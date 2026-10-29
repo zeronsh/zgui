@@ -500,3 +500,47 @@ fn a_metal_roughness_map_scales_the_materials_factors() {
         "dielectric {dielectric}, metal {metal}"
     );
 }
+
+#[test]
+fn a_decoded_texture_uploads_again_on_another_device() {
+    // A renderer on a device of its own (as after a lost one) uploads the
+    // texture again, its pixels decoded again from its file: the first
+    // renderer's upload dropped them.
+    const RED_BLUE: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 244, 34, 127, 138, 0, 0, 0, 14, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0,
+        66, 255, 1, 15, 249, 3, 253, 133, 17, 153, 118, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ];
+    let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+        position: [x, y, 0.],
+        normal: [0., 0., 1.],
+        uv: [u, v],
+    };
+    let square = Geometry::new(
+        vec![
+            vertex(-1., -1., 0., 1.),
+            vertex(1., -1., 1., 1.),
+            vertex(1., 1., 1., 0.),
+            vertex(-1., 1., 0., 0.),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .unwrap();
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(square, white);
+    world.set_texture(id, Some(Texture::decode(RED_BLUE).unwrap()));
+    for _ in 0..2 {
+        let Some(mut window) = Window::new(&world) else {
+            return;
+        };
+        window.draw();
+        let (left, right) = (window.pixel(30, 50), window.pixel(70, 50));
+        assert!(left[0] > 200 && left[2] < 40, "red on the left: {left:?}");
+        assert!(
+            right[2] > 200 && right[0] < 40,
+            "blue on the right: {right:?}"
+        );
+    }
+}

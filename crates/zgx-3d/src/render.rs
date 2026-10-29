@@ -254,13 +254,16 @@ impl Viewport for Renderer {
             entry.used = gpu.frame;
             for (map, texture) in crate::Map::ALL.into_iter().zip(d.maps) {
                 if let Some(texture) = texture {
-                    let entry = gpu
-                        .views
-                        .entry((texture.id(), map.srgb()))
-                        .or_insert_with(|| {
-                            (upload(frame.device, frame.queue, texture, map.srgb()), 0)
-                        });
-                    entry.1 = gpu.frame;
+                    // A texture that can't be read draws as if it had none.
+                    let key = (texture.id(), map.srgb());
+                    if !gpu.views.contains_key(&key)
+                        && let Some(view) = upload(frame.device, frame.queue, texture, map.srgb())
+                    {
+                        gpu.views.insert(key, (view, 0));
+                    }
+                    if let Some(entry) = gpu.views.get_mut(&key) {
+                        entry.1 = gpu.frame;
+                    }
                 }
             }
         }
@@ -274,7 +277,7 @@ impl Viewport for Renderer {
             let stand_ins = gpu.stand_ins.get_or_insert_with(|| {
                 let flat = |rgba: [u8; 4], srgb| {
                     let texture = crate::Texture::from_rgba8(1, 1, rgba.to_vec()).unwrap();
-                    upload(frame.device, frame.queue, &texture, srgb)
+                    upload(frame.device, frame.queue, &texture, srgb).expect("its pixels, held")
                 };
                 [
                     flat([255; 4], true),
@@ -880,13 +883,13 @@ fn upload(
     queue: &wgpu::Queue,
     texture: &crate::Texture,
     srgb: bool,
-) -> wgpu::TextureView {
-    let levels = crate::texture::mipmaps(texture.width(), texture.height(), texture.pixels());
-    let levels: Vec<&[u8]> = levels
-        .iter()
-        .map(|(_, _, pixels)| pixels.as_slice())
+) -> Option<wgpu::TextureView> {
+    let image = texture.pixels()?;
+    let smaller = crate::texture::mipmaps(texture.width(), texture.height(), image.pixels());
+    let levels: Vec<&[u8]> = std::iter::once(image.pixels())
+        .chain(smaller.iter().map(|(_, _, pixels)| pixels.as_slice()))
         .collect();
-    zgx_gpu::viewport::texture_with_levels(
+    let made = zgx_gpu::viewport::texture_with_levels(
         device,
         queue,
         (texture.width(), texture.height()),
@@ -897,8 +900,9 @@ fn upload(
         },
         &levels,
         "3D map",
-    )
-    .create_view(&Default::default())
+    );
+    texture.uploaded();
+    Some(made.create_view(&Default::default()))
 }
 /// A mesh's maps (`Map::ALL`'s order) bound for sampling.
 fn map_binding(

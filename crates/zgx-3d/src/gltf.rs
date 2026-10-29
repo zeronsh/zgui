@@ -846,7 +846,10 @@ mod tests {
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
         let texture = model.nodes[0].meshes[0].2[0].clone().expect("its texture");
         assert_eq!((texture.width(), texture.height()), (2, 1));
-        assert_eq!(texture.pixels(), [255, 0, 0, 255, 0, 0, 255, 255]);
+        assert_eq!(
+            texture.pixels().unwrap().pixels(),
+            [255, 0, 0, 255, 0, 0, 255, 255]
+        );
         let world = World::new();
         world.add_model(&model);
         world.set_camera(crate::Camera::looking_at([0., 0., 3.], [0., 0., 0.]));
