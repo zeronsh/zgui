@@ -320,3 +320,44 @@ return ui.column {
         vec!["Rechercher".to_string()]
     );
 }
+
+#[test]
+fn a_select_of_computed_options_relabels_them_in_the_locale() {
+    let code = r#"
+ui.i18n { dir = "locales", source = "en" }
+ui.command { id = "fr", run = function() ui.locale:set("fr") end }
+local options = ui.computed(function()
+    return {
+        { value = "s", label = ui.t("search"):get() },
+        { value = "g", label = ui.t("greeting", { name = "Ada" }):get() },
+    }
+end)
+local pick = ui.state("pick", "s")
+return ui.column {
+    ui.select { label = "Find", value = pick, options = options, id = "pick" },
+    ui.text { "{pick}", id = "picked" },
+}
+"#;
+    let path = app("select", code, &[("en", EN), ("fr", FR)]);
+    let mut h = harness(&path);
+    zgx::i18n::set_system_languages(|| vec!["en-US".into()]);
+    h.settle();
+    assert_eq!(h.error(), None);
+    assert!(h.texts().contains(&"Search".to_string()), "{:?}", h.texts());
+    assert!(h.host.run_command("fr"));
+    h.settle();
+    let texts = h.texts();
+    assert!(
+        texts.contains(&"Rechercher".to_string()),
+        "the chosen one shows relabelled: {texts:?}"
+    );
+    assert!(!texts.contains(&"Search".to_string()), "{texts:?}");
+    // Its menu lists them relabelled, and choosing writes the option's value.
+    h.click("pick");
+    h.settle();
+    let texts = h.texts();
+    assert!(texts.contains(&"Bonjour, Ada".to_string()), "{texts:?}");
+    h.click("g");
+    h.settle();
+    assert_eq!(h.text("picked"), "g");
+}

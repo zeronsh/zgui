@@ -11868,7 +11868,9 @@ export type SelectProps = {
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	options: { string } | { number } | { SelectOption },
+	-- A table is read as it is built; a state (a computed relabelling
+	-- them in the locale) is followed, options kept by their value.
+	options: { string } | { number } | { SelectOption } | Readable<{ SelectOption }>,
 	-- Shown while no option is chosen.
 	placeholder: string?,
 	label: Label?,

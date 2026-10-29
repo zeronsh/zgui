@@ -34,8 +34,7 @@ pub(crate) enum Library {
     Select {
         label: String,
         value: Signal<Value>,
-        /// Each option's value, what it shows, and whether it is disabled.
-        options: Vec<(Value, String, bool)>,
+        options: SelectOptions,
         placeholder: String,
     },
     /// `ui.combobox { text = state, items = state, value?, loading?, … }`.
@@ -170,6 +169,35 @@ pub(crate) fn section(kind: &Kind) -> Option<(&Value, &String)> {
     }
 }
 
+/// A select's options: a table read as it is built, or a state (a computed
+/// relabelling them in the locale) followed.
+#[derive(Clone)]
+pub(crate) enum SelectOptions {
+    /// Each option's value, what it shows, and whether it is disabled.
+    Fixed(Vec<(Value, String, bool)>),
+    Live(Signal<Value>),
+}
+
+/// An option of a select given as data: `{ label, value?, disabled? }`, or
+/// its value alone.
+fn select_option(option: &Value) -> (Value, String, bool) {
+    match option {
+        Value::Map(_) => {
+            let shown = option
+                .field("label")
+                .map(Value::to_string)
+                .unwrap_or_default();
+            let value = match option.field("value") {
+                None | Some(Value::Nil) => Value::Str(shown.as_str().into()),
+                Some(v) => v.clone(),
+            };
+            let disabled = matches!(option.field("disabled"), Some(Value::Bool(true)));
+            (value, shown, disabled)
+        }
+        other => (other.clone(), other.to_string(), false),
+    }
+}
+
 /// Add the library's functions to `ui`.
 pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     // `ui.<widget> { label?, value = state, … }`.
@@ -214,9 +242,20 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     ui.set(
         "select",
         widget(|label, value, t| {
-            let list: Table = t
-                .get("options")
-                .map_err(|_| mlua::Error::runtime("ui.select needs `options`"))?;
+            let given: mlua::Value = t.get("options")?;
+            if let Some(state) = crate::node::state_of(&given) {
+                return Ok(Kind::Library(Box::new(Library::Select {
+                    label,
+                    value,
+                    options: SelectOptions::Live(state),
+                    placeholder: t.get::<Option<String>>("placeholder")?.unwrap_or_default(),
+                })));
+            }
+            let mlua::Value::Table(list) = given else {
+                return Err(mlua::Error::runtime(
+                    "ui.select needs `options`, a table or a state",
+                ));
+            };
             let mut options = Vec::new();
             for option in list.sequence_values::<mlua::Value>() {
                 options.push(match option? {
@@ -239,7 +278,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
             Ok(Kind::Library(Box::new(Library::Select {
                 label,
                 value,
-                options,
+                options: SelectOptions::Fixed(options),
                 placeholder: t.get::<Option<String>>("placeholder")?.unwrap_or_default(),
             })))
         })?,
@@ -1231,7 +1270,53 @@ pub(crate) fn view(
         Library::Select {
             label,
             value,
-            options,
+            options: SelectOptions::Live(options),
+            placeholder,
+        } => {
+            // Options read from the state as it changes, the value written
+            // back as the option's own (by its text) among those now.
+            let cx = need(&mut cx);
+            fn read(options: &Value) -> (Vec<Value>, Vec<SelectOption>) {
+                options
+                    .list()
+                    .iter()
+                    .map(|option| {
+                        let (value, shown, disabled) = select_option(option);
+                        let option = SelectOption::new(value.to_string(), shown);
+                        (value, if disabled { option.disabled() } else { option })
+                    })
+                    .unzip()
+            }
+            let (values, list) = options.with_untracked(read);
+            let (values, list) = (cx.state(values), cx.state(list));
+            {
+                let (options, values, list) = (options.clone(), values.clone(), list.clone());
+                cx.retain(cx.runtime().effect(move || {
+                    let (v, l) = options.with(read);
+                    values.set(v);
+                    list.set(l);
+                }));
+            }
+            let chosen = bridge_with(
+                cx,
+                value,
+                |v| v.to_string(),
+                move |text: String| {
+                    values.with_untracked(|values| {
+                        values
+                            .iter()
+                            .find(|v| v.to_string() == text)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                },
+            );
+            select_live(label.clone(), chosen, list, placeholder.clone())
+        }
+        Library::Select {
+            label,
+            value,
+            options: SelectOptions::Fixed(options),
             placeholder,
         } => {
             // Options by their value's text; written back as the value itself.

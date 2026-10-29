@@ -295,6 +295,49 @@ fn a_select_chooses_from_its_menu_and_by_typing_while_closed() {
 }
 
 #[test]
+fn a_live_select_follows_its_options_relabelled_added_and_disabled() {
+    let mut ui = Ui::new(400., 300.);
+    let value = ui.signal("a".to_owned());
+    let options = ui.signal(vec![
+        SelectOption::new("a", "Apple"),
+        SelectOption::new("b", "Banana"),
+    ]);
+    let view = ui.mount(column().p(20.).child(select_live(
+        "Fruit",
+        value.clone(),
+        options.clone(),
+        "Choose…",
+    )));
+    ui.prepare_frame();
+    let trigger = with_role(&ui, &view, Role::ComboBox)[0];
+    let shown = |ui: &Ui| ui.semantics.borrow().get(trigger).unwrap().value.clone();
+    let item = |ui: &Ui, id: &str| {
+        let node = view.find(id).expect("its item");
+        let semantics = ui.semantics.borrow();
+        let node = semantics.get(node).unwrap();
+        (node.label.clone(), node.disabled)
+    };
+    assert_eq!(shown(&ui), Some("Apple".into()));
+    assert_eq!(item(&ui, "a"), ("Apple".into(), false));
+    // Relabelled in place (as a locale switch does), one added, one disabled.
+    options.set(vec![
+        SelectOption::new("a", "Pomme").disabled(),
+        SelectOption::new("b", "Banane"),
+        SelectOption::new("c", "Cerise"),
+    ]);
+    ui.prepare_frame();
+    assert_eq!(shown(&ui), Some("Pomme".into()));
+    assert_eq!(item(&ui, "a"), ("Pomme".into(), true));
+    assert_eq!(item(&ui, "c"), ("Cerise".into(), false));
+    click(&mut ui, trigger);
+    ui.prepare_frame();
+    let cherry = view.find("c").unwrap();
+    click(&mut ui, cherry);
+    assert_eq!(value.get(), "c");
+    assert_eq!(shown(&ui), Some("Cerise".into()));
+}
+
+#[test]
 fn a_bare_button_opens_its_menu() {
     let mut ui = Ui::new(400., 300.);
     let open = ui.signal(false);
