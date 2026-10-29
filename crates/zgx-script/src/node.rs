@@ -2156,7 +2156,6 @@ const WIDGET_FIELDS: &[&str] = &[
     "mixed",
     "select_on_focus",
     "secure",
-    "inputmode",
     "spellcheck",
     "line_numbers",
     "highlight",
@@ -2200,6 +2199,11 @@ const WIDGET_FIELDS: &[&str] = &[
     "hour12",
     "minute_step",
 ];
+/// Constructor fields looked for only once a key is no style property:
+/// every key is compared against `WIDGET_FIELDS`, so a field added there
+/// costs each style key of its length a comparison, and one added here
+/// costs them nothing.
+const LATE_FIELDS: &[&str] = &["inputmode"];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
 fn set_handler(
@@ -2867,8 +2871,12 @@ fn fill_from(
             }
             name if WIDGET_FIELDS.contains(&name) => {}
             name => {
-                let prop = Prop::parse(name)
-                    .ok_or_else(|| mlua::Error::runtime(format!("unknown property `{name}`")))?;
+                let Some(prop) = Prop::parse(name) else {
+                    if LATE_FIELDS.contains(&name) {
+                        return Ok(());
+                    }
+                    return Err(mlua::Error::runtime(format!("unknown property `{name}`")));
+                };
                 if let Some(keys) = &keys {
                     // The key kept alive while its address names it.
                     let string = borrowed.get::<mlua::LuaString>()?;
@@ -4786,6 +4794,39 @@ pub(crate) fn retain(env: &Env, resource: Box<dyn Any>) {
 
 #[cfg(test)]
 mod tests {
+    /// The constructors' own fields are matched before style properties
+    /// (`fill_from`), so a name in both is the constructor's: `size` is the
+    /// one. A new field named like a style property fails here until it is
+    /// given a meaning on purpose.
+    #[test]
+    fn constructor_fields_named_like_style_properties_keep_their_meaning() {
+        use super::{Kind, LATE_FIELDS, Node, Prop, WIDGET_FIELDS, fill_from};
+        let both: Vec<_> = WIDGET_FIELDS
+            .iter()
+            .chain(LATE_FIELDS)
+            .copied()
+            .filter(|name| Prop::parse(name).is_some())
+            .collect();
+        assert_eq!(
+            both,
+            ["size"],
+            "a constructor field named like a style property"
+        );
+        let lua = mlua::Lua::new();
+        let table: mlua::Table = lua
+            .load("return { size = { 10, 20 }, w = 30 }")
+            .eval()
+            .unwrap();
+        let mut node = Node::new(Default::default(), Kind::Div);
+        fill_from(&lua, &mut node, &table, None, crate::DesignLint::Off).unwrap();
+        let props: Vec<_> = node.props.iter().map(|(prop, _)| prop.name()).collect();
+        assert_eq!(
+            props,
+            ["w"],
+            "size is the constructor's, not a style property"
+        );
+    }
+
     /// A known style key keeps the same numeric bits and fallback errors
     /// as a key read for the first time.
     #[test]
