@@ -44,6 +44,7 @@ context_menu_below: boolean?
 | `checked`, `radio` (`menu_item`) | `boolean \| Readable<boolean> \| (() -> boolean)`, `boolean` | none | a check in the item's gutter while true (a toggle item), or a dot with `radio = true` (one of a group); assistive technology hears a checkbox or radio item |
 | `shortcut` (`menu_item`) | `string` | none | the keys that do it, shown at its end in the tertiary text colour: keys (`"cmd+c"`) as the platform shows them (⌘C on macOS, Ctrl+C elsewhere), or text as it is (`"⌘C"`) |
 | `match_anchor_width` (`popover`, `menu`) | `boolean` | `false` | at least as wide as its trigger, as a select's list is |
+| `at_caret` (`popover`) | `boolean` | `false` | at the caret of the input or textarea in its `anchor`, not at the anchor's box, as a mention's or a slash command's suggestions are (tiptap's suggestion, a chat composer's `@`): it follows the caret as text is typed, a line wraps or breaks, the field scrolls and an input method composes. It takes no focus and has no backdrop: keys go on to the field, whose `on_key` moves through the suggestions (with `active_descendant` naming the one it is on) and chooses one; `open` says when it shows, and a click elsewhere passes through |
 | `dismiss_on_backdrop` (`modal`, `popover`) | `boolean` | `true` | `false`: a click outside doesn't close it (a dialog that must be answered); Escape still does |
 | `disabled` (`menu_item`, `submenu`) | `boolean \| Readable<boolean> \| (() -> boolean)` | `false` | keyboard navigation skips it |
 | `context_menu` | `(e: PointerEvent) -> { Node }?` | none | `e` is `{ x, y, local_x, local_y }`; return the items, or nothing for no menu |
@@ -117,6 +118,66 @@ return ui.column {
 		ui.text { "Settings", text_size = 18, bold = true },
 		ui.button { on_click = ui.set(settings, false), "Done" },
 	},
+}
+```
+
+### Suggestions at the caret
+
+A mention's suggestions: a popover `at_caret` over the composer, open while the text before the caret ends in `@name`, the composer's keys moving through them.
+
+```lua
+local people = { "ada", "grace", "alan" }
+local text = ui.state("text", "")
+local active = ui.state("active", 1)
+local query = ui.computed(function(): string?
+	return text:get():match("@(%w*)$")
+end)
+local function choose(name: string)
+	text:set((text:peek():gsub("@%w*$", `@{name} `)))
+end
+local options: ContainerProps = {}
+for i, name in people do
+	options[i] = ui.button {
+		id = `person-{name}`,
+		role = "option",
+		selected = function()
+			return active:get() == i
+		end,
+		on_click = function()
+			choose(name)
+		end,
+		name,
+	}
+end
+return ui.popover {
+	open = function()
+		return query:get() ~= nil
+	end,
+	on_close = function() end,
+	at_caret = true,
+	w = 160,
+	anchor = ui.textarea {
+		value = text,
+		w = 320,
+		active_descendant = function()
+			return if query:get() then `person-{people[active:get()]}` else nil
+		end,
+		on_key = function(e: KeyEvent)
+			if query:peek() == nil then
+				return false
+			end
+			if e.key == "ArrowDown" or e.key == "ArrowUp" then
+				local step = if e.key == "ArrowDown" then 1 else -1
+				active:set((active:peek() - 1 + step) % #people + 1)
+				return true
+			elseif e.key == "Enter" or e.key == "Tab" then
+				choose(people[active:peek()])
+				return true
+			end
+			return false
+		end,
+	},
+	ui.column(options),
 }
 ```
 

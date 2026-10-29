@@ -370,6 +370,9 @@ struct PortalOptions {
     over: Option<Rc<dyn Fn() -> String>>,
     /// `View::arrow`: how far a popover's arrow reaches from its edge.
     arrow: Option<f32>,
+    /// `View::at_caret`: placed at the caret of the editor in its trigger,
+    /// focus left there.
+    at_caret: bool,
 }
 /// A declarative view: a node to mount, its styles, children, handlers and
 /// semantics. Built with the functions here ([`column()`], [`text()`],
@@ -421,6 +424,8 @@ pub(crate) struct Rare {
     animation: Option<animation::Animated>,
     keyboard_navigation: Option<bool>,
     end: Option<EndWatch>,
+    /// `View::active_descendant`: the id of the item it is on.
+    active_descendant: Option<Box<dyn Fn() -> Option<String>>>,
     dismiss_backdrop: Option<bool>,
     /// Where an overlay opens and a submenu's own trigger row: boxed, as
     /// few views have them (views are moved through the mount recursion).
@@ -485,6 +490,9 @@ impl Rare {
         }
         if self.end.is_some() {
             inner.end = self.end;
+        }
+        if self.active_descendant.is_some() {
+            inner.active_descendant = self.active_descendant;
         }
         if self.keyboard_navigation.is_some() {
             inner.keyboard_navigation = self.keyboard_navigation;
@@ -795,6 +803,27 @@ impl View {
     /// it, start-aligned, 4 points away unless set).
     pub fn placement(mut self, placement: crate::compose_popover::Placement) -> Self {
         self.rare_mut().portal.get_or_insert_default().placement = Some(placement);
+        self
+    }
+    /// The item this view is on while focus stays in it (`aria-activedescendant`):
+    /// the id of a node, as `id()` names it, or `None`. An editor driving a
+    /// list of suggestions (a mention's, `View::at_caret`) keeps focus and
+    /// moves through them with its keys; assistive technology hears the
+    /// one it is on. `id` is read again as what it reads changes.
+    pub fn active_descendant(mut self, id: impl Fn() -> Option<String> + 'static) -> Self {
+        self.rare_mut().active_descendant = Some(Box::new(id));
+        self
+    }
+    /// A popover placed at the caret of the text editor in its trigger, not
+    /// at the trigger's box, following it as it moves (typing, a click, a
+    /// line wrapping, the editor scrolling, an input method's composition),
+    /// as a mention's or a command's suggestions follow the caret. It takes
+    /// no focus: keys go on to the editor, which drives it (Up, Down,
+    /// Enter, Escape) with its own handlers, and tells assistive technology
+    /// the suggestion it is on (`View::active_descendant`). Pointer presses
+    /// outside it pass through, and close it only as the app says (`open`).
+    pub fn at_caret(mut self) -> Self {
+        self.rare_mut().portal.get_or_insert_default().at_caret = true;
         self
     }
     /// A non-modal layer over the window (toasts, a heads-up): a modal view
@@ -3052,6 +3081,10 @@ fn mount_portal_panel(
 
     let options = view.rare.as_ref().and_then(|r| r.portal.as_ref());
     let is_layer = options.is_some_and(|p| p.layer);
+    // At an editor's caret: placed there, and focus left in the editor, as
+    // a layer leaves it.
+    let at_caret = options.is_some_and(|p| p.at_caret);
+    let keeps_focus = is_layer || at_caret;
     // A layer's panel is only what it holds; a dialog's or menu's is a card.
     let mut defaults = if is_layer {
         Styles::new()
@@ -3253,10 +3286,18 @@ fn mount_portal_panel(
                     size,
                 }
             });
+            // At the caret: placed against the caret of the editor in the
+            // trigger (its box, where it has none).
+            let placed_at = match at_caret {
+                true => ui
+                    .editor_within(anchor)
+                    .map_or(anchor, |editor| editor.caret),
+                false => anchor,
+            };
             crate::compose_popover::mount(
                 ui,
                 owner,
-                anchor,
+                placed_at,
                 portal.overlay,
                 portal.position,
                 panel,
@@ -3292,7 +3333,7 @@ fn mount_portal_panel(
         panel_focusable,
         is_submenu,
         autofocus.unwrap_or(true),
-        is_layer,
+        keeps_focus,
     );
     // An unnamed popover or menu is named by its trigger, as a browser's
     // popover target is (`aria-labelledby`).
@@ -3301,7 +3342,7 @@ fn mount_portal_panel(
     }
     // A popover closes on a press outside it (in the window, in a parent
     // popover's panel), and the press goes on to what it lands on.
-    if let Some(anchor) = anchor.filter(|_| dismiss_backdrop && !is_menu && !is_layer) {
+    if let Some(anchor) = anchor.filter(|_| dismiss_backdrop && !is_menu && !keeps_focus) {
         crate::compose_popover::mount_dismissing(
             ui,
             owner,
@@ -3315,7 +3356,7 @@ fn mount_portal_panel(
     // A layer (a toast, a tooltip) traps nothing, so it isn't modal; a
     // popover traps focus as a dialog does, so it is.
     ui.semantics.borrow_mut().update(panel, |node| {
-        node.modal = node.modal && !is_layer;
+        node.modal = node.modal && !keeps_focus;
         node.hidden |= panel_hidden;
     });
     // A popover's trigger says it opens a dialog, and whether it shows (a
@@ -3980,6 +4021,9 @@ fn open_element(
     };
     if view.contents {
         ui.scene.borrow_mut().set_contents(root, true);
+    }
+    if let Some(active) = rare.as_deref_mut().and_then(|r| r.active_descendant.take()) {
+        watch_active_descendant(ui, root, environment.registry.clone(), active);
     }
     match rare.as_deref().and_then(|r| r.selectable) {
         Some(true) => crate::selection::mount_root(
@@ -4664,6 +4708,52 @@ fn open_element(
         focusable,
         pictured,
     }
+}
+/// `View::active_descendant`: `root`'s semantics point at the node named
+/// what `id` says, found again as `id` changes, and after the next layout
+/// when it is not mounted yet (an item in a popover just opening).
+#[inline(never)]
+fn watch_active_descendant(
+    ui: &mut Ui,
+    root: NodeId,
+    registry: Registry,
+    id: Box<dyn Fn() -> Option<String>>,
+) {
+    fn point(ui: &Ui, root: NodeId, registry: &Registry, id: Option<&str>) -> bool {
+        let target = id.and_then(|id| {
+            let scene = ui.scene.borrow();
+            registry
+                .borrow()
+                .get(id)?
+                .iter()
+                .copied()
+                .find(|node| scene.contains(*node))
+        });
+        let mut semantics = ui.semantics.borrow_mut();
+        if semantics.get(root).is_none() {
+            return false;
+        }
+        if semantics
+            .get(root)
+            .is_some_and(|node| node.active_descendant != target)
+        {
+            semantics.update(root, |node| node.active_descendant = target);
+        }
+        target.is_some() || id.is_none()
+    }
+    let weak = ui.downgrade();
+    ui.bind(root, move || {
+        let id = id();
+        let Some(ui) = weak.upgrade() else { return };
+        if !point(&ui, root, &registry, id.as_deref()) {
+            let (weak, registry) = (weak.clone(), registry.clone());
+            ui.after_layout(Box::new(move || {
+                if let Some(ui) = weak.upgrade() {
+                    point(&ui, root, &registry, id.as_deref());
+                }
+            }));
+        }
+    });
 }
 /// The rest of an element's mounting, once its children are in.
 #[cfg_attr(debug_assertions, inline(never))]

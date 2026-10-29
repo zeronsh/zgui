@@ -6475,6 +6475,11 @@ export type InputProps = {
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
 	-- password field. A state or function follows it (a setting).
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- The `id` of the suggestion it is on (HTML's `aria-activedescendant`),
+	-- nil for none: focus stays here, moving through a list of them with
+	-- its keys (a mention's, in a popover `at_caret`), and assistive
+	-- technology hears the one it is on.
+	active_descendant: (string | Readable<string?> | (() -> string?))?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 	-- Several lines only: a line's styles, asked for the lines in view and
@@ -14172,6 +14177,11 @@ export type PopoverProps = {
 	match_anchor_width: boolean?,
 	-- A popover only: false keeps it open on a click outside.
 	dismiss_on_backdrop: boolean?,
+	-- A popover only: at the caret of the input in its `anchor`, following
+	-- it (typing, a new line, scrolling, an input method's composition),
+	-- and taking no focus: keys go on to the input, which drives it (a
+	-- mention's suggestions). It closes as `open` says.
+	at_caret: boolean?,
 }
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it

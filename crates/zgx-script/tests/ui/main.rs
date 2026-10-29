@@ -25,6 +25,8 @@ mod layout_gaps;
 mod layout_motion;
 #[path = "../lazy_ui.rs"]
 mod lazy_ui;
+#[path = "../mentions.rs"]
+mod mentions;
 #[path = "../regions.rs"]
 mod regions;
 #[path = "../rtl.rs"]

@@ -55,6 +55,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `select_on_focus` | `boolean` | `false` | focusing selects all the text (an address bar) |
 | `inputmode` | `"text" \| "decimal" \| "numeric" \| "tel" \| "search" \| "email" \| "url" \| "none"` | `"text"` | what kind of text it takes (HTML's `inputmode`): which touch keyboard Windows shows (digits, `@`, `.com`) and what a Wayland input method offers; `"none"` shows no virtual keyboard, for a field with its own keypad. A hint, never a check of what is typed |
 | `spellcheck` | `boolean \| Readable<boolean> \| (() -> boolean)` | `false` | check the spelling as it is typed (HTML's `spellcheck`): misspelled words get a dotted line (not the word being typed), and the context menu offers the system checker's guesses, Learn Spelling and Ignore Spelling. Never in a password field |
+| `active_descendant` | `string \| Readable<string?> \| (() -> string?)` | none | the `id` of the suggestion it is on (HTML's `aria-activedescendant`): focus stays in the field while its keys (`on_key`) move through a list of them, a mention's in a popover `at_caret`, and assistive technology hears the one it is on. Nil for none |
 | `multiline` | `boolean` | `false` (`textarea`: always) | `input` with several lines |
 | `w`, `h` | `Length` | `240` wide (an intrinsic width), `36` high (`textarea`: `156`) | |
 | `px`, `py` | `Length` | `8`, `6` | |

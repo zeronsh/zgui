@@ -819,6 +819,9 @@ pub(crate) struct InputRare {
     /// `spellcheck = true` (or a state or function of one): the system's
     /// checker marks misspellings.
     pub(crate) spellcheck: Option<Source>,
+    /// `active_descendant = id` (or a state or function of one): the
+    /// suggestion it is on, for assistive technology, focus kept here.
+    pub(crate) active_descendant: Option<Source>,
 }
 
 #[derive(Clone)]
@@ -991,6 +994,9 @@ pub(crate) enum Kind {
         dismiss: Option<bool>,
         /// `match_anchor_width = true`: at least as wide as its trigger.
         match_anchor: bool,
+        /// `at_caret = true`: at the caret of the editor in its anchor,
+        /// focus left there (`View::at_caret`).
+        at_caret: bool,
     },
     Menu {
         label: String,
@@ -2676,13 +2682,16 @@ const LATE_FIELDS: &[&str] = &[
     "item_label",
     "on_end",
     "end_distance",
+    "active_descendant",
+    "at_caret",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
 /// it, so no style key compares against it: an input's caret (few set it,
 /// read only from those that do), whether plugins may target the node
-/// (`hook`, `private`); `inputmode` is read by `ui.input` itself, `on_end`
-/// and `end_distance` by `ui.list`. Any other key is unknown.
+/// (`hook`, `private`), an input's `active_descendant`, a popover's
+/// `at_caret`; `inputmode` is read by `ui.input` itself, `on_end` and
+/// `end_distance` by `ui.list`. Any other key is unknown.
 #[cold]
 #[inline(never)]
 fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlua::Result<()> {
@@ -2704,6 +2713,17 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
         "reorder" | "item_label" => {}
         // `ui.list`'s, read as the list is made.
         "on_end" | "end_distance" => {}
+        "active_descendant" => {
+            if let Kind::Input { rare, .. } = &mut node.kind {
+                let active = source(lua, Ty::Str, name, value)?;
+                rare.get_or_insert_default().active_descendant = Some(active);
+            }
+        }
+        "at_caret" => {
+            if let Kind::Popover { at_caret, .. } = &mut node.kind {
+                *at_caret = lua.unpack::<Option<bool>>(value)?.unwrap_or(false);
+            }
+        }
         "private" => node.private = lua.unpack(value)?,
         "hook" => match value {
             mlua::Value::String(name) => {
@@ -4532,6 +4552,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         arrow: table.get("arrow")?,
                         dismiss: table.get("dismiss_on_backdrop")?,
                         match_anchor,
+                        // Set as `fill` walks the table (`late_field`).
+                        at_caret: false,
                     }
                 };
                 let mut node = fill(lua, Node::new(owner(lua)?, kind), Some(&table))?;

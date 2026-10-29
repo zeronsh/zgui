@@ -2933,6 +2933,19 @@ impl Ui {
     pub fn editor(&self, node: NodeId) -> Option<EditorHandle> {
         self.storage.editors.borrow().get(&node).cloned()
     }
+    /// The editor whose root is `node` or inside it, if there is one.
+    pub fn editor_within(&self, node: NodeId) -> Option<EditorHandle> {
+        if let Some(editor) = self.editor(node) {
+            return Some(editor);
+        }
+        let scene = self.scene.borrow();
+        self.storage
+            .editors
+            .borrow()
+            .values()
+            .find(|editor| scene.contains(editor.node) && scene.is_within(editor.node, node))
+            .cloned()
+    }
     /// What the last press in a `View::window_drag` region asked of the
     /// window, once: the desktop host takes it after each pointer press.
     pub fn take_window_gesture(&self) -> Option<WindowGesture> {

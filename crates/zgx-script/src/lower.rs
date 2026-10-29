@@ -1960,15 +1960,17 @@ fn kind_view(
             input_mode,
             code,
         } => {
-            let (placeholder_color, caret_color, caret_width, spellcheck) = match rare.as_deref() {
-                Some(rare) => (
-                    rare.placeholder_color.as_ref(),
-                    rare.caret_color.as_ref(),
-                    rare.caret_width,
-                    rare.spellcheck.as_ref(),
-                ),
-                None => (None, None, None, None),
-            };
+            let (placeholder_color, caret_color, caret_width, spellcheck, active) =
+                match rare.as_deref() {
+                    Some(rare) => (
+                        rare.placeholder_color.as_ref(),
+                        rare.caret_color.as_ref(),
+                        rare.caret_width,
+                        rare.spellcheck.as_ref(),
+                        rare.active_descendant.as_ref(),
+                    ),
+                    None => (None, None, None, None, None),
+                };
             // What `find` searches: the state the text is in.
             let searched = match value {
                 crate::node::InputValue::State(state) => Some(state.clone()),
@@ -2080,6 +2082,9 @@ fn kind_view(
                         resolve(&check, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
                     });
                 }
+            }
+            if let Some(active) = active {
+                view = active_descendant(view, active, vm);
             }
             if *select_on_focus {
                 view = view.select_on_focus(true);
@@ -2400,6 +2405,7 @@ fn kind_view(
             arrow,
             dismiss,
             match_anchor,
+            at_caret,
         } => {
             let view = popover(
                 label.clone(),
@@ -2425,6 +2431,7 @@ fn kind_view(
             } else {
                 view
             };
+            let view = if *at_caret { view.at_caret() } else { view };
             match placement {
                 Some(at) => view.placement(*at),
                 None => view,
@@ -6733,4 +6740,14 @@ fn cached_hex_matches_every_parsed_value_in_a_sequence() {
             "{text:?}"
         );
     }
+}
+
+/// An input's `active_descendant`: the id it names, followed.
+#[inline(never)]
+fn active_descendant(view: View, active: &Source, vm: &Rc<Vm>) -> View {
+    let (active, vm) = (resolve_owned(active), vm.clone());
+    view.active_descendant(move || match resolve(&active, Ty::Str, None, &vm) {
+        Some(Lit::Str(id)) => Some(id.to_string()),
+        _ => None,
+    })
 }
