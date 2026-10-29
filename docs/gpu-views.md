@@ -47,7 +47,26 @@ At 120 Hz the plane shows every refresh on an M5 Max and an M1 Max, frames shown
 
 `ZGX_PRESENT_LOG=1` logs each plane's frames every 240: those shown a second, drawables handed over a second, gaps between them, and start-to-shown.
 
-It's opt-in: a view not marked opaque composites into the window's frame as before. The trade for one that is, on an M5 Max in the viewport scene: the system's GPU power about halved (100–160 against 235–250 mW; wgpu alone, 100–140), for about 1–2 points more app CPU (the thread included), about 4 more of the window server's CPU (as wgpu's) and about 20 MB more memory: the plane's three drawables (its composited texture goes once it shows). zgx-3d doesn't mark its views opaque yet: app CPU and memory come first.
+It's opt-in: a view not marked opaque composites into the window's frame as before, and zgx-3d's views composite. The trade for one that is, in the viewport scene animating at 120 Hz, plane against composited (wgpu drawing the same scene alone in brackets):
+
+| | M5 Max | M1 Max |
+| --- | --- | --- |
+| system GPU power | 104 against 205 mW (90) | 343 against 662 mW (316) |
+| app instructions a second | 161–172 M against 122 M | 159 M against 111 M (115) |
+| window server CPU | 21.4% against 18.6% (21.4) | 49.3% against 51.3% (47.7) |
+| memory | 365 against 348 MB (335) | 169 against 153 MiB (149) |
+
+The extra memory is the plane's three drawables (its composited texture goes once it shows).
+
+Most of the extra CPU is Core Animation's, not zgx's. Counted by thread on the M5, the system's threads run about 100 M instructions a second for a plane against 54 M composited (about 380 K a frame): macOS's pacing of each `CAMetalLayer`'s frames (FramePacing) and Core Animation's presenting of its drawables, which a composited view never asks for. wgpu's own surfaces pay the same. zgx's own part:
+- the drawables' thread, about 7 M a second;
+- the wake that hands each drawable to the main thread, about 11–19 M a second more there than a view needing no wake.
+
+Even both gone, a plane would use more CPU than composited; they remain a possible cut.
+
+A ring of IOSurface sublayers, flipped as the window's tiles are, used the least app CPU of all (88–107 M a second on the M5, 96 M on the M1). It lost the GPU win, though: the window server composites a plain layer every frame however it flips (`hidden`, opacity or contents), so its GPU power was about composited's.
+
+The GPU win comes with `CAMetalLayer`, and so does its CPU: a plane is for an app that weighs GPU power (a full-window 3D view on battery) above a few points of CPU.
 
 A frame that switches a view between its layer and the window's frame costs about two frames' worth of time. That's measured at four switches a second; a view doing so rarely doesn't notice.
 

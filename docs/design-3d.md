@@ -366,6 +366,22 @@ Anything else draws composited, as today.
 - Pool 2 came a refresh sooner (M1 19.1 ms, M5 10.8) but missed more: M5 0.9% of frames late in the worst stretches, bursts of 36 in two seconds, against pool 3's 0.6% (the handler-paced path's own 0.3–0.55%); M1 0.5% against 0.2%. Pool 3 is kept.
 - Its cost on the M5: WindowServer CPU about 23% against 19% handler-paced (wgpu's own, 22–23%), so waiting in `nextDrawable` costs the window server, whoever waits. App CPU +0.1 to +1.2 points (the thread included). The system's GPU and WindowServer GPU are unchanged.
 - **Memory** (render lane, footprint regions): +26 MB planed against composited was the three view-size drawables (+22 MB of IOSurfaces) and the composited texture kept alive under the plane (~13 MB), now dropped once the plane shows: about +20 MB left (M5, 364–370 against 347 MB).
-- **Open before zgx-3d turns planes on:** app CPU (+1 to +2 points against composited) and memory (about +20 MB).
+- **Decided (after window 38): zgx-3d stays composited, planes opt-in.** The app CPU is the platform's, so no plane can tie composited on it:
+  - **Per thread** (M5, retired instructions, `PROC_PIDTHREADCOUNTS`), in M a second:
+
+    | | system threads | main | drawables thread |
+    | --- | --- | --- | --- |
+    | planed | 100 | 51–59 | 7 |
+    | composited | 54 | 65 | — |
+
+  - **Where the system threads go** (stack samples): queues only a `CAMetalLayer`'s presents run. These are FramePacing's per-layer state sync (macOS 26), Core Animation's metal-layer event listener, its mach port replies, `CA::Context` and three times the completion traffic. wgpu's surfaces pay the same.
+  - **Private switches:** `lowLatency` and `serverSyncEnabled` changed nothing (tried locally; not shippable).
+  - **What's left of ours** (the thread, and the wake that hands a drawable over: up to ~20 M a second) is a possible cut, though cutting it changes no decision.
+  - **M1 Max:** 159 against 111 M instructions a second, 0.34 against 0.66 W, 169 against 153 MiB.
+- **A ring of IOSurface sublayers instead (lane/3d-plane-cpu, shelved):**
+  - It's the window tiles' technique: contents set once, a frame flipping `hidden` from its painter's completion handler.
+  - It used the least app CPU of all: M5 88–107 M instructions a second, M1 96 M.
+  - But the window server composites a plain layer every frame, however it flips (`hidden`, opacity, contents), with untagged surfaces, or flipped in the window's paced transaction. WindowServer GPU was 10.2% against composited's 8.6% (M1 15.3 against 11.4), and system GPU about composited's. Only a `CAMetalLayer` gets the cheaper path.
+  - Its resize was left broken.
 
 **Windows next.** The same, with a DComp visual for the plane's swap chain (native_host/dcomp.rs), with the D3D11 lane.
