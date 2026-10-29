@@ -52,6 +52,16 @@ pub(crate) fn editable_editor(ui: &Ui, native_focused: bool) -> Option<zgx::widg
 /// What an input method is told an editor takes (winit's `ImePurpose`, a
 /// Wayland text-input-v3 content purpose) for its `InputMode`. Wayland has
 /// no search purpose or one with no on-screen keyboard: those are normal.
+/// The purposes past `Normal` are the vendored winit's (`zgx_winit_patched`);
+/// with crates.io's, every field is normal.
+#[cfg(not(zgx_winit_patched))]
+pub(crate) fn ime_purpose(_: zgx::text_edit::InputMode) -> winit::window::ImePurpose {
+    winit::window::ImePurpose::Normal
+}
+/// What an input method is told an editor takes (winit's `ImePurpose`, a
+/// Wayland text-input-v3 content purpose) for its `InputMode`. Wayland has
+/// no search purpose or one with no on-screen keyboard: those are normal.
+#[cfg(zgx_winit_patched)]
 pub(crate) fn ime_purpose(mode: zgx::text_edit::InputMode) -> winit::window::ImePurpose {
     use winit::window::ImePurpose;
     use zgx::text_edit::InputMode;
