@@ -190,6 +190,7 @@ enum WindowCommand {
     Focus,
     MaxFrameRate(Option<f64>),
     LoseGpu,
+    Composition(std::sync::mpsc::Sender<crate::WindowComposition>),
     ContextMenu {
         entries: Vec<crate::AppMenuEntry>,
         x: f64,
@@ -232,6 +233,7 @@ impl WindowState {
             WindowCommand::Drag
             | WindowCommand::RefreshInfo
             | WindowCommand::LoseGpu
+            | WindowCommand::Composition(_)
             | WindowCommand::ContextMenu { .. } => {}
             WindowCommand::Title(title) => options.title.clone_from(title),
             WindowCommand::Size(width, height) => {
@@ -372,6 +374,14 @@ impl WindowHandle {
     /// draws on. Other windows on the same device recover alike.
     pub fn debug_lose_gpu(&self) {
         self.command(WindowCommand::LoseGpu);
+    }
+    /// What the window server composites of the window, read in the
+    /// process once the window handles the request (see
+    /// [`crate::WindowComposition`]); nothing arrives for a closed window.
+    pub fn debug_composition(&self) -> std::sync::mpsc::Receiver<crate::WindowComposition> {
+        let (send, receive) = std::sync::mpsc::channel();
+        self.command(WindowCommand::Composition(send));
+        receive
     }
     /// Queue a validated application menu action for this window's focused UI.
     pub fn dispatch_menu_action(&self, action: impl Into<crate::MenuAction>) {
@@ -3304,6 +3314,9 @@ impl Host {
                 .context
                 .window_info
                 .refresh(window, self.options.titlebar),
+            WindowCommand::Composition(reply) => {
+                let _ = reply.send(crate::composition::read(window, self.renderer.as_ref()));
+            }
             WindowCommand::LoseGpu => {
                 if let Some(renderer) = &self.renderer {
                     renderer.context().debug_lose_device();

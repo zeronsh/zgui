@@ -11592,6 +11592,12 @@ pub struct ShownFrame {
 }
 #[cfg(target_os = "macos")]
 impl ShownFrame {
+    /// The surface it reads, to tell which layer shows it (a layer's
+    /// `contents`); not to be dereferenced.
+    #[doc(hidden)]
+    pub fn surface_ptr(&self) -> *const std::ffi::c_void {
+        (&*self.surface as *const objc2_io_surface::IOSurfaceRef).cast()
+    }
     /// The region `x, y, width, height` (pixels, from its top left, clipped
     /// to it) as premultiplied BGRA rows, with its size; `None` for a region
     /// outside it.

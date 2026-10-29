@@ -113,7 +113,8 @@ def main():
             '--target-dir', str(args.target_dir)], 600)
         examples = ['native_surfaces', 'rich_text', 'platform_services', 'dynamic_menus', 'atspi',
                     'form', 'native_ime', 'layout', 'paint_styles', 'canvas', 'svg_transform', 'animated_image',
-                    'component_workload', 'windows', 'window_controls', 'native_platform', 'drag_drop', 'actions', 'cursors']
+                    'component_workload', 'windows', 'window_controls', 'native_platform', 'drag_drop', 'actions', 'cursors',
+                    'transparency']
         command = ['cargo', 'build', '-p', 'zgx-desktop', '--locked']
         for example in examples:
             command += ['--example', example]
@@ -130,6 +131,11 @@ def main():
         assert 'window controls smoke passed' in log and 'contained a panic' not in log, log
         log = run('native-surfaces-window', [str(directory / 'native_surfaces'), '--smoke-test'], 30)
         assert re.findall(r'NATIVE_SURFACE frame=(\d+) nv12=(true|false)', log) == [('1', 'false'), ('2', 'true'), ('3', 'false'), ('4', 'true')], log
+        # What the window server composites of a transparent window, read in
+        # the process (no screen capture): flags, layers and the shown frame.
+        log = run('transparent-window-composition', [str(directory / 'transparency'), '--composition'], 60)
+        assert re.findall(r'^STAGE (\w+)', log, re.M) == ['initial', 'blue', 'hidden', 'restored', 'resized'], log
+        assert re.search(r'^PASS$', log, re.M) and 'FAIL' not in log, log
         log = run('rich-text-window', [str(directory / 'rich_text'), '--smoke-test'], 30)
         assert 'RICH_CLAMP height=56' in log, log
         checklist = []

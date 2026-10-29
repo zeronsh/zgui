@@ -153,7 +153,7 @@ The script requires Xvfb, Openbox, xdotool, Weston, weston-screenshooter and Pyt
 
 ## Unverified platform behavior
 
-Real macOS windows, Metal presentation, the native clipboard (Unicode exchange with TextEdit), dead-key composition and the accessibility tree and actions are observed on an Apple M5 Max in the [Mac continuation packet](platform-validation/macos-continuation/README.md), and the macOS suite records hardware-GPU throughput and energy (`docs/results/suite-macos-*`: GPU Mcycles per second, GPU system watts). Still unvalidated: macOS candidate (Pinyin) input, Wayland/macOS transparent-window composition, and a complete VoiceOver usability audit. Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11, and Wayland text-input-v3 composition passes a paced Sway/Fcitx5 smoke ([below](#real-wayland-input-method-composition)), whose burst-input loss remains open. macOS candidate input is unvalidated.
+Real macOS windows, Metal presentation, the native clipboard (Unicode exchange with TextEdit), dead-key composition and the accessibility tree and actions are observed on an Apple M5 Max in the [Mac continuation packet](platform-validation/macos-continuation/README.md), and the macOS suite records hardware-GPU throughput and energy (`docs/results/suite-macos-*`: GPU Mcycles per second, GPU system watts). Still unvalidated: macOS candidate (Pinyin) input and a complete VoiceOver usability audit. Transparent-window composition is checked on X11, Wayland and macOS ([below](#native-macos-transparent-window-composition)). Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11, and Wayland text-input-v3 composition passes a paced Sway/Fcitx5 smoke ([below](#real-wayland-input-method-composition)), whose burst-input loss remains open. macOS candidate input is unvalidated.
 
 Use a real display and equivalent hardware renderer configurations for performance conclusions. In llvmpipe measurements, process CPU includes CPU execution of GPU shaders and driver allocations can dominate RSS. Keep these results distinct from hardware-backed measurements and from core microbenchmarks.
 
@@ -730,6 +730,29 @@ and preserve failed-trial evidence without emitting successful CSV rows.
 This covers Sway nested over X11 with pixman and a llvmpipe-rendered client.
 Native macOS, hardware GPU composition, compositor backdrop blur and OS-native
 blur materials remain unverified.
+
+## Native macOS transparent-window composition
+
+The same fixture, run with `--composition` on a Mac, checks what the window
+server composites over the desktop, read in the process: no screen capture,
+so no Screen Recording permission. `WindowHandle::debug_composition` reports
+the native window's opacity and background, every layer of its tree (from
+the frame view's down) and the premultiplied pixels of the IOSurface its
+layer shows. Five stages (initial, colour change, hidden panel, restored,
+resized from 320x240 to 400x300 points) check that:
+
+- the window is not opaque and its background has alpha zero;
+- exactly one visible layer shows the surface read, and neither it, its
+  ancestors nor any layer of the content view is opaque or has a background;
+- eight sample positions (nine after the resize) hold the panels' premultiplied colours, their
+  source-over overlap, alpha zero where nothing is drawn (including the
+  area a resize adds) and alpha 255 on the opaque control, within two.
+
+It passes on an Apple M5 Max (macOS 26.4) at 2x. As a control, the same run
+with the window made opaque fails every kind of check above.
+`scripts/macos_native_validation.py` runs it on each macOS CI job. This
+verifies everything the window server is given; its own blending onto the
+desktop is not observed, which would need a capture.
 
 ## Real Wayland input-method composition
 
