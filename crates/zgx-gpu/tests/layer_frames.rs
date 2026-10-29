@@ -995,6 +995,8 @@ fn main() {
         println!("layer_frames: switches between tiles and drawables match drawing whole");
         faded_scrolls_copy_their_interior_and_match_drawing_whole();
         println!("layer_frames: faded scrolls copy their interior and match drawing whole");
+        rounded_corners_scrolled_by_a_copy_match_drawing_whole();
+        println!("layer_frames: rounded corners scrolled by a copy match drawing whole");
     }
 }
 
@@ -1007,11 +1009,10 @@ fn faded(offset: Signal<f32>, cards: bool) -> View {
     for i in 0..40u8 {
         let shade = Color(40 + i % 5 * 20, 40, 90, 255);
         list = list.child(match cards {
-            // Square: a rounded corner's edge scrolled by a copy differs from
-            // it drawn whole by a level, faded or not (main's, at scale 1).
             true => div()
                 .w(300.)
                 .h(60.)
+                .rounded(10.)
                 .bg(Color(240, 238, 232, 255))
                 .child(div().w(120.).h(60.).bg(shade)),
             false => row()
@@ -1033,6 +1034,44 @@ fn faded(offset: Signal<f32>, cards: bool) -> View {
                 .fade_edges(40., 40.)
                 .child(list),
         )
+}
+/// Rounded cards in a scroll view, unfaded.
+#[cfg(target_os = "macos")]
+fn rounded_cards(offset: Signal<f32>) -> View {
+    let mut list = column().gap(8.).p(8.);
+    for i in 0..40u8 {
+        list = list.child(
+            div()
+                .w(300.)
+                .h(60.)
+                .rounded(10.)
+                .border(2.)
+                .border_color(Color(90, 90, 110, 255))
+                .bg(Color(240, 238, 232, 255 - i % 3 * 40)),
+        );
+    }
+    overlay()
+        .size(SIZE.0, SIZE.1)
+        .bg(Color(47, 107, 58, 255))
+        .child(
+            scroll(offset)
+                .w(330.)
+                .h(380.)
+                .left(20.)
+                .top(10.)
+                .child(list),
+        )
+}
+/// Rounded corners (and their borders) copied by a scroll, moved an odd
+/// number of pixels, as drawn where they went: their antialiasing is each
+/// pixel's own, not its 2×2 block's.
+#[cfg(target_os = "macos")]
+fn rounded_corners_scrolled_by_a_copy_match_drawing_whole() {
+    let steps = [0., 3., 7., 30., 31., 90., 89., 0.];
+    for scale in [1., 1.5] {
+        let copies = scrolled_matches_drawing_whole_at(rounded_cards, &steps, scale);
+        assert!(copies > 0, "scale {scale}: no copy");
+    }
 }
 /// A faded scroll copies its interior and repaints its bands and what it
 /// scrolls in: each frame as the scene drawn whole, at scale 1 and 1.5.
