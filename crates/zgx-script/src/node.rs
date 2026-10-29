@@ -826,6 +826,10 @@ pub(crate) enum Kind {
         /// `placeholder_color`.
         placeholder: Option<Source>,
         placeholder_color: Option<Source>,
+        /// `caret_color` (the text's if unset) and `caret_width` (points;
+        /// the app's if unset).
+        caret_color: Option<Source>,
+        caret_width: Option<f32>,
         /// `select_on_focus = true`: focusing it selects all its text.
         select_on_focus: bool,
         /// `line_numbers = true`: a textarea numbers its lines.
@@ -2497,6 +2501,8 @@ const WIDGET_FIELDS: &[&str] = &[
     "initial",
     "placeholder",
     "placeholder_color",
+    "caret_color",
+    "caret_width",
     "mixed",
     "select_on_focus",
     "secure",
@@ -3853,6 +3859,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         || table.get::<Option<bool>>("multiline")?.unwrap_or(false),
                     placeholder: optional("placeholder", Ty::Str)?,
                     placeholder_color: optional("placeholder_color", Ty::Color)?,
+                    caret_color: optional("caret_color", Ty::Color)?,
+                    caret_width: table.get::<Option<f64>>("caret_width")?.map(|w| w as f32),
                     select_on_focus: table
                         .get::<Option<bool>>("select_on_focus")?
                         .unwrap_or(false),

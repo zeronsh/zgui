@@ -50,6 +50,8 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `placeholder` | `Reactive<string>` | none | shown while the value is empty, never part of it |
 | `placeholder_color` | `Reactive<Color>` | `"#8a9ab0"` | |
+| `caret_color` | `Reactive<Color>` | the text's colour | the caret's colour; a `"$token"` follows the theme |
+| `caret_width` | `number` | the app's (`1`, or the system's text-cursor width) | the caret's width in points |
 | `select_on_focus` | `boolean` | `false` | focusing selects all the text (an address bar) |
 | `inputmode` | `"text" \| "decimal" \| "numeric" \| "tel" \| "search" \| "email" \| "url" \| "none"` | `"text"` | what kind of text it takes (HTML's `inputmode`): which touch keyboard Windows shows (digits, `@`, `.com`) and what a Wayland input method offers; `"none"` shows no virtual keyboard, for a field with its own keypad. A hint, never a check of what is typed |
 | `spellcheck` | `boolean \| Readable<boolean> \| (() -> boolean)` | `false` | check the spelling as it is typed (HTML's `spellcheck`): misspelled words get a dotted line (not the word being typed), and the context menu offers the system checker's guesses, Learn Spelling and Ignore Spelling. Never in a password field |
@@ -60,7 +62,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `shrink` | `number` | `1` | a row too narrow for it shrinks it, to nothing if need be (it scrolls its text); `shrink = 0` holds it |
 | `wrap` | `boolean` | `false` | `textarea`: wrap long lines rather than scroll them |
 | `line_numbers` | `boolean` | `false` | `textarea`: number the lines in a gutter at the left, the caret's brighter (a code editor); only the lines in view are built |
-| `highlight` | `(line, state) -> (spans, state)` | none | `textarea`: colour each line (a code editor's syntax): spans `{ from, to, color }` in bytes from 1 (as `string.find` gives them), and what the line leaves the next (a block comment running on; `0` before the first). Asked for the lines in view, and again only for one that changes or whose line before leaves another state; it must depend on its arguments alone |
+| `highlight` | `(line, state) -> (spans, state)` | none | `textarea`: style each line (a code editor's syntax, a Markdown composer's emphasis): spans `{ from, to, color }` in bytes from 1 (as `string.find` gives them), with any of `weight`, `italic`, `strike` and `bg` by name ([styled spans](#styled-spans)), and what the line leaves the next (a block comment running on; `0` before the first). Asked for the lines in view, and again only for one that changes or whose line before leaves another state; it must depend on its arguments alone |
 | `decorations` | state or `() -> { { from, to, color? } }` | none | `textarea`: ranges of the whole text marked behind it (a search's matches), in bytes from 1; only those in view are drawn |
 | `find` | `{ query, case?, current?, limit?, color?, current_color? }` | none | `textarea`: a search's matches marked behind the text, found by the editor where the text is held (no list made in the script); `current` (from 1) shows in `current_color` (`$warning`), the rest in `color` (`$selection`); `case = false` folds ASCII case |
 | `current_line` | `Reactive<Color>` | none | `textarea`: the colour behind the caret's row |
@@ -68,6 +70,50 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `on_caret` | `(line, column, anchor, focus) -> ()` | none | `textarea`: where the caret is whenever it moves (a status bar): line and column from 1, the selection in bytes from 0 |
 
 Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
+
+### Styled spans
+
+A `highlight` span is `{ from, to, color }` (`color` may be left out), with these by name:
+
+| Field | Type | |
+| --- | --- | --- |
+| `weight` | `number` | its font weight (`600`, `700`) |
+| `italic` | `boolean` | italic |
+| `strike` | `boolean` | a line through it, in its colour |
+| `bg` | `Color` | a wash behind it (inline code) |
+
+Where spans overlap, each of `color`, `weight` and `bg` is the first's (by `from`) that gives it, and `italic` and `strike` hold if any gives them: a code span inside bold text keeps the bold weight and shows its own colour, and delimiters greyed inside a bold span stay bold. A line whose spans give a `weight` or `italic` is shaped with them, so its width, wrapping, carets, clicks and selection follow what shows; other lines (colours, strikes and washes only) are shaped as plain text, as before.
+
+```lua
+local draft = ui.state("draft", "Some **bold** and `code`")
+return ui.textarea {
+	value = draft,
+	wrap = true,
+	highlight = function(line, state)
+		local spans = {}
+		local function each(pattern: string, style: (a: number, b: number) -> ())
+			local at = 1
+			while true do
+				local a, b = string.find(line, pattern, at)
+				if not a or not b then
+					break
+				end
+				style(a, b)
+				at = b + 1
+			end
+		end
+		each("%*%*.-%*%*", function(a, b)
+			table.insert(spans, { a, b, weight = 600 })
+			table.insert(spans, { a, a + 1, "$text.tertiary" })
+			table.insert(spans, { b - 1, b, "$text.tertiary" })
+		end)
+		each("`[^`]+`", function(a, b)
+			table.insert(spans, { a, b, "$accent", bg = "$input.bg" })
+		end)
+		return spans, state
+	end,
+}
+```
 
 A long text (more than 64 KiB, or 2,000 lines), or one with `highlight`, is laid out by its lines: the lines in view are shaped and drawn, a line keeps its shape until it changes, and where each line starts is a few bytes a line, so a file of 100,000 lines opens in about 20 ms and a keystroke costs about a millisecond ([the code editor example](../../crates/zgx-script/examples/code_editor), `code_editor_bench`). A string over 64 KiB in state is held in chunks of a few kilobytes: the state, the textarea bound to it, its layout and its accessibility value share one copy, and a keystroke's new value shares every chunk but the one it changed (a script reading the state still reads a string). Assistive technology reads such a text a page at a time, as browsers' code editors give it: the lines in view and a page each side (or around the caret, scrolled away), a text run a line, so a keystroke sends the runs of the line it changed.
 

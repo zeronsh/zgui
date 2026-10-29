@@ -44,6 +44,8 @@ mod editor_read_only;
 mod editor_selection_theme;
 #[path = "../editor_shape_reuse.rs"]
 mod editor_shape_reuse;
+#[path = "../editor_spans.rs"]
+mod editor_spans;
 #[path = "../editor_streaming_history.rs"]
 mod editor_streaming_history;
 #[path = "../editor_text_drag.rs"]
