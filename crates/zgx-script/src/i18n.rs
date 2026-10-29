@@ -202,7 +202,8 @@ fn arg_value(value: &Value) -> ArgValue {
 /// names either: `ui.i18n`'s function is also `ui`'s `__index` (which keys
 /// `ui` has never reach), so a script that uses none pays for the one
 /// function and a small metatable as its VM is made, not three functions
-/// and a userdata type.
+/// and a userdata type. `ui.selector` is made there too, the first time a
+/// plugin names it.
 pub(crate) fn install(
     lua: &Lua,
     ui: &Table,
@@ -213,6 +214,9 @@ pub(crate) fn install(
     let entry = lua.create_function(move |lua, (first, key): (mlua::Value, mlua::Value)| {
         // `__index(ui, key)`: a key `ui` doesn't have.
         if let mlua::Value::String(name) = &key {
+            if name.as_bytes().as_ref() == b"selector" {
+                return selector(lua);
+            }
             if !matches!(name.as_bytes().as_ref(), b"t" | b"locale") {
                 return Ok(mlua::Value::Nil);
             }
@@ -320,12 +324,27 @@ fn provide(lua: &Lua, locales: &Rc<Locales>) -> mlua::Result<()> {
     if !ui.raw_get::<mlua::Value>("t")?.is_nil() {
         return Ok(());
     }
-    // `ui` is frozen once the VM is made: open it for these two alone.
+    open(&ui, |ui| add(lua, ui, locales))
+}
+/// `f` with `ui` writable: it is frozen once the VM is made, and opened
+/// only to add what a script names first (`ui.t`, `ui.selector`).
+fn open(ui: &Table, f: impl FnOnce(&Table) -> mlua::Result<()>) -> mlua::Result<()> {
     let frozen = ui.is_readonly();
     ui.set_readonly(false);
-    let made = add(lua, &ui, locales);
+    let made = f(ui);
     ui.set_readonly(frozen);
     made
+}
+/// `ui.selector(text)`: a plugin's target by role or name
+/// (`'role:button "Save"'`), the text itself at run time; its type tells it
+/// from a target the app declares (`zgx types`). Made the first time a
+/// script names it, which is as Luau loads one naming `ui.selector` (it
+/// resolves such paths then): a script that never does makes none.
+fn selector(lua: &Lua) -> mlua::Result<mlua::Value> {
+    let ui: Table = lua.globals().get("ui")?;
+    let made = lua.create_function(|_, text: mlua::LuaString| Ok(text))?;
+    open(&ui, |ui| ui.raw_set("selector", made.clone()))?;
+    Ok(mlua::Value::Function(made))
 }
 fn add(lua: &Lua, ui: &Table, locales: &Rc<Locales>) -> mlua::Result<()> {
     let catalog = locales.clone();

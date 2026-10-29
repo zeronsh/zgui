@@ -49,6 +49,12 @@
 //!   kind for its field (`p = "$app.accent"`), or a theme file setting an
 //!   undeclared name. Unlike the rest it reads the app's scripts together
 //!   (`lint_app`): one may declare what another uses.
+//! - `unknown-target`: a `ui.contribute` or `ui.filter` target `"#id"` or `"hook:name"`
+//!   that no script declares with a literal `id` or `hook` (`"#sav"`: did
+//!   you mean `#save`?). Read across the app's and its plugins' scripts as
+//!   `unknown-token` is; for an app past luau-lsp's union limit (where
+//!   `zgx types` leaves `target` a string) and for plugins nobody
+//!   type-checks. A selector (`ui.selector(…)`) is not checked.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -137,6 +143,10 @@ pub const RULES: &[(&str, &str)] = &[
         "a plural lacking a category the locale's numbers need",
     ),
     ("i18n-key", "ui.t with a key the source locale lacks"),
+    (
+        "unknown-target",
+        "a ui.contribute or ui.filter target `#id` or `hook:name` no element declares",
+    ),
 ];
 
 /// `ui.*` calls that do not build interface (`ui.state`, `ui.set`,
@@ -199,6 +209,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "write_file",
     "i18n",
     "t",
+    "selector",
 ];
 
 /// Lint every `.luau` script at `paths` (files, or directories searched).
@@ -236,6 +247,7 @@ pub fn lint_app(sources: &[(PathBuf, String)]) -> Vec<Diagnostic> {
         .map(|(path, (tokens, _))| crate::token_lint::File { path, tokens })
         .collect();
     let mut tokens = crate::token_lint::unknown_tokens(&files);
+    tokens.extend(crate::hook_targets::unknown_targets(&files));
     tokens.retain(|d| {
         read.iter()
             .find(|(file, _)| **file == d.file)

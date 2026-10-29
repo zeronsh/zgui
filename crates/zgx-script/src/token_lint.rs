@@ -112,7 +112,7 @@ fn token_name(literal: &str) -> Option<&str> {
     valid.then_some(name)
 }
 /// A plain string literal's text, if it is one (no interpolation).
-fn literal(token: &Token) -> Option<&str> {
+pub(crate) fn literal(token: &Token) -> Option<&str> {
     (token.kind == Kind::Str)
         .then(|| {
             token
@@ -125,7 +125,7 @@ fn literal(token: &Token) -> Option<&str> {
 }
 
 /// The edit distance between two names, for a suggestion.
-fn distance(a: &str, b: &str) -> usize {
+pub(crate) fn distance(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
     let mut row: Vec<usize> = (0..=b.len()).collect();
     for (i, ca) in a.chars().enumerate() {
@@ -378,7 +378,7 @@ pub(crate) fn unknown_tokens(files: &[File]) -> Vec<Diagnostic> {
 /// The dotted name called by the call whose argument starts at `at` (a
 /// `(`, a `{` or a string), as `ui.theme.tokens { … }` and
 /// `ui.theme.load("x.json")` are called.
-fn called(t: &[Token], at: usize) -> Option<String> {
+pub(crate) fn called(t: &[Token], at: usize) -> Option<String> {
     let open = t.get(at)?;
     let callee_end = match open.kind {
         Kind::Punct if open.text == "(" || open.text == "{" => at,

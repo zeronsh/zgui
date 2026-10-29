@@ -45,6 +45,7 @@ mod file_events;
 #[path = "file_events_linux.rs"]
 mod file_events;
 mod form;
+mod hook_targets;
 mod i18n;
 #[cfg(feature = "inspect")]
 pub mod inspect;

@@ -69,6 +69,38 @@ ui.contribute { target = "#save", after = ui.text { id = "after", "After" } }
 }
 
 #[test]
+fn a_selector_names_a_target_by_role() {
+    let mut h = with(
+        APP,
+        "selector",
+        r##"local target = ui.selector('role:button "Open"')
+assert(target == 'role:button "Open"', "the text itself")
+ui.contribute { target = target, after = ui.text { "After open" } }"##,
+        vec![],
+    );
+    assert_eq!(h.error(), None);
+    let texts = h.texts();
+    let at = |t: &str| texts.iter().position(|x| x == t);
+    assert_eq!(
+        at("After open"),
+        at("Open").map(|at| at + 1),
+        "the selector found the button: {texts:?}"
+    );
+}
+
+#[test]
+fn a_script_naming_no_selector_makes_none() {
+    let h = with(
+        APP,
+        "plain",
+        r##"assert(rawget(ui, "selector") == nil, "made only for a script that names it")
+ui.contribute { target = "#open", after = ui.text { "After open" } }"##,
+        vec![],
+    );
+    assert_eq!(h.error(), None);
+}
+
+#[test]
 fn a_declared_hook_and_a_role_and_name_find_the_element() {
     let mut h = with(
         APP,

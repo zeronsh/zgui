@@ -167,6 +167,51 @@ pub fn standard_tokens_type() -> String {
     tokens_type(&[], &[], false)
 }
 
+/// Past this many targets the union is left a `string`: luau-lsp gives up
+/// on unions much larger (sol's i18n keys, measured), and the
+/// `unknown-target` lint checks them instead.
+const TARGETS_MAX: usize = 1000;
+
+/// `HookName` and `HookTarget` for the hooks and ids `targets` holds, in
+/// place of zgx's `string`s, and `Selector` made a type of its own, so a
+/// target misspelled, or a selector not written `ui.selector(…)`, is an
+/// error; unchanged (all `string`s) for none, or past `TARGETS_MAX`.
+fn hook_types(text: String, targets: &crate::hook_targets::Targets) -> String {
+    const TARGET: &str = "export type HookTarget = string\n";
+    const SELECTOR: &str = "export type Selector = string\n";
+    assert!(
+        text.contains(TARGET) && text.contains(SELECTOR),
+        "zgx.d.luau declares HookTarget and Selector as strings"
+    );
+    if targets.len() == 0 || targets.len() > TARGETS_MAX {
+        return text;
+    }
+    let union = |names: Vec<String>| {
+        names
+            .iter()
+            .map(|name| format!("{name:?}"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let hooks: Vec<String> = targets.hooks.iter().cloned().collect();
+    let names = if hooks.is_empty() {
+        String::from("never")
+    } else {
+        union(hooks)
+    };
+    let declared = format!(
+        "-- The hooks this app declares (`hook = \"…\"`).\n\
+         export type HookName = {names}\n\
+         export type HookTarget = {}\n",
+        union(targets.written())
+    );
+    text.replacen(TARGET, &declared, 1).replacen(
+        SELECTOR,
+        "export type Selector = { __zgx_selector: never }\n",
+        1,
+    )
+}
+
 /// zgx's definitions with the tokens an app's scripts (`sources`) declare.
 pub fn definitions(sources: &[(PathBuf, String)]) -> String {
     let read: Vec<_> = sources
@@ -178,6 +223,7 @@ pub fn definitions(sources: &[(PathBuf, String)]) -> String {
         .map(|(path, tokens)| crate::token_lint::File { path, tokens })
         .collect();
     let declared = crate::token_lint::declared(&files);
+    let targets = crate::hook_targets::declared(&files);
     let names: Vec<String> = declared
         .names
         .iter()
@@ -213,8 +259,10 @@ pub fn definitions(sources: &[(PathBuf, String)]) -> String {
             1,
         );
     }
+    let text = hook_types(text, &targets);
     format!(
-        "-- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`).\n\
+        "-- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`)\n\
+         -- and the ids and hooks its plugins may target.\n\
          -- Written by `zgx types` (and `zgx check`, and the debug host after a\n\
          -- reload that changes the names): don't edit it, and leave it out of\n\
          -- version control. Editors list it in place of zgx.d.luau.\n{text}"
@@ -322,6 +370,40 @@ mod tests {
             types.contains("\tchart: {\n\t\tvalue: string,\n\t\t[string]: any,\n\t},\n"),
             "{types}"
         );
+    }
+
+    #[test]
+    fn an_apps_ids_and_hooks_are_the_targets_plugins_may_name() {
+        let types = app(
+            r#"return ui.row { id = "toolbar", ui.button { id = "save", hook = "toolbar.save", label = "Save" } }"#,
+        );
+        assert!(
+            types.contains("export type HookName = \"toolbar.save\"\n"),
+            "{types}"
+        );
+        assert!(
+            types.contains(
+                "export type HookTarget = \"#save\" | \"#toolbar\" | \"hook:toolbar.save\"\n"
+            ),
+            "{types}"
+        );
+        assert!(
+            types.contains("export type Selector = { __zgx_selector: never }\n"),
+            "{types}"
+        );
+        // None declared: zgx's strings, as before.
+        let none = app("return ui.text { \"plain\" }");
+        assert!(none.contains("export type HookTarget = string\n"));
+        assert!(none.contains("export type Selector = string\n"));
+    }
+
+    #[test]
+    fn past_the_union_limit_targets_stay_strings() {
+        let ids: Vec<String> = (0..=TARGETS_MAX)
+            .map(|i| format!("id = \"n{i}\""))
+            .collect();
+        let types = app(&format!("return ui.column {{ {} }}", ids.join(", ")));
+        assert!(types.contains("export type HookTarget = string\n"));
     }
 
     #[test]

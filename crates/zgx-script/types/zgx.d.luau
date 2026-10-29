@@ -15283,9 +15283,13 @@ export type SlotProps = {
 	context: unknown?,
 	from: string?,
 }
--- A plugin's node at an element of the app's, by `target` (`"#save"`,
--- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
--- its place (replacing takes `Capability::Override`).
+-- What a plugin targets: an element by its `id` (`"#save"`) or declared hook
+-- (`"hook:toolbar.save"`). An app's own definitions (`zgx types`) name every
+-- one it declares, so a typo is an error.
+export type HookTarget = string
+-- A target by role or name (`ui.selector('role:button "Save"')`): the app's
+-- internals, which may change with its next version.
+export type Selector = string
 -- `ui.override`'s table.
 export type ModuleOverride = {
 	-- The app's module: "@app/components/card".
@@ -15293,9 +15297,11 @@ export type ModuleOverride = {
 	-- The plugin's replacement, relative to the plugin: "./card".
 	with: string,
 }
-
+-- A plugin's node at an element of the app's, by `target` (`"#save"`,
+-- `"hook:toolbar.save"`, `ui.selector('role:button "Save"')`): before it,
+-- after it, or in its place (replacing takes `Capability::Override`).
 export type HookContribution = {
-	target: string,
+	target: HookTarget | Selector,
 	before: Node?,
 	after: Node?,
 	replace: Node?,
@@ -15305,7 +15311,7 @@ export type HookContribution = {
 -- what it reads changes (it takes `Capability::Override`). A tooltip's text
 -- passes through as the element is built.
 export type HookFilter = {
-	target: string,
+	target: HookTarget | Selector,
 	text: ((text: string) -> string)?,
 	label: ((label: string?) -> string?)?,
 	hidden: ((hidden: boolean) -> boolean)?,
@@ -16149,6 +16155,9 @@ declare ui: {
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
+	-- A plugin's target by role or name, as written (`'role:button "Save"'`):
+	-- the app's internals, which may change with its next version.
+	selector: (text: string) -> Selector,
 	-- A plugin's filter over an element of the app's (`HookFilter`).
 	filter: (HookFilter) -> (),
 	-- From a plugin: one of the app's `@app/…` modules replaced by the
