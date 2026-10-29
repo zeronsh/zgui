@@ -7,6 +7,8 @@
 mod app_api;
 #[path = "../calls.rs"]
 mod calls;
+#[path = "../form_values.rs"]
+mod form_values;
 #[path = "../io.rs"]
 mod io;
 #[path = "../large_data.rs"]

@@ -1594,6 +1594,67 @@ fn location(lua: &Lua) -> Option<Rc<str>> {
     })
     .flatten()
 }
+/// A control's `value` (a checkbox's, a slider's, a segmented control's):
+/// a state, both ways; or, controlled as React's are, a function it shows,
+/// a change it makes going to `on_change` instead, the control showing the
+/// function's answer again until what it reads changes.
+pub(crate) fn control_value(lua: &Lua, table: &Table) -> mlua::Result<Signal<Value>> {
+    match table.get::<mlua::Value>("value")? {
+        mlua::Value::Function(show) => controlled(lua, show, table.get("on_change")?),
+        value => expect_state(&value, "`value`"),
+    }
+}
+/// The state a controlled control shows: what `show` returns, kept so as
+/// what it reads changes; a change the control writes goes to `on_change`
+/// and the control shows `show`'s answer again (the app's change, once it
+/// makes one, shows through `show`).
+#[cold]
+#[inline(never)]
+fn controlled(
+    lua: &Lua,
+    show: Function,
+    on_change: Option<Function>,
+) -> mlua::Result<Signal<Value>> {
+    let env = env(lua)?;
+    let runtime = env.runtime.clone();
+    let shown = runtime.signal(Value::Nil);
+    let last = Rc::new(RefCell::new(Value::Nil));
+    let showing = {
+        let (vm, shown, last) = (env.vm.clone(), shown.clone(), last.clone());
+        runtime.effect_now(move || {
+            let Some(vm) = vm.upgrade() else {
+                return;
+            };
+            match vm.call::<Value>(&show, ()) {
+                Ok(value) => {
+                    *last.borrow_mut() = value.clone();
+                    shown.set(value);
+                }
+                Err(error) => vm.report(error),
+            }
+        })
+    };
+    let changing = {
+        let (vm, shown, runtime2) = (env.vm.clone(), shown.clone(), runtime.clone());
+        runtime.effect_now(move || {
+            let now = shown.get();
+            let was = last.borrow().clone();
+            if now == was {
+                return;
+            }
+            runtime2.untracked(|| {
+                if let (Some(vm), Some(on_change)) = (vm.upgrade(), &on_change)
+                    && let Err(error) = vm.call::<()>(on_change, now)
+                {
+                    vm.report(error);
+                }
+                shown.set(was);
+            });
+        })
+    };
+    retain(&env, Box::new((showing, changing)));
+    Ok(shown)
+}
 /// The state `value` holds, to read and follow: a plugin's read-only
 /// shared state too.
 pub(crate) fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
@@ -3864,7 +3925,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
             crate::form::apply_field(lua, &table, false)?;
-            let value = expect_state(&table.get("value")?, "`value`")?;
+            let value = control_value(lua, &table)?;
             let kind = build(label(&table)?, value, &table)?;
             node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })

@@ -395,6 +395,15 @@ impl TestApp {
         self.ui.dispatch(InputEvent::Text(text.into()));
         self.settle();
     }
+    /// Click field `id` and replace its whole text with `text`, as a person
+    /// selecting all and typing does.
+    pub fn fill(&mut self, id: &str, text: &str) {
+        self.click(id);
+        self.keys("cmd+a");
+        self.key(Key::Backspace);
+        self.ui.dispatch(InputEvent::Text(text.into()));
+        self.settle();
+    }
     /// Press and release `key`, with `modifiers`, wherever focus is.
     pub fn key_with(&mut self, key: Key, modifiers: Modifiers) {
         crate::driver::press(&mut self.ui, key, modifiers);

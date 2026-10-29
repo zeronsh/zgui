@@ -204,7 +204,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
             crate::form::apply_field(lua, &table, false)?;
-            let value = expect_state(&table.get("value")?, "`value`")?;
+            let value = crate::node::control_value(lua, &table)?;
             let kind = build(label(&table)?, value, &table)?;
             node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })

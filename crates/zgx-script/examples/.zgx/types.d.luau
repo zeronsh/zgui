@@ -741,8 +741,9 @@ export type Response = {
 	-- Names in lower case.
 	headers: { [string]: string },
 	body: string,
-	-- The body decoded, when it is JSON.
-	json: unknown?,
+	-- The body decoded, when it is JSON (`any`, as JSON is to JavaScript:
+	-- cast it to the shape the server sends).
+	json: any,
 }
 
 -- A file the user picked (`ui.open_files`, `ui.save_file`): the only
@@ -784,10 +785,14 @@ export type Promise<T = unknown> = {
 -- submitting does (in a task: it may await, and raises what went wrong).
 export type FormSpec = {
 	fields: { [string]: any },
+	-- What fills the fields (a loaded record): followed, a field taking the
+	-- new value unless it has been edited.
+	values: (State<any> | () -> any)?,
 	validate: { [string]: (value: any, values: { [string]: any }) -> string? }?,
-	submit: ((values: { [string]: any }) -> any)?,
-	-- `on_success(result, values)`: what `submit` returned, and the values.
-	on_success: ((result: any, values: { [string]: any }) -> ())?,
+	submit: ((values: { [string]: any }, form: Form) -> any)?,
+	-- `on_success(result, values, form)`: what `submit` returned, the
+	-- values, and the form (to reset it).
+	on_success: ((result: any, values: { [string]: any }, form: Form) -> ())?,
 }
 -- A form's field: give it to a control as `field`.
 export type FormField = {
@@ -799,6 +804,8 @@ export type FormField = {
 	problem: State<string?>,
 	-- `problem` once it has been left or a submit tried: what to show.
 	error: State<string?>,
+	-- It differs from what it was filled with or last reset to.
+	dirty: State<boolean>,
 	ref: Ref,
 }
 export type Form = {
@@ -806,6 +813,8 @@ export type Form = {
 	values: { [string]: State<any> },
 	-- Every check passes.
 	valid: State<boolean>,
+	-- A field differs from what it was filled with or last reset to.
+	dirty: State<boolean>,
 	-- A submit has been tried.
 	attempted: State<boolean>,
 	-- A submit is under way.
@@ -816,7 +825,7 @@ export type Form = {
 	-- all fine, submit. An action, or call it.
 	submit: () -> (),
 	-- Back to the first values (or `values`), nothing shown wrong.
-	reset: (values: { [string]: any }?) -> (),
+	reset: (values: any?) -> (),
 	-- Stop a submit under way (a Cancel button): not `pending` any more,
 	-- and what it awaits is not heard. A form gone cancels its own.
 	cancel: () -> (),
@@ -5836,8 +5845,10 @@ export type CheckboxProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	-- Required unless `field` gives it.
-	value: (State<boolean>)?,
+	-- Required unless `field` gives it. A state, both ways; or, controlled
+	-- as React's are, a function it shows, a change going to `on_change`.
+	value: (State<boolean> | () -> boolean)?,
+	on_change: ((value: boolean) -> ...unknown)?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
@@ -6890,8 +6901,10 @@ export type SliderProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	-- Required unless `field` gives it.
-	value: (State<number>)?,
+	-- Required unless `field` gives it. A state, both ways; or, controlled
+	-- as React's are, a function it shows, a change going to `on_change`.
+	value: (State<number> | () -> number)?,
+	on_change: ((value: number) -> ...unknown)?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
@@ -7228,8 +7241,10 @@ export type SegmentedProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	-- Required unless `field` gives it.
-	value: (State<any>)?,
+	-- Required unless `field` gives it. A state, both ways; or, controlled
+	-- as React's are, a function it shows, a change going to `on_change`.
+	value: (State<any> | () -> any)?,
+	on_change: ((value: any) -> ...unknown)?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
@@ -7562,8 +7577,10 @@ export type StepperProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	-- Required unless `field` gives it.
-	value: (State<number>)?,
+	-- Required unless `field` gives it. A state, both ways; or, controlled
+	-- as React's are, a function it shows, a change going to `on_change`.
+	value: (State<number> | () -> number)?,
+	on_change: ((value: number) -> ...unknown)?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
@@ -11921,8 +11938,10 @@ export type SelectProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	-- Required unless `field` gives it.
-	value: (State<any>)?,
+	-- Required unless `field` gives it. A state, both ways; or, controlled
+	-- as React's are, a function it shows, a change going to `on_change`.
+	value: (State<any> | () -> any)?,
+	on_change: ((value: any) -> ...unknown)?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
@@ -15352,7 +15371,7 @@ export type SlotProps = {
 -- one it declares, so a typo is an error.
 -- The hooks this app declares (`hook = "…"`).
 export type HookName = "toolbar.add"
-export type HookTarget = "#add" | "#all-clear" | "#api" | "#app" | "#appearance" | "#area_" | "#ball" | "#board" | "#body" | "#budget" | "#buffer_menu" | "#busy" | "#button" | "#c1" | "#cancel" | "#cargo" | "#catalog" | "#city" | "#clear" | "#components" | "#compose" | "#composer" | "#confirm-remove" | "#copies" | "#copy_env" | "#ctx" | "#customer" | "#dark" | "#day" | "#delete" | "#docs" | "#documents" | "#done" | "#draft" | "#drawing" | "#dropdown_catcher" | "#due" | "#duplicate" | "#editor" | "#ellipse" | "#empty" | "#export_menu" | "#field-fill" | "#field-name" | "#file" | "#files" | "#filters" | "#find" | "#find-bar" | "#find-case" | "#find-close" | "#find-count" | "#find-next" | "#find-previous" | "#fit_frame" | "#focus" | "#frame_card" | "#frame_title" | "#frame_trace" | "#fruit" | "#g" | "#glyphs" | "#groceries" | "#guide" | "#highlight_" | "#id" | "#inspector" | "#keep" | "#knob" | "#live" | "#load-error" | "#loading" | "#logs_menu" | "#m1" | "#m2" | "#main" | "#menu_catcher" | "#menu_dim" | "#menu_layer" | "#messages" | "#model" | "#more_menu" | "#n" | "#new" | "#new-tab" | "#next" | "#next_frame" | "#notes" | "#o" | "#open" | "#open-dialog" | "#open-palette" | "#orbs" | "#orders" | "#other" | "#overlay_" | "#overlays_button" | "#overlays_hide_all" | "#overlays_menu" | "#palette" | "#panes" | "#pay" | "#plot" | "#prev_frame" | "#previous" | "#profiler" | "#range" | "#readme" | "#receive" | "#record" | "#record_start" | "#record_toggle" | "#rect" | "#redo" | "#refresh" | "#reload" | "#remove-error" | "#replace" | "#replace-all" | "#replace-one" | "#reply" | "#result_" | "#retry" | "#return" | "#role" | "#rows" | "#rtl" | "#runner" | "#runtime_menu" | "#s" | "#save" | "#save-error" | "#scroller" | "#search" | "#search_input" | "#search_menu" | "#select" | "#send" | "#settings" | "#ship" | "#sidebar" | "#sketch" | "#sliders" | "#snapping" | "#span_" | "#span_tooltip" | "#spans" | "#src" | "#stamp" | "#start" | "#state-" | "#status" | "#status-bar" | "#status-caret" | "#status-language" | "#status-message" | "#status-wrap" | "#status_bar" | "#status_buffer" | "#status_logs" | "#stop" | "#subject" | "#tab_placeholder" | "#target_button" | "#tasks" | "#team" | "#thinking" | "#timeline" | "#title" | "#title_bar" | "#toast" | "#toast-error" | "#toasts" | "#toggle-dark" | "#toggle-rtl" | "#toolbar" | "#tooltip_" | "#total" | "#track" | "#transcript" | "#undo" | "#view-menu" | "#volume" | "#welcome" | "#zoom" | "#zoom-in" | "#zoom-out" | "hook:toolbar.add"
+export type HookTarget = "#add" | "#all-clear" | "#api" | "#app" | "#appearance" | "#area_" | "#ball" | "#board" | "#body" | "#budget" | "#buffer_menu" | "#busy" | "#button" | "#c1" | "#cancel" | "#cargo" | "#catalog" | "#city" | "#clear" | "#components" | "#compose" | "#composer" | "#confirm-remove" | "#copies" | "#copy_env" | "#ctx" | "#customer" | "#dark" | "#day" | "#delete" | "#docs" | "#documents" | "#done" | "#draft" | "#drawing" | "#dropdown_catcher" | "#due" | "#duplicate" | "#editor" | "#ellipse" | "#empty" | "#export_menu" | "#failure" | "#field-fill" | "#field-name" | "#file" | "#files" | "#filters" | "#find" | "#find-bar" | "#find-case" | "#find-close" | "#find-count" | "#find-next" | "#find-previous" | "#fit_frame" | "#focus" | "#frame_card" | "#frame_title" | "#frame_trace" | "#fruit" | "#g" | "#glyphs" | "#groceries" | "#guide" | "#highlight_" | "#id" | "#inspector" | "#keep" | "#knob" | "#live" | "#load-error" | "#loading" | "#logs_menu" | "#m1" | "#m2" | "#main" | "#menu_catcher" | "#menu_dim" | "#menu_layer" | "#messages" | "#model" | "#more_menu" | "#n" | "#new" | "#new-tab" | "#next" | "#next_frame" | "#notes" | "#notifications" | "#o" | "#open" | "#open-dialog" | "#open-palette" | "#orbs" | "#orders" | "#other" | "#overlay_" | "#overlays_button" | "#overlays_hide_all" | "#overlays_menu" | "#palette" | "#panes" | "#pay" | "#plot" | "#prev_frame" | "#previous" | "#profiler" | "#range" | "#readme" | "#receive" | "#record" | "#record_start" | "#record_toggle" | "#rect" | "#redo" | "#refresh" | "#reload" | "#remove-error" | "#replace" | "#replace-all" | "#replace-one" | "#reply" | "#result_" | "#retry" | "#return" | "#revert" | "#role" | "#rows" | "#rtl" | "#runner" | "#runtime_menu" | "#s" | "#save" | "#save-error" | "#scroller" | "#search" | "#search_input" | "#search_menu" | "#select" | "#send" | "#settings" | "#ship" | "#sidebar" | "#sketch" | "#sliders" | "#snapping" | "#span_" | "#span_tooltip" | "#spans" | "#src" | "#stamp" | "#start" | "#state-" | "#status" | "#status-bar" | "#status-caret" | "#status-language" | "#status-message" | "#status-wrap" | "#status_bar" | "#status_buffer" | "#status_logs" | "#stop" | "#subject" | "#tab_placeholder" | "#target_button" | "#tasks" | "#team" | "#theme" | "#thinking" | "#timeline" | "#title" | "#title_bar" | "#toast" | "#toast-error" | "#toasts" | "#toggle-dark" | "#toggle-rtl" | "#toolbar" | "#tooltip_" | "#total" | "#track" | "#transcript" | "#undo" | "#view-menu" | "#volume" | "#welcome" | "#zoom" | "#zoom-in" | "#zoom-out" | "hook:toolbar.add"
 -- A target by role or name (`ui.selector('role:button "Save"')`): the app's
 -- internals, which may change with its next version.
 export type Selector = { __zgx_selector: never }

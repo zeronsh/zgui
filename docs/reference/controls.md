@@ -123,7 +123,8 @@ A toggle drawn as the platform draws one, a rounded 16-point box beside its labe
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<boolean>` | required | |
+| `value` | `State<boolean>`, or `() -> boolean` | required | the box, both ways; or, controlled as React's are, a function it shows, a click going to `on_change` instead (it shows the function's answer again until what that reads changes: an optimistic switch reads the loaded record) |
+| `on_change` | `(on: boolean) -> ()` | none | a controlled box's click |
 | `label` | `string` | `""` | shown beside the box, and its accessible name |
 | `mixed` | `State<boolean>` | none | neither on nor off while true: a dash, and "mixed" to assistive technology (a "select all" box with some of its group on) |
 | `on_click` | `Handler \| Action` | none | runs after the value toggled |
@@ -137,7 +138,7 @@ A horizontal number control: dragging, the arrow keys (1% of the range) and Home
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<number>` | required | clamped to the range |
+| `value` | `State<number>`, or `() -> number` | required | clamped to the range; a function controls it, a change going to `on_change` |
 | `min`, `max` | `number` | `0`, `1` | finite, `min < max` |
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `w`, `h` | `Length` | `240`, `36` | |
@@ -151,7 +152,7 @@ One of a few options side by side, as AppKit's segmented control: a radio group 
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<any>` | required | the chosen option's value, both ways |
+| `value` | `State<any>`, or `() -> any` | required | the chosen option's value, both ways; a function controls it, a choice going to `on_change` |
 | `options` | `{ string \| number \| { label, value } }` | required | what each shows; a bare string or number is its own value |
 | `label` | `string` | `""` | the group's accessible name |
 
@@ -161,7 +162,7 @@ A number field with buttons that step it, a spin button to assistive technology.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<number>` | required | held between `min` and `max`, rounded to `decimals` |
+| `value` | `State<number>`, or `() -> number` | required | held between `min` and `max`, rounded to `decimals`; a function controls it, a change going to `on_change` |
 | `min`, `max` | `number` | none | |
 | `step` | `number` | `1` | |
 | `decimals` | `number` | `0` | digits shown after the point |
@@ -173,7 +174,7 @@ A button showing the chosen option that opens a menu of them over itself, the ch
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<any>` | required | the chosen option's value, both ways |
+| `value` | `State<any>`, or `() -> any` | required | the chosen option's value, both ways; a function controls it, a choice going to `on_change` |
 | `options` | `{ string \| number \| { label, value, disabled } }` | required | a bare string or number is its own value; a disabled option shows but can't be chosen |
 | `placeholder` | `string` | `""` | shown while no option is chosen |
 | `label` | `string` | `""` | its accessible name |
@@ -338,15 +339,16 @@ return ui.column {
 | `ui.form` option | |
 | --- | --- |
 | `fields` | each field's name and first value |
+| `values` | what fills the fields (a loaded record): a state or a function, followed. As it changes, a field takes the new value unless it has been edited, so nothing typed is overwritten (React Hook Form's `values`) |
 | `validate` | a field's check: `check(value, values)` returns what is wrong (a message) or nil. It runs as the field changes, and as another field it reads (`values.name`) does |
-| `submit` | `submit(values)`, run as a task once every check passes: it may await, and what it raises is the form's `failure` |
-| `on_success` | `on_success(result, values)`: what `submit` returned |
+| `submit` | `submit(values, form)`, run as a task once every check passes: it may await, and what it raises is the form's `failure` |
+| `on_success` | `on_success(result, values, form)`: what `submit` returned. The form comes with it, to reset it to what was saved without referring to the form being made |
 
 | On the form | |
 | --- | --- |
-| `fields.name` | a field: `value` (its state), `touched` (it has been left), `problem` (what its check says now), `error` (`problem` once it has been left or a submit tried: what to show) |
+| `fields.name` | a field: `value` (its state), `touched` (it has been left), `problem` (what its check says now), `error` (`problem` once it has been left or a submit tried: what to show), `dirty` (it differs from what it was filled with or last reset to) |
 | `values.name` | a field's value state |
-| `valid`, `attempted`, `pending`, `failure` | every check passes; a submit has been tried; a submit is under way; what the last one raised |
+| `valid`, `attempted`, `pending`, `failure`, `dirty` | every check passes; a submit has been tried; a submit is under way; what the last one raised; a field differs from what it was filled with (a Save or Revert enabled only then) |
 | `submit()` | checks every field: one wrong shows so, and the first wrong (top, then left) takes focus; all fine, runs `submit`. A handler as it is (`on_click = form.submit`) |
 | `reset(values?)` | back to the first values (or `values`), nothing shown wrong |
 | `cancel()` | stops a submit under way (a Cancel button): not `pending` any more, and what it awaits is not heard. A form gone (its component, a reload) cancels its own |

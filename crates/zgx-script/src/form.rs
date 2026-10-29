@@ -6,6 +6,11 @@
 //! its error (heard by assistive technology, as `aria-invalid`), and, for a
 //! one-line input, Enter submitting the form.
 //!
+//! `values = state` (or a function) fills it from what is loaded: as that
+//! changes, a field takes the new value unless it has been left or edited,
+//! so nothing typed is overwritten. A field is `dirty` while it differs
+//! from what it was filled with (or last reset to), and so is the form.
+//!
 //! The form is Luau over the library's states and computeds; Rust gives it
 //! states of its own (no key: each form's) and binds the controls.
 use crate::node::env;
@@ -40,10 +45,32 @@ local function form(spec)
             return if field then field.value:get() else nil
         end,
     })
+    -- What the form follows (`values`), read as a table or nil.
+    local source, first = spec.values, nil
+    if type(source) == "function" then
+        first = source()
+    elseif source ~= nil then
+        local state = source
+        if type(state) ~= "userdata" then
+            error("ui.form's `values` is a state or a function giving the values", 2)
+        end
+        first = state:peek()
+        source = function()
+            return state:get()
+        end
+    end
     for name, initial in spec.fields do
         local field = { name = name, form = self }
+        if first and first[name] ~= nil then
+            initial = first[name]
+        end
         field.value = new_state(initial)
+        -- What it was filled with or reset to: it is dirty while it differs.
+        field.base = new_state(initial)
         field.touched = new_state(false)
+        field.dirty = ui.computed(function()
+            return field.value:get() ~= field.base:get()
+        end)
         field.ref = ui.ref()
         local check = checks[name]
         field.problem = ui.computed(function()
@@ -66,6 +93,41 @@ local function form(spec)
         if self.fields[name] == nil then
             error(`ui.form: \`validate.{name}\` checks no field`, 2)
         end
+    end
+    self.dirty = ui.computed(function()
+        for _, field in self.fields do
+            if field.dirty:get() then
+                return true
+            end
+        end
+        return false
+    end)
+    if source then
+        -- Follows the loaded values: a field takes what is new unless it
+        -- has been edited (never what is being typed); an edited field's
+        -- text stays, and it is dirty against the new value.
+        local started = false
+        ui.effect(function()
+            local to = source()
+            if not started then
+                started = true
+                return
+            end
+            if to == nil then
+                return
+            end
+            ui.batch(function()
+                for name, field in self.fields do
+                    local value = to[name]
+                    if value ~= nil then
+                        if not field.dirty:peek() then
+                            field.value:set(value)
+                        end
+                        field.base:set(value)
+                    end
+                end
+            end)
+        end)
     end
     self.valid = ui.computed(function()
         for _, field in self.fields do
@@ -112,12 +174,12 @@ local function form(spec)
         self.failure:set(nil)
         self.pending:set(true)
         running = ui.task(function()
-            local ok, result = pcall(spec.submit, values)
+            local ok, result = pcall(spec.submit, values, self)
             running = nil
             self.pending:set(false)
             if ok then
                 if spec.on_success then
-                    spec.on_success(result, values)
+                    spec.on_success(result, values, self)
                 end
             else
                 self.failure:set(message(result))
@@ -143,6 +205,7 @@ local function form(spec)
             for name, field in self.fields do
                 local value = if to and to[name] ~= nil then to[name] else spec.fields[name]
                 field.value:set(value)
+                field.base:set(value)
                 field.touched:set(false)
             end
             attempted:set(false)

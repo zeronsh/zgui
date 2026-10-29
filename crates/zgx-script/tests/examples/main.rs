@@ -23,6 +23,8 @@ mod mail_example;
 mod monitor_example;
 #[path = "../plugins_example.rs"]
 mod plugins_example;
+#[path = "../settings_example.rs"]
+mod settings_example;
 #[path = "../sketch_example.rs"]
 mod sketch_example;
 #[path = "../team_example.rs"]
