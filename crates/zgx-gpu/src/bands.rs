@@ -703,6 +703,12 @@ impl GpuRenderer {
                 cb
             },
         );
+        // The fade's box on one side and the scroll's clip on the other: a
+        // scroll folded shut (its clip empty, at the origin) or outside the
+        // fade's insets leaves them crossed, and no interior to copy.
+        if !(ol <= or && ot <= ob) {
+            return None;
+        }
         let interior = Pixels([
             if left > 0. {
                 px(rect.x + left).clamp(ol, or)
@@ -772,6 +778,7 @@ impl GpuRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zgx::scene::{Layout, ScrollMove, Style};
 
     /// A faded box wholly outside the target (a popup's list scrolled or
     /// folded out of it) has no bands there: none, not a clamp into an
@@ -792,5 +799,33 @@ mod tests {
                 "{rect:?}"
             );
         }
+    }
+
+    /// A scroll folded shut under a fade (its clip empty, at the window's
+    /// origin, below the fade's top) has no interior to copy: none, not a
+    /// clamp into the crossed box of the fade's top and the clip's bottom.
+    #[test]
+    fn a_scroll_folded_shut_under_a_fade_has_no_copy() {
+        let gpu = GpuRenderer::new(200, 200).unwrap();
+        let mut scene = Scene::new(200., 200.);
+        let fade = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Overlay),
+            Style {
+                clip: true,
+                fade_edges: [16., 0.],
+                ..Default::default()
+            },
+        );
+        let node = scene.append(fade, NodeKind::Container(Layout::Overlay), Style::default());
+        let scroll = ScrollMove {
+            node,
+            clip: Rect::default(),
+            dx: 0.,
+            dy: 8.,
+            serial: 0,
+        };
+        let mask = (Rect::new(20., 100., 160., 80.), [16., 0., 0., 0.]);
+        assert!(gpu.fade_copy(&scene, &scroll, mask, &|_| None).is_none());
     }
 }

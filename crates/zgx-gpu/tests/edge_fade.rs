@@ -517,3 +517,65 @@ fn rows_apart_in_a_band_fade_as_they_did_item_by_item() {
         assert!(banded == by_item, "direct {direct}");
     }
 }
+
+/// A faded list in a row folded shut (height 0, clipping) in a popup away
+/// from the window's corner: its clip, and so its fade's box, is empty,
+/// which the walk leaves at the window's origin, wholly outside the
+/// popup's target once its items are moved into the popup's space. Drawn
+/// without bands there, not a panic on every frame.
+#[test]
+fn a_fade_folded_shut_in_a_popup_draws() {
+    let _gpu_fixture = gpu_fixture();
+    let mut scene = Scene::new(400., 400.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let popup = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Column),
+        Style {
+            width: Some(80.),
+            height: Some(80.),
+            ..Default::default()
+        },
+    );
+    scene.set_transform(popup, Transform { x: 40., y: 300. });
+    scene.set_popup(popup, true);
+    let row = scene.append(
+        popup,
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(80.),
+            height: Some(0.),
+            clip: true,
+            ..Default::default()
+        },
+    );
+    let list = scene.append(
+        row,
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(80.),
+            height: Some(60.),
+            clip: true,
+            fade_edges: [16., 16.],
+            ..Default::default()
+        },
+    );
+    // Stacked in a band, so the run would draw its bands as one.
+    for color in [light(), dark()] {
+        scene.append(
+            list,
+            NodeKind::Rect(color),
+            Style {
+                width: Some(80.),
+                height: Some(60.),
+                ..Default::default()
+            },
+        );
+    }
+    let damage = scene.flush().damage;
+    let mut gpu = GpuRenderer::new(80, 80).unwrap();
+    gpu.set_popup(popup, Rect::new(40., 300., 80., 80.));
+    gpu.render(&scene, &damage).unwrap();
+    gpu.render(&scene, &[Rect::new(0., 0., 400., 400.)])
+        .unwrap();
+}
