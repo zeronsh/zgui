@@ -3387,6 +3387,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     crate::canvas::install(lua, &ui)?;
     #[cfg(feature = "scene3d")]
     crate::scene3d::install(lua, &ui)?;
+    lua.set_named_registry_value("zgx.pad", lua.create_string([0u8; 256])?)?;
     crate::data::install(lua, &ui)?;
 
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
