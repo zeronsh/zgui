@@ -1804,6 +1804,11 @@ export type NodeProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
 	window_drag: boolean?,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: (string | boolean)?,
+	private: boolean?,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -2130,6 +2135,11 @@ export type Props = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -2402,6 +2412,8 @@ export type Props_aria_hidden = boolean?
 export type Props_focus_group = ("vertical" | "horizontal" | "both")?
 export type Props_pointer_events = (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?
 export type Props_window_drag = boolean?
+export type Props_hook = (string | boolean)?
+export type Props_private = boolean?
 export type Props_selectable = boolean?
 export type Props_selection_color = Reactive<Color>?
 export type Props_selected_text_color = Reactive<Color>?
@@ -2656,6 +2668,11 @@ export type ContainerProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -2982,6 +2999,11 @@ export type ScrollProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -3315,6 +3337,11 @@ export type TextProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -3640,6 +3667,11 @@ export type MarkdownViewProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -4013,6 +4045,11 @@ export type RichProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -4332,6 +4369,11 @@ export type ImageProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -4661,6 +4703,11 @@ export type SvgProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -4807,7 +4854,14 @@ export type Material3D = {
 	opacity: Reactive<number>?,
 	unlit: boolean?,
 }
+-- Where a click landed on a mesh, in the scene's frame, and how far that is
+-- from the camera.
+export type Hit3D = { x: number, y: number, z: number, distance: number }
 export type MeshProps = Object3DProps & {
+	-- A click on it (a press let go where it began; a drag clicks nothing),
+	-- and the pointer coming over it (`true`) and leaving (`false`).
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
 	-- Its shape (default "box"), sized by `size` (box: {x, y, z}; plane:
 	-- {x, _, z}), `radius`, `height`, `tube` (torus) and `segments`.
 	geometry: ("box" | "sphere" | "plane" | "cylinder" | "cone" | "torus")?,
@@ -4830,6 +4884,9 @@ export type LightProps = Object3DProps & {
 	range: number?,
 }
 export type GroupProps = {
+	-- As a mesh's: a group hears its meshes' (unless a mesh hears it itself).
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
 	position: Vec3?,
 	rotation: Vec3?,
 	scale: (Reactive<number> | Vec3)?,
@@ -5046,6 +5103,11 @@ export type Scene3DProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -5171,6 +5233,8 @@ export type Scene3DProps = {
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
+	-- The sun (the first directional light) casts shadows from opaque meshes.
+	shadows: boolean?,
 	[number]: Object3D,
 }
 export type CanvasProps = {
@@ -5372,6 +5436,11 @@ export type CanvasProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -5723,6 +5792,11 @@ export type CheckboxProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -6050,6 +6124,11 @@ export type InputProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -6193,6 +6272,10 @@ export type InputProps = {
 	-- A password field: its text shows as a bullet per character, and
 	-- copying or cutting it gives nothing.
 	secure: boolean?,
+	-- What kind of text it takes (HTML's `inputmode`): a hint to touch
+	-- keyboards and input methods, never a check of what is typed. "none"
+	-- shows no virtual keyboard (a field with its own keypad).
+	inputmode: ("text" | "decimal" | "numeric" | "tel" | "search" | "email" | "url" | "none")?,
 	-- Check its spelling as it is typed (HTML's `spellcheck`): the system's
 	-- checker marks misspelled words with a dotted line, and its context
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
@@ -6433,6 +6516,11 @@ export type ProgressProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -6753,6 +6841,11 @@ export type SliderProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -7086,6 +7179,11 @@ export type SegmentedProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -7415,6 +7513,11 @@ export type StepperProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -7745,6 +7848,11 @@ export type DisclosureProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -8074,6 +8182,11 @@ export type AccordionProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -8391,6 +8504,11 @@ export type SectionProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -8719,6 +8837,11 @@ export type SeparatorProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -9044,6 +9167,11 @@ export type TabsProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -9377,6 +9505,11 @@ export type TreeProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -9720,6 +9853,11 @@ export type DataGridProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -10059,6 +10197,11 @@ export type CalendarProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -10390,6 +10533,11 @@ export type DatePickerProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -10719,6 +10867,11 @@ export type TimeFieldProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -11047,6 +11200,11 @@ export type ComboboxProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -11384,6 +11542,11 @@ export type CommandPaletteProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -11709,6 +11872,11 @@ export type SelectProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -12037,6 +12205,11 @@ export type SplitProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -12377,6 +12550,11 @@ export type ListProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -12756,6 +12934,11 @@ export type LayerProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -13081,6 +13264,11 @@ export type ModalProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -13421,6 +13609,11 @@ export type PopoverProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -13762,6 +13955,11 @@ export type MenuItemProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -14090,6 +14288,11 @@ export type SubmenuProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -14418,6 +14621,11 @@ export type WebViewProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -14760,6 +14968,11 @@ export type TerminalProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -15080,6 +15293,11 @@ export type SlotProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -15200,6 +15418,39 @@ export type SlotProps = {
 	[number]: never,
 	context: unknown?,
 	from: string?,
+}
+-- A plugin's node at an element of the app's, by `target` (`"#save"`,
+-- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
+-- its place (replacing takes `Capability::Override`).
+-- `ui.override`'s table.
+export type ModuleOverride = {
+	-- The app's module: "@app/components/card".
+	module: string,
+	-- The plugin's replacement, relative to the plugin: "./card".
+	with: string,
+}
+
+export type HookContribution = {
+	target: string,
+	before: Node?,
+	after: Node?,
+	replace: Node?,
+}
+-- A plugin's functions over an element of the app's, by `target`: each
+-- takes the prop's value as it is and returns it changed, run again when
+-- what it reads changes (it takes `Capability::Override`). A tooltip's text
+-- passes through as the element is built.
+export type HookFilter = {
+	target: string,
+	text: ((text: string) -> string)?,
+	label: ((label: string?) -> string?)?,
+	hidden: ((hidden: boolean) -> boolean)?,
+	disabled: ((disabled: boolean) -> boolean)?,
+	tooltip: ((tooltip: string) -> string)?,
+	items: ((items: { any }) -> { any })?,
+	-- Its children's ids (a position, from 1, for one without): those it
+	-- returns go first, in that order, the rest after them.
+	order: ((ids: { string | number }) -> { string | number })?,
 }
 -- How `ui.each` rows slide when the list moves them: `true` (a spring,
 -- bounce .1 over 400 ms), an ease, `{ duration, ease }`, `{ bounce,
@@ -15405,6 +15656,11 @@ export type EachOptions = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -15733,6 +15989,11 @@ export type PresenceOptions = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	window_drag: Props_window_drag,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: Props_hook,
+	private: Props_private,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -16023,7 +16284,14 @@ declare ui: {
 	-- it: a contributed component gets it as `props.slot` (one component,
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
-	contribute: (name: string, node: Node) -> (),
+	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
+	-- A plugin's filter over an element of the app's (`HookFilter`).
+	filter: (HookFilter) -> (),
+	-- From a plugin: one of the app's `@app/…` modules replaced by the
+	-- plugin's (`with`, one of its own files), which runs as the app's own
+	-- code. Needs `Capability::Override(module)` or `("*")`: a trust grant.
+	-- The replacement reaches the original as `@app-original/…`.
+	override: (ModuleOverride) -> (),
 	-- The script's (or module's) state for `key`, kept across reloads.
 	state: <T>(key: string, initial: T) -> State<T>,
 	-- State shared with Rust and every script.

@@ -2,7 +2,7 @@
 
 Plugins add to an app at places the app did not prepare for, as WordPress plugins hook into a theme: next to the app's Save button, in place of its empty state, with a filter on a list's items. Slots (`ui.slot` and `ui.contribute(name, node)`) stay as they are, for the places an app does prepare.
 
-Status: (a) is built (hook points, before/after/replace, the capabilities), and (b) (filters); (c) to (e) are planned, in that order.
+Status: (a) hook points, before/after/replace and the capabilities; (b) filters; (c) `@app` module overrides and packages; and (e) the worked example (`crates/zgx-script/examples/plugins`) and the guide, [plugins.md](../plugins.md), are built; (d), types, follows.
 
 ## Targets
 

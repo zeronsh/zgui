@@ -4701,7 +4701,14 @@ export type Material3D = {
 	opacity: Reactive<number>?,
 	unlit: boolean?,
 }
+-- Where a click landed on a mesh, in the scene's frame, and how far that is
+-- from the camera.
+export type Hit3D = { x: number, y: number, z: number, distance: number }
 export type MeshProps = Object3DProps & {
+	-- A click on it (a press let go where it began; a drag clicks nothing),
+	-- and the pointer coming over it (`true`) and leaving (`false`).
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
 	-- Its shape (default "box"), sized by `size` (box: {x, y, z}; plane:
 	-- {x, _, z}), `radius`, `height`, `tube` (torus) and `segments`.
 	geometry: ("box" | "sphere" | "plane" | "cylinder" | "cone" | "torus")?,
@@ -4724,6 +4731,9 @@ export type LightProps = Object3DProps & {
 	range: number?,
 }
 export type GroupProps = {
+	-- As a mesh's: a group hears its meshes' (unless a mesh hears it itself).
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
 	position: Vec3?,
 	rotation: Vec3?,
 	scale: (Reactive<number> | Vec3)?,
@@ -5070,6 +5080,8 @@ export type Scene3DProps = {
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
+	-- The sun (the first directional light) casts shadows from opaque meshes.
+	shadows: boolean?,
 	[number]: Object3D,
 }
 export type CanvasProps = {
@@ -15257,6 +15269,14 @@ export type SlotProps = {
 -- A plugin's node at an element of the app's, by `target` (`"#save"`,
 -- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
 -- its place (replacing takes `Capability::Override`).
+-- `ui.override`'s table.
+export type ModuleOverride = {
+	-- The app's module: "@app/components/card".
+	module: string,
+	-- The plugin's replacement, relative to the plugin: "./card".
+	with: string,
+}
+
 export type HookContribution = {
 	target: string,
 	before: Node?,
@@ -16114,6 +16134,11 @@ declare ui: {
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
 	-- A plugin's filter over an element of the app's (`HookFilter`).
 	filter: (HookFilter) -> (),
+	-- From a plugin: one of the app's `@app/…` modules replaced by the
+	-- plugin's (`with`, one of its own files), which runs as the app's own
+	-- code. Needs `Capability::Override(module)` or `("*")`: a trust grant.
+	-- The replacement reaches the original as `@app-original/…`.
+	override: (ModuleOverride) -> (),
 	-- The script's (or module's) state for `key`, kept across reloads.
 	state: <T>(key: string, initial: T) -> State<T>,
 	-- State shared with Rust and every script.

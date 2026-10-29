@@ -212,3 +212,31 @@ ui.contribute { target = "#password", after = ui.text { "Next to password" } }
     let texts = h.texts();
     assert!(!texts.iter().any(|t| t.starts_with("Next to")), "{texts:?}");
 }
+
+#[test]
+fn what_a_show_or_a_switch_shows_is_replaced_or_filtered() {
+    const SHOWS: &str = r##"
+local empty = ui.state("empty", true)
+local mode = ui.state("mode", "a")
+return ui.column {
+    ui.show(empty, ui.text { id = "none", "Nothing yet" }),
+    ui.switch(mode, { a = ui.text { id = "mode-a", "Mode A" } }),
+}
+"##;
+    let mut h = with(
+        SHOWS,
+        "shown",
+        r##"
+ui.contribute { target = "#none", replace = ui.text { id = "mine", "Mine instead" } }
+ui.filter { target = "#mode-a", text = function(t) return t .. "!" end }
+"##,
+        vec![Capability::Override("*".into())],
+    );
+    assert_eq!(h.error(), None);
+    assert!(h.find("none").is_none() && h.find("mine").is_some());
+    assert!(
+        h.texts().contains(&"Mode A!".to_string()),
+        "{:?}",
+        h.texts()
+    );
+}

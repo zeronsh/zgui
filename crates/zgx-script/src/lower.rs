@@ -339,14 +339,7 @@ fn hooked_children(
         children.extend(
             place(crate::node::Place::Before).map(|(hook, node)| contributed(hook, node, low)),
         );
-        let filters: Vec<_> = at
-            .iter()
-            .filter_map(|hook| match &hook.adds {
-                crate::node::Adds::Filters(filters) => Some((*hook, filters)),
-                crate::node::Adds::Node(..) => None,
-            })
-            .flat_map(|(hook, filters)| filters.iter().map(move |(what, f)| (hook, *what, f)))
-            .collect();
+        let filters = filters_in(&at);
         children.push(match place(crate::node::Place::Replace).next_back() {
             Some((hook, node)) => contributed(hook, node, low),
             None if filters.is_empty() => lowered(child),
@@ -359,6 +352,49 @@ fn hooked_children(
     view.children(children)
 }
 
+/// The filters among what is added at an element, each with its script,
+/// in the order the scripts filter.
+fn filters_in<'a>(
+    at: &[&'a crate::node::HookContribution],
+) -> Vec<(
+    &'a crate::node::HookContribution,
+    crate::node::Filtered,
+    &'a mlua::Function,
+)> {
+    at.iter()
+        .filter_map(|hook| match &hook.adds {
+            crate::node::Adds::Filters(filters) => Some((*hook, filters)),
+            crate::node::Adds::Node(..) => None,
+        })
+        .flat_map(|(hook, filters)| filters.iter().map(move |(what, f)| (hook, *what, f)))
+        .collect()
+}
+/// What a `ui.show` or `ui.switch` shows now, with what plugins put in its
+/// place or filter of it. Nothing goes before or after it: it lays out as
+/// the one element it shows.
+fn shown(node: &Rc<Node>, low: &Rc<Lowering>) -> View {
+    match &low.hooks {
+        None => lower(node, low),
+        Some(hooks) => hooked_shown(node, low, hooks),
+    }
+}
+#[cold]
+#[inline(never)]
+fn hooked_shown(node: &Rc<Node>, low: &Rc<Lowering>, hooks: &Hooks) -> View {
+    let at = hooks.at(node, true, low);
+    let replaced = at
+        .iter()
+        .rev()
+        .find_map(|hook| Some((*hook, hook.placed(crate::node::Place::Replace)?)));
+    if let Some((hook, replacement)) = replaced {
+        return contributed(hook, replacement, low);
+    }
+    let filters = filters_in(&at);
+    match filters.is_empty() {
+        true => lower(node, low),
+        false => filtered(node, &filters, low, None),
+    }
+}
 /// A value passed through a plugin's filter, by its script: what it
 /// returns, or (when it fails, reported as its error) the value as it was.
 fn passed(plugin: &std::rc::Weak<Vm>, f: &mlua::Function, value: Value) -> Value {
@@ -1921,8 +1957,8 @@ fn kind_view(
                 move |on, _| {
                     let _keep = &vm;
                     match (on, &otherwise) {
-                        (true, _) => lower(&then, &low),
-                        (false, Some(otherwise)) => lower(otherwise, &low),
+                        (true, _) => shown(&then, &low),
+                        (false, Some(otherwise)) => shown(otherwise, &low),
                         // Nothing: not a flex item either (no gap for it).
                         (false, None) => div().hidden(),
                     }
@@ -1948,8 +1984,8 @@ fn kind_view(
                         .iter()
                         .find(|(case, _)| *case == key || case.to_string() == key.to_string());
                     match (found, &default) {
-                        (Some((_, node)), _) => lower(node, &low),
-                        (None, Some(node)) => lower(node, &low),
+                        (Some((_, node)), _) => shown(node, &low),
+                        (None, Some(node)) => shown(node, &low),
                         (None, None) => div().hidden(),
                     }
                 },

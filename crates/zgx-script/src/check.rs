@@ -219,30 +219,71 @@ pub fn check(paths: &[PathBuf], options: &Options) -> Result<Report, CheckError>
     // zgx's, with the apps' own tokens in them (`app_types`).
     std::fs::write(&definitions, crate::app_types::definitions(&sources))
         .map_err(CheckError::Io)?;
-    let mut command = Command::new(&lsp);
-    command
-        .arg("analyze")
-        .arg("--platform=standard")
-        .arg("--flag:LuauSolverV2=true")
-        .arg(format!("--definitions={}", definitions.display()))
-        .arg("--formatter=gnu");
-    if options.strict {
-        let base = dir.join(".luaurc");
-        std::fs::write(&base, "{ \"languageMode\": \"strict\" }\n").map_err(CheckError::Io)?;
-        command.arg(format!("--base-luaurc={}", base.display()));
-    }
-    let output = command.args(&files).output().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            CheckError::NotInstalled
-        } else {
-            CheckError::Io(e)
+    // Scripts requiring `@app/…` (an app's own modules, which a plugin may
+    // replace) or `@app-original/…` (a replacement's original) are checked
+    // with both aliases naming their app's directory: the nearest holding
+    // an `app.luau`. A `.luaurc` cannot name them (zgx resolves them).
+    let mut plain = Vec::new();
+    let mut by_app: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
+    for (file, (_, code)) in files.iter().zip(&sources) {
+        let root = (code.contains("\"@app/") || code.contains("\"@app-original/"))
+            .then(|| app_root(file))
+            .flatten();
+        match root {
+            Some(root) => match by_app.iter_mut().find(|(at, _)| *at == root) {
+                Some((_, group)) => group.push(file.clone()),
+                None => by_app.push((root, vec![file.clone()])),
+            },
+            None => plain.push(file.clone()),
         }
-    })?;
-    let text = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    }
+    let analyze =
+        |files: &[PathBuf], app: Option<&Path>, at: usize| -> Result<String, CheckError> {
+            let mut command = Command::new(&lsp);
+            command
+                .arg("analyze")
+                .arg("--platform=standard")
+                .arg("--flag:LuauSolverV2=true")
+                .arg(format!("--definitions={}", definitions.display()))
+                .arg("--formatter=gnu");
+            let mut base = serde_json::Map::new();
+            if options.strict {
+                base.insert("languageMode".into(), "strict".into());
+            }
+            if let Some(app) = app {
+                let app = app.canonicalize().unwrap_or_else(|_| app.to_path_buf());
+                let app = serde_json::Value::from(app.to_string_lossy().into_owned());
+                base.insert(
+                    "aliases".into(),
+                    serde_json::json!({ "app": app, "app-original": app }),
+                );
+            }
+            if !base.is_empty() {
+                let file = dir.join(format!("base-{at}.luaurc"));
+                std::fs::write(&file, serde_json::Value::Object(base).to_string())
+                    .map_err(CheckError::Io)?;
+                command.arg(format!("--base-luaurc={}", file.display()));
+            }
+            let output = command.args(files).output().map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    CheckError::NotInstalled
+                } else {
+                    CheckError::Io(e)
+                }
+            })?;
+            Ok(format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        };
+    let mut text = String::new();
+    if !plain.is_empty() {
+        text.push_str(&analyze(&plain, None, 0)?);
+    }
+    for (at, (root, group)) in by_app.iter().enumerate() {
+        text.push_str(&analyze(group, Some(root), at + 1)?);
+    }
     let mut diagnostics = parse(&text);
     // luau-lsp names files relative to the working directory; show them
     // as they were given.
@@ -265,6 +306,13 @@ pub fn check(paths: &[PathBuf], options: &Options) -> Result<Report, CheckError>
         files: files.len(),
         diagnostics,
     })
+}
+/// The app `file` belongs to: the nearest directory holding an `app.luau`.
+fn app_root(file: &Path) -> Option<PathBuf> {
+    file.ancestors()
+        .skip(1)
+        .find(|dir| dir.join("app.luau").is_file())
+        .map(Path::to_path_buf)
 }
 static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 struct Cleanup(PathBuf);

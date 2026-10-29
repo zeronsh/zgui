@@ -1,0 +1,6 @@
+{
+	"languageMode": "strict",
+	"aliases": {
+		"kit": "../plugins_kit"
+	}
+}

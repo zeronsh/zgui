@@ -101,6 +101,8 @@ export const sets = [
         description: 'Theme tokens, light and dark, and the system’s accent, contrast and text size.' },
       { slug: 'animation', src: 'docs/scripting.md', title: 'Animation', sections: ['Animation'], unwrap: true,
         description: 'anime.js v4’s API on a Rust engine that ticks once per display frame and sleeps at rest.' },
+      { slug: 'plugins', src: 'docs/plugins.md', title: 'Plugins',
+        description: 'Plugins that add to an app, filter it and replace parts of it, and what the app lets them see and do.' },
       { slug: 'design-systems', src: 'docs/reference/design.md', title: 'Design systems' },
       '---API reference---',
       { slug: 'reference', src: 'docs/reference/index.md', title: 'Reading the reference' },
