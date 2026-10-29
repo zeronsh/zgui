@@ -1927,6 +1927,11 @@ impl State {
         }
         &self.0
     }
+    /// Sets the value as a script's write does (`ui.async`'s optimistic
+    /// writes).
+    pub(crate) fn write_from(&self, lua: &mlua::Lua, value: Value) {
+        self.write(lua, value);
+    }
     /// Sets the value; what it updates runs off the script's clock.
     fn write(&self, lua: &mlua::Lua, value: Value) {
         let vm = lua

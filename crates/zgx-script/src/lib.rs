@@ -45,6 +45,7 @@ mod file_events;
 #[path = "file_events_linux.rs"]
 mod file_events;
 mod form;
+mod handlers;
 mod hook_targets;
 mod i18n;
 #[cfg(feature = "inspect")]
@@ -2662,6 +2663,7 @@ impl ScriptHost {
             theme::install(lua, ui, dir, packages)
         });
         lazy.ui(&["form"], form::install);
+        lazy.ui(&["async", "optimistic"], handlers::install);
         lazy.ui(&["contribute", "filter", "override"], node::install_plugins);
         // `ui.selector(text)`: a plugin's target by role or name
         // (`'role:button "Save"'`), the text itself at run time; its type

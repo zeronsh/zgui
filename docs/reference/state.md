@@ -27,6 +27,8 @@ ui.action(name: string, arg: unknown?) -> Action
 ui.invoke(name: string, arg: unknown?) -> ()
 ui.call(name: string, arg: unknown?) -> Promise
 ui.task<A...>(f: (A...) -> (), A...) -> Task
+ui.async<A...>(f: (A...) -> ()) -> (A...) -> ()
+ui.optimistic<T>(state: State<T>, next: T, save: () -> ...any) -> string?
 ui.try<T, A...>(f: (A...) -> ...T, A...) -> (T?, string?)
 ui.resource<T>(load: () -> T, opts: { initial: T }?) -> Resource<T>
 ui.fetch(url: string, opts: FetchOptions?) -> Promise<Response>
@@ -129,6 +131,29 @@ end)
 ```
 
 `ui.task` returns its handle: `task:cancel()` stops it at the await it is at, never to go on (`task.cancelled` says so). A fetch it awaited (and nothing else hears) stops: the host's transport sees its `Body` close and its future is dropped. An action it awaited goes on, its answer unheard. Cancel what a closed view started, as React's effects abort a fetch in their cleanup: `ui.on_cleanup(function() task:cancel() end)`. A resource cancels a load it begins again, and its owner going cancels its load; a form cancels its submit with `form.cancel()` and as it goes.
+
+`ui.async(f)` is a handler that awaits, as React's async handlers do: each call runs `f` as a task with the call's arguments (`on_click = ui.async(save)`, a toast's `action.run`). Its tasks are cancelled as what made the handler goes (a component unmounting, a reload), and what one raises and doesn't catch is reported once as the script's error.
+
+`ui.optimistic(state, next, save)`, inside a task (a `ui.async` handler), writes `next` to `state` now and runs `save`, which may await. If `save` succeeds the write stays and it returns nil; if it raises, the state goes back to what this write replaced and the error comes back as text, as React's `useOptimistic` does. Calls on one state may overlap: the newest write shows, a failure puts back only what its own write replaced (never over a newer write still out or kept), and a write kept settles the older ones still out.
+
+```lua
+local liked = ui.state("liked", false)
+local like = ui.async(function(on: boolean)
+	local err = ui.optimistic(liked, on, function()
+		return ui.call("like", on):await()
+	end)
+	if err then
+		ui.toast { title = "Couldn't save that", body = err, kind = "error" }
+	end
+end)
+return ui.checkbox {
+	label = "Like",
+	value = function()
+		return liked:get()
+	end,
+	on_change = like,
+}
+```
 
 `ui.try(f, ...)` is `pcall` with its error typed: `f(...)`'s value and nil, or nil and what it raised as text a person reads (an error object's message, without its traceback), where Luau types `pcall`'s error as `f`'s result. Awaits inside `f` work in a task as through `pcall`:
 

@@ -51,37 +51,32 @@ local form = ui.form {
 			kind = "success",
 			action = {
 				label = "Undo",
-				run = function()
-					ui.task(function()
-						local restored, err = ui.try(request, "PUT", before)
-						if err then
-							ui.toast { title = "Couldn't undo", body = err, kind = "error" }
-							return
-						end
-						settings.data:set(restored)
-						form.reset(restored)
-					end)
-				end,
+				run = ui.async(function()
+					local restored, err = ui.try(request, "PUT", before)
+					if err then
+						ui.toast { title = "Couldn't undo", body = err, kind = "error" }
+						return
+					end
+					settings.data:set(restored)
+					form.reset(restored)
+				end),
 			},
 		}
 	end,
 }
 
--- The switch saves at once: shown as changed, and changed back if the
--- server refuses.
-local function set_notifications(on: boolean)
-	local before = settings.data:peek() :: Settings
-	local next = table.clone(before)
+-- The switch saves at once: shown as changed, and changed back (by
+-- `ui.optimistic`) if the server refuses.
+local set_notifications = ui.async(function(on: boolean)
+	local next = table.clone(settings.data:peek() :: Settings)
 	next.notifications = on
-	settings.data:set(next)
-	ui.task(function()
-		local _, err = ui.try(request, "PUT", next)
-		if err then
-			settings.data:set(before)
-			ui.toast { title = "Couldn't change notifications", body = err, kind = "error" }
-		end
+	local err = ui.optimistic(settings.data, next, function()
+		return request("PUT", next)
 	end)
-end
+	if err then
+		ui.toast { title = "Couldn't change notifications", body = err, kind = "error" }
+	end
+end)
 
 local function field(name: string, label: string)
 	local f = form.fields[name]

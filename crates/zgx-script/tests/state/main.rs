@@ -5,6 +5,8 @@
 #![allow(clippy::duplicate_mod)]
 #[path = "../app_api.rs"]
 mod app_api;
+#[path = "../async_handlers.rs"]
+mod async_handlers;
 #[path = "../calls.rs"]
 mod calls;
 #[path = "../form_values.rs"]

@@ -2828,6 +2828,15 @@ declare ui: {
 	-- Run `f(...)` as a task: `p:await()` inside it waits for a promise
 	-- without blocking anything else. Its handle cancels it.
 	task: <A...>(f: (A...) -> (), A...) -> Task,
+	-- A handler that runs `f` as a task each time it is called (a save on a
+	-- click, a toast's Undo): it may await, its tasks are cancelled as what
+	-- made it goes, and what it raises uncaught is reported once.
+	async: <A...>(f: (A...) -> ()) -> (A...) -> (),
+	-- Inside a task (a `ui.async` handler's): write `next` to `state` now
+	-- and run `save`, which may await. Kept if it succeeds; if it raises,
+	-- the state goes back to what this write replaced (never over a newer
+	-- write) and the error comes back as text, nil on success.
+	optimistic: <T>(state: State<T>, next: T, save: () -> ...any) -> string?,
 	-- `f(...)`'s value and nil, or nil and what it raised, as a string a
 	-- person reads (an error's text, no traceback): `pcall` with its error
 	-- typed. Awaits inside `f` work in a task, as through `pcall`.
