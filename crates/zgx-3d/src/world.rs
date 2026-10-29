@@ -291,6 +291,28 @@ impl Inner {
         }
         out
     }
+    /// The nearest visible mesh the world segment `from` to `to` meets, and
+    /// where along it (0 to 1).
+    fn nearest(&self, from: Vec3, to: Vec3) -> Option<(ObjectId, f32)> {
+        let mut matrices: Vec<Option<Option<Mat4>>> = vec![None; self.objects.len()];
+        let mut nearest: Option<(ObjectId, f32)> = None;
+        for index in 0..self.objects.len() {
+            let slot = &self.objects[index];
+            if let Some(object) = &slot.value
+                && let Some(geometry) = &object.geometry
+                && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
+                && let Some(t) = crate::pick::meet(geometry, matrix, from, to)
+                && nearest.is_none_or(|(_, n)| t < n)
+            {
+                let id = ObjectId {
+                    index: index as u32,
+                    generation: slot.generation,
+                };
+                nearest = Some((id, t));
+            }
+        }
+        nearest
+    }
     fn live(&self, index: u32, generation: u32) -> Option<usize> {
         let slot = self.objects.get(index as usize)?;
         (slot.generation == generation && slot.value.is_some()).then_some(index as usize)
@@ -493,6 +515,23 @@ impl World {
     #[cfg(test)]
     pub(crate) fn inner(&self) -> std::cell::Ref<'_, Inner> {
         self.inner.borrow()
+    }
+    /// What the view shows at `point` of its box (from its top left, in the
+    /// box's points), the box `size` points: the nearest visible mesh there,
+    /// and where on it. Found on the CPU from the meshes' triangles, both
+    /// sides; nothing is drawn for it.
+    pub fn pick(&self, point: (f32, f32), size: (f32, f32)) -> Option<crate::Hit> {
+        let inner = self.inner.borrow();
+        let camera = inner.camera;
+        let view_projection = camera.projection(size.0 / size.1) * camera.view();
+        let (from, to) = crate::pick::segment(view_projection, point, size)?;
+        let (object, t) = inner.nearest(from, to)?;
+        let point = from + (to - from) * t;
+        Some(crate::Hit {
+            object,
+            point,
+            distance: (point - camera.position).length(),
+        })
     }
     /// Changes made so far: a frame is drawn for each run of them.
     pub fn revision(&self) -> u64 {

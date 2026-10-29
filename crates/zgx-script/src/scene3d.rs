@@ -76,6 +76,12 @@ pub(crate) struct ObjectSpec {
     /// Degrees about X, Y, Z.
     rotation: Option<Vec3Spec>,
     scale: Option<Vec3Spec>,
+    /// Called with what was clicked on it (or a mesh in it): `{ x, y, z,
+    /// distance }`.
+    on_click: Option<Function>,
+    /// Called with `true` as the pointer comes over it (or a mesh in it),
+    /// `false` as it leaves.
+    on_hover: Option<Function>,
 }
 pub(crate) struct OrbitSpec {
     /// Degrees a second it turns on its own.
@@ -224,7 +230,19 @@ fn placed(lua: &Lua, table: &Table, shape: Shape) -> mlua::Result<mlua::AnyUserD
         position: opt_vec3(table, "position")?,
         rotation: opt_vec3(table, "rotation")?,
         scale,
+        on_click: opt_fn(table, "on_click")?,
+        on_hover: opt_fn(table, "on_hover")?,
     })))
+}
+fn opt_fn(table: &Table, key: &str) -> mlua::Result<Option<Function>> {
+    match table.get::<mlua::Value>(key)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Function(f) => Ok(Some(f)),
+        other => Err(wrong(format_args!(
+            "`{key}` of a 3D object takes a function, not {}",
+            other.type_name()
+        ))),
+    }
 }
 fn material(table: Option<Table>) -> mlua::Result<MaterialSpec> {
     let Some(table) = table else {
@@ -641,8 +659,9 @@ fn follow(cx: &mut Context, effect: Box<dyn FnMut()>) {
 pub(crate) fn lower(spec: &Scene3dSpec, vm: &Rc<Vm>, cx: &mut Context) -> zgx::compose::View {
     let world = World::new();
     let theme = cx.theme();
+    let mut handled = Vec::new();
     for object in &spec.objects {
-        add(&world, object, None, vm, cx, &theme);
+        add(&world, object, None, vm, cx, &theme, &mut handled);
     }
     // The background, and the camera (orbiting, if asked: dragged, scrolled
     // and turning on its own).
@@ -765,7 +784,128 @@ pub(crate) fn lower(spec: &Scene3dSpec, vm: &Rc<Vm>, cx: &mut Context) -> zgx::c
             }
         });
     }
+    if !handled.is_empty() {
+        view = picking(view, world, handled, vm.clone());
+    }
     view
+}
+
+/// How far a press may move and still click (points): further, it is a
+/// drag (orbiting the camera), and clicks nothing.
+const CLICK_SLOP: f32 = 4.;
+
+/// `view` picking its world's objects with handlers (`on_click`,
+/// `on_hover`): what the pointer is over is found as it moves (only if an
+/// object hears hovering) and where a press ends near where it began. A hit
+/// on a mesh reaches the nearest of it and its groups that hears it.
+fn picking(
+    view: zgx::compose::View,
+    world: World,
+    handled: Vec<(ObjectId, Rc<ObjectSpec>)>,
+    vm: Rc<Vm>,
+) -> zgx::compose::View {
+    use std::cell::{Cell, RefCell};
+    use zgx::input::{EventPhase, InputEvent, PointerButton};
+    let hovering = handled.iter().any(|(_, spec)| spec.on_hover.is_some());
+    let handle = Rc::new(RefCell::new(None::<zgx::compose::NodeHandle>));
+    let mounted = handle.clone();
+    let pressed = Cell::new(None::<(f32, f32)>);
+    let over = RefCell::new(None::<(ObjectId, Rc<ObjectSpec>)>);
+    view.on_mount(move |node| *mounted.borrow_mut() = Some(node))
+        .on_event(move |event| {
+            if event.phase == EventPhase::Capture {
+                return;
+            }
+            // What is at window point `x`, `y`, in the box.
+            let pick = |x: f32, y: f32| {
+                let scene = handle.borrow().as_ref()?.scene()?;
+                let bounds = scene.borrow().bounds(event.current_target);
+                world.pick((x - bounds.x, y - bounds.y), (bounds.width, bounds.height))
+            };
+            let hover = |now: Option<(ObjectId, Rc<ObjectSpec>)>| {
+                let before = over.replace(now.clone());
+                if before.as_ref().map(|(id, _)| *id) == now.as_ref().map(|(id, _)| *id) {
+                    return;
+                }
+                for (side, is_over) in [(before, false), (now, true)] {
+                    if let Some((_, spec)) = side
+                        && let Some(f) = &spec.on_hover
+                    {
+                        call(&vm, f, mlua::Value::Boolean(is_over));
+                    }
+                }
+            };
+            match event.event {
+                InputEvent::PointerDown {
+                    x,
+                    y,
+                    button: PointerButton::Primary,
+                } => pressed.set(Some((x, y))),
+                InputEvent::PointerUp {
+                    x,
+                    y,
+                    button: PointerButton::Primary,
+                } => {
+                    if let Some((from_x, from_y)) = pressed.take()
+                        && (x - from_x).hypot(y - from_y) <= CLICK_SLOP
+                        && let Some(hit) = pick(x, y)
+                        && let Some((_, spec)) =
+                            hearing(&world, &handled, hit.object, |s| s.on_click.is_some())
+                        && let Some(f) = &spec.on_click
+                    {
+                        let at = vm.lua.create_table().and_then(|t| {
+                            t.set("x", hit.point.x)?;
+                            t.set("y", hit.point.y)?;
+                            t.set("z", hit.point.z)?;
+                            t.set("distance", hit.distance)?;
+                            Ok(t)
+                        });
+                        match at {
+                            Ok(at) => call(&vm, f, mlua::Value::Table(at)),
+                            Err(error) => vm.report(error),
+                        }
+                    }
+                }
+                InputEvent::PointerMove { x, y } if hovering => {
+                    let now = pick(x, y).and_then(|hit| {
+                        hearing(&world, &handled, hit.object, |s| s.on_hover.is_some())
+                    });
+                    hover(now);
+                }
+                InputEvent::PointerLeave | InputEvent::PointerCancel => {
+                    pressed.set(None);
+                    if hovering {
+                        hover(None);
+                    }
+                }
+                _ => {}
+            }
+        })
+}
+/// The object hearing what `wants` says that a hit on `id` reaches: it or
+/// its nearest group that does.
+fn hearing(
+    world: &World,
+    handled: &[(ObjectId, Rc<ObjectSpec>)],
+    id: ObjectId,
+    wants: fn(&ObjectSpec) -> bool,
+) -> Option<(ObjectId, Rc<ObjectSpec>)> {
+    let mut at = Some(id);
+    while let Some(id) = at {
+        if let Some((_, spec)) = handled.iter().find(|(o, spec)| *o == id && wants(spec)) {
+            return Some((id, spec.clone()));
+        }
+        at = world.object(id).and_then(|object| object.parent);
+    }
+    None
+}
+/// Call a script's handler `f` with `arg`, in one batch, its error reported.
+fn call(vm: &Rc<Vm>, f: &Function, arg: mlua::Value) {
+    vm.runtime.clone().batch(|| {
+        if let Err(error) = vm.call::<()>(f, arg) {
+            vm.report(error);
+        }
+    });
 }
 
 /// Add `spec` (a child of `parent`) to `world`, following what it reads.
@@ -776,6 +916,7 @@ fn add(
     vm: &Rc<Vm>,
     cx: &mut Context,
     theme: &Rc<zgx::theme::ThemeScope>,
+    handled: &mut Vec<(ObjectId, Rc<ObjectSpec>)>,
 ) {
     let live = LiveObject {
         position: spec.position.as_ref().map(|v| LiveVec::of(v, cx)),
@@ -850,6 +991,9 @@ fn add(
                 parent,
             };
             let id = world.add(object);
+            if spec.on_click.is_some() || spec.on_hover.is_some() {
+                handled.push((id, spec.clone()));
+            }
             if live.dynamic() {
                 let (world, vm) = (world.clone(), vm.clone());
                 follow(
@@ -872,7 +1016,7 @@ fn add(
             }
             if let Shape::Group(children) = &spec.shape {
                 for child in children {
-                    add(world, child, Some(id), vm, cx, theme);
+                    add(world, child, Some(id), vm, cx, theme, handled);
                 }
             }
         }

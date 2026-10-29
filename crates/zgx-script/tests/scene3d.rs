@@ -127,3 +127,106 @@ fn objects_and_props_are_checked() {
         "no error"
     );
 }
+
+const PICKED: &str = r##"
+local clicked = ui.state("clicked", "none")
+local over = ui.state("over", false)
+local group = ui.state("group", 0)
+return ui.column {
+    ui.text { id = "clicked", "{clicked}" },
+    ui.text { id = "over", function() return if over:get() then "over" else "out" end },
+    ui.text { id = "group", "{group}" },
+    ui.scene3d {
+        id = "scene",
+        w = 200,
+        h = 200,
+        orbit = true,
+        camera = { position = { 0, 0, 4 }, fov = 40 },
+        ui.mesh {
+            geometry = "box",
+            on_click = function(hit) clicked:set(string.format("%.2f", hit.z)) end,
+            on_hover = function(is_over) over:set(is_over) end,
+        },
+        ui.group {
+            position = { 0, 1.2, 0 },
+            on_click = function() group:set(group:get() + 1) end,
+            ui.mesh { geometry = "sphere", radius = 0.3 },
+        },
+    },
+}
+"##;
+
+/// Press and release at `(x, y)` of the box `id`, from its top left, the
+/// release `moved` points further right.
+fn press(h: &mut Harness, id: &str, (x, y): (f32, f32), moved: f32) {
+    use zgx::input::{InputEvent, PointerButton};
+    let b = h.bounds(id);
+    let (x, y) = (b.x + x, b.y + y);
+    let button = PointerButton::Primary;
+    h.ui.dispatch(InputEvent::PointerDown { x, y, button });
+    h.ui.dispatch(InputEvent::PointerMove { x: x + moved, y });
+    h.ui.dispatch(InputEvent::PointerUp {
+        x: x + moved,
+        y,
+        button,
+    });
+    h.settle();
+}
+
+#[test]
+fn a_click_on_a_mesh_says_where_and_one_beside_it_nothing() {
+    let mut h = Harness::inline(PICKED);
+    assert_eq!(h.error(), None);
+    h.frame();
+    // The box's front face, half a unit towards the camera.
+    press(&mut h, "scene", (100., 100.), 0.);
+    assert_eq!(h.text("clicked"), "0.50");
+    h.ui.dispatch(zgx::input::InputEvent::PointerMove { x: 0., y: 0. });
+    press(&mut h, "scene", (5., 195.), 0.);
+    assert_eq!(h.text("clicked"), "0.50", "nothing there");
+}
+
+#[test]
+fn a_drag_orbits_and_clicks_nothing() {
+    let mut h = Harness::inline(PICKED);
+    h.frame();
+    press(&mut h, "scene", (100., 100.), 30.);
+    assert_eq!(h.text("clicked"), "none");
+}
+
+#[test]
+fn a_click_on_a_mesh_in_a_group_reaches_the_group() {
+    let mut h = Harness::inline(PICKED);
+    h.frame();
+    // The sphere, 1.2 up: about 0.82 of the half height at fov 40, 4 away.
+    let up = 1.2 / (4. * 20_f32.to_radians().tan());
+    press(&mut h, "scene", (100., 100. - 100. * up), 0.);
+    assert_eq!(h.text("group"), "1");
+    assert_eq!(h.text("clicked"), "none");
+}
+
+#[test]
+fn hovering_says_over_and_out() {
+    let mut h = Harness::inline(PICKED);
+    h.frame();
+    let b = h.bounds("scene");
+    let at = |x: f32, y: f32| zgx::input::InputEvent::PointerMove {
+        x: b.x + x,
+        y: b.y + y,
+    };
+    h.ui.dispatch(at(100., 100.));
+    h.settle();
+    assert_eq!(h.text("over"), "over");
+    h.ui.dispatch(at(5., 195.));
+    h.settle();
+    assert_eq!(h.text("over"), "out");
+    h.ui.dispatch(at(100., 100.));
+    h.ui.dispatch(zgx::input::InputEvent::PointerMove { x: -50., y: -50. });
+    h.settle();
+    assert_eq!(h.text("over"), "out", "leaving the box");
+}
+
+#[test]
+fn a_handler_must_be_a_function() {
+    assert!(raised(r#"ui.scene3d { ui.mesh { on_click = 3 } }"#).contains("on_click"));
+}

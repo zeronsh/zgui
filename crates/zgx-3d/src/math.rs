@@ -267,6 +267,90 @@ impl Mat4 {
             ],
         }
     }
+    /// Its inverse, if it has one (`None`: it flattens space, such as a
+    /// scale of 0).
+    pub fn inverse(&self) -> Option<Self> {
+        // The cofactors of the 16 values in order (MESA's gluInvertMatrix;
+        // the same for rows or columns, as a transpose's inverse is the
+        // inverse's transpose).
+        let m: [f32; 16] = bytemuck::cast(self.columns);
+        let mut inv = [0_f32; 16];
+        inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15]
+            + m[9] * m[7] * m[14]
+            + m[13] * m[6] * m[11]
+            - m[13] * m[7] * m[10];
+        inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15]
+            - m[8] * m[7] * m[14]
+            - m[12] * m[6] * m[11]
+            + m[12] * m[7] * m[10];
+        inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15]
+            + m[8] * m[7] * m[13]
+            + m[12] * m[5] * m[11]
+            - m[12] * m[7] * m[9];
+        inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14]
+            - m[8] * m[6] * m[13]
+            - m[12] * m[5] * m[10]
+            + m[12] * m[6] * m[9];
+        inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15]
+            - m[9] * m[3] * m[14]
+            - m[13] * m[2] * m[11]
+            + m[13] * m[3] * m[10];
+        inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15]
+            + m[8] * m[3] * m[14]
+            + m[12] * m[2] * m[11]
+            - m[12] * m[3] * m[10];
+        inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15]
+            - m[8] * m[3] * m[13]
+            - m[12] * m[1] * m[11]
+            + m[12] * m[3] * m[9];
+        inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14]
+            + m[8] * m[2] * m[13]
+            + m[12] * m[1] * m[10]
+            - m[12] * m[2] * m[9];
+        inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15]
+            + m[5] * m[3] * m[14]
+            + m[13] * m[2] * m[7]
+            - m[13] * m[3] * m[6];
+        inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15]
+            - m[4] * m[3] * m[14]
+            - m[12] * m[2] * m[7]
+            + m[12] * m[3] * m[6];
+        inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15]
+            + m[4] * m[3] * m[13]
+            + m[12] * m[1] * m[7]
+            - m[12] * m[3] * m[5];
+        inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14]
+            - m[4] * m[2] * m[13]
+            - m[12] * m[1] * m[6]
+            + m[12] * m[2] * m[5];
+        inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11]
+            - m[5] * m[3] * m[10]
+            - m[9] * m[2] * m[7]
+            + m[9] * m[3] * m[6];
+        inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11]
+            + m[4] * m[3] * m[10]
+            + m[8] * m[2] * m[7]
+            - m[8] * m[3] * m[6];
+        inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11]
+            - m[4] * m[3] * m[9]
+            - m[8] * m[1] * m[7]
+            + m[8] * m[3] * m[5];
+        inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10]
+            + m[4] * m[2] * m[9]
+            + m[8] * m[1] * m[6]
+            - m[8] * m[2] * m[5];
+        let det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+        if det == 0. || !det.is_finite() {
+            return None;
+        }
+        let inv = inv.map(|v| v / det);
+        let columns: [[f32; 4]; 4] = bytemuck::cast(inv);
+        columns
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite())
+            .then_some(Self { columns })
+    }
     /// The point `p` mapped (with its perspective divide).
     pub fn project(&self, p: Vec3) -> Vec3 {
         let c = &self.columns;
