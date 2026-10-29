@@ -65,6 +65,7 @@ mod motion;
 mod node;
 mod opens;
 mod persist;
+mod reorder;
 #[cfg(feature = "scene3d")]
 mod scene3d;
 mod sorted;

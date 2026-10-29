@@ -2621,7 +2621,15 @@ const WIDGET_FIELDS: &[&str] = &[
 /// added there costs each style key of its length a comparison, and one
 /// added here costs them nothing (a test checks none is a property).
 #[cfg(test)]
-const LATE_FIELDS: &[&str] = &["inputmode", "caret_color", "caret_width", "hook", "private"];
+const LATE_FIELDS: &[&str] = &[
+    "inputmode",
+    "caret_color",
+    "caret_width",
+    "hook",
+    "private",
+    "reorder",
+    "item_label",
+];
 
 /// A key no style property names, taken where it lies once the walk finds
 /// it, so no style key compares against it: an input's caret (few set it,
@@ -2645,6 +2653,8 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
             }
         }
         "inputmode" => {}
+        // `ui.each`'s reorder, read by `ui.each` itself.
+        "reorder" | "item_label" => {}
         "private" => node.private = lua.unpack(value)?,
         "hook" => match value {
             mlua::Value::String(name) => {
@@ -4175,8 +4185,15 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "each",
         lua.create_function(
-            |lua, (items, build, table): (mlua::Value, Function, Option<Table>)| {
-                let items = expect_readable(&items, "ui.each's list")?;
+            |lua, (list, build, table): (mlua::Value, Function, Option<Table>)| {
+                let items = expect_readable(&list, "ui.each's list")?;
+                // Rows dragged or moved by keyboard into a new order.
+                let build = match &table {
+                    Some(t) if !t.raw_get::<mlua::Value>("reorder")?.is_nil() => {
+                        crate::reorder::wrap(lua, list, build, t)?
+                    }
+                    _ => build,
+                };
                 // Every row is built and laid out: thousands are slow to
                 // mount and lay out, where `ui.list` builds what shows.
                 let rows = items.with_untracked(|list| list.list().len());

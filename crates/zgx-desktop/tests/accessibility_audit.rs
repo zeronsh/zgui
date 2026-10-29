@@ -81,6 +81,28 @@ fn what_the_catalogue_opens_is_usable_by_a_reader() {
 /// A form's fields wrong from the start: one showing its error under it,
 /// one with nothing showing why (macos_ax_form's).
 #[test]
+fn a_reorderable_list_is_usable_by_a_reader() {
+    let app = app(|runtime| {
+        ScriptHost::inline(
+            runtime,
+            "app",
+            r##"local folders = ui.state("folders", { "Inbox", "Work", "Personal" })
+            return ui.column {
+                ui.each(folders, function(name)
+                    return ui.row { w = 160, h = 24, ui.text { name } }
+                end, {
+                    key = function(name) return name end,
+                    reorder = function(from, to) end,
+                }),
+            }"##,
+        )
+    });
+    assert_eq!(app.error(), None);
+    let mut app = app;
+    check("reorderable each", audit(&mut app.ui));
+}
+
+#[test]
 fn an_invalid_form_says_why() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),

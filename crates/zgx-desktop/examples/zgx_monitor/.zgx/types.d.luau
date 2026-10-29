@@ -15759,6 +15759,13 @@ export type EachOptions = {
 	exit: ElementParams?,
 	-- The first rows play `enter` too.
 	initial: boolean?,
+	-- Rows the person drags into a new order, or moves with Alt+↑/↓
+	-- (heard as they move): `reorder(from, to)` moves the items, positions
+	-- from 1, `to` where the row ends up. Needs `key`.
+	reorder: ((from: number, to: number) -> ())?,
+	-- What a moved row is called when its move is announced (its key
+	-- otherwise): "Moved Inbox to position 2 of 5".
+	item_label: ((item: any) -> string)?,
 }
 -- `ui.presence`'s options; sizing makes it a box its content fills.
 export type PresenceOptions = {

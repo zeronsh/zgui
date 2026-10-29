@@ -418,7 +418,7 @@ fn signing_in_greets_the_user() {
 }
 ```
 
-It has `click`, `type_text`, `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `shown` (found and not transparent: a closed modal's kept content is not shown), `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgx-script's own tests use it.
+It has `click`, `type_text`, `fill` (a field's whole text replaced), `drag` (one node onto another, past the drag threshold), `scroll` (the viewport under a node), `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `shown` (found and not transparent: a closed modal's kept content is not shown), `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgx-script's own tests use it.
 
 ### Shipping an app
 

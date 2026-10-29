@@ -9,6 +9,8 @@ mod components;
 mod container_queries;
 #[path = "../driver.rs"]
 mod driver;
+#[path = "../each_reorder.rs"]
+mod each_reorder;
 #[path = "../failures.rs"]
 mod failures;
 #[path = "../i18n_script.rs"]

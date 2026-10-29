@@ -34,7 +34,7 @@ use std::{
 use zgx::{
     compose::{TaskRunner, View, ViewHandle, provide},
     frame::{Frame, FrameClock},
-    input::{InputEvent, Key, Modifiers},
+    input::{InputEvent, Key, Modifiers, PointerButton},
     reactive::Runtime,
     scene::{NodeId, NodeKind, Rect},
     task::LocalExecutor,
@@ -402,6 +402,34 @@ impl TestApp {
         self.keys("cmd+a");
         self.key(Key::Backspace);
         self.ui.dispatch(InputEvent::Text(text.into()));
+        self.settle();
+    }
+    /// Scroll the viewport under node `id`'s middle by `dy` points (down is
+    /// positive), as a wheel or a trackpad does.
+    pub fn scroll(&mut self, id: &str, dy: f32) {
+        let node = self.node(id);
+        crate::driver::scroll(&mut self.ui, node, dy);
+        self.settle();
+    }
+    /// Drag node `from` onto node `to` with the primary button: pressed
+    /// near `from`'s top left, past the drag threshold, then released over
+    /// `to`'s middle (its upper half: a reorderable row drops above it).
+    pub fn drag(&mut self, from: &str, to: &str) {
+        let (a, b) = (self.bounds(from), self.bounds(to));
+        let (x, y) = (a.x + a.width.min(12.), a.y + a.height.min(12.) / 2.);
+        let (tx, ty) = (b.x + b.width / 2., b.y + b.height / 3.);
+        let button = PointerButton::Primary;
+        self.ui.dispatch(InputEvent::PointerDown { x, y, button });
+        self.ui.dispatch(InputEvent::PointerMove {
+            x: x + 16.,
+            y: y + 8.,
+        });
+        self.ui.dispatch(InputEvent::PointerMove { x: tx, y: ty });
+        self.ui.dispatch(InputEvent::PointerUp {
+            x: tx,
+            y: ty,
+            button,
+        });
         self.settle();
     }
     /// Press and release `key`, with `modifiers`, wherever focus is.

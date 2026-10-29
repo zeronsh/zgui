@@ -29,6 +29,8 @@ ui.presence(value: string | Readable<unknown> | (() -> unknown), build: (value: 
 | `enter` | `ElementParams` | none | anime.js parameters played on what appears (`{ opacity = { 0, 1 }, duration = 200 }`) |
 | `exit` | `ElementParams` | none | played on what leaves; it leaves the flow where it was, as large as it was, and unmounts when the animation completes |
 | `initial` | `boolean` | `false` | the first rows (or the first value) play `enter` too |
+| `reorder` (`each`) | `(from: number, to: number) -> ()` | none | rows the person drags into a new order, or moves with Alt+↑ and Alt+↓, as dnd-kit's sortable lists: a row dropped on another goes above or below it by where it drops, a line showing where. `reorder(from, to)` moves the script's items (positions from 1, `to` where the row ends up). Each row is a Tab stop a reader names and is told how to move, and a keyboard move is heard ("Moved Inbox to position 2 of 5"). Needs `key`; works with `animate` |
+| `item_label` (`each`) | `(item: any) -> string` | the item's key | what a moved row is called as its move is heard |
 | `mode` (`presence`) | `"wait"` | both at once | the new content enters once the old has left |
 | properties | [Props](properties.md) | | `each`: style the box its rows lay out in. `presence`: sizing (`w`, `h`, `w_full`, `grow`, `p`, `absolute` and insets…) makes it a box its content fills |
 
@@ -110,6 +112,8 @@ return ui.column {
 `each`'s `animate` is one of three ways layout moves animate; the others are [properties](properties.md#size-and-position-animation): `layout = "position"` slides a node when layout moves it within its parent, and `layout_id = "selection"` hands a node's box to the next node mounted with the same id (a tab's highlight sliding to the tab that takes it). All hold the node where it showed with a translation that eases to nothing, on the compositor: no layout and no script runs while it moves. A row that leaves (`exit`) leaves the flow at once, so the rows after it close up while it plays.
 
 ## Gotchas
+
+- A node at opacity 0 takes no pointer, unlike CSS (where `opacity: 0` is still clicked): a row fading in from 0 (`enter = { opacity = { 0, 1 } }`) takes clicks and drops from its first visible frame, and a row fading out stops taking them once it is gone. To keep something invisible but clickable, give it a small opacity; to make something visible take no pointer, `pointer_events = "none"`.
 
 - `each`'s list must be a state (`ui.state`, `ui.computed`, a component's `ui.use_state`), not a function or a plain table: wrap a derived list in `ui.computed`.
 - Without `key`, a row is its item: it stays with its item through reorders, inserts and removals (a list built afresh from state, with equal tables, included), keeping its own state and elements, and an edit rebuilds only the edited row. Items equal in value are told apart by order. Give a `key` when an item's identity is not its value (an edited record should keep its row), and for `animate`, `enter` and `exit`, which need one to tell a moved row from a new one.
