@@ -14,7 +14,7 @@ description = "Run a zgx Luau script as a desktop app, with hot reload: `zgx-run
 # mimalloc as the runner's allocator (zgx-desktop's `mimalloc`): 6-10%
 # less CPU for script, text and layout work, for about 2 MB more memory.
 # `--no-default-features` keeps the system's.
-default = ["mimalloc", "inspect", "fetch", "scene3d", "i18n"]
+default = ["mimalloc", "inspect", "fetch", "scene3d", "i18n", "gltf"]
 mimalloc = ["zgx-desktop/mimalloc"]
 # Devtools for agents (`zgx run --inspect`, `zgx inspect`): a user-only
 # local socket a running app answers on, when asked. A build for shipping
@@ -31,6 +31,9 @@ scene3d = ["zgx-script/scene3d"]
 # Localized messages' plural rules and numbers for every locale
 # (zgx-script's `i18n`, about 90 KB).
 i18n = ["zgx-script/i18n"]
+# `ui.model` (zgx-script's `gltf`): glTF models in 3D scenes. 48.5 KiB
+# of a build for shipping (`dist`, on against off at one commit).
+gltf = ["zgx-script/gltf"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.5", default-features = false }

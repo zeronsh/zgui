@@ -68,6 +68,17 @@ pub(crate) enum Shape {
     Mesh(Geometry, MaterialSpec),
     Light(LightSpec),
     Group(Vec<Rc<ObjectSpec>>),
+    /// A glTF file (`ui.model`), read off the main thread (made only with
+    /// the `gltf` feature).
+    #[cfg_attr(not(feature = "gltf"), allow(dead_code))]
+    Model(ModelSpec),
+}
+#[cfg_attr(not(feature = "gltf"), allow(dead_code))]
+pub(crate) struct ModelSpec {
+    /// Its path, from the script's directory.
+    src: String,
+    /// Scaled to this many units across (its largest side), centred.
+    fit: Option<f32>,
 }
 /// An object of a scene (`ui.mesh`, `ui.light`, `ui.group`).
 pub(crate) struct ObjectSpec {
@@ -331,10 +342,11 @@ fn geometry(table: &Table) -> mlua::Result<Geometry> {
 /// the four (one instantiation of mlua's callback for them all).
 pub(crate) fn install(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     type Make = fn(&Lua, Table) -> mlua::Result<mlua::AnyUserData>;
-    let made: [(&str, Make); 4] = [
+    let made: [(&str, Make); 5] = [
         ("mesh", mesh),
         ("light", light),
         ("group", group),
+        ("model", model),
         ("scene3d", scene3d),
     ];
     for (name, make) in made {
@@ -379,6 +391,33 @@ fn light(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
 fn group(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
     let children = objects(&table, "ui.group")?;
     placed(lua, &table, Shape::Group(children))
+}
+
+/// `ui.model { src, fit, position, rotation, scale, on_click, on_hover }`.
+fn model(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
+    if !cfg!(feature = "gltf") {
+        return Err(wrong(format_args!(
+            "ui.model needs zgx-script's `gltf` feature (zgx-run has it)"
+        )));
+    }
+    let Some(src) = table.get::<Option<String>>("src")? else {
+        return Err(wrong(format_args!(
+            "ui.model needs a `src`: a .glb or .gltf file"
+        )));
+    };
+    let fit = match table.get::<mlua::Value>("fit")? {
+        mlua::Value::Nil => None,
+        mlua::Value::Number(n) => Some(n as f32),
+        mlua::Value::Integer(n) => Some(n as f32),
+        other => {
+            return Err(wrong(format_args!(
+                "ui.model `fit` is a number, not {}",
+                other.type_name()
+            )));
+        }
+    }
+    .filter(|fit| fit.is_finite() && *fit > 0.);
+    placed(lua, &table, Shape::Model(ModelSpec { src, fit }))
 }
 
 /// `ui.scene3d { camera, orbit, background, label, …objects, …box props }`.
@@ -671,14 +710,26 @@ fn follow(cx: &mut Context, effect: Box<dyn FnMut()>) {
 
 /// `spec` lowered: a GPU view of its world, the world's objects added and
 /// what they read followed by effects owned by `cx`.
-pub(crate) fn lower(spec: &Scene3dSpec, vm: &Rc<Vm>, cx: &mut Context) -> zgx::compose::View {
+pub(crate) fn lower(
+    spec: &Scene3dSpec,
+    vm: &Rc<Vm>,
+    assets: &Rc<crate::lower::Assets>,
+    cx: &mut Context,
+) -> zgx::compose::View {
     let world = World::new();
     let theme = cx.theme();
     world.set_shadows(spec.shadows);
-    let mut handled = Vec::new();
+    let mut adding = Adding {
+        world: &world,
+        vm,
+        assets,
+        theme: &theme,
+        handled: Vec::new(),
+    };
     for object in &spec.objects {
-        add(&world, object, None, vm, cx, &theme, &mut handled);
+        add(&mut adding, object, None, cx);
     }
+    let handled = adding.handled;
     // The background, and the camera (orbiting, if asked: dragged, scrolled
     // and turning on its own).
     if let Some(background) = &spec.background {
@@ -924,16 +975,20 @@ fn call(vm: &Rc<Vm>, f: &Function, arg: mlua::Value) {
     });
 }
 
-/// Add `spec` (a child of `parent`) to `world`, following what it reads.
-fn add(
-    world: &World,
-    spec: &Rc<ObjectSpec>,
-    parent: Option<ObjectId>,
-    vm: &Rc<Vm>,
-    cx: &mut Context,
-    theme: &Rc<zgx::theme::ThemeScope>,
-    handled: &mut Vec<(ObjectId, Rc<ObjectSpec>)>,
-) {
+/// What adding a scene's objects takes (`add`), and the objects with
+/// handlers so far.
+struct Adding<'a> {
+    world: &'a World,
+    vm: &'a Rc<Vm>,
+    /// Where models' files are read (`ui.model`).
+    #[cfg_attr(not(feature = "gltf"), allow(dead_code))]
+    assets: &'a Rc<crate::lower::Assets>,
+    theme: &'a Rc<zgx::theme::ThemeScope>,
+    handled: Vec<(ObjectId, Rc<ObjectSpec>)>,
+}
+/// Add `spec` (a child of `parent`) to the world, following what it reads.
+fn add(adding: &mut Adding, spec: &Rc<ObjectSpec>, parent: Option<ObjectId>, cx: &mut Context) {
+    let (world, vm, theme) = (adding.world, adding.vm, adding.theme);
     let live = LiveObject {
         position: spec.position.as_ref().map(|v| LiveVec::of(v, cx)),
         rotation: spec.rotation.as_ref().map(|v| LiveVec::of(v, cx)),
@@ -989,7 +1044,7 @@ fn add(
             let world = world.clone();
             follow(cx, Box::new(move || world.set_light(id, read())));
         }
-        Shape::Mesh(..) | Shape::Group(_) => {
+        Shape::Mesh(..) | Shape::Group(_) | Shape::Model(_) => {
             let (geometry, material) = match &spec.shape {
                 Shape::Mesh(geometry, material) => {
                     (Some(geometry.clone()), Some(LiveMaterial::of(material, cx)))
@@ -1008,7 +1063,7 @@ fn add(
             };
             let id = world.add(object);
             if spec.on_click.is_some() || spec.on_hover.is_some() {
-                handled.push((id, spec.clone()));
+                adding.handled.push((id, spec.clone()));
             }
             if live.dynamic() {
                 let (world, vm) = (world.clone(), vm.clone());
@@ -1032,9 +1087,125 @@ fn add(
             }
             if let Shape::Group(children) = &spec.shape {
                 for child in children {
-                    add(world, child, Some(id), vm, cx, theme, handled);
+                    add(adding, child, Some(id), cx);
                 }
+            }
+            #[cfg(feature = "gltf")]
+            if let Shape::Model(model) = &spec.shape {
+                load_model(world, id, model, vm, adding.assets, cx);
             }
         }
     }
+}
+
+/// Models read so far, by path, with when the file was changed: a reload
+/// (or another scene showing it) takes it from here unless it changed.
+#[cfg(feature = "gltf")]
+type ModelCache =
+    std::collections::HashMap<std::path::PathBuf, (Option<std::time::SystemTime>, zgx_3d::Model)>;
+#[cfg(feature = "gltf")]
+thread_local! {
+    static MODELS: std::cell::RefCell<ModelCache> = Default::default();
+}
+/// Models kept read at most: past it, the cache starts again.
+#[cfg(feature = "gltf")]
+const MODELS_KEPT: usize = 32;
+
+/// Read `spec`'s file (as images are: watched for changes, from the app's
+/// bundle if it has one), then its model off the main thread (its buffers
+/// from beside it, no further), and add it to `world` under `group` once
+/// read; an error is the script's to see.
+#[cfg(feature = "gltf")]
+fn load_model(
+    world: &World,
+    group: ObjectId,
+    spec: &ModelSpec,
+    vm: &Rc<Vm>,
+    assets: &Rc<crate::lower::Assets>,
+    cx: &mut Context,
+) {
+    let path = match crate::lower::resolve_path(vm, &spec.src) {
+        Ok(path) => path,
+        Err(error) => {
+            vm.report(mlua::Error::runtime(format!("ui.model: {error}")));
+            return;
+        }
+    };
+    let fit = spec.fit;
+    let changed = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let kept = MODELS.with(|models| {
+        models
+            .borrow()
+            .get(&path)
+            .filter(|(at, _)| changed.is_some() && *at == changed)
+            .map(|(_, model)| model.clone())
+    });
+    if let Some(model) = kept {
+        place_model(world, group, &model, fit);
+        return;
+    }
+    let bytes = match assets.read(&spec.src, &path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            vm.report(mlua::Error::runtime(format!(
+                "ui.model {}: {error}",
+                spec.src
+            )));
+            return;
+        }
+    };
+    let (tell, mut heard) = zgx::task::latest::<Result<zgx_3d::Model, String>>();
+    let (files, folder) = (
+        assets.source(),
+        crate::normalize(path.parent().unwrap_or(std::path::Path::new("."))),
+    );
+    std::thread::spawn(move || {
+        let read = zgx_3d::Model::from_bytes_with(&bytes, |uri| {
+            let beside = crate::normalize(&folder.join(uri));
+            crate::within(&folder, &beside)
+                .then(|| files.read(&beside).ok())
+                .flatten()
+        });
+        tell.send(read.map_err(|e| e.to_string()));
+    });
+    let (world, vm, src) = (world.clone(), Rc::downgrade(vm), spec.src.clone());
+    cx.tasks().spawn(async move {
+        let Some(read) = heard.recv().await else {
+            return;
+        };
+        match read {
+            Ok(model) => {
+                MODELS.with(|models| {
+                    let mut models = models.borrow_mut();
+                    if models.len() >= MODELS_KEPT {
+                        models.clear();
+                    }
+                    models.insert(path, (changed, model.clone()));
+                });
+                place_model(&world, group, &model, fit);
+            }
+            Err(error) => {
+                if let Some(vm) = vm.upgrade() {
+                    vm.report(mlua::Error::runtime(format!("ui.model {src}: {error}")));
+                }
+            }
+        }
+    });
+}
+/// `model` added under `group`: scaled to `fit` across and centred, if
+/// asked, else as it is.
+#[cfg(feature = "gltf")]
+fn place_model(world: &World, group: ObjectId, model: &zgx_3d::Model, fit: Option<f32>) {
+    let root = world.add_model(model);
+    let mut transform = Transform::default();
+    if let (Some(fit), Some((low, high))) = (fit, model.bounds()) {
+        let size = high - low;
+        let scale = fit / size.x.max(size.y).max(size.z).max(1e-6);
+        transform.scale = Vec3::ONE * scale;
+        transform.position = (low + high) * (-0.5 * scale);
+    }
+    world.update(root, |object| {
+        object.parent = Some(group);
+        object.transform = transform;
+    });
 }

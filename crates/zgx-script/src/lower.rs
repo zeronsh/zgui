@@ -258,7 +258,13 @@ impl Assets {
     pub(crate) fn set_files(&self, files: crate::Files) {
         self.source.set(Some(files));
     }
-    fn read(&self, src: &str, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    /// Where its files come from: the disk, or the app's bundle.
+    #[cfg(feature = "gltf")]
+    pub(crate) fn source(&self) -> crate::Files {
+        self.source.get().unwrap_or(crate::Files::Disk)
+    }
+    /// `src`'s bytes from `path`, the file kept to watch for changes.
+    pub(crate) fn read(&self, src: &str, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
         let bytes = match self.source.get() {
             Some(files) => files.read(path)?,
@@ -1857,7 +1863,7 @@ fn kind_view(
         Kind::WebView(spec) => web_view_of(spec, vm, low),
         Kind::Terminal(term) => zgx::terminal::terminal(term),
         #[cfg(feature = "scene3d")]
-        Kind::Scene3d(spec) => crate::scene3d::lower(spec, vm, need(&mut cx)),
+        Kind::Scene3d(spec) => crate::scene3d::lower(spec, vm, &low.assets, need(&mut cx)),
         Kind::Canvas(draw, options) => {
             let (draw, vm) = (draw.clone(), vm.clone());
             let theme = match cx.as_deref().map(Context::theme) {
@@ -3502,7 +3508,7 @@ fn placeholder() -> Arc<ImageData> {
 /// An image's path, from the script's directory. A plugin's come from its
 /// own directory or below, as its modules do, not from anywhere the user
 /// can read.
-fn resolve_path(vm: &Vm, path: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn resolve_path(vm: &Vm, path: &str) -> Result<std::path::PathBuf, String> {
     let given = std::path::Path::new(path);
     let resolved = match (&vm.base, given.is_relative()) {
         (Some(base), true) => base.join(given),

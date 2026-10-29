@@ -1559,6 +1559,7 @@ mod tests {
         "mesh",
         "light",
         "group",
+        "model",
     ];
 
     /// A function added to `ui` is either an element or listed in

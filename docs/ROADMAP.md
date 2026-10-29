@@ -84,6 +84,12 @@ here, to land together:
   `Kana`), and so do the docs and lint. Each backend has a mapping test. Until
   then, a key's physical code binds it where the layout gives it a `Key`
   (`KeyBinding::code`, added in 0.1.6).
+- [ ] zgx-3d's `Material` and `Object` become `#[non_exhaustive]`, made by
+  builders (`Material::rgb(..).with(..)`, `Object::mesh(..).at(..)` already
+  are), so later fields are additive. They're public structs of public fields
+  today (`Material` is `Copy`), so a field is a major change. Then a mesh's
+  texture moves onto its `Material`: in 0.1.x textures come in as the
+  world's, per object, so nothing breaks.
 
 ## Remaining validation and refinement
 

@@ -158,7 +158,7 @@ return ui.column {
 
 /// Press and release at `(x, y)` of the box `id`, from its top left, the
 /// release `moved` points further right.
-fn press(h: &mut Harness, id: &str, (x, y): (f32, f32), moved: f32) {
+fn press(h: &mut zgx_script::testing::TestApp, id: &str, (x, y): (f32, f32), moved: f32) {
     use zgx::input::{InputEvent, PointerButton};
     let b = h.bounds(id);
     let (x, y) = (b.x + x, b.y + y);
@@ -241,4 +241,97 @@ fn shadows_are_asked_for_with_true() {
     h.frame();
     assert!(frame_id(&mut h, "scene").is_some());
     assert!(raised(r#"ui.scene3d { shadows = 1 }"#).contains("shadows"));
+}
+
+/// A `.glb` of a unit square facing +z, as glTF writes one.
+#[cfg(feature = "gltf")]
+fn square_glb() -> Vec<u8> {
+    let positions: [f32; 12] = [-0.5, -0.5, 0., 0.5, -0.5, 0., 0.5, 0.5, 0., -0.5, 0.5, 0.];
+    let mut bin: Vec<u8> = positions.iter().flat_map(|v| v.to_le_bytes()).collect();
+    bin.extend([0_u16, 1, 2, 0, 2, 3].iter().flat_map(|i| i.to_le_bytes()));
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let mut json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"buffers":[{{"byteLength":{}}}],
+        "bufferViews":[{{"buffer":0,"byteLength":48}},{{"buffer":0,"byteOffset":48,"byteLength":12}}],
+        "accessors":[{{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3"}},
+            {{"bufferView":1,"componentType":5123,"count":6,"type":"SCALAR"}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"indices":1}}]}}],
+        "nodes":[{{"mesh":0}}],"scenes":[{{"nodes":[0]}}]}}"#,
+        bin.len()
+    )
+    .into_bytes();
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let mut out = b"glTF".to_vec();
+    out.extend(2_u32.to_le_bytes());
+    out.extend(((12 + 8 + json.len() + 8 + bin.len()) as u32).to_le_bytes());
+    out.extend((json.len() as u32).to_le_bytes());
+    out.extend(b"JSON");
+    out.extend(json);
+    out.extend((bin.len() as u32).to_le_bytes());
+    out.extend(b"BIN\0");
+    out.extend(bin);
+    out
+}
+
+/// A script `code` beside `square.glb`, in a directory of its own.
+#[cfg(feature = "gltf")]
+fn beside_a_model(name: &str, code: &str) -> Harness {
+    let dir = std::env::temp_dir().join(format!("zgx-model-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("square.glb"), square_glb()).unwrap();
+    std::fs::write(dir.join("app.luau"), code).unwrap();
+    Harness::new(|runtime| zgx_script::ScriptHost::new(runtime, dir.join("app.luau")))
+}
+
+#[cfg(feature = "gltf")]
+#[test]
+fn a_model_shows_once_read_and_hears_clicks_on_its_meshes() {
+    let mut h = beside_a_model(
+        "click",
+        r#"
+local clicked = ui.state("clicked", "none")
+return ui.column {
+    ui.text { id = "clicked", "{clicked}" },
+    ui.scene3d {
+        id = "scene", w = 200, h = 200,
+        camera = { position = { 0, 0, 3 } },
+        ui.model { src = "square.glb", fit = 2, on_click = function(hit) clicked:set(string.format("%.1f", hit.x)) end },
+    },
+}
+"#,
+    );
+    assert_eq!(h.error(), None);
+    // Read off the main thread: it shows (and hears) once read.
+    let heard = h.wait_until(|h| {
+        h.frame();
+        press(h, "scene", (100., 100.), 0.);
+        h.text("clicked") != "none"
+    });
+    assert!(heard, "never clicked: {}", h.tree());
+    assert_eq!(h.text("clicked"), "0.0");
+}
+
+#[cfg(feature = "gltf")]
+#[test]
+fn a_model_that_cannot_be_read_says_so() {
+    let h = beside_a_model(
+        "missing",
+        r#"return ui.scene3d { w = 100, h = 100, ui.model { src = "nowhere.glb" } }"#,
+    );
+    h.frame();
+    let error = h.error().unwrap_or_default();
+    assert!(error.contains("nowhere.glb"), "{error}");
+    assert!(raised(r#"ui.scene3d { ui.model { fit = 2 } }"#).contains("src"));
+    // Named alone (a module building objects), it is still there.
+    assert!(raised(r#"ui.model { fit = 2 }"#).contains("src"));
+}
+
+#[cfg(not(feature = "gltf"))]
+#[test]
+fn a_model_without_the_gltf_feature_says_so() {
+    assert!(raised(r#"ui.scene3d { ui.model { src = "a.glb" } }"#).contains("`gltf` feature"));
 }

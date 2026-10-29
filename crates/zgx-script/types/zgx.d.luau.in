@@ -1935,6 +1935,20 @@ export type LightProps = Object3DProps & {
 	direction: Vec3?,
 	range: number?,
 }
+export type ModelProps = {
+	-- A .glb or .gltf file, from the script's directory: read off the main
+	-- thread, shown once read (zgx-script's `gltf` feature).
+	src: string,
+	-- Scaled to this many units across (its largest side), centred on its
+	-- position; nil: as the file has it.
+	fit: number?,
+	-- As a group's: it hears its meshes'.
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
+	position: Vec3?,
+	rotation: Vec3?,
+	scale: (Reactive<number> | Vec3)?,
+}
 export type GroupProps = {
 	-- As a mesh's: a group hears its meshes' (unless a mesh hears it itself).
 	on_click: ((hit: Hit3D) -> ())?,
@@ -2636,6 +2650,7 @@ declare ui: {
 	mesh: (props: MeshProps) -> Object3D,
 	light: (props: LightProps) -> Object3D,
 	group: (props: GroupProps) -> Object3D,
+	model: (props: ModelProps) -> Object3D,
 	webview: (props: WebViewProps) -> Node,
 	-- `ui.web(opts)`: a page for this run. `ui.web(id, opts)`: the host's
 	-- page for `id`, made with `opts` the first time, kept across reloads.

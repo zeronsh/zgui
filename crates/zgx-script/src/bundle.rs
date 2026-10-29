@@ -282,7 +282,19 @@ pub mod build {
             }
             let wanted = matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some("luau" | "json" | "png" | "jpg" | "jpeg" | "svg" | "gif" | "webp")
+                Some(
+                    "luau"
+                        | "json"
+                        | "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "svg"
+                        | "gif"
+                        | "webp"
+                        | "glb"
+                        | "gltf"
+                        | "bin"
+                )
             ) || name == ".luaurc";
             if wanted && let Ok(rel) = path.strip_prefix(root) {
                 out.push(rel.to_string_lossy().replace('\\', "/"));

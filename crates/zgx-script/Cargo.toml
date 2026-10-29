@@ -32,6 +32,9 @@ scene3d = ["dep:zgx-3d"]
 # it. Without it `ui.i18n` and `ui.t` work, with English's plural rules
 # (`one`, `other`) and numbers as Rust writes them. zgx-run turns it on.
 i18n = ["zgx/i18n"]
+# `ui.model`: glTF 2.0 models (`.glb`, `.gltf`) in 3D scenes, read by
+# zgx-3d's `gltf`.
+gltf = ["scene3d", "zgx-3d/gltf"]
 svg = ["zgx-gpu/svg"]
 png = ["zgx-gpu/png"]
 jpeg = ["zgx-gpu/jpeg"]

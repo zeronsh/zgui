@@ -11,7 +11,13 @@ fn error_of(code: &str) -> String {
 
 #[test]
 fn a_scene_without_the_feature_says_which_feature_it_needs() {
-    for call in ["ui.scene3d {}", "ui.mesh {}", "ui.light {}", "ui.group {}"] {
+    for call in [
+        "ui.scene3d {}",
+        "ui.mesh {}",
+        "ui.light {}",
+        "ui.group {}",
+        "ui.model {}",
+    ] {
         let error = error_of(&format!("local a = 1\nreturn ui.column {{\n  {call},\n}}"));
         assert!(error.contains("`scene3d` feature"), "{call}: {error}");
     }

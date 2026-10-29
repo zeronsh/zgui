@@ -482,13 +482,13 @@ fn without_scene3d(mut message: String, code: &[u8]) -> String {
         .and_then(|n| code.split(|&b| b == b'\n').nth(n.wrapping_sub(1)))
         .map(String::from_utf8_lossy)
         .is_some_and(|line| {
-            ["ui.scene3d", "ui.mesh", "ui.light", "ui.group"]
+            ["ui.scene3d", "ui.mesh", "ui.light", "ui.group", "ui.model"]
                 .iter()
                 .any(|call| line.contains(call))
         });
     if calls {
         message.push_str(
-            "\n(ui.scene3d, ui.mesh, ui.light and ui.group are zgx-script's `scene3d` \
+            "\n(ui.scene3d, ui.mesh, ui.light, ui.group and ui.model are zgx-script's `scene3d` \
              feature, which this host was built without: zgx-run has it, and a Rust host \
              turns it on with `features = [\"scene3d\"]`)",
         );
@@ -2611,7 +2611,10 @@ impl ScriptHost {
         let lazy = lazy::Lazy::default();
         lazy.ui(&["path", "linear"], canvas::install);
         #[cfg(feature = "scene3d")]
-        lazy.ui(&["scene3d", "mesh", "light", "group"], scene3d::install);
+        lazy.ui(
+            &["scene3d", "mesh", "light", "group", "model"],
+            scene3d::install,
+        );
         lazy.ui(&["json", "number", "sort"], data::install);
         let terms = self.0.terms.clone();
         lazy.ui(&["term"], move |lua, ui| term::install(lua, ui, terms));
