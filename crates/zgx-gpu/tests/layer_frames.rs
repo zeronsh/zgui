@@ -488,17 +488,29 @@ const STEPS: &[f32] = &[
 /// returns how many scrolls copied.
 #[cfg(target_os = "macos")]
 fn scrolled_matches_drawing_whole(view: fn(Signal<f32>) -> View, steps: &[f32]) -> usize {
+    scrolled_matches_drawing_whole_at(view, steps, 2.)
+}
+/// `scrolled_matches_drawing_whole` at a device `scale`.
+#[cfg(target_os = "macos")]
+fn scrolled_matches_drawing_whole_at(
+    view: fn(Signal<f32>) -> View,
+    steps: &[f32],
+    scale: f32,
+) -> usize {
     let renderer = |host: &objc2::rc::Retained<objc2_quartz_core::CALayer>| {
-        let mut gpu =
-            GpuRenderer::debug_for_layer(host.clone(), (SIZE.0 * 2.) as u32, (SIZE.1 * 2.) as u32)
-                .unwrap();
-        gpu.set_scale_factor(2.);
+        let mut gpu = GpuRenderer::debug_for_layer(
+            host.clone(),
+            (SIZE.0 * scale) as u32,
+            (SIZE.1 * scale) as u32,
+        )
+        .unwrap();
+        gpu.set_scale_factor(scale);
         gpu
     };
     let host = objc2_quartz_core::CALayer::new();
     let mut gpu = renderer(&host);
     let mut ui = Ui::new(SIZE.0, SIZE.1);
-    ui.scene.borrow_mut().set_pixel_scale(2.);
+    ui.scene.borrow_mut().set_pixel_scale(scale);
     gpu.install_text(&mut ui.scene.borrow_mut());
     let offset = ui.signal(0.);
     ui.mount(view(offset.clone()));
@@ -524,7 +536,7 @@ fn scrolled_matches_drawing_whole(view: fn(Signal<f32>) -> View, steps: &[f32]) 
         whole.present().unwrap();
         let expected = whole.shown_pixels().expect("a surface shown").2;
         if shown != expected {
-            let width = (SIZE.0 * 2.) as usize;
+            let width = (SIZE.0 * scale) as usize;
             let spots: Vec<(usize, usize)> = shown
                 .chunks(4)
                 .zip(expected.chunks(4))
@@ -981,5 +993,58 @@ fn main() {
         println!("layer_frames: full-rate frames through drawables match drawing whole");
         switches_between_tiles_and_drawables_match_drawing_whole();
         println!("layer_frames: switches between tiles and drawables match drawing whole");
+        faded_scrolls_copy_their_interior_and_match_drawing_whole();
+        println!("layer_frames: faded scrolls copy their interior and match drawing whole");
+    }
+}
+
+/// A scroll view fading 40 px at top and bottom over cards (light paper,
+/// dark art over it: its bands drawn as one) or rows (an icon and a bar on
+/// nothing: faded item by item).
+#[cfg(target_os = "macos")]
+fn faded(offset: Signal<f32>, cards: bool) -> View {
+    let mut list = column().gap(8.).p(8.);
+    for i in 0..40u8 {
+        let shade = Color(40 + i % 5 * 20, 40, 90, 255);
+        list = list.child(match cards {
+            // Square: a rounded corner's edge scrolled by a copy differs from
+            // it drawn whole by a level, faded or not (main's, at scale 1).
+            true => div()
+                .w(300.)
+                .h(60.)
+                .bg(Color(240, 238, 232, 255))
+                .child(div().w(120.).h(60.).bg(shade)),
+            false => row()
+                .gap(8.)
+                .h(28.)
+                .child(div().size(20., 20.).bg(shade))
+                .child(div().w(200.).h(10.).bg(Color(200, 60, 40, 255))),
+        });
+    }
+    overlay()
+        .size(SIZE.0, SIZE.1)
+        .bg(Color(47, 107, 58, 255))
+        .child(
+            scroll(offset)
+                .w(330.)
+                .h(380.)
+                .left(20.)
+                .top(10.)
+                .fade_edges(40., 40.)
+                .child(list),
+        )
+}
+/// A faded scroll copies its interior and repaints its bands and what it
+/// scrolls in: each frame as the scene drawn whole, at scale 1 and 1.5.
+#[cfg(target_os = "macos")]
+fn faded_scrolls_copy_their_interior_and_match_drawing_whole() {
+    let steps = [0., 3., 7., 30., 31., 90., 400., 380., 0.];
+    for scale in [1., 1.5] {
+        let cards = scrolled_matches_drawing_whole_at(|o| faded(o, true), &steps, scale);
+        let rows = scrolled_matches_drawing_whole_at(|o| faded(o, false), &steps, scale);
+        assert!(
+            cards > 0 && rows > 0,
+            "scale {scale}: no copy, {cards} {rows}"
+        );
     }
 }

@@ -4830,9 +4830,10 @@ fn fade_insets_end_the_bands_inside_the_clip() {
 }
 
 /// Whole-pixel scrolls shift the retained pixels and draw only the exposed
-/// strip; the result matches a fresh renderer exactly. Content that fades at
-/// the edges, a sibling painting over the list, or a fractional shift make a
-/// copy inexact, so those repaint instead.
+/// strip; the result matches a fresh renderer exactly. A list fading at its
+/// edges copies its interior and repaints its bands. A sibling painting over
+/// the list, or a fractional shift, make a copy inexact, so those repaint
+/// instead.
 #[test]
 fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
     let _gpu_fixture = gpu_fixture();
@@ -4921,7 +4922,8 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
             // 0→14, 14→28 and 28→100 copy. 100→101.5 and 101.5→150 shift by
             // fractions of a pixel; 150→40 jumps past the viewport.
             Case::Plain => assert!(copies >= 3, "{copies}"),
-            Case::Faded => assert_eq!(copies, 0),
+            // Its interior copies, its bands repaint (bands.rs).
+            Case::Faded => assert!(copies >= 3, "{copies}"),
             Case::Rounded => assert!(copies >= 3, "{copies}"),
             // Only 28→100 copies: its 72 px exposed strip repaints the whole
             // overlay, which the smaller moves would have shifted.

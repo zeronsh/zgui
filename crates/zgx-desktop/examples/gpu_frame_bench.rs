@@ -87,7 +87,7 @@ fn main() {
     // Each tick's change: the dashboard's data, or the animation's clock a
     // 120 Hz refresh on (as `animation_headless`).
     let (name, mut advance): (String, Advance) = if fade {
-        faded_cards(&ui, env("CARDS", 20), env("ROWS", 0) != 0)
+        faded_cards(&ui, env("CARDS", 20), env("ROWS", 0) != 0, scale)
     } else if animate {
         let clock = ui.signal(0_f32);
         ui.mount(animation_view::animation(clock.clone()));
@@ -233,9 +233,12 @@ fn retired() -> u64 {
 }
 
 /// `ZGX_MODE=fade`'s scene (see the top): its tick scrolls the list.
-fn faded_cards(ui: &Ui, cards: usize, rows: bool) -> (String, Advance) {
+fn faded_cards(ui: &Ui, cards: usize, rows: bool, scale: f32) -> (String, Advance) {
     use zgx::scene::{Color, Layout, NodeKind, QuadStyle, Style, Transform};
     let mut scene = ui.scene.borrow_mut();
+    // Scrolled as a window scrolls: on whole device pixels, its moves
+    // reported (copied where a copy reproduces the frame).
+    scene.set_pixel_scale(scale);
     let root = scene.root();
     scene.set_kind(root, NodeKind::Container(Layout::Overlay));
     let clip = scene.append(
@@ -258,6 +261,7 @@ fn faded_cards(ui: &Ui, cards: usize, rows: bool) -> (String, Advance) {
             ..Default::default()
         },
     );
+    scene.set_scroll_copy(list, true);
     for i in (0..cards).filter(|_| rows) {
         let row = scene.append(
             list,

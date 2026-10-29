@@ -707,6 +707,9 @@ enum CopyBlocker {
     Between(NodeId),
     /// A content item is masked, isolated (a layer) or blurred.
     Effect(NodeId),
+    /// A content item fades with this mask (`fade_edges`): the move copies
+    /// within its interior, if the mask holds still (`scroll_copies`).
+    Fade(NodeId, zgx::scene::FadeMask),
     /// A node paints over the content and does not repaint this frame.
     Over(NodeId),
     /// What lies under the content shows through and does not repaint.
@@ -721,6 +724,11 @@ impl CopyBlocker {
             Self::NoContent => "none of its content paints in its view".into(),
             Self::Between(id) => format!("{} paints between its content's items", node(id)),
             Self::Effect(id) => format!("{} in it is masked, a layer or blurred", node(id)),
+            Self::Fade(id, _) => format!(
+                "{} in it fades with bands that move as it scrolls (`fade_overflow`) or are \
+                 not its view's own",
+                node(id)
+            ),
             Self::Over(id) => format!(
                 "{} draws over it, so moving its pixels would move that too (keep what draws \
                  over a scroll view outside its box)",
@@ -740,12 +748,15 @@ impl CopyBlocker {
 /// paints in the clip outside this frame's damage. What paints above or
 /// shows beneath it and repaints where it is still had its pixels in the
 /// frame copied: `carried` gets where the copy puts them, to repaint.
+/// Content under one fade mask (`fade_edges`) is no obstacle: `fade` gets
+/// the mask, for the move to copy within its interior (`scroll_copies`).
 fn copy_blocker(
     scene: &Scene,
     scroll: &zgx::scene::ScrollMove,
     damage: &[Rect],
     scale: f32,
     carried: &mut Vec<Rect>,
+    fade: &mut Option<zgx::scene::FadeMask>,
 ) -> Option<CopyBlocker> {
     let clip = scroll.clip;
     let items = scene.layer_items_within(None, Some(&[clip]));
@@ -779,8 +790,15 @@ fn copy_blocker(
         if !content(item) {
             return Some(CopyBlocker::Between(item.id));
         }
-        if item.mask().is_some() || item.isolated || item.effects.blur_radius > 0. {
+        if item.isolated || item.effects.blur_radius > 0. {
             return Some(CopyBlocker::Effect(item.id));
+        }
+        if let Some(mask) = item.mask() {
+            match fade {
+                None => *fade = Some(mask),
+                Some(other) if *other == mask => {}
+                Some(_) => return Some(CopyBlocker::Effect(item.id)),
+            }
         }
     }
     let carry = |rect: Rect| {
@@ -8616,8 +8634,9 @@ impl GpuRenderer {
                 let scaled = value * self.scale;
                 ((scaled - scaled.round()).abs() < 1e-3).then_some(scaled.round() as i32)
             };
-            let pixels = (|| {
-                let clip = scroll.clip.intersection(Rect::new(
+            // The copy of `clip`'s pixels the move makes, if whole.
+            let pixels_of = |clip: Rect| {
+                let clip = clip.intersection(Rect::new(
                     0.,
                     0.,
                     self.width as f32 / self.scale,
@@ -8636,7 +8655,8 @@ impl GpuRenderer {
                         (-dx, -dy),
                     )
                 })
-            })();
+            };
+            let pixels = pixels_of(scroll.clip);
             // Why it repaints, for devtools (`zgx inspect frames`).
             let refused: Result<_, fn(&Scene) -> String> = match pixels {
                 _ if !zgx::switches::SCROLL_COPY.on() => {
@@ -8656,8 +8676,27 @@ impl GpuRenderer {
                 }
                 Some(copy) => Ok(copy),
             };
+            // Under a fade, the interior's pixels move (the mask is 1 there)
+            // and the rest of the view repaints: its bands, and what of the
+            // interior the copy leaves.
+            let refused = refused.map(|copy| {
+                let mut fade = None;
+                match copy_blocker(scene, scroll, damage, self.scale, &mut carried, &mut fade) {
+                    None => match fade {
+                        None => (copy, None),
+                        Some(mask) => match self.fade_copy(scene, scroll, mask, &pixels_of) {
+                            Some((copy, rest)) => {
+                                carried.extend(rest);
+                                (copy, None)
+                            }
+                            None => (copy, Some(CopyBlocker::Fade(scroll.node, mask))),
+                        },
+                    },
+                    blocker => (copy, blocker),
+                }
+            });
             match refused {
-                Ok(copy) => match copy_blocker(scene, scroll, damage, self.scale, &mut carried) {
+                Ok((copy, blocker)) => match blocker {
                     None => match scene.scroll_corners(scroll.node) {
                         // Rounded clips around it that stay where they are:
                         // the copy moves their edges and what lies outside
@@ -13629,7 +13668,7 @@ mod copy_blocker_tests {
             let damage = ui.scene.borrow_mut().flush().damage;
             let scene = ui.scene.borrow();
             let scroll = scene.scroll_moves().last().expect("it moved").clone();
-            let blocker = copy_blocker(&scene, &scroll, &damage, 1., &mut Vec::new());
+            let blocker = copy_blocker(&scene, &scroll, &damage, 1., &mut Vec::new(), &mut None);
             if covered {
                 let Some(blocker @ CopyBlocker::Over(_)) = blocker else {
                     panic!("the square over the list keeps it from copying: {blocker:?}");

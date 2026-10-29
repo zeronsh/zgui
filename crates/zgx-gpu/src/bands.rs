@@ -18,7 +18,7 @@
 //! the frame that is no layer (so nothing the scene says about that id
 //! makes it composite otherwise), held until the next frame has drawn any
 //! frame deferred before it.
-use crate::{Draw, GpuRenderer, LayerCache, Scissor};
+use crate::{Draw, GpuRenderer, LayerCache, Scissor, ScrollCopy};
 use std::rc::Rc;
 use zgx::scene::{FadeMask, NodeId, NodeKind, PaintExtras, PaintItem, Rect, Scene};
 
@@ -637,6 +637,124 @@ impl GpuRenderer {
                 stats,
             );
         }
+    }
+    /// A scroll move under `mask` as a copy of its interior (where the
+    /// mask is 1, on the device pixels its bands end on, as `band_strips`
+    /// puts them): the copy `pixels` makes of it, and what of
+    /// the view repaints (its bands, and the interior the copy leaves). Only
+    /// for a fade around the content, its bands holding still (no
+    /// `fade_overflow`) and the content's own nothing of it: the frame
+    /// before drew the same interior.
+    pub(crate) fn fade_copy(
+        &self,
+        scene: &Scene,
+        scroll: &zgx::scene::ScrollMove,
+        (rect, bands): FadeMask,
+        pixels: &dyn Fn(Rect) -> Option<ScrollCopy>,
+    ) -> Option<(ScrollCopy, Vec<Rect>)> {
+        // The fade: the nearest node around the content that fades (not
+        // the content, which moves), its bands its own still.
+        let band = |band: f32| if band.is_finite() { band.max(0.) } else { 0. };
+        let mut at = scene.parent(scroll.node);
+        let style = loop {
+            let style = scene.style(at?);
+            if style
+                .fade_edges
+                .iter()
+                .chain(&style.fade_edges_x)
+                .any(|edge| band(*edge) > 0.)
+            {
+                break style;
+            }
+            at = scene.parent(at?);
+        };
+        let own = [
+            band(style.fade_edges[0]),
+            band(style.fade_edges_x[1]),
+            band(style.fade_edges[1]),
+            band(style.fade_edges_x[0]),
+        ];
+        if style.fade_overflow || own != bands {
+            return None;
+        }
+        let scale = self.scale;
+        let px = |v: f32| (v * scale).round();
+        let clip = Pixels::around(scroll.clip, scale);
+        let [top, right, bottom, left] = bands;
+        let [cl, ct, cr, cb] = clip.0;
+        let (ol, ot) = (
+            if left > 0. { px(rect.x) } else { cl },
+            if top > 0. { px(rect.y) } else { ct },
+        );
+        let (or, ob) = (
+            if right > 0. {
+                px(rect.x + rect.width)
+            } else {
+                cr
+            },
+            if bottom > 0. {
+                px(rect.y + rect.height)
+            } else {
+                cb
+            },
+        );
+        let interior = Pixels([
+            if left > 0. {
+                px(rect.x + left).clamp(ol, or)
+            } else {
+                cl
+            },
+            if top > 0. {
+                px(rect.y + top).clamp(ot, ob)
+            } else {
+                ct
+            },
+            if right > 0. {
+                px(rect.x + rect.width - right).clamp(ol, or)
+            } else {
+                cr
+            },
+            if bottom > 0. {
+                px(rect.y + rect.height - bottom).clamp(ot, ob)
+            } else {
+                cb
+            },
+        ])
+        .meet(clip);
+        if interior.empty() {
+            return None;
+        }
+        let interior = interior.rect(scale);
+        let copy = pixels(interior)?;
+        // The view less where the copy lands: up to four rectangles.
+        let ((x, y, w, h), _) = copy;
+        let landed = Rect::new(
+            x as f32 / scale,
+            y as f32 / scale,
+            w as f32 / scale,
+            h as f32 / scale,
+        );
+        let view = scroll.clip;
+        let rest = [
+            Rect::new(view.x, view.y, view.width, landed.y - view.y),
+            Rect::new(
+                view.x,
+                landed.y + landed.height,
+                view.width,
+                view.y + view.height - (landed.y + landed.height),
+            ),
+            Rect::new(view.x, landed.y, landed.x - view.x, landed.height),
+            Rect::new(
+                landed.x + landed.width,
+                landed.y,
+                view.x + view.width - (landed.x + landed.width),
+                landed.height,
+            ),
+        ]
+        .into_iter()
+        .filter(|r| r.width > 0. && r.height > 0.)
+        .collect();
+        Some((copy, rest))
     }
     /// The viewport uniform of a target `viewport` in size, and its bind
     /// group with no regions (made if new), leaving the frame's as it is.
