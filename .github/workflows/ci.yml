@@ -77,6 +77,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Benchmark sampler failure evidence
         run: python3 scripts/test_compare.py -v
+      - name: Which windows the Windows probes' guard takes as their app's
+        run: python3 scripts/test_windows_guard.py -v
       - run: cargo fmt --all -- --check
       # Every Luau script in the repository (examples and probes too), as
       # stylua.toml and .styluaignore have them.

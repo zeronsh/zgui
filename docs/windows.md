@@ -751,6 +751,14 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
     back (`windows_input.guard_windows`).
   - **New windows.** A top-level window that wasn't showing when the probe
     began and isn't a classic candidate list stops it too, sending nothing.
+    Given the app it launched (`app=(pid, title)`), the guard passes that
+    app's own new windows, each checked once as it appears
+    (`scripts/windows_guard.py`): a `ZgxPopup` or Win32 menu (`#32768`, its
+    window's system menu) of its process, and its
+    WebView2 surface, an unowned top-level window of a
+    `msedgewebview2.exe` that is a direct child of the app's process and
+    bears its title. Anything else, another app's web view included, still
+    stops it.
   - **The candidate list itself.** Windows 11 draws candidates, and offers
     like Bing's, in TextInputHost's "Windows Input Experience" window (a
     `Windows.UI.Core.CoreWindow` under an `ApplicationFrameWindow`) that

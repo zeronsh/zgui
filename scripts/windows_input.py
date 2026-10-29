@@ -15,6 +15,8 @@ import time
 import zlib
 from ctypes import wintypes
 
+import windows_guard
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -213,6 +215,31 @@ def visible_windows():
         return True
 
     user32.EnumWindows(WNDENUMPROC(visit), 0)
+    return found
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+
+
+def processes():
+    """{pid: (parent pid, exe name)} of every process now (`windows_guard`)."""
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == H(-1).value:
+        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot")
+    entry = PROCESSENTRY32W()
+    entry.dwSize = ctypes.sizeof(entry)
+    found = {}
+    try:
+        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            found[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile)
+            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
     return found
 
 
@@ -496,7 +523,7 @@ def below_caret(hwnd, lines, field="first"):
     return points
 
 
-def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where=None):
+def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where=None, app=None):
     """Fail closed from now on: before every input sent (and when the
     returned check is called, after the last), the probe stops with a
     screenshot in directory `shots`, sending nothing, when
@@ -512,8 +539,15 @@ def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where
       enumeration doesn't list, holds anything but its candidate UI
       (`CANDIDATE_UI` and its list's items), or the hit-test or its UI
       Automation read fails.
+    With `app`, (pid, title) of the app the probe launched, its own new
+    windows are passed, each checked once as it appears (`windows_guard`):
+    a `ZgxPopup` or Win32 menu (`#32768`, the system menu) of its
+    process, and its WebView2 surface (a
+    msedgewebview2.exe child of it bearing its title); any other window
+    still stops the run.
     An offer or a consent prompt is never answered or closed."""
     baseline = {window[0] for window in visible_windows()}
+    trusted = set()
     before = ime_settings(settings)
     stops = 0
 
@@ -532,7 +566,14 @@ def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where
             changed = sorted(f"{k[0]}\\{k[1]}" for k in now.keys() | before.keys() if now.get(k) != before.get(k))
             restore_ime_settings(before, now)
             stop(f"an input method's settings changed ({', '.join(changed)}); put back as they were")
-        new = [w for w in visible_windows() if w[0] not in baseline]
+        new = [w for w in visible_windows() if w[0] not in baseline and w[0] not in trusted]
+        if app is not None and any(w[2] not in allowed for w in new):
+            # Read as they appear: a PID is only the app's while it runs.
+            running = processes()
+            for w in new:
+                if w[2] not in allowed and windows_guard.is_ours(w, app, running):
+                    trusted.add(w[0])
+            new = [w for w in new if w[0] not in trusted]
         unknown = [w for w in new if w[2] not in allowed]
         if unknown:
             found = "; ".join(f"class {c!r} title {t!r} {w}x{h} pid {pid}" for _, pid, c, t, (w, h) in unknown)
@@ -852,6 +893,8 @@ for name, res, args in [
     ("CreateToolhelp32Snapshot", H, [wintypes.DWORD, wintypes.DWORD]),
     ("Thread32First", wintypes.BOOL, [H, ctypes.POINTER(THREADENTRY32)]),
     ("Thread32Next", wintypes.BOOL, [H, ctypes.POINTER(THREADENTRY32)]),
+    ("Process32FirstW", wintypes.BOOL, [H, ctypes.POINTER(PROCESSENTRY32W)]),
+    ("Process32NextW", wintypes.BOOL, [H, ctypes.POINTER(PROCESSENTRY32W)]),
     ("OpenThread", H, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]),
     ("QueryThreadCycleTime", wintypes.BOOL, [H, ctypes.POINTER(ctypes.c_uint64)]),
     ("GetThreadDescription", ctypes.HRESULT, [H, ctypes.POINTER(wintypes.LPWSTR)]),

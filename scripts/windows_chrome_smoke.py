@@ -18,6 +18,7 @@ import subprocess
 import time
 from ctypes import wintypes
 
+import windows_compare as compare
 import windows_input as win
 
 user32 = ctypes.WinDLL("user32")
@@ -25,6 +26,10 @@ user32.IsZoomed.argtypes = [wintypes.HWND]
 user32.IsIconic.argtypes = [wintypes.HWND]
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 CLOSE, MAXIMIZE, MINIMIZE = 0, 1, 2
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.WindowFromPoint.argtypes = [wintypes.POINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
 user32.SendMessageW.restype = ctypes.c_ssize_t
 user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 # What each button answers WM_NCHITTEST with, as the system's buttons do.
@@ -55,6 +60,22 @@ def wait_for(check, what, timeout=5.0):
         if time.monotonic() > deadline:
             raise AssertionError(f"timed out waiting for {what}")
         time.sleep(0.05)
+
+
+def settle_uncovered(window, timeout=3.0):
+    """After a restore the pointer still rests where the minimize button
+    was, and that button's own "Minimise" tooltip covers the window's top
+    right corner: move the pointer to the client centre, once it is our
+    window there (never over another), and let the tooltip go before
+    checking nothing covers the window."""
+    width, height = win.client_size(window)
+    centre = (width // 2, height // 2)
+    x, y = win.to_screen(window, *centre)
+    top = user32.GetAncestor(user32.WindowFromPoint(wintypes.POINT(x, y)), 2)  # GA_ROOT
+    if top != win._handle(window):
+        raise AssertionError("the window's client centre shows another window: the pointer stays put")
+    win.move(window, *centre)
+    wait_for(lambda: compare.uncovered(window), "the window to be uncovered (its tooltip gone)", timeout)
 
 
 def main():
@@ -98,7 +119,7 @@ def main():
         # Restoring animates: the buttons take presses once it has ended.
         time.sleep(1.5)
         win.activate(window)
-        time.sleep(0.3)
+        settle_uncovered(window)
         win.click(window, *button(window, CLOSE))
         proc.wait(timeout=5)
         print(f"PASS: caption buttons hit-test as the system's (HTMAXBUTTON for snap layouts), "
