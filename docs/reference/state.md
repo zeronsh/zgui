@@ -502,6 +502,8 @@ return ui.column {
 
 Back and forward come from the platform's own input as well: the mouse's back and forward buttons over the view, and the commands `router.back` and `router.forward`, which the desktop host binds to Alt+← and Alt+→ (⌘[ and ⌘] on macOS). With a `scheme`, a link the system opens the app with (`mail://thread/42`) navigates to the route its path matches; a link that matches none is reported once. A route-driven modal reads the route in a controlled `open` and goes back in `on_close` ([overlays](overlays.md)).
 
+`zgx types` (and `zgx check`) types an app's literal routes ([scripting](../scripting.md)). `navigate` and `replace` take one overload per route, its params named by its path's `:params`, so `navigate("thraed")` and `navigate("thread", { idd = 7 })` are type errors. `is` takes the route names, and each `view` case's function gets its route's params. Up to 100 routes are typed with their params, and up to 1,000 by name alone. Past that, or for routes built at run time, they stay strings, and the `unknown-route` lint checks literal names.
+
 ## Plugins and slots
 
 A host's plugins (`ScriptHost::plugins(dir)`) are scripts in their own sandboxed VMs. A plugin returns nothing; it adds nodes to the application's slots with `ui.contribute(name, node)`. `ui.slot(name, props)` is a column holding every contribution to `name`, in plugin order; `props` style it. Plugins see the `ui.shared` state the host exposes (`expose_shared`, or `expose_shared_read` to read and follow only: a plugin's write is an error), never the application's `ui.state`.

@@ -68,6 +68,7 @@ mod paged;
 mod persist;
 mod reorder;
 mod router;
+mod routes;
 #[cfg(feature = "scene3d")]
 mod scene3d;
 mod sorted;

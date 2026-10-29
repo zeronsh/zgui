@@ -212,6 +212,94 @@ fn hook_types(text: String, targets: &crate::hook_targets::Targets) -> String {
     )
 }
 
+/// The most routes `RouteName` names; past it the route types stay
+/// `string`s, as `MessageKey` does, and the `unknown-route` lint checks
+/// names instead.
+const ROUTES_MAX: usize = 1000;
+/// The most routes `navigate` takes an overload for, each typing its route's
+/// params: past it a call takes any route name and loose params (a
+/// misspelled name still fails; every overload is listed in a failure's
+/// message, which is unreadable by then).
+const ROUTE_OVERLOADS: usize = 100;
+
+/// A table type's field for `name`: bare where it can be.
+fn field(name: &str) -> String {
+    let bare = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !KEYWORDS.contains(&name);
+    match bare {
+        true => name.to_owned(),
+        false => format!("[{name:?}]"),
+    }
+}
+
+/// `RouteName`, `Navigate` and `RouteCases` for the routes an app's
+/// routers declare, in place of zgx's `string`s; unchanged for none, a
+/// router it can't read, or past `ROUTES_MAX`.
+fn route_types(text: String, routes: &crate::routes::Routes) -> String {
+    const NAME: &str = "export type RouteName = string\n";
+    const NAVIGATE: &str =
+        "export type Navigate = (to: string, params: { [string]: any }?) -> ()\n";
+    const CASES: &str =
+        "export type RouteCases = { [string]: Node | (params: { [string]: string }) -> Node }\n";
+    assert!(
+        text.contains(NAME) && text.contains(NAVIGATE) && text.contains(CASES),
+        "zgx.d.luau declares RouteName, Navigate and RouteCases loose"
+    );
+    let routes = &routes.routes;
+    if routes.is_empty() || routes.len() > ROUTES_MAX {
+        return text;
+    }
+    let table = |params: &[String], value: &str, access: &str| match params.is_empty() {
+        true => String::from("{}"),
+        false => {
+            let fields: Vec<String> = params
+                .iter()
+                .map(|param| format!("{access}{}: {value}", field(param)))
+                .collect();
+            format!("{{ {} }}", fields.join(", "))
+        }
+    };
+    let names: Vec<String> = routes.keys().map(|name| format!("{name:?}")).collect();
+    let navigate = match routes.len() <= ROUTE_OVERLOADS {
+        true => routes
+            .iter()
+            .map(|(name, params)| match params.is_empty() {
+                true => format!("((to: {name:?}, params: {{}}?) -> ())"),
+                false => format!(
+                    "((to: {name:?}, params: {}) -> ())",
+                    // Read only: the new solver holds a table's fields
+                    // invariant, and `{ id = 7 }` is no `{ id: string | number }`.
+                    table(params, "string | number", "read ")
+                ),
+            })
+            .collect::<Vec<_>>()
+            .join(" & "),
+        false => String::from("(to: RouteName, params: { [string]: any }?) -> ()"),
+    };
+    let cases: Vec<String> = routes
+        .iter()
+        .map(|(name, params)| {
+            format!(
+                "{}: (Node | (params: {}) -> Node)?",
+                field(name),
+                table(params, "string", "")
+            )
+        })
+        .collect();
+    text.replacen(
+        NAME,
+        &format!("export type RouteName = {}\n", names.join(" | ")),
+        1,
+    )
+    .replacen(NAVIGATE, &format!("export type Navigate = {navigate}\n"), 1)
+    .replacen(
+        CASES,
+        &format!("export type RouteCases = {{ {} }}\n", cases.join(", ")),
+        1,
+    )
+}
+
 /// zgx's definitions with the tokens an app's scripts (`sources`) declare.
 pub fn definitions(sources: &[(PathBuf, String)]) -> String {
     let read: Vec<_> = sources
@@ -260,9 +348,13 @@ pub fn definitions(sources: &[(PathBuf, String)]) -> String {
         );
     }
     let text = hook_types(text, &targets);
+    let text = match crate::routes::declared(&files) {
+        routes if routes.open => text,
+        routes => route_types(text, &routes),
+    };
     format!(
         "-- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`)\n\
-         -- and the ids and hooks its plugins may target.\n\
+         -- and the ids and hooks its plugins may target, its message keys and routes.\n\
          -- Written by `zgx types` (and `zgx check`, and the debug host after a\n\
          -- reload that changes the names): don't edit it, and leave it out of\n\
          -- version control. Editors list it in place of zgx.d.luau.\n{text}"
@@ -404,6 +496,54 @@ mod tests {
             .collect();
         let types = app(&format!("return ui.column {{ {} }}", ids.join(", ")));
         assert!(types.contains("export type HookTarget = string\n"));
+    }
+
+    #[test]
+    fn an_apps_routes_type_navigate_and_the_views_cases() {
+        let types = app(
+            r#"local router = ui.router { routes = { list = "/", thread = "/thread/:id", ["end"] = "/end/:a/:b" } }"#,
+        );
+        assert!(types.contains("export type RouteName = \"end\" | \"list\" | \"thread\"\n"));
+        assert!(types.contains(
+            "export type Navigate = ((to: \"end\", params: { read a: string | number, read b: string | number }) -> ()) \
+             & ((to: \"list\", params: {}?) -> ()) \
+             & ((to: \"thread\", params: { read id: string | number }) -> ())\n"
+        ));
+        assert!(types.contains(
+            "export type RouteCases = { [\"end\"]: (Node | (params: { a: string, b: string }) -> Node)?, \
+             list: (Node | (params: {}) -> Node)?, thread: (Node | (params: { id: string }) -> Node)? }\n"
+        ));
+    }
+
+    #[test]
+    fn routes_read_at_run_time_or_past_the_limit_stay_strings() {
+        let loose = app("return ui.text { \"plain\" }");
+        assert!(loose.contains("export type RouteName = string\n"));
+        let open =
+            app("local routes = { list = \"/\" }\nlocal router = ui.router { routes = routes }");
+        assert!(
+            open.contains("export type RouteName = string\n"),
+            "routes not literal"
+        );
+        let many: Vec<String> = (0..=ROUTES_MAX)
+            .map(|i| format!("r{i} = \"/r{i}\""))
+            .collect();
+        let past = app(&format!(
+            "local router = ui.router {{ routes = {{ {} }} }}",
+            many.join(", ")
+        ));
+        assert!(past.contains("export type RouteName = string\n"));
+        // Past the overloads, a name still checks and params go loose.
+        let some: Vec<String> = (0..=ROUTE_OVERLOADS)
+            .map(|i| format!("r{i} = \"/r{i}\""))
+            .collect();
+        let named = app(&format!(
+            "local router = ui.router {{ routes = {{ {} }} }}",
+            some.join(", ")
+        ));
+        assert!(named.contains(
+            "export type Navigate = (to: RouteName, params: { [string]: any }?) -> ()\n"
+        ));
     }
 
     #[test]

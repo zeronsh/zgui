@@ -799,24 +799,33 @@ export type RouterSpec = {
 }
 -- Where the router is: the route's name, its path and its params.
 export type Route = { name: string, path: string, params: { [string]: string } }
+-- The app's route names. `zgx types` writes the names of its literal
+-- `ui.router { routes = { … } }`, so a misspelled one is an error.
+export type RouteName = string
+-- `navigate` and `replace`. `zgx types` writes one overload per route, its
+-- params named by its path's `:params`.
+export type Navigate = (to: string, params: { [string]: any }?) -> ()
+-- `view`'s cases. `zgx types` writes each route's, its function's params
+-- named by its path.
+export type RouteCases = { [string]: Node | (params: { [string]: string }) -> Node }
 export type Router = {
 	route: State<Route>,
 	can_back: State<boolean>,
 	can_forward: State<boolean>,
 	-- Go to a route by its name and params.
-	navigate: (to: string, params: { [string]: any }?) -> (),
+	navigate: Navigate,
 	-- The same, in place of the route now (nothing added behind).
-	replace: (to: string, params: { [string]: any }?) -> (),
+	replace: Navigate,
 	-- Go to the route a path matches ("/thread/42"), as a deep link does;
 	-- `{ replace = true }` in place of the route now.
 	open: (path: string, opts: { replace: boolean? }?) -> (),
 	back: () -> (),
 	forward: () -> (),
 	-- Whether the route is `name` now (tracked).
-	is: (name: string) -> boolean,
+	is: (name: RouteName) -> boolean,
 	-- What each route shows: a node or a function of its params; the mouse's
 	-- back and forward buttons over it go back and forward.
-	view: (cases: { [string]: Node | (params: { [string]: string }) -> Node }, props: ContainerProps?) -> Node,
+	view: (cases: RouteCases, props: ContainerProps?) -> Node,
 }
 export type FormSpec = {
 	fields: { [string]: any },

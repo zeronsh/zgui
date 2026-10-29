@@ -226,3 +226,41 @@ fn the_examples_types_files_are_what_zgx_types_writes() {
         );
     }
 }
+
+#[test]
+fn a_misspelled_route_or_param_is_a_type_error() {
+    if !installed() {
+        return;
+    }
+    let router =
+        "local router = ui.router { routes = { list = \"/\", thread = \"/thread/:id\" } }\n";
+    let dir = scripts(
+        "routes",
+        &[
+            (
+                "app.luau",
+                &format!(
+                    "{router}router.navigate(\"thread\", {{ id = 7 }})\nrouter.replace(\"list\")\n\
+                     local _shown = router.is(\"thread\")\n\
+                     return router.view({{ list = ui.text {{ \"All\" }}, thread = function(params)\n\
+                     \treturn ui.text {{ params.id }}\nend }})\n"
+                ),
+            ),
+            (
+                "name.luau",
+                &format!("{router}router.navigate(\"thraed\", {{ id = 7 }})\nreturn {{}}\n"),
+            ),
+            (
+                "param.luau",
+                &format!("{router}router.navigate(\"thread\", {{ idd = 7 }})\nreturn {{}}\n"),
+            ),
+        ],
+    );
+    let out = zgx().arg("check").arg(&dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(!stdout.contains("app.luau"), "{stdout}");
+    assert!(stdout.contains("name.luau:2:"), "{stdout}");
+    assert!(stdout.contains("param.luau:2:"), "{stdout}");
+    std::fs::remove_dir_all(dir).unwrap();
+}

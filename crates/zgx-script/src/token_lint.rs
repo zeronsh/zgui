@@ -405,7 +405,7 @@ pub(crate) fn called(t: &[Token], at: usize) -> Option<String> {
 }
 
 /// The index of the bracket closing the one opened at `at`.
-fn closing(t: &[Token], at: usize) -> usize {
+pub(crate) fn closing(t: &[Token], at: usize) -> usize {
     let mut depth = 0;
     for (j, token) in t.iter().enumerate().skip(at) {
         if token.kind != Kind::Punct {
@@ -504,7 +504,7 @@ fn group(t: &[Token], open: usize, prefix: &str, names: &mut Names) {
 }
 
 /// The start of the field after the one at `at`, in a table ending at `end`.
-fn next_field(t: &[Token], at: usize, end: usize) -> usize {
+pub(crate) fn next_field(t: &[Token], at: usize, end: usize) -> usize {
     let mut j = at;
     while j < end {
         match (t[j].kind, t[j].text.as_str()) {

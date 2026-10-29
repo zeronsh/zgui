@@ -58,6 +58,12 @@
 //!   `unknown-token` is; for an app past luau-lsp's union limit (where
 //!   `zgx types` leaves `target` a string) and for plugins nobody
 //!   type-checks. A selector (`ui.selector(…)`) is not checked.
+//! - `unknown-route`: a literal route name given to a router's `navigate`,
+//!   `replace` or `is`, or a case of its `view`, that no literal
+//!   `ui.router { routes = … }` declares (`"thraed"`: did you mean
+//!   `thread`?). Types catch the calls; a misspelled `view` case they
+//!   don't (Luau takes a table's extra fields), nor an app past their
+//!   limit.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -153,6 +159,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "unknown-target",
         "a ui.contribute or ui.filter target `#id` or `hook:name` no element declares",
+    ),
+    (
+        "unknown-route",
+        "a route name given to a router's navigate, replace, is or view that no ui.router declares",
     ),
 ];
 
@@ -260,6 +270,7 @@ pub fn lint_app(sources: &[(PathBuf, String)]) -> Vec<Diagnostic> {
         .collect();
     let mut tokens = crate::token_lint::unknown_tokens(&files);
     tokens.extend(crate::hook_targets::unknown_targets(&files));
+    tokens.extend(crate::routes::unknown_routes(&files));
     tokens.retain(|d| {
         read.iter()
             .find(|(file, _)| **file == d.file)
