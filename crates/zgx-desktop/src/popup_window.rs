@@ -612,6 +612,8 @@ mod macos {
         rect: Option<Rect>,
         /// Its popup root's layer revision it last drew.
         revision: Option<u64>,
+        /// Its frame's last contained panic (`contain::run`).
+        fault: Option<crate::contain::Fault>,
         /// A drag preview's: from where its preview goes to its frame.
         preview: Option<(f32, f32)>,
         /// Moved by the window server alone (`follow`), to `rect` over its
@@ -708,6 +710,7 @@ mod macos {
                 scale: 0.,
                 rect: None,
                 revision: None,
+                fault: None,
                 preview: None,
                 moved: None,
             }
@@ -818,6 +821,7 @@ mod macos {
             self.material = None;
             self.rect = None;
             self.revision = None;
+            self.fault = None;
             if self.preview.take().is_some() {
                 let number = self.window.windowNumber();
                 PREVIEWS.with(|previews| previews.borrow_mut().retain(|other| *other != number));
@@ -1364,8 +1368,20 @@ mod macos {
                 if changed || resized {
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
                     let renderer = panel.renderer.as_mut().expect("made above");
-                    renderer.repaint_all();
-                    renderer.render(scene, &[])?;
+                    let drawn = crate::contain::run(
+                        &mut panel.fault,
+                        revision,
+                        std::time::Instant::now(),
+                        "a popup's frame",
+                        crate::contain::queue,
+                        || {
+                            renderer.repaint_all();
+                            renderer.render(scene, &[])
+                        },
+                    );
+                    if let Some(drawn) = drawn {
+                        drawn?;
+                    }
                 }
                 // A drag preview's panel goes where the drag puts it; its
                 // frame is drawn where the scene has it.
@@ -1676,6 +1692,8 @@ mod x11 {
         window: Arc<Window>,
         renderer: Option<GpuRenderer>,
         revision: Option<u64>,
+        /// Its frame's last contained panic (`contain::run`).
+        fault: Option<crate::contain::Fault>,
         /// Where it shows: its box in the parent's coordinates.
         rect: Option<Rect>,
         /// A drag preview's: its box's offset from where the scene lays the
@@ -2114,6 +2132,7 @@ mod x11 {
                     window: Arc::new(window),
                     renderer: None,
                     revision: None,
+                    fault: None,
                     rect: None,
                     preview: None,
                 });
@@ -2338,9 +2357,21 @@ mod x11 {
                 if new || full || resized || popup.revision != Some(revision) {
                     popup.revision = Some(revision);
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
-                    renderer.repaint_all();
-                    renderer.render(scene, &[])?;
-                    renderer.present()?;
+                    let drawn = crate::contain::run(
+                        &mut popup.fault,
+                        revision,
+                        std::time::Instant::now(),
+                        "a popup's frame",
+                        crate::contain::queue,
+                        || {
+                            renderer.repaint_all();
+                            renderer.render(scene, &[])
+                        },
+                    );
+                    if let Some(drawn) = drawn {
+                        drawn?;
+                        renderer.present()?;
+                    }
                 }
                 // Onto the screen once its frame is there.
                 if popup.rect != Some(frame) {
@@ -2448,6 +2479,7 @@ mod x11 {
             pass_through(&popup.window, false);
         }
         popup.revision = None;
+        popup.fault = None;
         popup.rect = None;
         TARGETS.with(|targets| targets.borrow_mut().remove(&popup.window.id()));
         HIDDEN.with(|hidden| {

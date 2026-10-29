@@ -4,7 +4,9 @@ example: a menu hanging past its window's bottom edge shows in a window of
 its own, override-redirect, typed a popup menu and transient for its parent,
 its rows past the parent's edge drawn and chosen there; a press on the bare
 desktop closes it (the pointer grab a menu holds); and no popup window
-exists before one is wanted, nor shows once it closed. At a scale of 2
+exists before one is wanted, nor shows once it closed. A popup whose frame
+panics every time it is drawn (`ZGX_PANIC_IN`, debug builds) is reported
+once and skipped while the app runs on and still closes it. At a scale of 2
 (`WINIT_X11_SCALE_FACTOR`), its window is its size in the screen's pixels,
 where the scene put it in them, and its last item is chosen there."""
 import argparse
@@ -145,6 +147,39 @@ def main():
                                            "drawn past the window")), checks
         assert checks["wakeups at rest (3 s)"] <= 1, checks
         stop(app)
+
+        # A popup's frame that panics every time it is drawn (#950): the
+        # panic is reported once, its frames are skipped, and the app runs
+        # on: the menu still opens over its trigger and a press closes it.
+        # Its stderr (the report) in a file of its own, its stdout in `log`.
+        errors = args.output / "application-panic-stderr.log"
+        log = args.output / "application-panic.log"
+        app = launch("application-panic-stderr", [str(args.binary.resolve())],
+                     dict(env, ZGX_PANIC_IN="a popup's frame"), stdout=log.open("w"))
+        until("READY with a panicking popup", lambda: "READY" in log.read_text())
+        main_window = until("the window", lambda: (windows(True) or [None])[0])
+        run("xdotool", "windowactivate", "--sync", main_window)
+        x, y, w, h = geometry(main_window)
+        run("xdotool", "mousemove", x + 76, y + h - 30)
+        time.sleep(.3)
+        run("xdotool", "click", 1)
+        until("the menu open with a panicking frame", lambda: state().startswith("OPEN true"))
+        # Hover its rows for three seconds: every hover changes its frame.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            for row in range(8):
+                run("xdotool", "mousemove", x + 76, y + h + 20 + row * 22)
+                time.sleep(.05)
+        checks["running with a panicking popup frame"] = app.poll() is None
+        run("xdotool", "mousemove", SCREEN[0] - 5, 5)
+        time.sleep(.3)
+        run("xdotool", "click", 1)
+        until("the menu closed with a panicking frame", lambda: state().startswith("OPEN false"))
+        stop(app)
+        text = errors.read_text()
+        checks["a panicking popup frame reported once"] = text.count("contained a panic in a popup's frame") == 1
+        assert checks["running with a panicking popup frame"], checks
+        assert checks["a panicking popup frame reported once"], (checks, text[-3000:])
 
         # At a scale of 2, on a screen twice the size: the same layout in
         # points, in twice the pixels.

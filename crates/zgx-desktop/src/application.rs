@@ -1307,6 +1307,11 @@ struct Host {
     renderer_retry: Option<std::time::Instant>,
     /// The banner saying something failed (`show_error`), once one has.
     error_banner: Option<(Signal<String>, zgx::compose::ViewHandle)>,
+    /// The window's frame's and the popup host's last contained panics,
+    /// and the damaged frames tried (`contain::run`).
+    render_fault: Option<crate::contain::Fault>,
+    popups_fault: Option<crate::contain::Fault>,
+    frames_tried: u64,
     adapter: Option<accesskit_winit::Adapter>,
     tree: AccessibilityTree,
     proxy: EventLoopProxy<Event>,
@@ -1677,6 +1682,9 @@ impl Host {
             renderer: None,
             renderer_retry: None,
             error_banner: None,
+            render_fault: None,
+            popups_fault: None,
+            frames_tried: 0,
             adapter: None,
             tree: AccessibilityTree::new(),
             proxy,
@@ -2176,6 +2184,10 @@ impl Host {
             extended = [damage, &planned[..]].concat();
             &extended[..]
         };
+        // Panics contained in this frame's pieces (`contain::run`), and
+        // whether the window's own frame was left undrawn by one.
+        let mut faults: Vec<String> = Vec::new();
+        let mut undrawn = false;
         if !damage.is_empty() {
             if self.frame_paced && !self.present_ready {
                 // Layout/model work proceeds, but defer GPU work until a frame
@@ -2196,19 +2208,42 @@ impl Host {
                     zgx_gpu::present_log::log(|| {
                         format!("render forced={forced} rects={}", damage.len())
                     });
-                    let stats = renderer.render(&scene, damage)?;
-                    first_mark(&FIRST_RENDER, "first frame rendered");
-                    self.native.render(&scene, damage)?;
-                    if let Some(frame) = &mut self.damage_check {
-                        *frame += 1;
-                        check_damage(renderer, &scene, damage, &full, size.width as usize, *frame)?;
+                    // A panic in it skips the window's frames (their damage
+                    // kept: the next drawn is whole) until it changes,
+                    // reported once; the rest of the app runs on.
+                    self.frames_tried += 1;
+                    let rendered = crate::contain::run(
+                        &mut self.render_fault,
+                        self.frames_tried,
+                        std::time::Instant::now(),
+                        "the window's frame",
+                        |message| faults.push(message.to_string()),
+                        || renderer.render(&scene, damage),
+                    );
+                    if let Some(stats) = rendered {
+                        let stats = stats?;
+                        first_mark(&FIRST_RENDER, "first frame rendered");
+                        self.native.render(&scene, damage)?;
+                        if let Some(frame) = &mut self.damage_check {
+                            *frame += 1;
+                            check_damage(
+                                renderer,
+                                &scene,
+                                damage,
+                                &full,
+                                size.width as usize,
+                                *frame,
+                            )?;
+                        }
+                        if let Some(log) = &mut self.gpu_stats {
+                            log.record(stats, renderer);
+                        }
+                        self.presentation.damaged();
+                    } else {
+                        undrawn = true;
                     }
-                    if let Some(log) = &mut self.gpu_stats {
-                        log.record(stats, renderer);
-                    }
-                    self.presentation.damaged();
                 }
-                self.force = false;
+                self.force = undrawn;
             }
         }
         // GPU views on planes of their own: their new frames, which damage
@@ -2398,18 +2433,39 @@ impl Host {
             && (self.popups.showing() || !scene.popups().is_empty())
         {
             let full = forced || report.damage.first() == full.first();
-            self.popups.update(
-                &window,
-                &scene,
-                &self.context.ui.semantics.borrow(),
-                &renderer.context(),
-                self.scale_factor as f32,
-                full,
-                self.context.ui.input.drag_state().as_ref(),
-                self.context.ui.input.take_drag_ended(),
-            )?;
+            // Each popup's frame is contained (`contain::run`); what else
+            // the host does (placing, materials) is contained as a whole.
+            self.frames_tried += 1;
+            let popups = &mut self.popups;
+            let updated = crate::contain::run(
+                &mut self.popups_fault,
+                self.frames_tried,
+                std::time::Instant::now(),
+                "the popups' update",
+                |message| faults.push(message.to_string()),
+                || {
+                    popups.update(
+                        &window,
+                        &scene,
+                        &self.context.ui.semantics.borrow(),
+                        &renderer.context(),
+                        self.scale_factor as f32,
+                        full,
+                        self.context.ui.input.drag_state().as_ref(),
+                        self.context.ui.input.take_drag_ended(),
+                    )
+                },
+            );
+            if let Some(updated) = updated {
+                updated?;
+            }
+            faults.extend(crate::contain::take_reported());
         }
         drop(scene);
+        // Banners for what was contained, now that nothing is borrowed.
+        for message in faults {
+            self.show_error(&message);
+        }
         // Native geometry that changed without zgx pixels to show with it.
         self.native.flush();
         let ui = &self.context.ui;

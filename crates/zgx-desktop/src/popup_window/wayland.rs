@@ -210,6 +210,8 @@ struct Shown {
     asked: Rect,
     trigger: Option<Rect>,
     revision: Option<u64>,
+    /// Its frame's last contained panic (`contain::run`).
+    fault: Option<crate::contain::Fault>,
     /// The popup it is a popup of (a submenu's menu), if not the window's.
     parent: Option<NodeId>,
 }
@@ -417,11 +419,20 @@ impl Popups {
                 if full || popup.revision != Some(revision) {
                     popup.revision = Some(revision);
                     popup.renderer.set_popup(*root, *bounds);
-                    popup.renderer.repaint_all();
-                    let status = popup
-                        .renderer
-                        .render(scene, &[])
-                        .and_then(|_| popup.renderer.present_with_status());
+                    let renderer = &mut popup.renderer;
+                    let status = crate::contain::run(
+                        &mut popup.fault,
+                        revision,
+                        std::time::Instant::now(),
+                        "a popup's frame",
+                        crate::contain::queue,
+                        || {
+                            renderer.repaint_all();
+                            renderer
+                                .render(scene, &[])
+                                .and_then(|_| renderer.present_with_status())
+                        },
+                    );
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?} {status:?}"));
                 }
                 client.state.targets.insert(
@@ -660,6 +671,7 @@ fn show(
         asked: geometry(rect),
         trigger: trigger.map(geometry),
         revision: None,
+        fault: None,
         parent: of.map(|(holder, ..)| holder),
     })
 }

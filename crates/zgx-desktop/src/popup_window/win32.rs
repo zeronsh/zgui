@@ -342,6 +342,8 @@ struct Panel {
     screen: Option<(i32, i32, i32, i32)>,
     /// Its popup root's layer revision it last drew.
     revision: Option<u64>,
+    /// Its frame's last contained panic (`contain::run`).
+    fault: Option<crate::contain::Fault>,
     /// A drag preview's: its box's offset from where the scene lays its root
     /// out (its window goes where the drag puts the root).
     preview: Option<(f32, f32)>,
@@ -423,6 +425,7 @@ impl Panel {
                 rect: None,
                 screen: None,
                 revision: None,
+                fault: None,
                 preview: None,
                 corner: None,
             })
@@ -537,6 +540,7 @@ impl Panel {
         self.rect = None;
         self.screen = None;
         self.revision = None;
+        self.fault = None;
         if let Some(renderer) = &mut self.renderer {
             renderer.trim();
         }
@@ -1091,9 +1095,21 @@ impl PopupHost {
                 .is_none_or(|old| (old.width, old.height) != (rect.width, rect.height));
             if changed || resized {
                 let renderer = panel.renderer.as_mut().expect("made above");
-                renderer.repaint_all();
-                renderer.render(scene, &[])?;
-                renderer.present()?;
+                let drawn = crate::contain::run(
+                    &mut panel.fault,
+                    revision,
+                    std::time::Instant::now(),
+                    "a popup's frame",
+                    crate::contain::queue,
+                    || {
+                        renderer.repaint_all();
+                        renderer.render(scene, &[])
+                    },
+                );
+                if let Some(drawn) = drawn {
+                    drawn?;
+                    renderer.present()?;
+                }
             }
             // A drag preview's window goes where the drag puts it; its frame
             // is drawn where the scene has it.

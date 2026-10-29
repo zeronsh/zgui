@@ -28,6 +28,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub mod app_menu;
 mod clipboard;
 mod composition;
+mod contain;
 pub mod file_dialog;
 #[cfg(target_os = "linux")]
 mod linux_dbus;
