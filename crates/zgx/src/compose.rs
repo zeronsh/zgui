@@ -122,7 +122,9 @@ pub(crate) struct Environment {
     pub(crate) services: ServiceScope,
     typography: Signal<Typography>,
     registry: Registry,
-    portal: Option<(NodeId, Signal<bool>)>,
+    /// The portal this subtree is in: its overlay, whether it shows, and
+    /// whether it is anchored (a popover's or a menu's).
+    portal: Option<(NodeId, Signal<bool>, bool)>,
     menu: Option<Rc<crate::compose_menu::MenuContext>>,
     measure: crate::rich_text::TextMeasure,
     /// The theme scope styles in this subtree resolve tokens from.
@@ -2811,11 +2813,15 @@ fn mount_portal_panel(
     let portal_parent = environment
         .portal
         .as_ref()
-        .map_or(ui.root(), |(node, _)| *node);
+        .map_or(ui.root(), |(node, _, _)| *node);
     let parent_visible = environment
         .portal
         .as_ref()
-        .map(|(_, visible)| visible.clone());
+        .map(|(_, visible, _)| visible.clone());
+    let in_anchored = environment
+        .portal
+        .as_ref()
+        .is_some_and(|(_, _, anchored)| *anchored);
     let portal = crate::compose_modal::create(ui, owner, portal_parent);
     if !anchored {
         // The theme's backdrop, following it.
@@ -2834,7 +2840,16 @@ fn mount_portal_panel(
             );
         });
     }
-    environment.portal = Some((portal.overlay, portal.visible.clone()));
+    let is_layer = view
+        .rare
+        .as_ref()
+        .and_then(|r| r.portal.as_ref())
+        .is_some_and(|p| p.layer);
+    environment.portal = Some((
+        portal.overlay,
+        portal.visible.clone(),
+        anchored && !is_layer,
+    ));
     let menu_context = is_menu.then(|| {
         crate::compose_menu::MenuContext::new(
             open.clone(),
@@ -2847,8 +2862,6 @@ fn mount_portal_panel(
         environment.menu = Some(menu.clone());
     }
 
-    let options = view.rare.as_ref().and_then(|r| r.portal.as_ref());
-    let is_layer = options.is_some_and(|p| p.layer);
     // A layer's panel is only what it holds; a dialog's or menu's is a card.
     let mut defaults = if is_layer {
         Styles::new()
@@ -3090,6 +3103,19 @@ fn mount_portal_panel(
         autofocus.unwrap_or(true),
         is_layer,
     );
+    // A popover in another's panel closes on a press in the parent's, too.
+    if let Some(anchor) =
+        anchor.filter(|_| in_anchored && dismiss_backdrop && !is_menu && !is_layer)
+    {
+        crate::compose_popover::mount_nested(
+            ui,
+            owner,
+            anchor,
+            portal.overlay,
+            open_signal.clone(),
+            portal.visible.clone(),
+        );
+    }
     // A layer (a toast, a tooltip) traps nothing, so it isn't modal; a
     // popover traps focus as a dialog does, so it is.
     ui.semantics.borrow_mut().update(panel, |node| {

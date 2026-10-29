@@ -640,6 +640,9 @@ struct State {
     /// Non-modal layers (toasts): what they hold stays live under any modal
     /// scope (`set_layer`).
     layers: Vec<NodeId>,
+    /// Scope roots and their triggers, which stay live to the pointer while
+    /// the scope is active (`set_scope_trigger`).
+    triggers: Vec<(NodeId, NodeId)>,
     clicks: ClickTracker,
     /// The system's drag threshold, once the host gives it.
     drag_threshold: Option<f32>,
@@ -1201,6 +1204,8 @@ impl InputDispatcher {
             crate::shrink_sparse(&mut s.options);
         }
         s.layers.retain(|id| *id != node);
+        s.triggers
+            .retain(|(root, trigger)| *root != node && *trigger != node);
         if s.clicks.0.is_some_and(|click| click.target == node) {
             s.clicks.0 = None;
         }
@@ -1251,6 +1256,11 @@ impl InputDispatcher {
                         .flatten(),
                 )
                 .chain(s.layers.iter().copied())
+                .chain(
+                    s.triggers
+                        .iter()
+                        .flat_map(|(root, trigger)| [*root, *trigger]),
+                )
                 .chain(s.unfocused_keys.iter().copied())
                 .filter(|id| !scene.contains(*id))
                 .collect()
@@ -1290,6 +1300,10 @@ impl InputDispatcher {
         };
         let hit = self.hit_target(&scene.borrow(), x, y);
         self.set_hover(scene, hit);
+    }
+    /// What a press at `x, y` lands on, as dispatch finds it.
+    pub(crate) fn pointer_target(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
+        self.hit_target(scene, x, y)
     }
     /// Move hover to `hit` and its ancestors, as the DOM's `mouseenter` and
     /// `mouseleave` do: a node hears `PointerLeave` once the pointer is
@@ -1438,6 +1452,16 @@ impl InputDispatcher {
         s.layers.retain(|id| *id != root);
         if layer {
             s.layers.push(root);
+        }
+    }
+    /// Keep `trigger` live while `root`'s scope is active, though outside it
+    /// (a popover's trigger row in its parent's panel, which toggles it), or
+    /// with `None`, no longer.
+    pub(crate) fn set_scope_trigger(&self, root: NodeId, trigger: Option<NodeId>) {
+        let mut s = self.state.borrow_mut();
+        s.triggers.retain(|(scope, _)| *scope != root);
+        if let Some(trigger) = trigger {
+            s.triggers.push((root, trigger));
         }
     }
     /// The active modal root, if any. Focus and pointer routing stay inside
@@ -1589,15 +1613,20 @@ impl InputDispatcher {
             }
             found
         };
-        // Inside the active scope, or, through porous scopes (submenus), any
-        // scope below it.
+        // Inside the active scope (or its trigger, `set_scope_trigger`), or,
+        // through porous scopes (submenus), any scope below it.
         let mut live = s.scopes.iter().rev().peekable();
         if !in_layer && live.peek().is_some() {
             let mut inside = false;
             for scope in live {
+                let trigger = s
+                    .triggers
+                    .iter()
+                    .find(|(root, _)| *root == scope.root)
+                    .map(|(_, trigger)| *trigger);
                 let mut ancestor = Some(node);
                 while let Some(id) = ancestor {
-                    if id == scope.root {
+                    if id == scope.root || Some(id) == trigger {
                         inside = true;
                         break;
                     }

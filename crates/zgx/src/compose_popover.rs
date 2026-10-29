@@ -1,5 +1,7 @@
 //! Placement for a retained popover portal; ownership and focus live in compose_modal.
 use crate::{
+    input::{InputEvent, PointerButton},
+    reactive::Signal,
     scene::{Direction, NodeId, Rect, Transform},
     widgets::Ui,
 };
@@ -107,6 +109,60 @@ pub(crate) fn mount_submenu(
     mount_placement(
         ui, owner, anchor, overlay, position, panel, None, None, None,
     );
+}
+
+/// A popover opened from inside another's panel (a row of a popover menu)
+/// closes on a press anywhere outside it and its trigger, and the press goes
+/// on to what it lands on: the parent's field takes focus, its other row
+/// acts, its backdrop closes it too. Its own backdrop lets the pointer
+/// through, so the parent's panel answers presses under it; and as the parent
+/// may reach past the window (popup windows, `Ui::set_popup_screens`), past
+/// any backdrop, the document hears each press to tell where it lands.
+pub(crate) fn mount_nested(
+    ui: &mut Ui,
+    owner: NodeId,
+    anchor: NodeId,
+    overlay: NodeId,
+    open: Signal<bool>,
+    visible: Signal<bool>,
+) {
+    let mut options = ui.input.options(overlay).unwrap_or_default();
+    options.pass_through = true;
+    ui.input.set_options(overlay, options);
+    ui.input.set_scope_trigger(overlay, Some(anchor));
+    let weak = ui.downgrade();
+    ui.on_document_event(owner, move |event| {
+        let InputEvent::PointerDown {
+            x,
+            y,
+            button: PointerButton::Primary,
+        } = *event
+        else {
+            return;
+        };
+        if !visible.with_untracked(|visible| *visible) {
+            return;
+        }
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let inside = {
+            let scene = ui.scene.borrow();
+            ui.input.pointer_target(&scene, x, y).is_some_and(|target| {
+                scene.contains(target)
+                    && (scene.is_within(target, overlay) || scene.is_within(target, anchor))
+            })
+        };
+        // On its trigger, the trigger's own click answers (an app toggling
+        // it closes it, rather than it closing here and opening again).
+        if inside {
+            return;
+        }
+        open.set(false);
+        // Closed now, though in a batch: the parent's backdrop, under the
+        // same press, hears it with its own focus scope back on top.
+        crate::compose_modal::deactivate(&ui, overlay);
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
