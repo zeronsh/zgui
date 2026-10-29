@@ -7,10 +7,10 @@
 //! normals, made smooth where a mesh has none, and texture coordinates, of
 //! any of glTF's component types), and their metallic-roughness materials'
 //! factors: colour, metal, roughness, emission, blending (`BLEND`) and
-//! `KHR_materials_unlit`, and their base colour textures (PNG or JPEG, in
-//! the file, inline or beside it). Not yet: the other textures (metal and
-//! roughness, normals, emission, occlusion), skins, morph targets,
-//! animations, sparse accessors, points and lines (skipped).
+//! `KHR_materials_unlit`, and their base colour, metal and roughness, and
+//! normal textures (PNG or JPEG, in the file, inline or beside it). Not
+//! yet: emission and occlusion textures, skins, morph targets, animations,
+//! sparse accessors, points and lines (skipped).
 use crate::{
     Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
 };
@@ -40,8 +40,11 @@ pub struct Model {
 struct Node {
     transform: Transform,
     children: Vec<usize>,
-    meshes: Vec<(Geometry, Material, Option<Texture>)>,
+    meshes: Vec<(Geometry, Material, Maps)>,
 }
+
+/// A mesh's textures, in `Map::ALL`'s order.
+type Maps = [Option<Texture>; 3];
 
 /// Deeper than this, a node tree is taken for a cycle.
 const MAX_DEPTH: usize = 256;
@@ -89,13 +92,14 @@ impl Model {
             doc: &doc,
             buffers: &buffers,
         };
-        // Base colour textures: each image a material uses, decoded once.
-        // One that can't be read leaves its meshes their colour alone.
+        // Textures: each image a material uses, decoded once. One that
+        // can't be read leaves its meshes their factors alone.
         let mut images: Vec<Option<Option<Texture>>> = vec![None; list(&doc, "images").len()];
         let materials = list(&doc, "materials")
             .iter()
             .map(|value| {
-                let texture = base_colour_image(&doc, value).and_then(|image| {
+                let maps: Maps = MAP_TEXTURES.map(|path| {
+                    let image = material_image(&doc, value, path)?;
                     images
                         .get_mut(image)?
                         .get_or_insert_with(|| {
@@ -104,7 +108,7 @@ impl Model {
                         })
                         .clone()
                 });
-                (material(value), texture)
+                (material(value), maps)
             })
             .collect::<Vec<_>>();
         let meshes = list(&doc, "meshes")
@@ -194,10 +198,12 @@ impl World {
             }
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
-            for (geometry, material, texture) in &node.meshes {
+            for (geometry, material, maps) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
-                if texture.is_some() {
-                    self.set_texture(mesh, texture.clone());
+                for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
+                    if texture.is_some() {
+                        self.set_map(mesh, map, texture.clone());
+                    }
                 }
             }
             stack.extend(node.children.iter().rev().map(|&c| (c, id, depth + 1)));
@@ -330,9 +336,9 @@ fn rotation_of(x: Vec3, y: Vec3, z: Vec3) -> Quat {
 }
 
 /// A material's factors (glTF's are in linear light, as zgx-3d's). Where
-/// a texture (not read yet) would scale a factor, its factor alone would
-/// mislead (a textured helmet's factors of 1 make a glowing mirror): a
-/// textured emission is none, and a textured metalness a dielectric.
+/// a texture not read yet would scale a factor, its factor alone would
+/// mislead (a textured helmet's emission of 1 makes it glow): a textured
+/// emission is none.
 fn material(value: &Value) -> Material {
     let pbr = value.get("pbrMetallicRoughness");
     let number = |key: &str, default: f32| {
@@ -344,21 +350,11 @@ fn material(value: &Value) -> Material {
     if value.get("alphaMode").and_then(Value::as_str) != Some("BLEND") {
         color[3] = 1.;
     }
-    let textured = |owner: Option<&Value>, key: &str| owner.is_some_and(|o| o.get(key).is_some());
-    let metal_textured = textured(pbr, "metallicRoughnessTexture");
     Material {
         color,
-        metallic: if metal_textured {
-            0.
-        } else {
-            number("metallicFactor", 1.).clamp(0., 1.)
-        },
-        roughness: if metal_textured {
-            0.5
-        } else {
-            number("roughnessFactor", 1.).clamp(0., 1.)
-        },
-        emissive: if textured(Some(value), "emissiveTexture") {
+        metallic: number("metallicFactor", 1.).clamp(0., 1.),
+        roughness: number("roughnessFactor", 1.).clamp(0., 1.),
+        emissive: if value.get("emissiveTexture").is_some() {
             [0.; 3]
         } else {
             floats::<3>(value.get("emissiveFactor")).unwrap_or([0.; 3])
@@ -369,11 +365,17 @@ fn material(value: &Value) -> Material {
     }
 }
 
-/// The image of `material`'s base colour texture, if it has one.
-fn base_colour_image(doc: &Value, material: &Value) -> Option<usize> {
-    let texture = material
-        .get("pbrMetallicRoughness")?
-        .get("baseColorTexture")?
+/// Where a material names each of its maps' textures (`Map::ALL`'s order).
+const MAP_TEXTURES: [&[&str]; 3] = [
+    &["pbrMetallicRoughness", "baseColorTexture"],
+    &["pbrMetallicRoughness", "metallicRoughnessTexture"],
+    &["normalTexture"],
+];
+/// The image of the texture `material` names at `path`, if it has one.
+fn material_image(doc: &Value, material: &Value, path: &[&str]) -> Option<usize> {
+    let texture = path
+        .iter()
+        .try_fold(material, |at, key| at.get(key))?
         .get("index")?
         .as_u64()?;
     let source = list(doc, "textures").get(texture as usize)?.get("source")?;
@@ -411,8 +413,8 @@ impl Reader<'_> {
     fn mesh(
         &self,
         mesh: &Value,
-        materials: &[(Material, Option<Texture>)],
-    ) -> Result<Vec<(Geometry, Material, Option<Texture>)>, ModelError> {
+        materials: &[(Material, Maps)],
+    ) -> Result<Vec<(Geometry, Material, Maps)>, ModelError> {
         let mut out = Vec::new();
         for primitive in list(mesh, "primitives") {
             // Triangles only: points, lines, strips and fans are skipped.
@@ -458,7 +460,7 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let (material, texture) = primitive
+            let (material, maps) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
                 .and_then(|m| materials.get(m as usize).cloned())
@@ -469,10 +471,10 @@ impl Reader<'_> {
                         roughness: 1.,
                         ..Material::default()
                     };
-                    (plain, None)
+                    (plain, Maps::default())
                 });
             let geometry = Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
-            out.push((geometry, material, texture));
+            out.push((geometry, material, maps));
         }
         Ok(out)
     }
@@ -842,7 +844,7 @@ mod tests {
             doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
         });
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
-        let texture = model.nodes[0].meshes[0].2.clone().expect("its texture");
+        let texture = model.nodes[0].meshes[0].2[0].clone().expect("its texture");
         assert_eq!((texture.width(), texture.height()), (2, 1));
         assert_eq!(texture.pixels(), [255, 0, 0, 255, 0, 0, 255, 255]);
         let world = World::new();
@@ -857,7 +859,7 @@ mod tests {
             doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
         });
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
-        assert!(model.nodes[0].meshes[0].2.is_none());
+        assert!(model.nodes[0].meshes[0].2[0].is_none());
     }
 
     #[test]

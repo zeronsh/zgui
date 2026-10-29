@@ -29,6 +29,29 @@ impl PartialEq for Texture {
         self.0.id == other.0.id
     }
 }
+/// What a mesh's texture gives it (`World::set_map`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Map {
+    /// Its colour, multiplied by the material's (sRGB, its alpha the
+    /// opacity of a translucent mesh).
+    BaseColour,
+    /// How metal (blue) and how rough (green) each point is, multiplying
+    /// the material's metallic and roughness (glTF's metallicRoughness).
+    MetalRoughness,
+    /// Which way each point faces, in the surface's own frame (red right,
+    /// green up the texture, blue out; glTF's and OpenGL's convention).
+    Normal,
+}
+impl Map {
+    /// Every map, in the order a frame binds them.
+    pub(crate) const ALL: [Map; 3] = [Map::BaseColour, Map::MetalRoughness, Map::Normal];
+    /// Whether its texels are colours (sRGB) rather than data.
+    pub(crate) fn srgb(self) -> bool {
+        matches!(self, Map::BaseColour)
+    }
+}
+
 /// The longest side a texture may have.
 pub(crate) const MAX_SIDE: u32 = 8192;
 impl Texture {

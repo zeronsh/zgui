@@ -81,7 +81,15 @@ struct Gpu {
     /// Textures by id, with the frame that last drew each.
     texture_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
-    textures: HashMap<u64, (wgpu::BindGroup, u64)>,
+    /// Uploaded textures by id and whether read as sRGB (a texture may be
+    /// a colour map in one place, data in another).
+    views: HashMap<(u64, bool), (wgpu::TextureView, u64)>,
+    /// Each set of maps meshes draw with (`Map::ALL`'s ids, 0 for none),
+    /// bound.
+    bindings: HashMap<[u64; 3], (wgpu::BindGroup, u64)>,
+    /// What a map a mesh hasn't got reads: white (its factors as they are)
+    /// and a flat normal. Made with the first textured frame.
+    stand_ins: Option<[wgpu::TextureView; 3]>,
     instances: Option<(wgpu::Buffer, usize)>,
     geometries: HashMap<u64, Buffers>,
     targets: Option<((u32, u32), wgpu::TextureView, wgpu::TextureView)>,
@@ -179,7 +187,8 @@ impl Viewport for Renderer {
         };
         let translucent = |d: &crate::world::Drawn| d.material.color[3] < 1.;
         // Opaque ones by geometry, then texture.
-        let texture_of = |d: &crate::world::Drawn| d.texture.map_or(0, crate::Texture::id);
+        let texture_of =
+            |d: &crate::world::Drawn| d.maps.map(|map| map.map_or(0, crate::Texture::id));
         let key = |d: &crate::world::Drawn| {
             if translucent(d) {
                 // Its depth's bits in total order, the farthest least.
@@ -189,12 +198,12 @@ impl Viewport for Renderer {
                 } else {
                     bits | 1 << 31
                 };
-                (1 << 63 | u64::from(!ordered), 0)
+                (1 << 63 | u64::from(!ordered), texture_of(d))
             } else {
                 (d.geometry.id() & !(1 << 63), texture_of(d))
             }
         };
-        let mut order: Vec<((u64, u64), usize)> = all.iter().map(key).zip(0..).collect();
+        let mut order: Vec<((u64, [u64; 3]), usize)> = all.iter().map(key).zip(0..).collect();
         order.sort_unstable();
         let drawn: Vec<&crate::world::Drawn> = order.iter().map(|&(_, i)| &all[i]).collect();
         let instances: Vec<Instance> = drawn.iter().map(|d| instance(d)).collect();
@@ -243,21 +252,56 @@ impl Viewport for Renderer {
                 }
             });
             entry.used = gpu.frame;
-            if let Some(texture) = d.texture {
-                let (layout, sampler) = (&gpu.texture_layout, &gpu.texture_sampler);
-                let entry = gpu.textures.entry(texture.id()).or_insert_with(|| {
-                    (
-                        upload(frame.device, frame.queue, layout, sampler, texture),
-                        0,
-                    )
-                });
-                entry.1 = gpu.frame;
+            for (map, texture) in crate::Map::ALL.into_iter().zip(d.maps) {
+                if let Some(texture) = texture {
+                    let entry = gpu
+                        .views
+                        .entry((texture.id(), map.srgb()))
+                        .or_insert_with(|| {
+                            (upload(frame.device, frame.queue, texture, map.srgb()), 0)
+                        });
+                    entry.1 = gpu.frame;
+                }
             }
+        }
+        // Each set of maps bound once, against stand-ins where a map is
+        // missing.
+        for d in &drawn {
+            let key = texture_of(d);
+            if key == [0; 3] {
+                continue;
+            }
+            let stand_ins = gpu.stand_ins.get_or_insert_with(|| {
+                let flat = |rgba: [u8; 4], srgb| {
+                    let texture = crate::Texture::from_rgba8(1, 1, rgba.to_vec()).unwrap();
+                    upload(frame.device, frame.queue, &texture, srgb)
+                };
+                [
+                    flat([255; 4], true),
+                    flat([255; 4], false),
+                    flat([128, 128, 255, 255], false),
+                ]
+            });
+            let views = &gpu.views;
+            let (layout, sampler) = (&gpu.texture_layout, &gpu.texture_sampler);
+            let entry = gpu.bindings.entry(key).or_insert_with(|| {
+                let view = |i: usize| {
+                    d.maps[i]
+                        .and_then(|t| views.get(&(t.id(), crate::Map::ALL[i].srgb())))
+                        .map_or(&stand_ins[i], |(view, _)| view)
+                };
+                (
+                    map_binding(frame.device, layout, sampler, [view(0), view(1), view(2)]),
+                    0,
+                )
+            });
+            entry.1 = gpu.frame;
         }
         let now = gpu.frame;
         gpu.geometries
             .retain(|_, buffers| now - buffers.used <= KEEP_FRAMES);
-        gpu.textures
+        gpu.views.retain(|_, (_, used)| now - *used <= KEEP_FRAMES);
+        gpu.bindings
             .retain(|_, (_, used)| now - *used <= KEEP_FRAMES);
 
         // Runs of one geometry and texture, of one pass (opaque, then
@@ -322,7 +366,7 @@ impl Viewport for Renderer {
             gpu.shadow_drawn = casting;
         }
 
-        if gpu.textured.is_none() && runs.iter().any(|(_, _, texture, _)| *texture != 0) {
+        if gpu.textured.is_none() && runs.iter().any(|(_, _, maps, _)| *maps != [0; 3]) {
             let shader = frame
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -375,7 +419,7 @@ impl Viewport for Renderer {
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
         for (geometry, glass, texture, instances) in runs {
             let buffers = &gpu.geometries[&geometry];
-            match (gpu.textures.get(&texture), &gpu.textured) {
+            match (gpu.bindings.get(&texture), &gpu.textured) {
                 (Some((binding, _)), Some(textured)) => {
                     pass.set_pipeline(&textured[usize::from(glass)]);
                     pass.set_bind_group(1, binding, &[]);
@@ -622,21 +666,24 @@ impl Gpu {
         });
         let stand_in = depth_map(device, 1, "3D shadow stand-in");
         let bind = frame_binding(device, &layout, &uniforms, &stand_in, &sampler);
+        let map_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("3D texture"),
+            label: Some("3D maps"),
             entries: &[
+                map_entry(0),
+                map_entry(1),
+                map_entry(2),
                 wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -728,7 +775,9 @@ impl Gpu {
             shadow_drawn: None,
             texture_layout,
             texture_sampler,
-            textures: HashMap::new(),
+            views: HashMap::new(),
+            bindings: HashMap::new(),
+            stand_ins: None,
             instances: None,
             geometries: HashMap::new(),
             targets: None,
@@ -743,14 +792,14 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array!
     3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
     7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4
 ];
-/// The shader, sampling a texture or not (its colour alone).
+/// The shader, sampling textures or not: its lines marked `//T ` are a
+/// textured pipeline's alone (its maps' bindings, samples and normal
+/// mapping), comments in an untextured one's.
 fn shader_source(textured: bool) -> String {
     if textured {
-        SHADER.to_owned()
+        SHADER.replace("//T ", "")
     } else {
-        SHADER
-            .replace(TEXTURE_BINDINGS, "")
-            .replace(TEXTURE_SAMPLE, "vec4(1.0)")
+        SHADER.to_owned()
     }
 }
 /// The opaque and translucent meshes' pipelines with `shader`, bound as
@@ -824,38 +873,58 @@ fn main_pipelines(
 }
 
 /// `texture` and its mipmaps on the GPU (written by the CPU where memory
-/// is shared: no copy, see `texture_with_levels`), bound for sampling.
+/// is shared: no copy, see `texture_with_levels`), read as sRGB colours or
+/// as data.
 fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
     texture: &crate::Texture,
-) -> wgpu::BindGroup {
+    srgb: bool,
+) -> wgpu::TextureView {
     let levels = crate::texture::mipmaps(texture.width(), texture.height(), texture.pixels());
     let levels: Vec<&[u8]> = levels
         .iter()
         .map(|(_, _, pixels)| pixels.as_slice())
         .collect();
-    let made = zgx_gpu::viewport::texture_with_levels(
+    zgx_gpu::viewport::texture_with_levels(
         device,
         queue,
         (texture.width(), texture.height()),
-        wgpu::TextureFormat::Rgba8UnormSrgb,
+        if srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
         &levels,
-        "3D texture",
-    );
-    let view = made.create_view(&Default::default());
+        "3D map",
+    )
+    .create_view(&Default::default())
+}
+/// A mesh's maps (`Map::ALL`'s order) bound for sampling.
+fn map_binding(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    maps: [&wgpu::TextureView; 3],
+) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("3D texture"),
+        label: Some("3D maps"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(maps[0]),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
+                resource: wgpu::BindingResource::TextureView(maps[1]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(maps[2]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
                 resource: wgpu::BindingResource::Sampler(sampler),
             },
         ],
@@ -908,14 +977,6 @@ fn frame_binding(
     })
 }
 
-/// The shader's texture, which an untextured pipeline's leaves out
-/// (`shader_source`).
-const TEXTURE_BINDINGS: &str = "@group(1) @binding(0) var base_texture: texture_2d<f32>;
-@group(1) @binding(1) var base_sampler: sampler;
-// (end of the texture's bindings)
-";
-const TEXTURE_SAMPLE: &str = "textureSample(base_texture, base_sampler, in.uv)";
-
 /// Metallic-roughness shading (GGX, Smith, Schlick) under a sun, up to four
 /// point lights and a hemisphere's ambient, mapped to display range by
 /// Khronos's PBR Neutral, premultiplied.
@@ -935,9 +996,10 @@ struct Frame {
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
-@group(1) @binding(0) var base_texture: texture_2d<f32>;
-@group(1) @binding(1) var base_sampler: sampler;
-// (end of the texture's bindings)
+//T @group(1) @binding(0) var base_texture: texture_2d<f32>;
+//T @group(1) @binding(1) var metal_rough_texture: texture_2d<f32>;
+//T @group(1) @binding(2) var normal_texture: texture_2d<f32>;
+//T @group(1) @binding(3) var map_sampler: sampler;
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -1032,9 +1094,34 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
     return select(high, low, c <= vec3(0.0031308));
 }
 
+//T // The surface's normal tilted by a normal map's texel (0 to 1 each, half
+//T // way flat), its frame from the screen's derivatives of the point and its
+//T // texture coordinates (as Khronos's viewer makes it without tangents).
+//T fn bumped(ng: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>, duvx: vec2<f32>, duvy: vec2<f32>, texel: vec3<f32>) -> vec3<f32> {
+//T     let det = duvx.x * duvy.y - duvy.x * duvx.y;
+//T     let along = (duvy.y * dpx - duvx.y * dpy) * sign(det);
+//T     let t = along - ng * dot(ng, along);
+//T     if abs(det) < 1e-12 || dot(t, t) < 1e-20 {
+//T         return ng;
+//T     }
+//T     let tangent = normalize(t);
+//T     let m = texel * 2.0 - 1.0;
+//T     return normalize(tangent * m.x + cross(ng, tangent) * m.y + ng * m.z);
+//T }
+
 @fragment fn fragment(in: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    // Its texture's colour (white without one), in linear light.
-    let texel = textureSample(base_texture, base_sampler, in.uv);
+    // Its maps (none in an untextured pipeline): its colour (white without
+    // one), in linear light; metal and roughness; which way it faces.
+    var texel = vec4(1.0);
+    var surface = vec4(1.0);
+    var bump = vec3(0.5, 0.5, 1.0);
+//T     texel = textureSample(base_texture, map_sampler, in.uv);
+//T     surface = textureSample(metal_rough_texture, map_sampler, in.uv);
+//T     bump = textureSample(normal_texture, map_sampler, in.uv).xyz;
+//T     let dpx = dpdx(in.world);
+//T     let dpy = dpdy(in.world);
+//T     let duvx = dpdx(in.uv);
+//T     let duvy = dpdy(in.uv);
     let base = in.color.rgb * texel.rgb;
     var lit: vec3<f32>;
     if in.material.z > 0.5 {
@@ -1044,9 +1131,10 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
         if !front {
             n = -n;
         }
+//T         n = bumped(n, dpx, dpy, duvx, duvy, bump);
         let v = normalize(frame.camera.xyz - in.world);
-        let metallic = in.material.x;
-        let roughness = in.material.y;
+        let metallic = in.material.x * surface.b;
+        let roughness = clamp(in.material.y * surface.g, 0.02, 1.0);
         var sun = frame.sun_color.rgb;
         if frame.params.w > 0.5 {
             sun *= sunlit(in.world, n);
@@ -1092,8 +1180,15 @@ mod tests {
     #[test]
     fn an_untextured_shader_binds_no_texture() {
         let (plain, textured) = (shader_source(false), shader_source(true));
-        assert!(!plain.contains("base_texture") && !plain.contains("@group(1)"));
-        assert!(textured.contains(TEXTURE_BINDINGS) && textured.contains(TEXTURE_SAMPLE));
+        // In the plain shader every line naming a map is a comment.
+        for line in plain
+            .lines()
+            .filter(|l| l.contains("_texture") || l.contains("@group(1)"))
+        {
+            assert!(line.trim_start().starts_with("//"), "{line}");
+        }
+        assert!(textured.contains("@group(1) @binding(2) var normal_texture"));
+        assert!(!textured.contains("//T"));
     }
 
     #[test]

@@ -410,3 +410,93 @@ fn textures_are_checked_and_mipmapped_down_to_one_texel() {
     let t = Texture::from_rgba8(3, 2, vec![10; 24]).unwrap();
     assert_eq!((t.width(), t.height()), (3, 2));
 }
+
+#[test]
+fn a_normal_map_tilts_a_surface_as_gltf_says() {
+    // A square facing the camera, u across to the right, v down; lit from
+    // the right (then from above), its normal map tilting it towards the
+    // light or away: +x is towards u, +y up the texture (glTF's).
+    let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+        position: [x, y, 0.],
+        normal: [0., 0., 1.],
+        uv: [u, v],
+    };
+    let square = || {
+        Geometry::new(
+            vec![
+                vertex(-1., -1., 0., 1.),
+                vertex(1., -1., 1., 1.),
+                vertex(1., 1., 1., 0.),
+                vertex(-1., 1., 0., 0.),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+        .unwrap()
+    };
+    let level = |light: Vec3, texel: [u8; 4]| -> Option<u8> {
+        let (world, id) = one(square(), Material::rgb(0xffffff).with(0., 1.));
+        world.add_light(Light::Directional {
+            direction: light,
+            color: [1., 1., 1.],
+            intensity: 2.,
+        });
+        world.set_map(
+            id,
+            Map::Normal,
+            Some(Texture::from_rgba8(1, 1, texel.to_vec()).unwrap()),
+        );
+        let mut window = Window::new(&world)?;
+        window.draw();
+        Some(window.pixel(50, 50)[0])
+    };
+    // Light from the right, travelling left and in.
+    let from_right = vec3(-1., 0., -1.);
+    let (Some(towards), Some(flat), Some(away)) = (
+        level(from_right, [230, 128, 180, 255]),
+        level(from_right, [128, 128, 255, 255]),
+        level(from_right, [26, 128, 180, 255]),
+    ) else {
+        return;
+    };
+    assert!(towards > flat && flat > away, "x: {towards} {flat} {away}");
+    let from_above = vec3(0., -1., -1.);
+    let (towards, away) = (
+        level(from_above, [128, 230, 180, 255]).unwrap(),
+        level(from_above, [128, 26, 180, 255]).unwrap(),
+    );
+    assert!(towards > away + 20, "y: {towards} {away}");
+}
+
+#[test]
+fn a_metal_roughness_map_scales_the_materials_factors() {
+    // A white sphere, fully metal and rough by its factors; its map's blue
+    // (metal) 0 makes it a dielectric, lit diffusely where a rough metal
+    // with no surroundings is dark.
+    let shade = |texel: [u8; 4]| -> Option<u8> {
+        let (world, id) = one(
+            Geometry::sphere(1., 48),
+            Material::rgb(0xffffff).with(1., 1.),
+        );
+        world.add_light(Light::Directional {
+            direction: vec3(0., 0., -1.),
+            color: [1., 1., 1.],
+            intensity: 3.,
+        });
+        world.set_map(
+            id,
+            Map::MetalRoughness,
+            Some(Texture::from_rgba8(1, 1, texel.to_vec()).unwrap()),
+        );
+        let mut window = Window::new(&world)?;
+        window.draw();
+        Some(window.pixel(50, 50)[0])
+    };
+    let (Some(metal), Some(dielectric)) = (shade([0, 255, 255, 255]), shade([0, 255, 0, 255]))
+    else {
+        return;
+    };
+    assert!(
+        dielectric > metal + 30,
+        "dielectric {dielectric}, metal {metal}"
+    );
+}

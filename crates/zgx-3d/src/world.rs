@@ -258,9 +258,9 @@ pub(crate) struct Inner {
     pub(crate) background: Option<[f32; 4]>,
     /// Whether the sun casts shadows (`World::set_shadows`).
     pub(crate) shadows: bool,
-    /// Objects' textures (`World::set_texture`), by index, with the
+    /// Objects' textures (`World::set_map`), by index and map, with the
     /// generation they were set for.
-    textures: std::collections::HashMap<u32, (u32, crate::Texture)>,
+    textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -268,7 +268,8 @@ pub(crate) struct Inner {
 pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
     pub(crate) material: &'a Material,
-    pub(crate) texture: Option<&'a crate::Texture>,
+    /// Its textures, by `Map::ALL`'s order.
+    pub(crate) maps: [Option<&'a crate::Texture>; 3],
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -292,11 +293,12 @@ impl Inner {
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
-                    texture: self
-                        .textures
-                        .get(&(index as u32))
-                        .filter(|(set_for, _)| *set_for == generation)
-                        .map(|(_, texture)| texture),
+                    maps: crate::Map::ALL.map(|map| {
+                        self.textures
+                            .get(&(index as u32, map))
+                            .filter(|(set_for, _)| *set_for == generation)
+                            .map(|(_, texture)| texture)
+                    }),
                     matrix,
                 });
             }
@@ -430,7 +432,7 @@ impl World {
             Some(slot) if slot.generation == id.generation && slot.value.is_some() => {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
-                inner.textures.remove(&id.index);
+                inner.textures.retain(|(index, _), _| *index != id.index);
                 true
             }
             _ => false,
@@ -438,30 +440,41 @@ impl World {
     }
     /// Object `id`'s texture: its colour multiplied by `texture` across its
     /// geometry's texture coordinates (`None`: its colour alone). A copy of
-    /// the texture is shared, not made.
+    /// the texture is shared, not made. Its base colour map (`set_map`).
     pub fn set_texture(&self, id: ObjectId, texture: Option<crate::Texture>) {
+        self.set_map(id, crate::Map::BaseColour, texture);
+    }
+    /// Object `id`'s texture, if it has one (its base colour map).
+    pub fn texture(&self, id: ObjectId) -> Option<crate::Texture> {
+        self.map(id, crate::Map::BaseColour)
+    }
+    /// Object `id`'s `map`: what `texture` gives it across its geometry's
+    /// texture coordinates (`None`: its material alone). A copy of the
+    /// texture is shared, not made.
+    pub fn set_map(&self, id: ObjectId, map: crate::Map, texture: Option<crate::Texture>) {
         self.change(|inner| {
             if inner.live(id.index, id.generation).is_none() {
                 return false;
             }
-            let before = inner.textures.get(&id.index).map(|(_, t)| t.id());
+            let key = (id.index, map);
+            let before = inner.textures.get(&key).map(|(_, t)| t.id());
             match texture {
                 Some(texture) => {
                     let changed = before != Some(texture.id());
-                    inner.textures.insert(id.index, (id.generation, texture));
+                    inner.textures.insert(key, (id.generation, texture));
                     changed
                 }
-                None => inner.textures.remove(&id.index).is_some(),
+                None => inner.textures.remove(&key).is_some(),
             }
         });
     }
-    /// Object `id`'s texture, if it has one.
-    pub fn texture(&self, id: ObjectId) -> Option<crate::Texture> {
+    /// Object `id`'s `map`, if it has one.
+    pub fn map(&self, id: ObjectId, map: crate::Map) -> Option<crate::Texture> {
         let inner = self.inner.borrow();
         inner.live(id.index, id.generation)?;
         inner
             .textures
-            .get(&id.index)
+            .get(&(id.index, map))
             .filter(|(set_for, _)| *set_for == id.generation)
             .map(|(_, texture)| texture.clone())
     }
