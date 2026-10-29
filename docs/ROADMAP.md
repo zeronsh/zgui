@@ -61,6 +61,30 @@ Primary platforms: **Linux and macOS**, per user preference. Windows remains a p
 
 Platform-specific behavior is not considered validated merely because it compiles. Native Mac process CPU/RSS/physical-footprint smoke measurements now exist; matched hardware-GPU comparisons, presentation cadence and energy measurements remain unverified. The plan is updated as implementation and evidence arrive.
 
+## Breaking changes for 0.2
+
+0.1.x stays additive (cargo-semver-checks clean). Changes that need a break wait
+here, to land together:
+
+- [ ] Named keys outside `Key`'s vocabulary. The desktop host drops every
+  winit `NamedKey` outside Tab, Enter, Space, Escape, the editing and
+  navigation keys, Insert, ContextMenu and F1–F35: media (play/pause, next,
+  previous, stop, volume up, down and mute), input-method keys (Kana, Eisu,
+  Convert/Henkan, NonConvert/Muhenkan, Hiragana, Katakana, Zenkaku/Hankaku,
+  Hangul, Hanja), PrintScreen, ScrollLock, Pause, NumLock, CapsLock, Help,
+  Clear, the Select, Find, Undo, Copy and Paste keys, Browser and Launch keys,
+  brightness and power. They reach no handler or binding. `Key` and
+  `InputEvent` are exhaustive, so a variant for them is a major change.
+  Design: `Key::Named(NamedKey)`, with `NamedKey` a `#[non_exhaustive]` enum of
+  those keys (and the keypad's identities, `NumpadEnter` and the others).
+  `Key` and `InputEvent` become `#[non_exhaustive]`, so later keys and events
+  are additive. Every backend maps them: winit's `NamedKey` on macOS, Windows
+  and Linux, and the Wayland and X11 paths' own. Keymaps,
+  `ui.command { keys = }` and the Luau key names take their names (`MediaPlayPause`,
+  `Kana`), and so do the docs and lint. Each backend has a mapping test. Until
+  then, a key's physical code binds it where the layout gives it a `Key`
+  (`KeyBinding::code`, added in 0.1.6).
+
 ## Remaining validation and refinement
 
 Completed checkboxes describe implemented, tested capabilities, not complete platform coverage or a stable API release. The following work remains explicit:

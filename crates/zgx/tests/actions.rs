@@ -427,3 +427,59 @@ fn binds_key_answers_as_dispatch_would_without_dispatching() {
     // Asking changes nothing: the chord still starts afresh.
     assert!(!ui.input.has_pending_keys());
 }
+#[test]
+fn a_binding_by_physical_key_tells_the_keypad_from_the_digit_row() {
+    let mut ui = Ui::new(400., 200.);
+    let trace = Rc::new(RefCell::new(Vec::new()));
+    let log = trace.clone();
+    let mounted = ui.mount(
+        column()
+            .keymap(
+                Keymap::new()
+                    .bind(binding(vec![Key::Character("1".into())], "digit"))
+                    .bind(KeyBinding::code(
+                        "Numpad1",
+                        Modifiers::default(),
+                        Action::new(Save("keypad")),
+                    ))
+                    .bind(KeyBinding::code(
+                        "NumpadEnter",
+                        Modifiers {
+                            shift: true,
+                            ..Default::default()
+                        },
+                        Action::new(Save("keypad enter")),
+                    )),
+            )
+            .on_action(move |action: &Save, cx| {
+                log.borrow_mut().push(action.0);
+                cx.prevent_default();
+            })
+            .child(button().id("focus")),
+    );
+    ui.input.focus(&ui.scene, mounted.find("focus"));
+    // The same key ("1") from the keypad and from the digit row.
+    ui.input.set_key_code(Some("Numpad1".into()));
+    ui.dispatch(down(Key::Character("1".into())));
+    ui.input.set_key_code(Some("Digit1".into()));
+    ui.dispatch(down(Key::Character("1".into())));
+    // A code binds with exactly its modifiers.
+    ui.input.set_key_code(Some("NumpadEnter".into()));
+    ui.dispatch(down(Key::Enter));
+    ui.dispatch(InputEvent::KeyDown {
+        key: Key::Enter,
+        modifiers: Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+        repeat: false,
+    });
+    assert_eq!(*trace.borrow(), vec!["keypad", "digit", "keypad enter"]);
+    // A host asking whether zgx binds it sees the code binding too.
+    ui.input.set_key_code(Some("Numpad1".into()));
+    assert!(ui.input.binds_key(
+        &ui.scene.borrow(),
+        &Key::Character("x".into()),
+        Modifiers::default()
+    ));
+}

@@ -838,9 +838,10 @@ impl InputDispatcher {
     pub fn binds_key(&self, scene: &Scene, key: &Key, modifiers: Modifiers) -> bool {
         let path = self.action_path(scene);
         let stroke = crate::actions::Keystroke::new(key.clone(), modifiers);
+        let code = self.state.borrow().key_code.clone();
         self.actions
             .try_borrow()
-            .is_ok_and(|actions| actions.binds(&path, &stroke))
+            .is_ok_and(|actions| actions.binds(&path, &stroke, code.as_deref()))
     }
     /// Route a typed action from focus through its enabled ancestors.
     pub fn dispatch_action(
@@ -2209,11 +2210,14 @@ impl InputDispatcher {
                 repeat,
             } = &event
             {
+                // The physical key, for bindings of one (`KeyBinding::code`).
+                let code = self.state.borrow().key_code.clone();
                 loop {
                     let path = self.action_path(&scene.borrow());
                     let resolution = self.actions.borrow_mut().resolve(
                         path,
                         crate::actions::Keystroke::new(key.clone(), *modifiers),
+                        code.as_deref(),
                         *repeat,
                         Instant::now(),
                     );

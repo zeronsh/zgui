@@ -61,7 +61,19 @@ existing interaction scheduling already integrates these methods.
 Focus changes, native blur, pointer press, composition, registration changes,
 disabling, subtree disposal and host interaction cancellation clear pending
 input. Idle views have no key deadline or polling. F1–F35 and Insert survive the
-desktop mapping alongside existing character/navigation/editing keys. On a layout of other letters (Russian, Greek, Hebrew, Arabic), a
+desktop mapping alongside existing character/navigation/editing keys.
+
+`KeyBinding::code("Numpad1", modifiers, action)` binds a physical key by the
+name the DOM's `KeyboardEvent.code` gives it (`"Numpad1"`, `"NumpadEnter"`,
+`"NumpadAdd"`), whatever its layout makes of it: the keypad's 1 apart from the
+digit row's (`"Digit1"`), which a binding of `Key::Character("1")` matches
+either way. It is one stroke, with exactly those modifiers. The desktop host
+reports each key's code (`EventContext::key_code`); a custom host sets it with
+`InputDispatcher::set_key_code` before dispatching the key. Keys zgx's `Key`
+has no value for (media, input-method and lock keys) reach no handler yet: they
+need a new `Key` variant, planned for 0.2 (`docs/ROADMAP.md`).
+
+On a layout of other letters (Russian, Greek, Hebrew, Arabic), a
 key pressed with Ctrl or Cmd (and not Alt, which with Ctrl is Windows' AltGr)
 whose character is outside ASCII arrives as the US letter on that key, as
 browsers and GTK take shortcuts: Ctrl and the C key copy whatever the layout

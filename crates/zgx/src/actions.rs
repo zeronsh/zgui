@@ -73,6 +73,8 @@ pub struct KeyBinding {
     sequence: Vec<Keystroke>,
     action: Action,
     context: Option<ContextPredicate>,
+    /// A physical key it binds instead of `sequence`'s key (`KeyBinding::code`).
+    code: Option<Rc<str>>,
 }
 impl KeyBinding {
     /// Bind one through four strokes. Invalid lengths are rejected without registration.
@@ -88,7 +90,34 @@ impl KeyBinding {
             sequence,
             action: action.into(),
             context: None,
+            code: None,
         })
+    }
+    /// Bind the physical key `code` (as the DOM's `KeyboardEvent.code`
+    /// names it: `"Numpad1"`, `"NumpadEnter"`, `"NumpadAdd"`) with exactly
+    /// `modifiers`, whatever its layout makes of it: the keypad's 1 apart
+    /// from the digit row's (`"Digit1"`). One stroke.
+    pub fn code(code: impl Into<String>, modifiers: Modifiers, action: impl Into<Action>) -> Self {
+        let code: Rc<str> = code.into().into();
+        Self {
+            // Its key is never compared (`code` is).
+            sequence: vec![Keystroke::new(Key::Character(String::new()), modifiers)],
+            action: action.into(),
+            context: None,
+            code: Some(code),
+        }
+    }
+    /// Whether it starts with `strokes`, the last pressed as the physical
+    /// key `code`.
+    fn starts_with(&self, strokes: &[Keystroke], code: Option<&str>) -> bool {
+        match &self.code {
+            None => self.sequence.starts_with(strokes),
+            Some(bound) => {
+                strokes.len() == 1
+                    && code == Some(&**bound)
+                    && strokes[0].modifiers == self.sequence[0].modifiers
+            }
+        }
     }
     /// Apply only where a context in the stack has `context` (see
     /// [`ContextPredicate::Flag`]).
@@ -266,7 +295,7 @@ impl Registry {
     }
     /// Whether a binding on `path` (focus first) starts with `stroke`, as
     /// `resolve` would find it from no pending sequence. Reads only.
-    pub(crate) fn binds(&self, path: &[NodeId], stroke: &Keystroke) -> bool {
+    pub(crate) fn binds(&self, path: &[NodeId], stroke: &Keystroke, code: Option<&str>) -> bool {
         let contexts: Vec<KeyContext> = path
             .iter()
             .rev()
@@ -289,7 +318,7 @@ impl Registry {
             .flat_map(|maps| maps.iter().rev())
             .flat_map(|(_, map)| map.bindings.iter().rev())
             .find(|binding| {
-                binding.sequence.first() == Some(stroke)
+                binding.starts_with(std::slice::from_ref(stroke), code)
                     && binding
                         .context
                         .as_ref()
@@ -301,6 +330,7 @@ impl Registry {
         &mut self,
         path: Vec<NodeId>,
         stroke: Keystroke,
+        code: Option<&str>,
         repeat: bool,
         now: Instant,
     ) -> Resolution {
@@ -337,7 +367,7 @@ impl Registry {
                             .context
                             .as_ref()
                             .is_some_and(|context| !context.matches(&contexts))
-                            || !binding.sequence.starts_with(&strokes)
+                            || !binding.starts_with(&strokes, code)
                         {
                             continue;
                         }
@@ -408,7 +438,7 @@ mod tests {
         assert!(matches!(
             registry
                 .borrow_mut()
-                .resolve(vec![node], stroke(1), false, now),
+                .resolve(vec![node], stroke(1), None, false, now),
             Resolution::Prefix
         ));
         assert_eq!(
@@ -429,7 +459,7 @@ mod tests {
         let Resolution::Matched(replay) =
             registry
                 .borrow_mut()
-                .resolve(vec![node], stroke(3), false, now)
+                .resolve(vec![node], stroke(3), None, false, now)
         else {
             panic!("exact binding did not win")
         };
