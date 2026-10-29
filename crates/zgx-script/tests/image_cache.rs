@@ -81,3 +81,33 @@ fn an_unmounted_page_leaves_the_budget_and_comes_back_from_it() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn boxes_with_background_images_leave_the_budget_as_they_unmount() {
+    const BOXES: &str = r##"
+local shown = ui.state("shown", true)
+local boxes = {}
+for i = 1, 40 do
+    boxes[i] = ui.div { bg_image = `img{i}.png`, w = 2, h = 2 }
+end
+return ui.column {
+    ui.show(shown, ui.row(boxes)),
+    ui.button { id = "hide", w = 40, h = 20, on_click = function() shown:set(false) end, "Hide" },
+}
+"##;
+    let dir = std::env::temp_dir().join(format!("zgx-bg-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 1..=40 {
+        std::fs::write(dir.join(format!("img{i}.png")), PNG).unwrap();
+    }
+    let app = dir.join("app.luau");
+    std::fs::write(&app, BOXES).unwrap();
+    let mut h = Harness::new(move |runtime| ScriptHost::new(runtime, app).image_cache(10 * 16));
+    h.frames(1);
+    assert_eq!(h.error(), None);
+    assert_eq!(h.host.image_cache_stats().0, 40);
+    h.click("hide");
+    h.frames(1);
+    assert_eq!(h.host.image_cache_stats().1, 10 * 16, "down to the budget");
+    std::fs::remove_dir_all(&dir).ok();
+}

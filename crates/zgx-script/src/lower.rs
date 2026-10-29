@@ -2694,6 +2694,9 @@ fn styled(
                 low.clone(),
             )
         });
+    if let Some((_, _, low)) = &bg_image {
+        view = swept(view, low);
+    }
     let shaders = node.shaders.as_deref();
     let shader =
         shaders.and_then(|s| Some((s.fill.clone()?, s.params.unwrap_or_default(), s.tokens)));
@@ -4886,6 +4889,15 @@ fn lower_image(node: &Node, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         }
     };
     view.on_mount(move |handle| handle.retain(sweeper.sweeper()))
+}
+
+/// `view`, showing a cached picture (a box's `bg_image`): as it unmounts,
+/// the cache lets go of pictures no node shows beyond its budget.
+#[cold]
+#[inline(never)]
+fn swept(view: View, low: &Lowering) -> View {
+    let assets = low.assets.clone();
+    view.on_mount(move |handle| handle.retain(assets.sweeper()))
 }
 
 /// A list row's key: its index, or (`key`) its item's key, a number,
