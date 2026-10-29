@@ -1435,6 +1435,10 @@ struct Host {
     focus_memory: crate::focus_memory::FocusMemory,
     last_accessibility: Option<(u64, Option<NodeId>)>,
     accessibility_geometry_dirty: bool,
+    /// The popups' layer revisions, summed: what changes in them damages
+    /// nothing in this window (`Scene::set_popup`), so their geometry is
+    /// dirty when these move.
+    popup_revisions: u64,
     /// Geometry alone reaches assistive technology at most every 100 ms.
     accessibility_pacer: crate::accessibility::GeometryPacer,
     /// The display text selection last published as the primary selection.
@@ -1772,6 +1776,7 @@ impl Host {
             focus_memory: crate::focus_memory::FocusMemory::default(),
             last_accessibility: None,
             accessibility_geometry_dirty: true,
+            popup_revisions: 0,
             accessibility_pacer: Default::default(),
             #[cfg(target_os = "linux")]
             primary_revision: 0,
@@ -2128,7 +2133,11 @@ impl Host {
         let scene = self.context.ui.scene.clone();
         let mut scene = scene.borrow_mut();
         let report = scene.flush();
-        self.accessibility_geometry_dirty |= !report.damage.is_empty();
+        let popup_revisions = scene.popups().iter().fold(0u64, |sum, root| {
+            sum.wrapping_add(scene.layer_revision(*root))
+        });
+        self.accessibility_geometry_dirty |= !report.damage.is_empty()
+            || std::mem::replace(&mut self.popup_revisions, popup_revisions) != popup_revisions;
         let full = [scene.bounds(scene.root())];
         let forced = self.force;
         // Painting only what changed can be switched off, to compare
