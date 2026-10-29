@@ -4,6 +4,11 @@ use std::{io::Cursor, sync::Arc};
 use zgx::image::ImageData;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Decode PNG/JPEG into immutable, straight-alpha RGBA8. No filesystem/network access.
+///
+/// The image is decoded into its final buffer, allocated once: 8-bit RGB,
+/// grey and grey-with-alpha images decode into its front and widen to RGBA
+/// in place, so a decode's peak is about the image itself, not the three
+/// copies (decoder output, its RGBA form, `ImageData`'s) it once was.
 pub fn decode_image(bytes: &[u8]) -> Result<Arc<ImageData>, GpuError> {
     if bytes.len() > MAX_BYTES {
         return Err(GpuError("encoded image exceeds 64 MiB".into()));
@@ -25,16 +30,56 @@ pub fn decode_image(bytes: &[u8]) -> Result<Arc<ImageData>, GpuError> {
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(MAX_BYTES as u64);
     reader.limits(limits);
-    let decoded = reader
-        .decode()
-        .map_err(|e| GpuError(e.to_string()))?
-        .into_rgba8();
-    if decoded.as_raw().len() > MAX_BYTES {
+    let failed = |e: image::ImageError| GpuError(e.to_string());
+    let decoder = reader.into_decoder().map_err(failed)?;
+    use image::ImageDecoder;
+    let (width, height) = decoder.dimensions();
+    let pixels = width as usize * height as usize;
+    if pixels * 4 > MAX_BYTES {
         return Err(GpuError("decoded image exceeds 64 MiB".into()));
     }
-    ImageData::new(decoded.width(), decoded.height(), decoded.into_raw())
+    let channels = match decoder.color_type() {
+        image::ColorType::Rgba8 => 4,
+        image::ColorType::Rgb8 => 3,
+        image::ColorType::La8 => 2,
+        image::ColorType::L8 => 1,
+        // Deeper or wider samples: as `image` converts them.
+        _ => {
+            let decoded = image::DynamicImage::from_decoder(decoder)
+                .map_err(failed)?
+                .into_rgba8();
+            return ImageData::new(width, height, decoded.into_raw())
+                .map(Arc::new)
+                .map_err(|e| GpuError(e.into()));
+        }
+    };
+    // SAFETY: Zeroed bytes are initialized `u8`s.
+    let mut rgba = unsafe { Arc::<[u8]>::new_zeroed_slice(pixels * 4).assume_init() };
+    let buffer = Arc::get_mut(&mut rgba).expect("a buffer just made");
+    decoder
+        .read_image(&mut buffer[..pixels * channels])
+        .map_err(failed)?;
+    widen(buffer, channels, pixels);
+    ImageData::new(width, height, rgba)
         .map(Arc::new)
         .map_err(|e| GpuError(e.into()))
+}
+/// `pixels` pixels of `channels` bytes each (RGB, grey with alpha, grey) at
+/// the front of `buffer`, widened in place to RGBA, last first: a pixel's
+/// four bytes never reach a narrower pixel not yet read.
+fn widen(buffer: &mut [u8], channels: usize, pixels: usize) {
+    if channels == 4 {
+        return;
+    }
+    for i in (0..pixels).rev() {
+        let at = i * channels;
+        let rgba = match channels {
+            3 => [buffer[at], buffer[at + 1], buffer[at + 2], 255],
+            2 => [buffer[at], buffer[at], buffer[at], buffer[at + 1]],
+            _ => [buffer[at], buffer[at], buffer[at], 255],
+        };
+        buffer[i * 4..i * 4 + 4].copy_from_slice(&rgba);
+    }
 }
 /// Rasterize an SVG at the requested physical size. External resources are disabled.
 /// SVG text needs conversion to outlines; the lightweight SVG dependency disables fonts.

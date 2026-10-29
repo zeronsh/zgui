@@ -109,6 +109,11 @@ harness = false
 name = "gif"
 required-features = ["gif"]
 
+# A counting global allocator: a process of its own.
+[[test]]
+name = "decode_peak"
+required-features = ["png", "jpeg"]
+
 [[test]]
 name = "svg"
 required-features = ["svg"]

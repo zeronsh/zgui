@@ -36,6 +36,31 @@ for asynchronous loading/playback; the desktop host supplies one.
 
 For code-driven animation (spinners, transitions, springs), await the window's display-paced frame clock instead of a timer; see [animation frames](application.md#animation-frames).
 
+## Decoded pixels kept while an image shows (a post-0.1.6 candidate)
+
+A decoded image stays in memory while a node shows it, and, once none
+does, within the cache's budget (`ScriptHost::image_cache`, 48 MiB by
+default). The GPU's copy lives in the renderer's atlas, which may evict it
+while the node still shows. The CPU copy is then what uploads it again: a
+scroll back to it costs an upload, not a decode.
+
+A mounted image could keep its encoded file instead, as 3D textures do
+(`zgx_3d::Texture`), and decode it again when the atlas has evicted it and
+it shows again, or after a lost device. That trades heap for decodes:
+
+- **Heap:** a page of 40 images of 640 by 480 (30 PNG, 10 JPEG) holds 49.2
+  MB of decoded pixels while it shows, against 18.9 MB of files. Real
+  photographs compress far better than that page's patterns: their JPEGs
+  are 5 to 20 times smaller than their pixels.
+- **Decodes:** 1.7 ms a PNG, 2.4 ms a JPEG of that size (M5 Max, one core).
+  A scroll back over ten evicted images would decode for about 20 ms, more
+  than two frames at 120 Hz, so it would have to decode off the main
+  thread, the image showing a frame or two late.
+
+Not in 0.1.6: today's trade (heap held while an image shows) keeps scroll
+backs free of decodes. Each decode already holds about the image once
+(`assets::decode_image`: PNG 1.09, JPEG 1.36 images at its peak).
+
 ## Image formats are features
 
 SVG, PNG, JPEG and GIF decoding are cargo features of `zgx-gpu`, `zgx-desktop`
