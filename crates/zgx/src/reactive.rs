@@ -771,6 +771,11 @@ impl Refresh {
 }
 impl Drop for Effect {
     fn drop(&mut self) {
+        // While tracing, its name and pending cause go with it.
+        #[cfg(feature = "trace")]
+        if crate::trace::enabled() {
+            crate::trace::forget(self.id);
+        }
         if let Some(runtime) = self.runtime.upgrade() {
             let record = runtime.effects.borrow_mut().remove(&self.id);
             if let Some(record) = record {

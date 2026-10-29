@@ -114,6 +114,17 @@ pub fn name(effect: u64, name: impl Into<Rc<str>>) {
         });
     }
 }
+/// Effect `effect` is gone: its name, and the cause of a run it was queued
+/// for and never made, go too (each mount names its effects anew).
+pub(crate) fn forget(effect: u64) {
+    // Dropped as the thread ends, the log may be gone already.
+    let _ = LOG.try_with(|log| {
+        if let Ok(mut log) = log.try_borrow_mut() {
+            log.names.remove(&effect);
+            log.causes.remove(&effect);
+        }
+    });
+}
 /// Signal `signal` was written, queueing `queued`.
 pub(crate) fn wrote(signal: usize, queued: &[u64]) {
     LOG.with_borrow_mut(|log| {
@@ -204,4 +215,49 @@ pub fn frames(n: usize) -> Vec<Frame> {
         let skip = log.frames.len().saturating_sub(n);
         log.frames.iter().skip(skip).cloned().collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{compose::prelude::*, widgets::Ui};
+
+    fn sizes() -> (usize, usize) {
+        super::LOG.with_borrow(|log| (log.names.len(), log.causes.len()))
+    }
+
+    #[test]
+    fn remounting_while_tracing_keeps_its_names_bounded() {
+        super::set_enabled(true);
+        let mut ui = Ui::new(200., 200.);
+        let count = ui.signal(0u32);
+        let shown = ui.signal(true);
+        let (read, show) = (count.clone(), shown.clone());
+        ui.mount(column().child(switch(
+            move || show.get(),
+            move |on, _| {
+                let read = read.clone();
+                column().children((0..if on { 20 } else { 0 }).map(move |i| {
+                    let read = read.clone();
+                    text_signal(move || format!("{i}: {}", read.get()))
+                }))
+            },
+        )));
+        ui.prepare_frame();
+        let once = sizes();
+        for round in 0..30 {
+            // Queued, then taken away before it runs: its cause goes too.
+            count.set(round + 1);
+            shown.set(false);
+            ui.prepare_frame();
+            shown.set(true);
+            ui.prepare_frame();
+        }
+        let after = sizes();
+        super::set_enabled(false);
+        assert!(once.0 > 0, "the mount named its effects");
+        assert!(
+            after.0 <= once.0 + 4 && after.1 <= once.1 + 4,
+            "names and causes stay as many as the mounted effects: {once:?} then {after:?}"
+        );
+    }
 }
