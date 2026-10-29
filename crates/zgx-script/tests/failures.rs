@@ -72,3 +72,48 @@ return ui.column {
     let error = h.error().expect("the image's error is reported");
     assert!(error.contains("picture.png"), "{error}");
 }
+
+/// A missing image is reported with the script line that named it, in
+/// the file that names it: it loads once the node mounts, when no script
+/// line runs.
+#[test]
+fn a_missing_image_names_the_line_that_asked_for_it() {
+    let error_of = |name: &str, files: &[(&str, &str)]| {
+        let dir =
+            std::env::temp_dir().join(format!("zgx-image-site-{}-{name}", std::process::id()));
+        for (file, code) in files {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, code).unwrap();
+        }
+        let path = dir.join("app.luau");
+        let h = Harness::new(|runtime| zgx_script::ScriptHost::new(runtime, path));
+        h.frame();
+        h.error().expect("the image's error is reported")
+    };
+    let error = error_of(
+        "bg",
+        &[(
+            "app.luau",
+            "return ui.column {\n\n\tui.div { bg_image = 'no-such.png', w = 40, h = 40 },\n}\n",
+        )],
+    );
+    assert!(
+        error.contains("app.luau:3: ") && error.contains("no-such.png"),
+        "{error}"
+    );
+    let error = error_of(
+        "module",
+        &[
+            (
+                "app.luau",
+                "local card = require('./components/card')\nreturn card()\n",
+            ),
+            (
+                "components/card.luau",
+                "return function()\n\treturn ui.image { src = \"no/such/picture.png\", w = 40, h = 40 }\nend\n",
+            ),
+        ],
+    );
+    assert!(error.contains("components/card.luau:2: "), "{error}");
+}

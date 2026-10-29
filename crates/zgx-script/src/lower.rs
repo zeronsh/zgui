@@ -2928,10 +2928,48 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
             Some(image)
         }
         Err(e) => {
+            let e = match literal_site(vm, src) {
+                Some(site) => format!("{site}: {e}"),
+                None => e,
+            };
             vm.report(mlua::Error::runtime(e));
             None
         }
     }
+}
+/// The script line naming `src` as a string (`app.luau:12`), for its load
+/// error: an image loads as its node mounts, when no script line runs.
+/// Found in the script's files only once one fails, so the images that
+/// load keep nothing of where they were named.
+#[cold]
+#[inline(never)]
+fn literal_site(vm: &Vm, src: &str) -> Option<String> {
+    let base = vm.base.as_ref()?;
+    let quoted = [format!("\"{src}\""), format!("'{src}'")];
+    let mut dirs = vec![base.clone()];
+    let mut files = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "luau" || e == "lua") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files.iter().find_map(|file| {
+        let text = std::fs::read_to_string(file).ok()?;
+        let line = text
+            .lines()
+            .position(|line| quoted.iter().any(|q| line.contains(q.as_str())))?;
+        let name = file.strip_prefix(base).unwrap_or(file);
+        Some(format!("{}:{}", name.display(), line + 1))
+    })
 }
 fn load_svg(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Arc<SvgData> {
     if let Some(svg) = low.assets.svgs.borrow().get(src) {
