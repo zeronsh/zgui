@@ -6776,18 +6776,20 @@ impl Scene {
     fn shown_context(&self, id: NodeId) -> DamageContext {
         let mut transform = Transform::default();
         let mut clips = false;
-        let popups = !self.popups.is_empty();
         let mut current = Some(id);
         while let Some(at) = current {
             let node = self.node(at);
-            // A popup's subtree is its own window's (see `shown`).
-            if !own_visible(&node.style) || popups && self.popups.contains(&at) {
+            if !own_visible(&node.style) {
                 return None;
             }
             transform.x += node.transform.x;
             transform.y += node.transform.y;
             clips |= clip_axes(&node.style) != (false, false);
             current = node.parent;
+        }
+        // A popup's subtree is its own window's (see `shown`).
+        if !self.popups.is_empty() && self.popup_holding_cold(id).is_some() {
+            return None;
         }
         let clip = match clips {
             true => self.world_clip(id),
@@ -7013,19 +7015,23 @@ impl Scene {
     /// it whole as its layer revision moves, so its changes damage nothing
     /// in this one.
     fn shown(&self, id: NodeId) -> bool {
-        let popups = !self.popups.is_empty();
-        let mut at = id;
         let mut node = self.node(id);
         loop {
-            if !own_visible(&node.style) || popups && self.popups.contains(&at) {
+            if !own_visible(&node.style) {
                 return false;
             }
             let Some(parent) = node.parent else {
-                return true;
+                return self.popups.is_empty() || self.popup_holding_cold(id).is_none();
             };
-            at = parent;
             node = self.tree_node(parent);
         }
+    }
+    /// `popup_holding`, out of the damage walks' way: they pass popups by
+    /// with one check.
+    #[cold]
+    #[inline(never)]
+    fn popup_holding_cold(&self, id: NodeId) -> Option<NodeId> {
+        self.popup_holding(id)
     }
     fn damage_node(&mut self, id: NodeId) {
         if self.damage_is_full() || !self.shown(id) {
