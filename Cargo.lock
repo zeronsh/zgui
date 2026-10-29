@@ -5149,8 +5149,12 @@ name = "zgx-run"
 version = "0.1.6"
 dependencies = [
  "png 0.18.1",
+ "polling",
+ "rustls",
  "serde_json",
+ "tungstenite",
  "ureq",
+ "webpki-roots",
  "zgx",
  "zgx-desktop",
  "zgx-script",

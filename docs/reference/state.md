@@ -295,6 +295,42 @@ return ui.column {
 
 `ui.image { src = "https://…" }` and `ui.svg { src = "https://…" }` load through the same fetcher: one request per URL however many nodes show it, decoded off the main thread, cached for the host's life; a node shows nothing until its source arrives, and only the nodes showing it redraw.
 
+### Live connections
+
+`ui.socket(url, opts)` keeps a connection open (a WebSocket: a chat's, a feed's) through the host's connector, as React's `useWebSocket`. Its `status` is a state, `"connecting"`, `"open"`, `"reconnecting"` or `"closed"`, for a banner; each message goes to `on_message(message, binary)`, text as a string (decoded first with `json = true`) or a binary message's bytes as a string. `send(v)` sends a string as text and any other value as JSON, and `send_bytes(s)` a binary message; sent while the connection is not open, they wait and go in order once it is. `buffered` is a state of the bytes sent and not yet taken by the connection, and past `max_buffered` (16 MB) `send` refuses, returning false, as it does once the socket is closed for good. A connection that ends or fails opens again after a wait: `reconnect = { min = 500, max = 30000, factor = 2, jitter = 0.2, attempts = math.huge }` is the default (true), `false` none. Meanwhile `attempt` counts and `retry_in` is the wait in ms; out of attempts it is `"closed"`, and `error` (a `UiError`, tracked) says why it last ended. `on_open` and `on_close(err)` hear each connection begin and end. `close()` closes it until `reconnect()`, which also cuts a wait short. `url` may be a function: a state it reads changing (a room, a token) opens it again at once. It closes with its owner (a component, or the script on reload).
+
+The host connects with `ScriptHost::socket_connector(|request, socket| async { … })`: it opens `request.url`, calls `socket.opened()`, hands each message that arrives to `socket.receive`, and sends what `socket.next().await` gives, as fast as the connection takes it, until that answers `None` (the script closed it); its future answers `Ok(())` when the connection ends and `Err(message)` when it fails. A plugin needs the host's `Capability::Fetch`. `ui.sleep(ms)` is a promise settled after `ms`, to await in a task.
+
+```lua
+type Message = { from: string, text: string }
+local messages = ui.state("messages", {} :: { Message })
+local socket = ui.socket("wss://chat.example/room/1", {
+	json = true,
+	on_message = function(message: Message)
+		messages:push(message)
+	end,
+})
+return ui.column {
+	ui.show(function()
+		return socket.status:get() ~= "open"
+	end, ui.text {
+		function()
+			local wait = socket.retry_in:get()
+			return if wait > 0 then `Reconnecting in {math.ceil(wait / 1000)} s…` else "Connecting…"
+		end,
+	}),
+	ui.each(messages, function(m: Message)
+		return ui.text { `{m.from}: {m.text}` }
+	end),
+	ui.button {
+		"Wave",
+		on_click = function()
+			socket.send({ text = "👋" })
+		end,
+	},
+}
+```
+
 ### The clipboard and files
 
 A desktop window gives scripts its clipboard and file dialogs (`zgx::platform`). `ui.clipboard.read()` returns its text, `ui.clipboard.write(text)` replaces it. `ui.clipboard.read_image()` settles with its image as a full-colour `Bitmap` (`w`, `h`; a screenshot, an image editor's copy, a browser's Copy Image), or nil, and `ui.clipboard.write_image(bitmap)` puts one there (a `ui.bitmap`, or one read before) for other apps to paste, settling with whether it took it: promises, as a large image is decoded and encoded off the main thread (a 4K one took 15 to 70 ms to read and 130 ms to write). State can keep a `Bitmap`, its pixels counted against a plugin's memory limit, and `ui.image { src = state }` shows the one it holds (a pasted picture: `ui.clipboard.read_image():after(function(b) if b then pasted:set(b) end end)`). `ui.open_files({ title, directory, filters = { { "Images", { "png" } } }, multiple })` settles with the files the user picks (an empty list if they cancel) and `ui.save_file({ name })` with where they choose to save (or nil), each a `{ path, name }`. A script reads and writes only files the user picked in this host's dialogs, as a web page does: `ui.read_file(file)` settles with its text and `ui.write_file(file, text)` writes beside it and renames over it (never half a file), both off the main thread. Headless, without a window, they are errors.

@@ -71,6 +71,7 @@ mod router;
 mod routes;
 #[cfg(feature = "scene3d")]
 mod scene3d;
+mod socket;
 mod sorted;
 mod term;
 pub mod testing;
@@ -87,6 +88,7 @@ pub use calls::{Body, Request, Response};
 pub use command::Command;
 pub use design::DesignLint;
 pub use persist::app_data_dir;
+pub use socket::{Message, Socket, SocketRequest};
 pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted, values_converted};
 pub use windows::Window;
 
@@ -951,6 +953,8 @@ struct Inner {
     async_actions: calls::AsyncActions,
     /// The transport `ui.fetch` and remote images use (`fetcher`).
     fetcher: calls::SharedFetcher,
+    /// The transport `ui.socket` connects through (`socket_connector`).
+    connector: socket::SharedConnector,
     /// What each plugin may do beyond its sandbox (`grant`), by name.
     grants: RefCell<HashMap<String, Vec<Capability>>>,
     /// The plugins the app manages (`set_plugins`).
@@ -1111,6 +1115,7 @@ impl ScriptHost {
             files: Files::Disk,
             async_actions: Rc::default(),
             fetcher: Rc::default(),
+            connector: Rc::default(),
             grants: RefCell::default(),
             managed: RefCell::default(),
             exposed_actions: Rc::default(),
@@ -1400,6 +1405,23 @@ impl ScriptHost {
     {
         *self.0.fetcher.borrow_mut() = Some(Rc::new(move |request, body| -> calls::Fetch {
             Box::pin(fetch(request, body))
+        }));
+    }
+    /// The transport for `ui.socket`: a connection the script keeps open
+    /// (a WebSocket). `connect` opens `request`'s connection and runs it
+    /// until it ends (`Ok`) or fails (`Err`, its message the script's
+    /// error): it tells the `Socket` once it is open, hands it each message
+    /// that arrives, and sends what `Socket::next` gives until that answers
+    /// `None` (the script closed it), then closes. The script opens it
+    /// again after a wait, as its `reconnect` says. Without one,
+    /// `ui.socket` stays closed, its error saying so.
+    pub fn socket_connector<F, Fut>(&self, connect: F)
+    where
+        F: Fn(SocketRequest, Socket) -> Fut + 'static,
+        Fut: std::future::Future<Output = Result<(), String>> + 'static,
+    {
+        *self.0.connector.borrow_mut() = Some(Rc::new(move |request, socket| -> socket::Connect {
+            Box::pin(connect(request, socket))
         }));
     }
     /// Let plugin `plugin` (its file name, `stats.luau`, or `plugin`'s
@@ -2660,6 +2682,10 @@ impl ScriptHost {
             move |lua, ui| calls::install(lua, ui, actions, fetch, upload_files),
         );
         lazy.ui(&["paged", "debounced"], paged::install);
+        let connector = may(Capability::Fetch).then(|| self.0.connector.clone());
+        lazy.ui(&["socket", "sleep"], move |lua, ui| {
+            socket::install(lua, ui, connector)
+        });
         let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());
         let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
         lazy.ui(

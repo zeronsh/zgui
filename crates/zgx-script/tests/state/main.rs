@@ -33,6 +33,8 @@ mod plugins;
 mod router;
 #[path = "../script.rs"]
 mod script;
+#[path = "../socket.rs"]
+mod socket;
 #[path = "../state.rs"]
 mod state;
 #[path = "../streaming.rs"]

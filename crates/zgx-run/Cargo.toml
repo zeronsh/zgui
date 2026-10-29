@@ -14,7 +14,7 @@ description = "Run a zgx Luau script as a desktop app, with hot reload: `zgx-run
 # mimalloc as the runner's allocator (zgx-desktop's `mimalloc`): 6-10%
 # less CPU for script, text and layout work, for about 2 MB more memory.
 # `--no-default-features` keeps the system's.
-default = ["mimalloc", "inspect", "fetch", "scene3d", "i18n", "gltf"]
+default = ["mimalloc", "inspect", "fetch", "socket", "scene3d", "i18n", "gltf"]
 mimalloc = ["zgx-desktop/mimalloc"]
 # Devtools for agents (`zgx run --inspect`, `zgx inspect`): a user-only
 # local socket a running app answers on, when asked. A build for shipping
@@ -26,6 +26,12 @@ inspect = ["zgx-script/inspect"]
 # roots. An app that brings its own transport, or none, leaves it out
 # (`--no-default-features`) and with it ureq, rustls and ring.
 fetch = ["dep:ureq"]
+# A connector for `ui.socket` (`zgx_run::install_connector`): WebSockets,
+# `ws://` and `wss://`, TLS by rustls with Mozilla's roots, each connection
+# on a thread of its own that sleeps until the network or the script wakes
+# it. Without it, `ui.socket` stays closed unless the host brings a
+# connector of its own.
+socket = ["dep:tungstenite", "dep:rustls", "dep:webpki-roots", "dep:polling"]
 # `ui.scene3d` (zgx-script's `scene3d`): 3D scenes, drawn with zgx-3d.
 scene3d = ["zgx-script/scene3d"]
 # Localized messages' plural rules and numbers for every locale
@@ -43,6 +49,10 @@ serde_json = "1"
 # `~3.5`: the fetcher's connector uses `ureq::unversioned`, which a minor
 # release may change.
 ureq = { version = "~3.5", default-features = false, features = ["rustls", "gzip"], optional = true }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "1", optional = true }
+polling = { version = "3", optional = true }
 
 [dev-dependencies]
 # Reading devtools' snapshots back.

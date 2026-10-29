@@ -20,6 +20,16 @@ pub fn install_fetcher(host: &ScriptHost) {
     fetch::install(host);
 }
 
+#[cfg(feature = "socket")]
+mod socket;
+/// Give `host` the connector `run` gives a script (feature `socket`, on by
+/// default): `ui.socket` over WebSockets, `ws://` and `wss://`, each
+/// connection on a thread of its own. For a host made outside `run`.
+#[cfg(feature = "socket")]
+pub fn install_connector(host: &ScriptHost) {
+    socket::install(host);
+}
+
 /// Menus in the order the script first names them, items in its order.
 pub fn menus(commands: &[Command]) -> Vec<AppMenu> {
     let mut menus: Vec<AppMenu> = Vec::new();
@@ -382,6 +392,8 @@ pub fn run_hosting(
         // The network, unless the host's setup brings its own transport.
         #[cfg(feature = "fetch")]
         fetch::install(&host);
+        #[cfg(feature = "socket")]
+        socket::install(&host);
         configure(&host);
         let _ = host.reload();
         cx.tasks.spawn(host.watch(Duration::from_millis(250)));

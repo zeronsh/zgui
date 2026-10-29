@@ -181,6 +181,8 @@ const NOT_ELEMENTS: &[&str] = &[
     "resource",
     "paged",
     "debounced",
+    "socket",
+    "sleep",
     "form",
     "try",
     "effect",

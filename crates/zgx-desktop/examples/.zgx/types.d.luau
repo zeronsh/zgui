@@ -1091,6 +1091,58 @@ export type Paged<T> = {
 	reload: () -> (),
 }
 
+-- How a socket opens again after its connection ends (`ui.socket`'s
+-- `reconnect`): `min` ms after the first, `factor` times longer each
+-- attempt after, at most `max`, give or take `jitter` of it (0 to 1), for
+-- at most `attempts`.
+export type SocketReconnect = {
+	min: number?,
+	max: number?,
+	factor: number?,
+	jitter: number?,
+	attempts: number?,
+}
+
+export type SocketOptions = {
+	-- The subprotocols to ask for.
+	protocols: { string }?,
+	-- true (the default: 500 ms, doubling, at most 30 s, give or take
+	-- 20%, without end), false, or the wait's shape.
+	reconnect: (boolean | SocketReconnect)?,
+	-- Text messages decoded as JSON before `on_message`.
+	json: boolean?,
+	-- The most bytes queued unsent: past it, `send` refuses (16 MB).
+	max_buffered: number?,
+	-- Each message: text (or, `json`, what it decodes to), or a binary
+	-- message's bytes as a string, `binary` true.
+	on_message: ((message: any, binary: boolean) -> ())?,
+	on_open: (() -> ())?,
+	-- The connection ended, with its error if it failed.
+	on_close: ((error: UiError?) -> ())?,
+}
+
+-- A connection kept open (`ui.socket`).
+export type Socket = {
+	status: State<"connecting" | "open" | "reconnecting" | "closed">,
+	-- Attempts since it was last open (0 while open).
+	attempt: State<number>,
+	-- The wait before the next attempt, in ms (0 unless reconnecting).
+	retry_in: State<number>,
+	-- Bytes sent but not yet taken by the connection.
+	buffered: State<number>,
+	-- Why it last ended or failed (tracked), or nil.
+	error: UiError?,
+	-- Queue a message: a string as text, any other value as JSON. False if
+	-- it is closed for good or `max_buffered` would be passed.
+	send: (message: any) -> boolean,
+	-- Queue a binary message: the string's bytes.
+	send_bytes: (bytes: string) -> boolean,
+	-- Close it; only `reconnect()` opens it again.
+	close: () -> (),
+	-- Open it again now, a wait under way cut short.
+	reconnect: () -> (),
+}
+
 -- A mounted node a script reaches: through `on_mount`, `on_resize`, a ref
 -- or an animation's function values.
 declare extern type Element with
@@ -17006,6 +17058,15 @@ declare ui: {
 	-- read-only (as `ui.computed`'s: a write is an error), its timer begun
 	-- again on each change, gone with its owner.
 	debounced: <T>(state: State<T>, ms: number) -> State<T>,
+	-- A connection kept open to `url` (a WebSocket) through the host's
+	-- connector, as `useWebSocket`: messages to `on_message`, `send` queued
+	-- while it is not open and sent in order once it is, opened again after
+	-- a growing wait when it ends. `url` may be a function: a state it
+	-- reads changing opens it again. Closed with its owner; a plugin needs
+	-- the host's grant.
+	socket: (url: string | () -> string, opts: SocketOptions?) -> Socket,
+	-- A promise settled after `ms`, to await in a task (a retry's wait).
+	sleep: (ms: number) -> Promise<nil>,
 	-- A form's fields, checked as they are typed, and its submit with its
 	-- pending and failure states; controls bind with `field`.
 	form: (spec: FormSpec) -> Form,

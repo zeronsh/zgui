@@ -30,6 +30,8 @@ Every example on this page runs, and type checks in strict mode, as part of zgx-
 | Suspense, React Query, SWR | `ui.resource(load)`: `data`, `loading`, `error`, `status` as states |
 | `fetch`, `await`, `AbortController` | `ui.fetch(url, opts):await()` in a `ui.task`; `task:cancel()` stops the request |
 | streaming a response (`ReadableStream`, SSE) | `ui.fetch(url, { on_event = function(e) … end })` |
+| `useWebSocket` (react-use-websocket), `reconnecting-websocket` | `ui.socket(url, { json = true, on_message = fn })`: `status` a state, `send` queued until open, reconnect with backoff built in |
+| `await new Promise(r => setTimeout(r, ms))` | `ui.sleep(ms):await()` in a `ui.task` |
 | controlled inputs | `ui.input { value = state }`, or `value = function` with `on_change` |
 | React Hook Form | `ui.form { fields, validate, submit }` with `field = form.fields.name` on a control |
 | portals and modals | `ui.modal { open = state, … }`, `ui.popover`, `ui.menu`: panels over everything, still in your tree |
@@ -288,6 +290,8 @@ return ui.column {
 ```
 
 Requests go through the host's transport (`ScriptHost::fetcher`), as a browser's go through its network stack. `ui.fetch(url, { on_chunk, on_event })` hears a response as it arrives (a model's reply, server-sent events), and cancelling the task that awaits it stops the request, as `AbortController` does.
+
+A WebSocket is `ui.socket(url, opts)`, through the host's `ScriptHost::socket_connector` (zgx-run brings one): what `useWebSocket` gives, with reconnection as `reconnecting-websocket`'s. `status` is a state for a banner, a message sent before the connection opens waits for it, a dropped connection opens again after a growing wait (`attempt`, `retry_in`), and a URL function reading a state (a room) opens it again when that changes. It closes with the component that made it, as an effect's cleanup would close it.
 
 ## Forms
 
