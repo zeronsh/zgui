@@ -1161,6 +1161,88 @@ fn a_loop_no_one_can_see_waits_until_it_shows() {
 }
 
 #[test]
+fn a_loop_in_a_popup_past_the_window_runs_on() {
+    // A popover opened near the window's bottom right, where the host shows
+    // it in a window of its own: its panel hangs past this one's edges.
+    let mut h = Harness::inline(
+        r##"local open = ui.state("open", false)
+        local SH = ui.shader([[fn fill(input: FillInput) -> vec4<f32> {
+          return vec4<f32>(fract(input.time), 0.4, 1.0, 1.0);
+        }]], { fps = 12 })
+        return ui.div { absolute = true, right = 8, bottom = 8,
+          ui.popover { open = open, w = 240,
+            anchor = ui.button { "Open", id = "open", on_click = function() open:set(true) end },
+            placement = { side = "bottom", align = "start" },
+            build = function()
+              return ui.div { id = "spin", w = 200, h = 40, bg_shader = SH,
+                on_mount = function(el)
+                  anime.animate(el, { shaderTime = { 0, 600 }, x = { 0, 100 }, duration = 600000,
+                    loop = true, ease = "linear", frameRate = 12 })
+                end }
+            end } }"##,
+    );
+    h.ui.set_popup_screens(vec![zgx::scene::Rect::new(-1e5, -1e5, 2e5, 2e5)]);
+    h.click("open");
+    h.frames(2);
+    let spin = h.find("spin").expect("open");
+    assert!(
+        !h.ui.scene.borrow().popups().is_empty(),
+        "shown in a popup window"
+    );
+    let time = |h: &mut Harness| h.ui.scene.borrow().shader_uniforms(spin).time;
+    let (t, x) = (time(&mut h), h.x("spin"));
+    h.run_ms(500.);
+    assert!(
+        time(&mut h) > t,
+        "its shader's time runs on: {}",
+        time(&mut h)
+    );
+    assert!(h.x("spin") > x, "and it moves: {}", h.x("spin"));
+    assert_eq!(h.clock.demanded_rate(120.), Some(12.), "at its own rate");
+}
+
+#[test]
+fn a_fade_and_a_spring_in_a_popup_past_the_window_play_and_its_window_draws() {
+    let mut h = Harness::inline(
+        r##"local open = ui.state("open", false)
+        local at = ui.state("at", 0)
+        return ui.div { absolute = true, right = 8, bottom = 8,
+          ui.popover { open = open, w = 240,
+            anchor = ui.button { "Open", id = "open", on_click = function() open:set(true) end },
+            placement = { side = "bottom", align = "start" },
+            build = function()
+              return ui.column {
+                ui.div { id = "fade", w = 200, h = 20, bg = "#ff0000",
+                  on_mount = function(el) anime.animate(el, { opacity = { 0, 1 }, y = { 6, 0 }, duration = 550 }) end },
+                ui.div { id = "spring", w = 20, h = 20, bg = "#00ff00", x = ui.spring(at) },
+                ui.button { "Move", id = "move", on_click = function() at:set(100) end } }
+            end } }"##,
+    );
+    h.ui.set_popup_screens(vec![zgx::scene::Rect::new(-1e5, -1e5, 2e5, 2e5)]);
+    h.click("open");
+    h.frames(2);
+    let root = h.ui.scene.borrow().popups()[0];
+    let revision = h.ui.scene.borrow().layer_revision(root);
+    let opacity = h.opacity("fade");
+    h.run_ms(200.);
+    assert!(
+        h.opacity("fade") > opacity,
+        "it fades in: {}",
+        h.opacity("fade")
+    );
+    h.run_ms(500.);
+    assert_eq!(h.opacity("fade"), 1., "and ends");
+    assert_ne!(h.ui.scene.borrow().layer_revision(root), revision);
+    let revision = h.ui.scene.borrow().layer_revision(root);
+    h.click("move");
+    h.run_ms(100.);
+    let x = h.x("spring");
+    assert!(x > 0. && x < 100., "it springs: {x}");
+    assert_eq!(h.ui.scene.borrow().popups(), [root], "still open");
+    assert_ne!(h.ui.scene.borrow().layer_revision(root), revision);
+}
+
+#[test]
 fn a_delayed_animation_takes_over_where_an_earlier_one_left_its_property() {
     // Made together: the second, delayed, starts from where the first left
     // `x`, not from where `x` was when both were made (anime.js v4's replace).
