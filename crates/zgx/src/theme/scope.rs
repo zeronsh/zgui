@@ -674,6 +674,25 @@ impl Themes {
     pub fn names(&self) -> Vec<String> {
         self.shared.state.borrow().order.clone()
     }
+    /// Every token the applied theme gives a value, by name: zgx's
+    /// standard tokens, those the app declared (`declare`), and any the
+    /// theme adds.
+    pub fn token_names(&self) -> Vec<Arc<str>> {
+        self.root
+            .exprs
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, expr)| expr.is_some())
+            .map(|(i, _)| TokenId(i as u32).name())
+            .collect()
+    }
+    /// Moves whenever the applied tokens' values do (a theme applied,
+    /// registered or loaded again, a token declared): what keeps
+    /// `token_names` reads them again then.
+    pub fn revision(&self) -> u64 {
+        self.root.epoch.get()
+    }
     /// Apply the theme `name`. This also stops following the system.
     pub fn set(&self, name: &str) -> Result<(), ThemeError> {
         let name = renamed(name);

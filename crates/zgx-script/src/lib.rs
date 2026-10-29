@@ -26,6 +26,7 @@
 #![warn(missing_docs)]
 mod anim;
 mod anime;
+pub mod app_types;
 mod bundle;
 mod calls;
 mod canvas;
@@ -1700,6 +1701,18 @@ impl ScriptHost {
             .iter()
             .filter_map(|file| Some((file.clone(), std::fs::read_to_string(file).ok()?)))
             .collect();
+        // The app's tokens' types, where its editor reads them (`zgx types`
+        // or `zgx check` wrote them), as the names change.
+        if let Some(dir) = self.0.app.dir()
+            && app_types::types_file(&dir).is_file()
+        {
+            let own: Vec<_> = sources
+                .iter()
+                .filter(|(file, _)| file.starts_with(&dir))
+                .cloned()
+                .collect();
+            let _ = app_types::write_types_of(&dir, &own);
+        }
         for d in lint::lint_app(&sources) {
             let name = d.file.file_name().unwrap_or(d.file.as_os_str());
             let line = format!(

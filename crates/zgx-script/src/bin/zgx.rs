@@ -8,6 +8,10 @@
 //! they look or do not do what they look like (`zgx_script::lint`); it
 //! exits 1 when it finds any.
 //!
+//! `zgx types <dir>…` writes each app's own theme tokens as Luau types
+//! (`<dir>/.zgx/types.d.luau`, `zgx_script::app_types`), for editors to
+//! complete `"$app.…"`.
+//!
 //! `zgx inspect <command>…` asks a running app serving devtools (`zgx-run
 //! --inspect`): its tree, nodes, states and errors, and clicks, typing and
 //! keys (`zgx_script::inspect`; `docs/agents/inspect.md`).
@@ -17,6 +21,7 @@ use zgx_script::check::{CheckError, Options, Report, check};
 const USAGE: &str = "usage: zgx check [--nonstrict] <file-or-dir>...
        zgx lint [--format text|json] <file-or-dir>...
        zgx lint --rules
+       zgx types <dir>...
        zgx inspect [--app PID] [--json] <command> [args]   (zgx inspect help)
 
 check: type checks zgx Luau scripts with luau-lsp, the bundled ui/anime
@@ -26,13 +31,47 @@ unless a .luaurc (languageMode) or a --!nonstrict comment says otherwise.
 lint: zgx's best-practice rules (no luau-lsp needed). A finding names the
 cheaper way to write it; `-- zgx-lint: allow(rule)` on its line or the
 line above accepts a deliberate exception. It exits 1 when it finds any;
-`--format json` prints them as one JSON object for tools.";
+`--format json` prints them as one JSON object for tools.
+
+types: writes each app's own theme tokens (`ui.theme.tokens`) as Luau
+types to <dir>/.zgx/types.d.luau, for editors to complete \"$app.…\" (list
+it in luau-lsp's definition files). `zgx check` writes it too.";
+
+/// `zgx types <dir>...`
+fn types(args: Vec<String>) -> ExitCode {
+    if args.is_empty() || args.iter().any(|a| a.starts_with('-')) {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    for dir in args.iter().map(PathBuf::from) {
+        if !dir.is_dir() {
+            eprintln!("zgx types: {} is not an app's directory", dir.display());
+            return ExitCode::from(2);
+        }
+        match zgx_script::app_types::write_types(&dir) {
+            Ok(changed) => {
+                let file = zgx_script::app_types::types_file(&dir);
+                println!(
+                    "{} {}\n  (editors: add it to luau-lsp.types.definitionFiles)",
+                    if changed { "wrote" } else { "unchanged:" },
+                    file.display()
+                );
+            }
+            Err(error) => {
+                eprintln!("zgx types: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("check") => {}
         Some("lint") => return lint(args.collect()),
+        Some("types") => return types(args.collect()),
         Some("inspect") => return inspect(args.collect()),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");

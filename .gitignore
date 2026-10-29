@@ -8,3 +8,6 @@ __pycache__/
 /comparison.csv*
 
 .wrangler/
+
+# An app's generated types (`zgx types`, `zgx check`).
+.zgx/

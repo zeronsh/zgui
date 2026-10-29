@@ -107,6 +107,34 @@ fn app_tokens_and_luau_themes() {
 }
 
 #[test]
+fn ui_tokens_name_every_token_as_fields() {
+    let mut h = Harness::inline(
+        r##"ui.theme.tokens { app = { card = "#20242c" } }
+        local before = ui.tokens.surface.raised
+        -- Declared after the first read: found all the same.
+        ui.theme.tokens { app = { late = "#ffffff" } }
+        local typo = select(2, pcall(function() return ui.tokens.app.crad end))
+        return ui.column {
+            ui.div { id = "card", w = 10, h = 10, bg = ui.tokens.app.card },
+            ui.div { id = "raised", w = 10, h = 10, bg = before, rounded = ui.tokens.radius.lg },
+            ui.div { id = "late", w = 10, h = 10, bg = ui.tokens.app.late },
+            ui.text { ui.tokens.accent.value .. " " .. ui.tokens.accent.hover .. " " .. ui.tokens.space[3], id = "names" },
+            ui.text { tostring(typo), id = "typo" },
+        }"##,
+    );
+    assert_eq!(h.fill("card"), Color(0x20, 0x24, 0x2c, 255));
+    assert_eq!(h.fill("raised"), DARK_RAISED);
+    assert_eq!(h.radius("raised"), 10.);
+    assert_eq!(h.fill("late"), WHITE);
+    assert_eq!(h.text("names"), "$accent $accent.hover $space.3");
+    assert!(
+        h.text("typo").contains("ui.tokens has no `app.crad`"),
+        "{}",
+        h.text("typo")
+    );
+}
+
+#[test]
 fn scoped_themes_restyle_their_subtrees() {
     let mut h = Harness::inline(
         r##"local light = ui.state("light", true)

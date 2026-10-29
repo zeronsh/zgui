@@ -328,6 +328,142 @@ export type TokenName =
 -- names, 0xrrggbb, or a colour token ("$text.secondary"; `ColorToken`
 -- lists the standard ones). Plain `string`: the new solver would carry a
 -- union of token names through a script's own string code.
+
+-- `ui.tokens`: every token as a path of fields, its value the token's
+-- string (`ui.tokens.surface.raised` is "$surface.raised"), so a typo is
+-- a type error and editors complete the next name. A group that is a token
+-- too has it as `value`; a number in a name is an index (`space[3]`).
+-- These are the standard tokens; `zgx types <dir>` writes these
+-- definitions with an app's own (`ui.theme.tokens`) added.
+export type Tokens = {
+	accent: {
+		hover: string,
+		text: string,
+		value: string,
+	},
+	backdrop: string,
+	background: string,
+	border: {
+		strong: string,
+		subtle: string,
+		value: string,
+	},
+	button: {
+		bg: string,
+		hover: string,
+		pressed: string,
+	},
+	control: {
+		height: string,
+	},
+	danger: string,
+	find: {
+		current: string,
+		match: string,
+	},
+	focus: {
+		ring: string,
+	},
+	font: {
+		line: {
+			lg: string,
+			md: string,
+			sm: string,
+			xl: string,
+			xs: string,
+			xxl: string,
+		},
+		mono: string,
+		sans: string,
+		size: {
+			lg: string,
+			md: string,
+			sm: string,
+			xl: string,
+			xs: string,
+			xxl: string,
+		},
+		weight: {
+			bold: string,
+			medium: string,
+			regular: string,
+			semibold: string,
+		},
+	},
+	glass: {
+		blur: string,
+		tint: string,
+	},
+	hover: string,
+	info: string,
+	input: {
+		bg: string,
+	},
+	menu: {
+		bg: string,
+		hover: string,
+	},
+	motion: {
+		duration: {
+			fast: string,
+			normal: string,
+			slow: string,
+		},
+		ease: {
+			enter: string,
+			exit: string,
+			standard: string,
+		},
+	},
+	popover: {
+		bg: string,
+	},
+	pressed: string,
+	radius: {
+		full: string,
+		lg: string,
+		md: string,
+		sm: string,
+		xl: string,
+	},
+	scrollbar: {
+		thumb: {
+			active: string,
+			value: string,
+		},
+		track: string,
+	},
+	selection: {
+		inactive: string,
+		item: string,
+		radius: string,
+		text: {
+			inactive: string,
+			value: string,
+		},
+		value: string,
+	},
+	shadow: {
+		lg: string,
+		md: string,
+		sm: string,
+	},
+	space: { string },
+	success: string,
+	surface: {
+		base: string,
+		overlay: string,
+		raised: string,
+		sunken: string,
+	},
+	text: {
+		disabled: string,
+		primary: string,
+		secondary: string,
+		tertiary: string,
+	},
+	warning: string,
+}
 export type Color = string | number
 -- A number, or a number token: a standard one (`"$radius.md"`, see
 -- `NumberToken`) or an app's (`"$terminal.inset"`), hence any string.
@@ -15621,6 +15757,8 @@ export type ThemeApi = {
 
 declare ui: {
 	theme: ThemeApi,
+	-- Every token as fields: `bg = ui.tokens.surface.raised` (see `Tokens`).
+	tokens: Tokens,
 	-- The system's display settings, as CSS's media queries read them
 	-- (`prefers-reduced-motion`, `prefers-contrast: more`,
 	-- `prefers-reduced-transparency`): each follows the system (`:get()`

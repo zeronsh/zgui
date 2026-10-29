@@ -148,6 +148,65 @@ pub(crate) struct File<'a> {
     pub(crate) tokens: &'a [Token],
 }
 
+/// What an app's scripts (`files`) declare with literal `ui.theme.tokens`
+/// tables: each name, sorted, with its kind where it shows (through the
+/// references a default makes, to zgx's tokens or the app's own).
+pub(crate) fn declared(files: &[File]) -> Declared {
+    let standard = standard();
+    let mut names = Names::default();
+    for file in files {
+        let t = file.tokens;
+        for i in 0..t.len() {
+            if called(t, i).as_deref() == Some("ui.theme.tokens") {
+                let arg = if t[i].kind == Kind::Punct && t[i].text == "(" {
+                    i + 1
+                } else {
+                    i
+                };
+                declarations(t, arg, &mut names);
+            }
+        }
+    }
+    let kind_of = |name: &str| -> Option<TokenKind> {
+        let mut name = name.to_owned();
+        for _ in 0..8 {
+            if let Some(kind) = standard.get(name.as_str()) {
+                return Some(*kind);
+            }
+            if let Some(Some(kind)) = names.declared.get(&name) {
+                return Some(*kind);
+            }
+            name = names.references.get(&name)?.clone();
+        }
+        None
+    };
+    let mut out: Vec<_> = names
+        .declared
+        .keys()
+        .filter(|name| !standard.contains_key(name.as_str()))
+        .map(|name| (name.clone(), kind_of(name)))
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut open = names.open.clone();
+    open.sort();
+    open.dedup();
+    Declared {
+        names: out,
+        open,
+        all_open: names.all_open,
+    }
+}
+
+/// What `declared` finds.
+pub(crate) struct Declared {
+    /// Each name, sorted, with its kind where it shows.
+    pub(crate) names: Vec<(String, Option<TokenKind>)>,
+    /// Groups declared in a way the lint can't read.
+    pub(crate) open: Vec<String>,
+    /// Every name is open.
+    pub(crate) all_open: bool,
+}
+
 /// The `unknown-token` findings over an app's scripts (`files`, all of one
 /// app: what one declares, another may use).
 pub(crate) fn unknown_tokens(files: &[File]) -> Vec<Diagnostic> {
@@ -212,7 +271,7 @@ pub(crate) fn unknown_tokens(files: &[File]) -> Vec<Diagnostic> {
             .map(|c| (distance(name, c), c))
             .min_by_key(|(d, c)| (*d, c.len()));
         match best {
-            Some((d, c)) if d <= (name.len() / 3).max(2) => format!(": did you mean `${c}`?"),
+            Some((d, c)) if d <= (name.len() / 3).max(2) => format!(": did you mean ${c}?"),
             _ => String::new(),
         }
     };
@@ -243,7 +302,7 @@ pub(crate) fn unknown_tokens(files: &[File]) -> Vec<Diagnostic> {
                     file,
                     i,
                     format!(
-                        "`${name}` is neither a zgx token nor declared in `ui.theme.tokens`{}",
+                        "`${name}` is no token: neither zgx's nor declared by `ui.theme.tokens`{}",
                         suggest(name)
                     ),
                 ),
@@ -569,7 +628,7 @@ return ui.column { bg = "$app.crad", gap = "$app.gap" }"##,
         )]);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(
-            found[0].contains("$app.crad") && found[0].contains("did you mean `$app.card`?"),
+            found[0].contains("$app.crad") && found[0].contains("did you mean $app.card?"),
             "{found:?}"
         );
     }
@@ -614,7 +673,7 @@ return ui.row { bg = "$chart.line", color = "$app.anything", border_color = "$ap
         // names pass; `apps` is neither.
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(
-            found[0].contains("$apps.card") && found[0].contains("did you mean `$app.card`?"),
+            found[0].contains("$apps.card") && found[0].contains("did you mean $app.card?"),
             "{found:?}"
         );
     }
