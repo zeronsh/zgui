@@ -93,6 +93,10 @@ thread_local! {
 /// Whether the platform has a drag of the app's: over the app's windows it
 /// is the host's to carry (`WindowManager::native_drag`), not another app's
 /// (`text_drop`).
+#[cfg(any(
+    all(any(target_os = "macos", windows), zgx_winit_patched),
+    target_os = "linux"
+))]
 pub(crate) fn handed_off() -> bool {
     HANDED_OFF.with(|count| count.get() > 0)
 }
