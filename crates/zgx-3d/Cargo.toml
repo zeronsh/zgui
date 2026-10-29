@@ -17,8 +17,9 @@ bytemuck = { version = "1.25", features = ["derive"] }
 serde_json = { version = "1", optional = true }
 
 [features]
-# glTF 2.0 models (`Model`, `World::add_model`): `.glb` and `.gltf` files.
-gltf = ["dep:serde_json"]
+# glTF 2.0 models (`Model`, `World::add_model`): `.glb` and `.gltf` files,
+# their textures PNG or JPEG.
+gltf = ["dep:serde_json", "zgx-gpu/png", "zgx-gpu/jpeg"]
 
 [dev-dependencies]
 zgx-desktop = { path = "../zgx-desktop", default-features = false }

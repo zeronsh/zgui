@@ -258,6 +258,9 @@ pub(crate) struct Inner {
     pub(crate) background: Option<[f32; 4]>,
     /// Whether the sun casts shadows (`World::set_shadows`).
     pub(crate) shadows: bool,
+    /// Objects' textures (`World::set_texture`), by index, with the
+    /// generation they were set for.
+    textures: std::collections::HashMap<u32, (u32, crate::Texture)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -265,6 +268,7 @@ pub(crate) struct Inner {
 pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
     pub(crate) material: &'a Material,
+    pub(crate) texture: Option<&'a crate::Texture>,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -284,9 +288,15 @@ impl Inner {
                 && let Some(geometry) = &object.geometry
                 && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
             {
+                let generation = self.objects[index].generation;
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
+                    texture: self
+                        .textures
+                        .get(&(index as u32))
+                        .filter(|(set_for, _)| *set_for == generation)
+                        .map(|(_, texture)| texture),
                     matrix,
                 });
             }
@@ -383,6 +393,7 @@ impl World {
             camera: Camera::default(),
             background: None,
             shadows: false,
+            textures: Default::default(),
             revision: 0,
         }));
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
@@ -419,10 +430,40 @@ impl World {
             Some(slot) if slot.generation == id.generation && slot.value.is_some() => {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
+                inner.textures.remove(&id.index);
                 true
             }
             _ => false,
         });
+    }
+    /// Object `id`'s texture: its colour multiplied by `texture` across its
+    /// geometry's texture coordinates (`None`: its colour alone). A copy of
+    /// the texture is shared, not made.
+    pub fn set_texture(&self, id: ObjectId, texture: Option<crate::Texture>) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let before = inner.textures.get(&id.index).map(|(_, t)| t.id());
+            match texture {
+                Some(texture) => {
+                    let changed = before != Some(texture.id());
+                    inner.textures.insert(id.index, (id.generation, texture));
+                    changed
+                }
+                None => inner.textures.remove(&id.index).is_some(),
+            }
+        });
+    }
+    /// Object `id`'s texture, if it has one.
+    pub fn texture(&self, id: ObjectId) -> Option<crate::Texture> {
+        let inner = self.inner.borrow();
+        inner.live(id.index, id.generation)?;
+        inner
+            .textures
+            .get(&id.index)
+            .filter(|(set_for, _)| *set_for == id.generation)
+            .map(|(_, texture)| texture.clone())
     }
     /// Change object `id` with `f` (nothing if it is gone). The view draws a
     /// frame only if the object changed.

@@ -37,6 +37,7 @@ mod math;
 mod orbit;
 mod pick;
 mod render;
+mod texture;
 mod world;
 
 pub use geometry::{Geometry, Vertex};
@@ -45,6 +46,7 @@ pub use gltf::{Model, ModelError};
 pub use math::{Mat4, Quat, Transform, Vec3, vec3};
 pub use orbit::Orbit;
 pub use pick::Hit;
+pub use texture::Texture;
 pub use world::{
     Camera, Light, LightId, Material, Object, ObjectId, POINT_LIGHTS, World, srgb_to_linear,
 };

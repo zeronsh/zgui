@@ -97,6 +97,186 @@ pub fn view(painter: impl Viewport) -> zgx::gpu_view::GpuView {
     }))
 }
 
+/// A texture for a painter to sample, holding `levels`: RGBA8 pixels, rows
+/// top to bottom, the first `size` and each next half the one before (at
+/// least 1), as many as the painter has. `format` is `Rgba8UnormSrgb` for
+/// colours (sRGB, read in linear light) or `Rgba8Unorm` for data read as
+/// written (a normal map, a metal and roughness map).
+///
+/// On a Mac with unified memory the CPU writes it in place: a copy into a
+/// texture (`Queue::write_texture`, or wgpu clearing one never written)
+/// opens a blit encoder, and with it some 160 MB of the driver's memory
+/// kept while copies come and for seconds after. Elsewhere it is written
+/// with `write_texture`.
+///
+/// Panics if a level holds other than its width times height times 4
+/// bytes, or `format` is neither of those two.
+pub fn texture_with_levels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    size: (u32, u32),
+    format: wgpu::TextureFormat,
+    levels: &[&[u8]],
+    label: &str,
+) -> wgpu::Texture {
+    assert!(
+        matches!(
+            format,
+            wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm
+        ),
+        "texture_with_levels makes Rgba8UnormSrgb or Rgba8Unorm textures, not {format:?}"
+    );
+    let level_size = |level: usize| ((size.0 >> level).max(1), (size.1 >> level).max(1));
+    for (level, pixels) in levels.iter().enumerate() {
+        let (width, height) = level_size(level);
+        assert_eq!(
+            pixels.len() as u64,
+            u64::from(width) * u64::from(height) * 4,
+            "texture level {level}: {width} by {height} RGBA8 pixels"
+        );
+    }
+    let count = levels.len().max(1) as u32;
+    #[cfg(target_os = "macos")]
+    if let Some(texture) = shared_levels(device, size, format, levels, count, label) {
+        return texture;
+    }
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: size.0,
+            height: size.1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (level, pixels) in levels.iter().enumerate() {
+        let (width, height) = level_size(level);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    texture
+}
+/// `texture_with_levels` on a Metal device with unified memory: a shared
+/// texture the CPU writes in place. `None` on another device.
+#[cfg(target_os = "macos")]
+fn shared_levels(
+    device: &wgpu::Device,
+    size: (u32, u32),
+    format: wgpu::TextureFormat,
+    levels: &[&[u8]],
+    count: u32,
+    label: &str,
+) -> Option<wgpu::Texture> {
+    use objc2_metal::{
+        MTLDevice, MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize, MTLStorageMode, MTLTexture,
+        MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
+    };
+    // SAFETY: The raw device only makes a texture; nothing destroys it, and
+    // the guard is dropped before wgpu is called again.
+    let hal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
+    if !hal.raw_device().hasUnifiedMemory() {
+        return None;
+    }
+    // SAFETY: A plain 2D texture descriptor of this size.
+    let descriptor = unsafe {
+        MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+            if format == wgpu::TextureFormat::Rgba8UnormSrgb {
+                MTLPixelFormat::RGBA8Unorm_sRGB
+            } else {
+                MTLPixelFormat::RGBA8Unorm
+            },
+            size.0 as usize,
+            size.1 as usize,
+            false,
+        )
+    };
+    // SAFETY: Each level halves the one before, at least 1 (asserted by
+    // the caller's sizes), so there are no more than the full chain's.
+    unsafe { descriptor.setMipmapLevelCount(count as usize) };
+    descriptor.setUsage(MTLTextureUsage::ShaderRead);
+    descriptor.setStorageMode(MTLStorageMode::Shared);
+    let metal = hal.raw_device().newTextureWithDescriptor(&descriptor)?;
+    drop(hal);
+    for (level, pixels) in levels.iter().enumerate() {
+        let (width, height) = ((size.0 >> level).max(1), (size.1 >> level).max(1));
+        let region = MTLRegion {
+            origin: MTLOrigin { x: 0, y: 0, z: 0 },
+            size: MTLSize {
+                width: width as usize,
+                height: height as usize,
+                depth: 1,
+            },
+        };
+        // SAFETY: Level `level` whole, of a new RGBA8 texture no submission
+        // reads, from `pixels` holding its rows of `width * 4` bytes
+        // (asserted by the caller).
+        unsafe {
+            metal.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                region,
+                level,
+                std::ptr::NonNull::from(*pixels).cast(),
+                (width * 4) as usize,
+            )
+        };
+    }
+    // SAFETY: Metal made this texture on this device: RGBA8 in `format`, this size,
+    // `count` levels and one layer, readable by shaders; wgpu takes
+    // ownership of it, written (and so initialized) whole.
+    Some(unsafe {
+        let raw = wgpu::hal::metal::Device::texture_from_raw(
+            metal,
+            format,
+            MTLTextureType::Type2D,
+            1,
+            count,
+            wgpu::hal::CopyExtent {
+                width: size.0,
+                height: size.1,
+                depth: 1,
+            },
+        );
+        device.create_texture_from_hal::<wgpu::hal::api::Metal>(
+            raw,
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: count,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+        )
+    })
+}
+
 /// A renderer's views: the frame each one's texture is cached under.
 #[derive(Default)]
 pub(crate) struct Views {

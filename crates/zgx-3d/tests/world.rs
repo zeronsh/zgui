@@ -352,3 +352,61 @@ fn the_sun_casts_shadows_only_when_asked() {
     window.draw();
     assert!(level(&window, shaded).abs_diff(off_shaded) <= 2);
 }
+
+#[test]
+fn a_texture_colours_a_mesh_across_its_coordinates() {
+    // A square facing the camera, its texture red on the left, blue on the
+    // right.
+    let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+        position: [x, y, 0.],
+        normal: [0., 0., 1.],
+        uv: [u, v],
+    };
+    let square = Geometry::new(
+        vec![
+            vertex(-1., -1., 0., 1.),
+            vertex(1., -1., 1., 1.),
+            vertex(1., 1., 1., 0.),
+            vertex(-1., 1., 0., 0.),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .unwrap();
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(square, white);
+    let texture = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    world.set_texture(id, Some(texture.clone()));
+    assert_eq!(world.texture(id), Some(texture.clone()));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    // The texels' centres (u 0.25 and 0.75): x ±0.5, 30 and 70 across.
+    let (left, right) = (window.pixel(30, 50), window.pixel(70, 50));
+    assert!(left[0] > 200 && left[2] < 40, "red on the left: {left:?}");
+    assert!(
+        right[2] > 200 && right[0] < 40,
+        "blue on the right: {right:?}"
+    );
+    // The same texture again changes nothing; none, the colour alone.
+    let revision = world.revision();
+    world.set_texture(id, Some(texture));
+    assert_eq!(world.revision(), revision);
+    world.set_texture(id, None);
+    window.draw();
+    let plain = window.pixel(30, 50);
+    assert!(
+        plain[0] > 240 && plain[1] > 240 && plain[2] > 240,
+        "{plain:?}"
+    );
+}
+
+#[test]
+fn textures_are_checked_and_mipmapped_down_to_one_texel() {
+    assert!(Texture::from_rgba8(0, 1, vec![]).is_err());
+    assert!(Texture::from_rgba8(2, 2, vec![0; 15]).is_err());
+    assert!(Texture::from_rgba8(9000, 1, vec![0; 36000]).is_err());
+    let t = Texture::from_rgba8(3, 2, vec![10; 24]).unwrap();
+    assert_eq!((t.width(), t.height()), (3, 2));
+}

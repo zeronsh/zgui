@@ -59,8 +59,11 @@ struct Buffers {
 }
 struct Gpu {
     format: wgpu::TextureFormat,
-    opaque: wgpu::RenderPipeline,
-    translucent: wgpu::RenderPipeline,
+    /// Opaque and translucent meshes', without textures: an untextured
+    /// scene binds none (a bound texture costs Apple's driver 16 MB).
+    plain: [wgpu::RenderPipeline; 2],
+    /// Textured meshes', made with the first textured frame.
+    textured: Option<[wgpu::RenderPipeline; 2]>,
     uniforms: wgpu::Buffer,
     layout: wgpu::BindGroupLayout,
     bind: wgpu::BindGroup,
@@ -75,6 +78,10 @@ struct Gpu {
     /// What the shadow map holds: the sun's view and each opaque mesh's
     /// geometry and place. A frame where only the camera moved keeps it.
     shadow_drawn: Option<(Mat4, Vec<(u64, Mat4)>)>,
+    /// Textures by id, with the frame that last drew each.
+    texture_layout: wgpu::BindGroupLayout,
+    texture_sampler: wgpu::Sampler,
+    textures: HashMap<u64, (wgpu::BindGroup, u64)>,
     instances: Option<(wgpu::Buffer, usize)>,
     geometries: HashMap<u64, Buffers>,
     targets: Option<((u32, u32), wgpu::TextureView, wgpu::TextureView)>,
@@ -171,6 +178,8 @@ impl Viewport for Renderer {
             -p.z
         };
         let translucent = |d: &crate::world::Drawn| d.material.color[3] < 1.;
+        // Opaque ones by geometry, then texture.
+        let texture_of = |d: &crate::world::Drawn| d.texture.map_or(0, crate::Texture::id);
         let key = |d: &crate::world::Drawn| {
             if translucent(d) {
                 // Its depth's bits in total order, the farthest least.
@@ -180,12 +189,12 @@ impl Viewport for Renderer {
                 } else {
                     bits | 1 << 31
                 };
-                1 << 63 | u64::from(!ordered)
+                (1 << 63 | u64::from(!ordered), 0)
             } else {
-                d.geometry.id() & !(1 << 63)
+                (d.geometry.id() & !(1 << 63), texture_of(d))
             }
         };
-        let mut order: Vec<(u64, usize)> = all.iter().map(key).zip(0..).collect();
+        let mut order: Vec<((u64, u64), usize)> = all.iter().map(key).zip(0..).collect();
         order.sort_unstable();
         let drawn: Vec<&crate::world::Drawn> = order.iter().map(|&(_, i)| &all[i]).collect();
         let instances: Vec<Instance> = drawn.iter().map(|d| instance(d)).collect();
@@ -234,22 +243,41 @@ impl Viewport for Renderer {
                 }
             });
             entry.used = gpu.frame;
+            if let Some(texture) = d.texture {
+                let (layout, sampler) = (&gpu.texture_layout, &gpu.texture_sampler);
+                let entry = gpu.textures.entry(texture.id()).or_insert_with(|| {
+                    (
+                        upload(frame.device, frame.queue, layout, sampler, texture),
+                        0,
+                    )
+                });
+                entry.1 = gpu.frame;
+            }
         }
         let now = gpu.frame;
         gpu.geometries
             .retain(|_, buffers| now - buffers.used <= KEEP_FRAMES);
+        gpu.textures
+            .retain(|_, (_, used)| now - *used <= KEEP_FRAMES);
 
-        // Runs of one geometry, of one pass (opaque, then translucent).
+        // Runs of one geometry and texture, of one pass (opaque, then
+        // translucent).
         let mut runs = Vec::new();
         let mut start = 0;
         while start < drawn.len() {
-            let (geometry, glass) = (drawn[start].geometry.id(), translucent(drawn[start]));
+            let first = drawn[start];
+            let (geometry, glass, texture) =
+                (first.geometry.id(), translucent(first), texture_of(first));
             let end = start
                 + drawn[start..]
                     .iter()
-                    .take_while(|d| d.geometry.id() == geometry && translucent(d) == glass)
+                    .take_while(|d| {
+                        d.geometry.id() == geometry
+                            && translucent(d) == glass
+                            && texture_of(d) == texture
+                    })
                     .count();
-            runs.push((geometry, glass, start as u32..end as u32));
+            runs.push((geometry, glass, texture, start as u32..end as u32));
             start = end;
         }
         // What the map would hold now; drawn only if it holds something else.
@@ -284,7 +312,7 @@ impl Viewport for Renderer {
             pass.set_bind_group(0, &gpu.shadow_bind, &[]);
             pass.set_vertex_buffer(1, instances_buffer.slice(..));
             // Translucent meshes cast none.
-            for (geometry, _, instances) in runs.iter().filter(|(_, glass, _)| !glass) {
+            for (geometry, _, _, instances) in runs.iter().filter(|(_, glass, ..)| !glass) {
                 let buffers = &gpu.geometries[geometry];
                 pass.set_vertex_buffer(0, buffers.vertices.slice(..));
                 pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -294,6 +322,20 @@ impl Viewport for Renderer {
             gpu.shadow_drawn = casting;
         }
 
+        if gpu.textured.is_none() && runs.iter().any(|(_, _, texture, _)| *texture != 0) {
+            let shader = frame
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("3D textured"),
+                    source: wgpu::ShaderSource::Wgsl(shader_source(true).into()),
+                });
+            gpu.textured = Some(main_pipelines(
+                frame.device,
+                gpu.format,
+                &shader,
+                &[Some(&gpu.layout), Some(&gpu.texture_layout)],
+            ));
+        }
         let (_, colour, depth_view) = gpu.targets.as_ref().unwrap();
         let clear = world
             .background
@@ -331,9 +373,15 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, &gpu.bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
-        for (geometry, glass, instances) in runs {
+        for (geometry, glass, texture, instances) in runs {
             let buffers = &gpu.geometries[&geometry];
-            pass.set_pipeline(if glass { &gpu.translucent } else { &gpu.opaque });
+            match (gpu.textures.get(&texture), &gpu.textured) {
+                (Some((binding, _)), Some(textured)) => {
+                    pass.set_pipeline(&textured[usize::from(glass)]);
+                    pass.set_bind_group(1, binding, &[]);
+                }
+                _ => pass.set_pipeline(&gpu.plain[usize::from(glass)]),
+            }
             pass.set_vertex_buffer(0, buffers.vertices.slice(..));
             pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..buffers.count, 0, instances);
@@ -525,7 +573,7 @@ impl Gpu {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source(false).into()),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("3D frame"),
@@ -574,11 +622,38 @@ impl Gpu {
         });
         let stand_in = depth_map(device, 1, "3D shadow stand-in");
         let bind = frame_binding(device, &layout, &uniforms, &stand_in, &sampler);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("3D"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
+        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("3D texture"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("3D texture"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        let plain = main_pipelines(device, format, &shader, &[Some(&layout)]);
         let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D shadow frame"),
             entries: &[uniform_entry],
@@ -591,67 +666,7 @@ impl Gpu {
                 resource: uniforms.as_entire_binding(),
             }],
         });
-        let vertex_attributes =
-            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
-        let instance_attributes = wgpu::vertex_attr_array![
-            3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
-            7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4
-        ];
-        let pipeline = |translucent: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(if translucent {
-                    "3D translucent"
-                } else {
-                    "3D opaque"
-                }),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vertex"),
-                    compilation_options: Default::default(),
-                    buffers: &[
-                        wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &vertex_attributes,
-                        },
-                        wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<Instance>() as u64,
-                            step_mode: wgpu::VertexStepMode::Instance,
-                            attributes: &instance_attributes,
-                        },
-                    ],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fragment"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: translucent
-                            .then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: (!translucent).then_some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH,
-                    depth_write_enabled: Some(!translucent),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: SAMPLES,
-                    ..Default::default()
-                },
-                multiview_mask: None,
-                cache: None,
-            })
-        };
+        let (vertex_attributes, instance_attributes) = (VERTEX_ATTRIBUTES, INSTANCE_ATTRIBUTES);
         let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("3D shadows"),
             layout: Some(
@@ -700,8 +715,8 @@ impl Gpu {
         });
         Self {
             format,
-            opaque: pipeline(false),
-            translucent: pipeline(true),
+            plain,
+            textured: None,
             uniforms,
             layout,
             bind,
@@ -711,6 +726,9 @@ impl Gpu {
             shadow_map: None,
             stand_in,
             shadow_drawn: None,
+            texture_layout,
+            texture_sampler,
+            textures: HashMap::new(),
             instances: None,
             geometries: HashMap::new(),
             targets: None,
@@ -719,6 +737,130 @@ impl Gpu {
     }
 }
 
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
+    7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4
+];
+/// The shader, sampling a texture or not (its colour alone).
+fn shader_source(textured: bool) -> String {
+    if textured {
+        SHADER.to_owned()
+    } else {
+        SHADER
+            .replace(TEXTURE_BINDINGS, "")
+            .replace(TEXTURE_SAMPLE, "vec4(1.0)")
+    }
+}
+/// The opaque and translucent meshes' pipelines with `shader`, bound as
+/// `layouts` say.
+fn main_pipelines(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    layouts: &[Option<&wgpu::BindGroupLayout>],
+) -> [wgpu::RenderPipeline; 2] {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("3D"),
+        bind_group_layouts: layouts,
+        immediate_size: 0,
+    });
+    let pipeline = |translucent: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(if translucent {
+                "3D translucent"
+            } else {
+                "3D opaque"
+            }),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vertex"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &VERTEX_ATTRIBUTES,
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &INSTANCE_ATTRIBUTES,
+                    },
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fragment"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: translucent.then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: (!translucent).then_some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(!translucent),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: SAMPLES,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    [pipeline(false), pipeline(true)]
+}
+
+/// `texture` and its mipmaps on the GPU (written by the CPU where memory
+/// is shared: no copy, see `texture_with_levels`), bound for sampling.
+fn upload(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    texture: &crate::Texture,
+) -> wgpu::BindGroup {
+    let levels = crate::texture::mipmaps(texture.width(), texture.height(), texture.pixels());
+    let levels: Vec<&[u8]> = levels
+        .iter()
+        .map(|(_, _, pixels)| pixels.as_slice())
+        .collect();
+    let made = zgx_gpu::viewport::texture_with_levels(
+        device,
+        queue,
+        (texture.width(), texture.height()),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        &levels,
+        "3D texture",
+    );
+    let view = made.create_view(&Default::default());
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("3D texture"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
 /// A depth texture `side` texels square, drawn to and sampled.
 fn depth_map(device: &wgpu::Device, side: u32, label: &str) -> wgpu::TextureView {
     device
@@ -766,6 +908,14 @@ fn frame_binding(
     })
 }
 
+/// The shader's texture, which an untextured pipeline's leaves out
+/// (`shader_source`).
+const TEXTURE_BINDINGS: &str = "@group(1) @binding(0) var base_texture: texture_2d<f32>;
+@group(1) @binding(1) var base_sampler: sampler;
+// (end of the texture's bindings)
+";
+const TEXTURE_SAMPLE: &str = "textureSample(base_texture, base_sampler, in.uv)";
+
 /// Metallic-roughness shading (GGX, Smith, Schlick) under a sun, up to four
 /// point lights and a hemisphere's ambient, mapped to display range by
 /// Khronos's PBR Neutral, premultiplied.
@@ -785,6 +935,9 @@ struct Frame {
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(1) @binding(0) var base_texture: texture_2d<f32>;
+@group(1) @binding(1) var base_sampler: sampler;
+// (end of the texture's bindings)
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -793,6 +946,7 @@ struct Out {
     @location(2) color: vec4<f32>,
     @location(3) emissive: vec3<f32>,
     @location(4) material: vec3<f32>,
+    @location(5) uv: vec2<f32>,
 }
 
 @vertex fn vertex(
@@ -804,7 +958,7 @@ struct Out {
     let model = mat4x4(m0, m1, m2, m3);
     let world = model * vec4(position, 1.0);
     let n = mat3x3(n0.xyz, n1.xyz, n2.xyz) * normal;
-    return Out(frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w));
+    return Out(frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv);
 }
 
 @vertex fn shadow_vertex(
@@ -879,7 +1033,9 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment fn fragment(in: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let base = in.color.rgb;
+    // Its texture's colour (white without one), in linear light.
+    let texel = textureSample(base_texture, base_sampler, in.uv);
+    let base = in.color.rgb * texel.rgb;
     var lit: vec3<f32>;
     if in.material.z > 0.5 {
         lit = base;
@@ -921,7 +1077,9 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
     if frame.params.y > 0.5 {
         lit = encode(clamp(lit, vec3(0.0), vec3(1.0)));
     }
-    let alpha = clamp(in.color.a, 0.0, 1.0);
+    // A translucent mesh's texture adds its own alpha; an opaque one's
+    // is ignored (glTF's OPAQUE).
+    let alpha = clamp(select(1.0, in.color.a * texel.a, in.color.a < 1.0), 0.0, 1.0);
     return vec4(lit * alpha, alpha);
 }
 "#;
@@ -930,6 +1088,13 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 mod tests {
     use super::*;
     use crate::{Camera, World, math::vec3};
+
+    #[test]
+    fn an_untextured_shader_binds_no_texture() {
+        let (plain, textured) = (shader_source(false), shader_source(true));
+        assert!(!plain.contains("base_texture") && !plain.contains("@group(1)"));
+        assert!(textured.contains(TEXTURE_BINDINGS) && textured.contains(TEXTURE_SAMPLE));
+    }
 
     #[test]
     fn a_frame_shades_with_the_four_point_lights_nearest_the_target() {

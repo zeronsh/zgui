@@ -7,9 +7,13 @@
 //! normals, made smooth where a mesh has none, and texture coordinates, of
 //! any of glTF's component types), and their metallic-roughness materials'
 //! factors: colour, metal, roughness, emission, blending (`BLEND`) and
-//! `KHR_materials_unlit`. Not yet: textures, skins, morph targets,
+//! `KHR_materials_unlit`, and their base colour textures (PNG or JPEG, in
+//! the file, inline or beside it). Not yet: the other textures (metal and
+//! roughness, normals, emission, occlusion), skins, morph targets,
 //! animations, sparse accessors, points and lines (skipped).
-use crate::{Geometry, Material, Object, ObjectId, Quat, Transform, Vec3, Vertex, World, vec3};
+use crate::{
+    Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
+};
 use serde_json::Value;
 
 /// Why a model could not be read.
@@ -36,7 +40,7 @@ pub struct Model {
 struct Node {
     transform: Transform,
     children: Vec<usize>,
-    meshes: Vec<(Geometry, Material)>,
+    meshes: Vec<(Geometry, Material, Option<Texture>)>,
 }
 
 /// Deeper than this, a node tree is taken for a cycle.
@@ -85,9 +89,23 @@ impl Model {
             doc: &doc,
             buffers: &buffers,
         };
+        // Base colour textures: each image a material uses, decoded once.
+        // One that can't be read leaves its meshes their colour alone.
+        let mut images: Vec<Option<Option<Texture>>> = vec![None; list(&doc, "images").len()];
         let materials = list(&doc, "materials")
             .iter()
-            .map(material)
+            .map(|value| {
+                let texture = base_colour_image(&doc, value).and_then(|image| {
+                    images
+                        .get_mut(image)?
+                        .get_or_insert_with(|| {
+                            let bytes = reader.image(image, &mut resolve)?;
+                            Texture::decode(&bytes).ok()
+                        })
+                        .clone()
+                });
+                (material(value), texture)
+            })
             .collect::<Vec<_>>();
         let meshes = list(&doc, "meshes")
             .iter()
@@ -146,7 +164,7 @@ impl Model {
             }
             let node = &self.nodes[index];
             let matrix = parent * node.transform.matrix();
-            for (geometry, _) in &node.meshes {
+            for (geometry, ..) in &node.meshes {
                 let (low, high) = geometry.bounds();
                 for i in 0..8 {
                     let p = matrix.project(vec3(
@@ -176,8 +194,11 @@ impl World {
             }
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
-            for (geometry, material) in &node.meshes {
-                self.add(Object::mesh(geometry.clone(), *material).child_of(id));
+            for (geometry, material, texture) in &node.meshes {
+                let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
+                if texture.is_some() {
+                    self.set_texture(mesh, texture.clone());
+                }
             }
             stack.extend(node.children.iter().rev().map(|&c| (c, id, depth + 1)));
         }
@@ -348,17 +369,50 @@ fn material(value: &Value) -> Material {
     }
 }
 
+/// The image of `material`'s base colour texture, if it has one.
+fn base_colour_image(doc: &Value, material: &Value) -> Option<usize> {
+    let texture = material
+        .get("pbrMetallicRoughness")?
+        .get("baseColorTexture")?
+        .get("index")?
+        .as_u64()?;
+    let source = list(doc, "textures").get(texture as usize)?.get("source")?;
+    source.as_u64().map(|i| i as usize)
+}
+
 struct Reader<'a> {
     doc: &'a Value,
     buffers: &'a [Vec<u8>],
 }
 impl Reader<'_> {
+    /// Image `index`'s encoded bytes: from a buffer view, a data URI or a
+    /// file `resolve` gives.
+    fn image(
+        &self,
+        index: usize,
+        resolve: &mut impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        let image = list(self.doc, "images").get(index)?;
+        if let Some(uri) = image.get("uri").and_then(Value::as_str) {
+            return match uri.strip_prefix("data:") {
+                Some(data) => data.split_once(";base64,").and_then(|(_, b64)| base64(b64)),
+                None => resolve(uri),
+            };
+        }
+        let view = list(self.doc, "bufferViews").get(image.get("bufferView")?.as_u64()? as usize)?;
+        let number = |key: &str| view.get(key).and_then(Value::as_u64).unwrap_or(0) as usize;
+        let buffer = self.buffers.get(number("buffer"))?;
+        let start = number("byteOffset");
+        buffer
+            .get(start..start.checked_add(number("byteLength"))?)
+            .map(<[u8]>::to_vec)
+    }
     /// A mesh's triangle primitives as geometries in their materials.
     fn mesh(
         &self,
         mesh: &Value,
-        materials: &[Material],
-    ) -> Result<Vec<(Geometry, Material)>, ModelError> {
+        materials: &[(Material, Option<Texture>)],
+    ) -> Result<Vec<(Geometry, Material, Option<Texture>)>, ModelError> {
         let mut out = Vec::new();
         for primitive in list(mesh, "primitives") {
             // Triangles only: points, lines, strips and fans are skipped.
@@ -404,18 +458,21 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let material = primitive
+            let (material, texture) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
-                .and_then(|m| materials.get(m as usize).copied())
-                .unwrap_or_else(|| Material {
-                    color: [1.; 4],
-                    metallic: 1.,
-                    roughness: 1.,
-                    ..Material::default()
+                .and_then(|m| materials.get(m as usize).cloned())
+                .unwrap_or_else(|| {
+                    let plain = Material {
+                        color: [1.; 4],
+                        metallic: 1.,
+                        roughness: 1.,
+                        ..Material::default()
+                    };
+                    (plain, None)
                 });
             let geometry = Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
-            out.push((geometry, material));
+            out.push((geometry, material, texture));
         }
         Ok(out)
     }
@@ -769,6 +826,38 @@ mod tests {
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
         World::new().add_model(&model);
         assert!(model.bounds().is_some());
+    }
+
+    /// A 2 by 1 PNG: red, then blue.
+    const RED_BLUE: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII=";
+
+    #[test]
+    fn a_base_colour_texture_comes_with_its_mesh() {
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["images"] = json!([
+                { "uri": format!("data:image/png;base64,{RED_BLUE}") },
+                { "uri": "data:image/png;base64,bm90IGEgcG5n" },
+            ]);
+            doc["textures"] = json!([{ "source": 0 }, { "source": 1 }]);
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let texture = model.nodes[0].meshes[0].2.clone().expect("its texture");
+        assert_eq!((texture.width(), texture.height()), (2, 1));
+        assert_eq!(texture.pixels(), [255, 0, 0, 255, 0, 0, 255, 255]);
+        let world = World::new();
+        world.add_model(&model);
+        world.set_camera(crate::Camera::looking_at([0., 0., 3.], [0., 0., 0.]));
+        let hit = world.pick((50., 50.), (100., 100.)).unwrap();
+        assert_eq!(world.texture(hit.object), Some(texture));
+        // An image that doesn't decode leaves the mesh its colour alone.
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["images"] = json!([{ "uri": "data:image/png;base64,bm90IGEgcG5n" }]);
+            doc["textures"] = json!([{ "source": 0 }]);
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        assert!(model.nodes[0].meshes[0].2.is_none());
     }
 
     #[test]
