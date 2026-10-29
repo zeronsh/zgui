@@ -1362,6 +1362,7 @@ mod macos {
                     .rect
                     .is_none_or(|old| (old.width, old.height) != (rect.width, rect.height));
                 if changed || resized {
+                    zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
                     let renderer = panel.renderer.as_mut().expect("made above");
                     renderer.repaint_all();
                     renderer.render(scene, &[])?;

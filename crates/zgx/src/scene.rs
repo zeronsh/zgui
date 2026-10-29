@@ -1607,6 +1607,10 @@ fn paints_only(old: &NodeKind, new: &NodeKind) -> bool {
 // While removals are pending, this bit routes only subtree damage through
 // its existing exceptional path. Layout/flush materialize before other uses.
 const PENDING_CHILDREN_BIT: usize = 1usize << (usize::BITS - 1);
+// While popups are shown (`set_popup`), this bit routes damage through the
+// same exceptional path, where a popup's subtree is left out (its own window
+// draws it): windows without popups take the path they did, and pay nothing.
+const POPUPS_BIT: usize = 1usize << (usize::BITS - 2);
 const _: () = assert!(std::mem::size_of::<Slot>() > 2);
 const BOUNDS_VALID: u8 = 1;
 const HIT_DIRECTION: u8 = 2;
@@ -2916,12 +2920,16 @@ impl Scene {
         self.damage_subtree(id);
         if popup {
             self.popups.push(id);
+            self.filtered.set(self.filtered.get() | POPUPS_BIT);
             if !std::mem::replace(&mut self.node_mut(id).promoted, true) {
                 self.promoted_count += 1;
                 self.popups_promoted.push(id);
             }
         } else {
             self.popups.retain(|n| *n != id);
+            if self.popups.is_empty() {
+                self.filtered.set(self.filtered.get() & !POPUPS_BIT);
+            }
             self.popup_anchors.retain(|(root, _)| *root != id);
             if self.popups_promoted.contains(&id) {
                 self.popups_promoted.retain(|n| *n != id);
@@ -3269,12 +3277,19 @@ impl Scene {
         false
     }
     /// The part of `id`'s box that shows: inside its clips and not fully
-    /// transparent; `None` when nothing does.
+    /// transparent; `None` when nothing does. Under a popup root
+    /// (`set_popup`) that is where its own window shows it, past this
+    /// one's viewport and its ancestors' clips.
     pub fn visible_bounds(&self, id: NodeId) -> Option<Rect> {
         self.note_geometry_read(id);
         let (bounds, effects, clip) = self.world(id);
         if effects.opacity <= 0. {
             return None;
+        }
+        if !self.popups.is_empty()
+            && let Some(shown) = self.visible_in_popup(id)
+        {
+            return shown;
         }
         if self.transformed > 0 {
             let (bounds, clip, placement) = self.placed(id);
@@ -3288,6 +3303,69 @@ impl Scene {
             };
         }
         bounds.intersection(clip.unwrap_or(self.viewport))
+    }
+    /// `visible_bounds` for `id` under a popup root, if it is under one.
+    /// Out of line: windows without popups never come here.
+    #[cold]
+    #[inline(never)]
+    fn visible_in_popup(&self, id: NodeId) -> Option<Option<Rect>> {
+        let root = self.popup_holding(id)?;
+        let (bounds, clip, placement) = self.placed_in_popup(id, root);
+        let Some(visible) = bounds.intersection(clip.unwrap_or(UNCLIPPED)) else {
+            return Some(None);
+        };
+        Some(match placement {
+            Some(placement) => placement
+                .matrix
+                .bounds(visible)
+                .intersection(placement.clip),
+            None => Some(visible),
+        })
+    }
+    /// The popup root (`set_popup`) `id` is or is under, if any.
+    fn popup_holding(&self, id: NodeId) -> Option<NodeId> {
+        if self.popups.is_empty() {
+            return None;
+        }
+        std::iter::once(id)
+            .chain(self.ancestors(id))
+            .find(|at| self.popups.contains(at))
+    }
+    /// `placed`, for `id` in popup `root`'s subtree, as the popup's window
+    /// draws it (`layer_items(Some(root))`): from the translation of what
+    /// holds the root, cut by no clip above it.
+    fn placed_in_popup(&self, id: NodeId, root: NodeId) -> (Rect, Option<Rect>, Option<Placement>) {
+        let (transform, clip, placement) = match self.node(id).parent {
+            Some(parent) if id != root => self.context_in_popup(parent, root),
+            _ => (self.held_translation(root), Some(UNCLIPPED), None),
+        };
+        let (_, bounds, clip, placement) = self.descend(self.node(id), transform, clip, placement);
+        (bounds, clip, placement)
+    }
+    /// `context`, within popup `root`'s subtree (see `placed_in_popup`).
+    fn context_in_popup(
+        &self,
+        id: NodeId,
+        root: NodeId,
+    ) -> (Transform, Option<Rect>, Option<Placement>) {
+        let node = self.node(id);
+        let (transform, clip, placement) = match node.parent {
+            Some(parent) if id != root => self.context_in_popup(parent, root),
+            _ => (self.held_translation(root), Some(UNCLIPPED), None),
+        };
+        let (transform, _, clip, placement) = self.descend(node, transform, clip, placement);
+        (transform, clip, placement)
+    }
+    /// The translations of `id`'s ancestors, summed.
+    fn held_translation(&self, id: NodeId) -> Transform {
+        self.ancestors(id)
+            .fold(Transform::default(), |sum, ancestor| {
+                let at = self.node(ancestor).transform;
+                Transform {
+                    x: sum.x + at.x,
+                    y: sum.y + at.y,
+                }
+            })
     }
     /// Where `id`'s box shows: the viewport-aligned box around its corners
     /// after its own and its ancestors' local transforms, unclipped. `bounds`
@@ -6518,6 +6596,11 @@ impl Scene {
         // instead of walking back up from every descendant.
         let special = self.transformed + self.filtered.get();
         if special > 0 {
+            // A popup root's subtree (`set_popup`) damages nothing in this
+            // window: its own window draws it whole as its revision moves.
+            if special & POPUPS_BIT != 0 && self.in_popup_cold(id) {
+                return;
+            }
             if (special as isize) < 0 {
                 return self.damage_pending_subtree(id, context);
             }
@@ -6969,12 +7052,23 @@ impl Scene {
             node = self.tree_node(parent);
         }
     }
+    /// Whether `id` is or is under a popup root: asked only on the damage
+    /// walks' exceptional path, while `POPUPS_BIT` is set.
+    #[cold]
+    #[inline(never)]
+    fn in_popup_cold(&self, id: NodeId) -> bool {
+        self.popup_holding(id).is_some()
+    }
     fn damage_node(&mut self, id: NodeId) {
         if self.damage_is_full() || !self.shown(id) {
             return;
         }
         let past_clip = self.paints_past_clip(id);
         if self.transformed + self.filtered.get() > 0 {
+            // As `damage_subtree_with`'s.
+            if self.filtered.get() & POPUPS_BIT != 0 && self.in_popup_cold(id) {
+                return;
+            }
             let (bounds, clip, placement) = self.placed(id);
             let node = self.node(id);
             let blur_radius = node.effects.blur_radius;
@@ -10086,6 +10180,136 @@ mod tests {
         assert_eq!(scene.popup_bounds(popup), None);
         scene.remove(popup);
         assert!(scene.popups().is_empty());
+    }
+    #[test]
+    fn what_a_popup_holds_shows_past_the_viewport_and_its_holders_clips() {
+        let mut scene = Scene::new(100.0, 100.0);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let quad = NodeKind::Quad(QuadStyle {
+            fill: Color(1, 2, 3, 255),
+            ..Default::default()
+        });
+        let boxed = |width, height, clip| Style {
+            absolute: true,
+            width: Some(width),
+            height: Some(height),
+            clip,
+            ..Default::default()
+        };
+        let root = scene.root();
+        // A popover's trigger in a clipping card; its panel hangs past the
+        // window's bottom right.
+        let card = scene.append(
+            root,
+            NodeKind::Container(Layout::Overlay),
+            boxed(40., 40., true),
+        );
+        let popup = scene.append(
+            card,
+            NodeKind::Container(Layout::Overlay),
+            boxed(60., 60., false),
+        );
+        scene.set_transform(popup, Transform { x: 80., y: 80. });
+        let panel = scene.append(
+            popup,
+            NodeKind::Container(Layout::Overlay),
+            boxed(60., 60., true),
+        );
+        let item = scene.append(panel, quad.clone(), boxed(40., 20., false));
+        scene.set_transform(item, Transform { x: 10., y: 30. });
+        // Past the panel's own clip: cut there still.
+        let cut = scene.append(panel, quad.clone(), boxed(20., 20., false));
+        scene.set_transform(cut, Transform { x: 70., y: 0. });
+        scene.flush();
+        assert_eq!(scene.visible_bounds(item), None);
+        scene.set_popup(popup, true);
+        scene.flush();
+        // Where the popup's window shows it.
+        assert_eq!(
+            scene.visible_bounds(item),
+            Some(Rect::new(90., 110., 40., 20.))
+        );
+        assert_eq!(
+            scene.visible_bounds(popup),
+            Some(Rect::new(80., 80., 60., 60.))
+        );
+        assert_eq!(scene.visible_bounds(cut), None);
+        // And so through a layer inside it (a scaled node).
+        scene.set_local_transform(
+            item,
+            LocalTransform {
+                scale: (0.5, 0.5),
+                ..Default::default()
+            },
+        );
+        scene.flush();
+        assert_eq!(
+            scene.visible_bounds(item),
+            Some(Rect::new(100., 115., 20., 10.))
+        );
+        // Transparent, it shows nothing.
+        scene.set_effects(
+            popup,
+            Effects {
+                opacity: 0.,
+                ..Default::default()
+            },
+        );
+        assert_eq!(scene.visible_bounds(item), None);
+    }
+    #[test]
+    fn what_a_popup_holds_damages_nothing_in_the_window() {
+        let mut scene = Scene::new(100.0, 100.0);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let boxed = Style {
+            absolute: true,
+            width: Some(60.),
+            height: Some(60.),
+            ..Default::default()
+        };
+        // Half over the window: its window draws it, this one leaves it out.
+        let popup = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Overlay),
+            boxed.clone(),
+        );
+        scene.set_transform(popup, Transform { x: 70., y: 70. });
+        let item = scene.append(
+            popup,
+            NodeKind::Quad(QuadStyle {
+                fill: Color(1, 2, 3, 255),
+                ..Default::default()
+            }),
+            boxed,
+        );
+        scene.set_popup(popup, true);
+        scene.flush();
+        let revision = scene.layer_revision(popup);
+        // A fade, a move and a scale inside it, as animations write them.
+        scene.set_effects(
+            item,
+            Effects {
+                opacity: 0.5,
+                ..Default::default()
+            },
+        );
+        assert_eq!(scene.flush().damage, []);
+        scene.set_transform(item, Transform { x: 3., y: 0. });
+        assert_eq!(scene.flush().damage, []);
+        scene.set_local_transform(
+            item,
+            LocalTransform {
+                scale: (0.5, 0.5),
+                ..Default::default()
+            },
+        );
+        assert_eq!(scene.flush().damage, []);
+        scene.set_transform(item, Transform { x: 6., y: 0. });
+        assert_eq!(scene.flush().damage, []);
+        assert_ne!(scene.layer_revision(popup), revision, "its window draws");
+        // Back in the window, it damages where it paints there.
+        scene.set_popup(popup, false);
+        assert_ne!(scene.flush().damage, []);
     }
     #[test]
     fn hit_testing_respects_stacking_clip_transform_and_opacity() {
