@@ -17,7 +17,7 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-pub use crate::editor_lines::{Highlighter, LineColors};
+pub use crate::editor_lines::{Highlighter, LineColors, LineSpans, SpanHighlighter, SpanStyle};
 
 #[derive(Default)]
 struct Owned {
@@ -153,6 +153,9 @@ struct EditorHint {
     value: EditorValue,
     /// The placeholder and its colour (`None`: the theme's `muted`).
     placeholder: RefCell<Option<(std::sync::Arc<str>, Option<Color>)>>,
+    /// The caret's colour and width, if not the text's and the app's
+    /// (`EditorHandle::set_caret_style`).
+    caret: Cell<(Option<Color>, Option<f32>)>,
     select_on_focus: Cell<bool>,
     /// A password field: its text shows masked and never leaves it.
     secure: Cell<bool>,
@@ -239,6 +242,7 @@ impl EditorHint {
         Self {
             value,
             placeholder: RefCell::default(),
+            caret: Cell::default(),
             select_on_focus: Cell::default(),
             secure: Cell::default(),
             input_mode: Cell::default(),
@@ -551,11 +555,27 @@ impl EditorHandle {
     /// only for those that change (see [`Highlighter`]). Its colours change
     /// no metrics, so carets and selections stay where they were.
     pub fn set_highlighter(&self, highlighter: Option<Highlighter>) {
+        self.set_span_highlighter(highlighter.map(crate::editor_lines::span_highlighter));
+    }
+    /// Style a multiline editor's lines with `highlighter`, as
+    /// `set_highlighter` colours them, with weights, italics, strikes and
+    /// washes too (see [`SpanStyle`]). A line whose spans set a weight or
+    /// italics is shaped with them, so its carets, hits and wrapping follow
+    /// what shows; other lines are shaped as their plain text.
+    pub fn set_span_highlighter(&self, highlighter: Option<SpanHighlighter>) {
         if !self.multiline {
             return;
         }
         self.hint.line_cache().set_highlighter(highlighter);
         self.refresh();
+    }
+    /// The caret's colour (`None`: the text's, as by default) and width in
+    /// points (`None`: the app's, `Ui::set_caret_width`).
+    pub fn set_caret_style(&self, color: Option<Color>, width: Option<f32>) {
+        let width = width.filter(|w| w.is_finite() && *w >= 0.);
+        if self.hint.caret.replace((color, width)) != (color, width) {
+            self.refresh();
+        }
     }
     /// Ask the highlighter for the lines anew (what it gives changed: a
     /// theme's colours).
@@ -879,43 +899,6 @@ fn editor_font<'a>(
     })
 }
 
-/// `line` in runs of the colours `colors` give it, the rest `color`: a
-/// highlighted line (`None` if it has none to give).
-fn line_runs(
-    line: &str,
-    colors: &LineColors,
-    color: Color,
-    size: f32,
-    font: &FontStyle,
-) -> Option<crate::rich_text::RichText> {
-    if line.is_empty() {
-        return None;
-    }
-    let run = |range: std::ops::Range<usize>, color| crate::rich_text::TextRun {
-        range,
-        font: font.clone(),
-        font_size: size,
-        color,
-        ..Default::default()
-    };
-    let mut runs = Vec::with_capacity(colors.len() * 2 + 1);
-    let mut at = 0;
-    for (range, shade) in colors {
-        let start = range.start.max(at);
-        if start >= range.end {
-            continue;
-        }
-        if start > at {
-            runs.push(run(at..start, color));
-        }
-        runs.push(run(start..range.end, *shade));
-        at = range.end;
-    }
-    if at < line.len() {
-        runs.push(run(at..line.len(), color));
-    }
-    crate::rich_text::RichText::new(line, runs).ok()
-}
 /// A long text's layout by its lines, the editor's last if the text is the
 /// same.
 #[allow(clippy::too_many_arguments)]
@@ -935,7 +918,7 @@ fn long_layout(
         width,
         font,
         scene.text_shaper_revision(),
-        || scene.line_shaper(size, font),
+        || (scene.line_shaper(size, font), scene.rich_line_shaper()),
     )
 }
 /// `e`'s committed text laid out (`editor_layout`): a long one by its
@@ -3886,7 +3869,8 @@ impl Ui {
             );
             let font = editor_font(&s, root, &font).into_owned();
             s.set_font(text, font.clone());
-            s.set_kind(caret, NodeKind::Rect(color));
+            let caret_color = draw_hint.caret.get().0.unwrap_or(color);
+            s.set_kind(caret, NodeKind::Rect(caret_color));
             let wrap_width = draw_wrap.get().then_some(inner_width.max(1.));
             // The committed text's revision tells its layout it is the same
             // (a scroll), without comparing a long document.
@@ -3979,7 +3963,11 @@ impl Ui {
                 // One line, centred in the box (negative: pushed down).
                 (line_height - inner_height) / 2.
             };
-            let caret_width = draw_caret_width.get();
+            let caret_width = draw_hint
+                .caret
+                .get()
+                .1
+                .unwrap_or_else(|| draw_caret_width.get());
             s.set_style(caret, fixed(caret_width, line_height));
             // Aligned, the text's box is its layout's width, which the text
             // aligns in as the layout does; its placeholder, the field's.
@@ -4068,10 +4056,9 @@ impl Ui {
                     }
                     for (i, id) in pool.iter() {
                         let line = lines.line_text(*i);
-                        let colored = draw_hint
-                            .line_cache()
-                            .colors(lines, *i)
-                            .and_then(|colors| line_runs(&line, &colors, color, size, &font));
+                        let colored = draw_hint.line_cache().spans(lines, *i).and_then(|spans| {
+                            crate::editor_lines::styled_line(&line, &spans, color, size, &font)
+                        });
                         match colored {
                             Some(rich) => {
                                 if !matches!(s.kind(*id), NodeKind::RichText { text } if **text == rich)
@@ -4143,7 +4130,7 @@ impl Ui {
             if caret_shown {
                 // A bare insertion point: no composition, no selection.
                 let bare = e.preedit().is_none() && selection.range().is_empty();
-                draw_blink.restart(caret, color, Instant::now(), bare);
+                draw_blink.restart(caret, caret_color, Instant::now(), bare);
             } else {
                 draw_blink.release(caret);
             }
@@ -4556,6 +4543,15 @@ impl Ui {
             let storage = Rc::downgrade(&self.storage);
             Rc::new(move || {
                 refresh();
+                // Spans that shape their lines found as it drew (the first
+                // bold line): what it placed from plain lines is placed again.
+                if told
+                    .code()
+                    .and_then(|code| code.lines.borrow().clone())
+                    .is_some_and(|lines| lines.take_restyled())
+                {
+                    refresh();
+                }
                 EditorHint::watch_theme(&told, &storage, root, &watched_theme);
                 // Where the caret is, told once drawn (nothing borrowed),
                 // if it moved. The callback is out while it runs: a refresh

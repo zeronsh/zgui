@@ -7,6 +7,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 ### Added
 
 - **Input modes, as HTML's `inputmode`**: `View::input_mode(InputMode::Email)` (`Text`, `Decimal`, `Numeric`, `Tel`, `Search`, `Email`, `Url`, `None`), `EditorHandle::set_input_mode`, and Luau's `inputmode = "email"`, say what kind of text a field takes. It is a hint, never a check. On Windows (`ZGX_TSF=1`) it is the field's input scope, which the touch keyboard and input methods follow, and `None` shows no touch keyboard. Windows input methods also reconvert committed text in place (select it, press Convert or Hanja).
+- **Styled highlight spans**: a text area's highlighter can set a weight, italics, a strike and a wash behind a range, as well as its colour (`View::span_highlighter`, `EditorHandle::set_span_highlighter`, `SpanStyle`; Luau's `highlight` spans take `weight`, `italic`, `strike` and `bg` by name beside `{ from, to, color }`). A line whose spans set a weight or italics is shaped with them, so its width, wrapping, carets and clicks follow what shows. Other lines are shaped as plain text, as before. Overlapping spans merge, so a code span inside bold text stays bold. This is enough for a Markdown composer's emphasis and inline code ([styled spans](docs/reference/controls.md#styled-spans)).
+- **An editor's own caret colour and width**: `View::caret_color` / `caret_color_when`, `View::caret_width`, `EditorHandle::set_caret_style`, and Luau's `caret_color` (a colour or `"$token"`) and `caret_width` on `ui.input` and `ui.textarea`. By default the caret still takes the text's colour and the app's width (`Ui::set_caret_width`).
 
 ## 0.1.5 (2026-10-28)
 

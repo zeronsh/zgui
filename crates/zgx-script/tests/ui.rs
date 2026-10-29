@@ -3577,3 +3577,80 @@ fn a_spring_or_tween_between_far_values_settles() {
         assert!(retargeted_far_settles(curve, 3e38), "{curve} 3e38");
     }
 }
+
+#[test]
+fn a_textarea_styles_its_highlight_spans_and_takes_its_own_caret() {
+    use zgx::scene::Color;
+    let mut h = Harness::inline(
+        r##"local text = ui.state("text", "a **bold** `code`")
+        return ui.column {
+            ui.textarea { id = "draft", value = text, w = 300, h = 100, wrap = true,
+                caret_color = "#ff4000", caret_width = 2,
+                highlight = function(line, state)
+                    local spans = {}
+                    local a, b = string.find(line, "%*%*.-%*%*")
+                    if a then
+                        table.insert(spans, { a, a + 1, "#808080" })
+                        table.insert(spans, { a, b, weight = 600 })
+                        table.insert(spans, { b - 1, b, "#808080" })
+                    end
+                    local c, d = string.find(line, "`.-`")
+                    if c then
+                        table.insert(spans, { c, d, "$accent", bg = "#202020", italic = true, strike = true })
+                    end
+                    return spans, state
+                end },
+            ui.input { id = "name", value = ui.state("name", ""), caret_color = "$danger" },
+        }"##,
+    );
+    assert_eq!(h.error(), None);
+    let draft = h.find("draft").unwrap();
+    h.ui.input.focus(&h.ui.scene, Some(draft));
+    h.frames(1);
+    let editor = h.ui.focused_editor().unwrap();
+    {
+        let scene = h.ui.scene.borrow();
+        assert_eq!(scene.bounds(editor.caret).width, 2.);
+        assert_eq!(
+            scene.kind(editor.caret),
+            &NodeKind::Rect(Color(255, 64, 0, 255))
+        );
+    }
+    let runs = {
+        let scene = h.ui.scene.borrow();
+        let mut pending = vec![draft];
+        let mut found = None;
+        while let Some(id) = pending.pop() {
+            if let NodeKind::RichText { text } = scene.kind(id) {
+                found = Some(
+                    text.runs()
+                        .iter()
+                        .map(|run| (text.text()[run.range.clone()].to_string(), run.clone()))
+                        .collect::<Vec<_>>(),
+                );
+            }
+            pending.extend(scene.children(id).iter().copied());
+        }
+        found.expect("the line shows styled")
+    };
+    let run = |text: &str| runs.iter().find(|(t, _)| t == text).unwrap().1.clone();
+    // The delimiters grey, the whole bold: spans merge.
+    assert_eq!(run("**").font.weight, 600);
+    assert_eq!(run("**").color, Color(128, 128, 128, 255));
+    assert_eq!(run("bold").font.weight, 600);
+    let code = run("`code`");
+    assert!(code.font.italic && code.strikethrough.is_some());
+    assert_eq!(code.background, Some(Color(32, 32, 32, 255)));
+    assert_eq!(run("a ").font.weight, 400);
+    // A token colours the input's caret; its width is the app's.
+    let name = h.find("name").unwrap();
+    h.ui.input.focus(&h.ui.scene, Some(name));
+    h.frames(1);
+    let editor = h.ui.focused_editor().unwrap();
+    let danger = zgx::theme::Themes::of(&h.ui.runtime)
+        .root()
+        .color(zgx::theme::tok::DANGER);
+    let scene = h.ui.scene.borrow();
+    assert_eq!(scene.kind(editor.caret), &NodeKind::Rect(danger));
+    assert_eq!(scene.bounds(editor.caret).width, h.ui.caret_width());
+}

@@ -2639,7 +2639,7 @@ pub struct Scene {
     /// Rich text's, as `rich_measurer` measures `min_content_lines`' copy.
     rich_min_content: Option<Box<RichMinContent>>,
     rich_measurer: crate::rich_text::TextMeasure,
-    rich_shaper: Option<Box<crate::rich_text::RichShaper>>,
+    rich_shaper: Option<std::rc::Rc<crate::rich_text::RichShaper>>,
     text_shaper_revision: u64,
     pending_layout_nodes: usize,
     layout_revision: u64,
@@ -4776,7 +4776,7 @@ impl Scene {
         ) -> Box<dyn crate::text_layout::TextLayout>
         + 'static,
     ) {
-        self.rich_shaper = Some(Box::new(shaper));
+        self.rich_shaper = Some(std::rc::Rc::new(shaper));
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
     }
     /// Shape a rich paragraph, wrapped at `width` if given.
@@ -5154,6 +5154,19 @@ impl Scene {
                     text, size, width,
                 ))
             })
+        }
+    }
+    /// Styled lines shaped apart from the scene, as `shape_rich_text`
+    /// shapes them: a highlighted editor's lines whose spans set a weight
+    /// or italics (`editor_lines`).
+    pub(crate) fn rich_line_shaper(&self) -> crate::editor_lines::RichLineShaper {
+        match self.rich_shaper.clone() {
+            Some(shaper) => std::rc::Rc::new(move |rich, width| shaper(rich, width)),
+            None => std::rc::Rc::new(|rich, width| {
+                Box::new(crate::text_layout::FallbackTextLayout::with_rich(
+                    rich, width,
+                ))
+            }),
         }
     }
     /// The size of `text` at `size` in `font`, wrapped at `width` if given.

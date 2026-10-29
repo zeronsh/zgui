@@ -1232,6 +1232,8 @@ fn kind_view(
             multiline,
             placeholder,
             placeholder_color,
+            caret_color,
+            caret_width,
             select_on_focus,
             line_numbers,
             secure,
@@ -1308,6 +1310,29 @@ fn kind_view(
                     });
                 }
                 None => {}
+            }
+            match caret_color {
+                Some(Source::Lit(Lit::Color(color))) => view = view.caret_color(*color),
+                Some(color) => {
+                    // A token follows the element's theme; anything
+                    // unresolved shows the text's colour.
+                    let (color, vm) = (resolve_owned(color), vm.clone());
+                    let theme = match cx.as_deref().map(Context::theme) {
+                        Some(theme) => theme,
+                        None => zgx::theme::Themes::of(&low.runtime).root().clone(),
+                    };
+                    view = view.caret_color_when(move || {
+                        match resolve(&color, Ty::Color, None, &vm) {
+                            Some(Lit::Color(color)) => Some(color),
+                            Some(Lit::Token(t)) => theme.get(t).color(),
+                            _ => None,
+                        }
+                    });
+                }
+                None => {}
+            }
+            if let Some(width) = caret_width {
+                view = view.caret_width(*width);
             }
             if let Some(control) = controlled {
                 view = view.on_event(control);
@@ -3592,12 +3617,54 @@ fn code_editor(
         }
     };
     let ranges = Rc::new(ranges);
+    // A highlighter's `{ { from, to, color?, weight =, italic =, strike =,
+    // bg = } }`: positional as `ranges`, its styles by name.
+    let spans = {
+        let color_of = color_of.clone();
+        // The style's keys, made once (a line's every token is read).
+        let keys = ["weight", "italic", "strike", "bg"].map(|key| vm.lua.create_string(key).ok());
+        move |list: &mlua::Table| {
+            let mut out = Vec::with_capacity(list.raw_len());
+            for span in list.sequence_values::<mlua::Table>().flatten() {
+                let (Ok(from), Ok(to)) = (span.raw_get::<f64>(1), span.raw_get::<f64>(2)) else {
+                    continue;
+                };
+                if from < 1. || to < from {
+                    continue;
+                }
+                let color_at = |key: mlua::Value| match span.raw_get::<Option<mlua::LuaString>>(key)
+                {
+                    Ok(Some(text)) => color_of(&text),
+                    _ => None,
+                };
+                let [weight, italic, strike, bg] = keys.clone().map(|key| match key {
+                    Some(key) => span.raw_get::<mlua::Value>(key).unwrap_or(mlua::Value::Nil),
+                    None => mlua::Value::Nil,
+                });
+                let style = zgx::widgets::SpanStyle {
+                    color: color_at(mlua::Value::Integer(3)),
+                    weight: match weight {
+                        mlua::Value::Integer(w) => Some(w.clamp(1, 1000) as u16),
+                        mlua::Value::Number(w) => Some(w.clamp(1., 1000.) as u16),
+                        _ => None,
+                    },
+                    italic: italic.as_boolean() == Some(true),
+                    strike: strike.as_boolean() == Some(true),
+                    background: bg.as_string().and_then(|text| color_of(text)),
+                };
+                if style != zgx::widgets::SpanStyle::default() {
+                    out.push((from as usize - 1..to as usize, style));
+                }
+            }
+            out
+        }
+    };
     if let Some(highlight) = &code.highlight {
-        let (highlight, vm, ranges) = (highlight.clone(), vm.clone(), ranges.clone());
-        view = view.highlighter(move |line, state| {
+        let (highlight, vm) = (highlight.clone(), vm.clone());
+        view = view.span_highlighter(move |line, state| {
             match vm.call::<(Option<mlua::Table>, Option<f64>)>(&highlight, (line, state)) {
-                Ok((spans, next)) => (
-                    spans.map_or_else(Vec::new, |spans| ranges(&spans, 0, None)),
+                Ok((list, next)) => (
+                    list.map_or_else(Vec::new, |list| spans(&list)),
                     next.map_or(0, |n| n as u32),
                 ),
                 Err(error) => {

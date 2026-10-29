@@ -469,6 +469,19 @@ export type Tokens = {
 	warning: string,
 }
 export type Color = string | number
+-- A `highlight` span: `{ from, to, color? }` (bytes from 1; a colour or
+-- `"$token"`), styled by name. A weight or italics shapes its line, so
+-- carets and clicks follow what shows.
+export type HighlightSpan = {
+	[number]: number | Color,
+	-- Its font weight (600, 700).
+	weight: number?,
+	italic: boolean?,
+	-- A line through it.
+	strike: boolean?,
+	-- A wash behind it (inline code).
+	bg: Color?,
+}
 -- A number, or a number token: a standard one (`"$radius.md"`, see
 -- `NumberToken`) or an app's (`"$terminal.inset"`), hence any string.
 export type Num = number | string
@@ -6035,11 +6048,19 @@ export type InputProps = {
 	-- typography and `placeholder_color`.
 	placeholder: Reactive<string>?,
 	placeholder_color: Reactive<Color>?,
+	-- The caret's colour (the text's by default) and width in points (the
+	-- app's by default).
+	caret_color: Reactive<Color>?,
+	caret_width: number?,
 	-- Focusing it selects all its text (an address bar).
 	select_on_focus: boolean?,
 	-- A password field: its text shows as a bullet per character, and
 	-- copying or cutting it gives nothing.
 	secure: boolean?,
+	-- What kind of text it takes (HTML's `inputmode`): a hint to touch
+	-- keyboards and input methods, never a check of what is typed. "none"
+	-- shows no virtual keyboard (a field with its own keypad).
+	inputmode: ("text" | "decimal" | "numeric" | "tel" | "search" | "email" | "url" | "none")?,
 	-- Check its spelling as it is typed (HTML's `spellcheck`): the system's
 	-- checker marks misspelled words with a dotted line, and its context
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
@@ -6047,14 +6068,15 @@ export type InputProps = {
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
-	-- Several lines only: a line's colours, asked for the lines in view and
+	-- Several lines only: a line's styles, asked for the lines in view and
 	-- again only for one that changes. Given the line and what the line
 	-- before left (0 before the first), it returns spans `{ from, to,
 	-- color }` (bytes counted from 1, as `string.find` gives them; `color`
-	-- a colour or `"$token"`) and what the line leaves the next (a block
-	-- comment or string running on: any number of the highlighter's). It
-	-- must depend on nothing but its arguments.
-	highlight: ((line: string, state: number) -> ({ { any } }?, number?))?,
+	-- a colour or `"$token"`, or left out) with `weight`, `italic`,
+	-- `strike` and `bg` by name (`HighlightSpan`), and what the line leaves
+	-- the next (a block comment or string running on: any number of the
+	-- highlighter's). It must depend on nothing but its arguments.
+	highlight: ((line: string, state: number) -> ({ HighlightSpan }?, number?))?,
 	-- Several lines only: ranges of the whole text marked behind it (a
 	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
 	-- from 1; only those in view are drawn.

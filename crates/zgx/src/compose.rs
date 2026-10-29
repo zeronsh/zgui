@@ -339,7 +339,7 @@ type Decorations = Vec<(std::ops::Range<usize>, crate::scene::Color)>;
 /// marked behind its text, its current line and what Tab inserts.
 #[derive(Default)]
 pub(crate) struct CodeOptions {
-    highlighter: Option<crate::widgets::Highlighter>,
+    highlighter: Option<crate::widgets::SpanHighlighter>,
     decorations: Option<Box<dyn FnMut() -> Decorations>>,
     current_line: Option<Box<dyn FnMut() -> Option<crate::scene::Color>>>,
     indent: Option<String>,
@@ -386,6 +386,9 @@ pub(crate) struct Rare {
     accessibility: Option<Box<Accessibility>>,
     placeholder: Option<Box<dyn FnMut() -> String>>,
     placeholder_color: Option<Box<dyn FnMut() -> crate::scene::Color>>,
+    /// The caret's colour (followed) and width (`View::caret_color`).
+    caret_color: Option<Box<dyn FnMut() -> Option<crate::scene::Color>>>,
+    caret_width: Option<f32>,
     select_on_focus: Option<bool>,
     secure: Option<bool>,
     input_mode: Option<crate::text_edit::InputMode>,
@@ -459,6 +462,12 @@ impl Rare {
         }
         if self.placeholder_color.is_some() {
             inner.placeholder_color = self.placeholder_color;
+        }
+        if self.caret_color.is_some() {
+            inner.caret_color = self.caret_color;
+        }
+        if self.caret_width.is_some() {
+            inner.caret_width = self.caret_width;
         }
         if self.select_on_focus.is_some() {
             inner.select_on_focus = self.select_on_focus;
@@ -1130,6 +1139,26 @@ impl View {
         self.rare_mut().placeholder_color = Some(Box::new(color));
         self
     }
+    /// The caret's colour, instead of the text's. Only editor roots accept
+    /// this.
+    pub fn caret_color(self, color: crate::scene::Color) -> Self {
+        self.caret_color_when(move || Some(color))
+    }
+    /// A caret colour that follows the reactive values it reads (`None`:
+    /// the text's).
+    pub fn caret_color_when(
+        mut self,
+        color: impl FnMut() -> Option<crate::scene::Color> + 'static,
+    ) -> Self {
+        self.rare_mut().caret_color = Some(Box::new(color));
+        self
+    }
+    /// The caret's width in points, instead of the app's
+    /// (`Ui::set_caret_width`). Only editor roots accept this.
+    pub fn caret_width(mut self, points: f32) -> Self {
+        self.rare_mut().caret_width = Some(points);
+        self
+    }
     /// Select an editor's whole text whenever it takes focus, as a browser's
     /// address bar does: the first click selects everything, the next places
     /// the caret (see `EditorHandle::set_select_on_focus`). Only editor
@@ -1183,6 +1212,19 @@ impl View {
     pub fn highlighter(
         mut self,
         highlighter: impl Fn(&str, u32) -> (crate::widgets::LineColors, u32) + 'static,
+    ) -> Self {
+        self.code_mut().highlighter = Some(crate::editor_lines::span_highlighter(
+            std::rc::Rc::new(highlighter),
+        ));
+        self
+    }
+    /// Style a text area's lines, as `highlighter` colours them, with
+    /// weights, italics, strikes and washes behind the text too (see
+    /// [`crate::widgets::SpanStyle`]): a Markdown composer's bold, emphasis
+    /// and inline code. Only editor roots accept this.
+    pub fn span_highlighter(
+        mut self,
+        highlighter: impl Fn(&str, u32) -> (crate::widgets::LineSpans, u32) + 'static,
     ) -> Self {
         self.code_mut().highlighter = Some(std::rc::Rc::new(highlighter));
         self
@@ -3398,6 +3440,12 @@ fn open_element(
         "placeholder is only supported on editor views"
     );
     assert!(
+        rare.as_deref()
+            .is_none_or(|r| r.caret_color.is_none() && r.caret_width.is_none())
+            || is_editor,
+        "caret_color and caret_width are only supported on editor views"
+    );
+    assert!(
         rare.as_deref().is_none_or(|r| r.select_on_focus.is_none()) || is_editor,
         "select_on_focus is only supported on editor views"
     );
@@ -4315,7 +4363,7 @@ fn open_element(
                 on_caret,
             } = *code;
             if highlighter.is_some() {
-                editor.set_highlighter(highlighter);
+                editor.set_span_highlighter(highlighter);
                 // Colours may be theme tokens: a new theme colours the lines
                 // again (the highlighter is asked anew).
                 let (editor, theme) = (editor.clone(), environment.theme.clone());
@@ -4340,6 +4388,15 @@ fn open_element(
                 let editor = editor.clone();
                 ui.bind(root, move || editor.set_current_line(color()));
             }
+        }
+        let caret_width = rare.as_deref().and_then(|r| r.caret_width);
+        match rare.as_deref_mut().and_then(|r| r.caret_color.take()) {
+            Some(mut color) => {
+                let editor = editor.clone();
+                ui.bind(root, move || editor.set_caret_style(color(), caret_width));
+            }
+            None if caret_width.is_some() => editor.set_caret_style(None, caret_width),
+            None => {}
         }
         let (mut text, mut color) = (
             rare.as_deref_mut().and_then(|r| r.placeholder.take()),
