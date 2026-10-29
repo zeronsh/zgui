@@ -163,3 +163,66 @@ fn a_debug_build_watching_checks_after_reloads() {
     assert!(shown.contains("app.luau:1:"), "{shown}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn a_reload_writes_the_types_of_the_whole_app() {
+    // A module this run hasn't required still declares the app's tokens: the
+    // file is what `zgx types` writes, not only what was loaded.
+    let dir = scripts(
+        "reload-types",
+        &[
+            ("app.luau", "return ui.text { \"hi\" }\n"),
+            (
+                "panes.luau",
+                "ui.theme.tokens { panes = { edge = \"#fff\" } }\nreturn {}\n",
+            ),
+        ],
+    );
+    let types = zgx_script::app_types::types_file(&dir);
+    std::fs::create_dir_all(types.parent().unwrap()).unwrap();
+    std::fs::write(&types, "").unwrap();
+    let runtime = zgx::reactive::Runtime::new();
+    let host = zgx_script::ScriptHost::new(&runtime, dir.join("app.luau"));
+    host.reload().unwrap();
+    let written = std::fs::read_to_string(&types).unwrap();
+    assert!(written.contains("edge: string"), "{written}");
+    zgx_script::app_types::write_types(&dir).unwrap();
+    assert_eq!(std::fs::read_to_string(&types).unwrap(), written);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_examples_types_files_are_what_zgx_types_writes() {
+    // Committed for editors; a change to zgx's own definitions regenerates
+    // them (`zgx types <dir>`), or every run of an example rewrites them.
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.ends_with(".zgx/types.d.luau") {
+                out.push(path);
+            } else if path.is_dir() && !path.ends_with("target") {
+                walk(&path, out);
+            }
+        }
+    }
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = Vec::new();
+    walk(&crates, &mut files);
+    assert!(!files.is_empty());
+    for file in files {
+        let dir = file.parent().and_then(|zgx| zgx.parent()).unwrap();
+        let sources: Vec<_> = zgx_script::check::scripts(dir)
+            .into_iter()
+            .map(|script| {
+                let source = std::fs::read_to_string(&script).unwrap();
+                (script, source)
+            })
+            .collect();
+        assert!(
+            std::fs::read_to_string(&file).unwrap() == zgx_script::app_types::definitions(&sources),
+            "{} is stale: run `zgx types {}`",
+            file.display(),
+            dir.display()
+        );
+    }
+}
