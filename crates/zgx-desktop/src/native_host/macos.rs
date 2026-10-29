@@ -157,14 +157,30 @@ fn app_key(
         alt: flags.contains(Flags::Option),
         meta: flags.contains(Flags::Command),
     };
-    // SAFETY: AppKit's live key event, on the main thread.
-    let key = unsafe { winit::platform::macos::key_event_of(std::ptr::from_ref(event).cast()) };
-    let Some(key) = crate::application::shortcut_of(&key, modifiers) else {
+    let Some(key) = shortcut_of(event, modifiers) else {
         return false;
     };
     scene
         .try_borrow()
         .is_ok_and(|scene| ask(&router.input, &scene, &key, modifiers))
+}
+
+/// The shortcut `event` is, named as zgx names the window's own key presses.
+/// The names are the vendored winit's (`zgx_winit_patched`); crates.io's
+/// names no AppKit event, so with it no key a page or terminal gets is the
+/// app's, as its views never hand one back up anyway.
+#[cfg(not(zgx_winit_patched))]
+fn shortcut_of(_: &objc2_app_kit::NSEvent, _: zgx::input::Modifiers) -> Option<zgx::input::Key> {
+    None
+}
+#[cfg(zgx_winit_patched)]
+fn shortcut_of(
+    event: &objc2_app_kit::NSEvent,
+    modifiers: zgx::input::Modifiers,
+) -> Option<zgx::input::Key> {
+    // SAFETY: AppKit's live key event, on the main thread.
+    let key = unsafe { winit::platform::macos::key_event_of(std::ptr::from_ref(event).cast()) };
+    crate::application::shortcut_of(&key, modifiers)
 }
 
 /// A shortcut the app keeps (`app_reserves_key`), the app's first: its
