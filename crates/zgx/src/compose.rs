@@ -981,6 +981,21 @@ impl View {
         self.accessibility_mut().label = Some(Box::new(label));
         self
     }
+    /// Named `label`, or as `followed` says where a component's caller
+    /// gave a label that changes ([`FollowedLabel`]).
+    pub fn accessible_label_or(
+        self,
+        label: impl Into<String>,
+        followed: Option<&Followed>,
+    ) -> Self {
+        match followed {
+            Some(followed) => {
+                let followed = followed.clone();
+                self.accessible_label_when(move || followed.get())
+            }
+            None => self.accessible_label(label),
+        }
+    }
     fn accessibility_mut(&mut self) -> &mut Accessibility {
         self.rare_mut()
             .accessibility
@@ -1850,6 +1865,47 @@ pub fn provide_with<T: 'static>(
         Box::new(child),
     ))
 }
+thread_local! {
+    /// Whether any `FollowedLabel` was made: until then a component's
+    /// `FollowedLabel::take` looks for none.
+    static FOLLOWED: Cell<bool> = const { Cell::new(false) };
+}
+/// A label its caller follows (a translation, a state), for a component
+/// that names one of its inner nodes with its `label` (a tab strip, a
+/// select's button): provided around it ([`FollowedLabel::around`]) and
+/// taken by it as it builds ([`FollowedLabel::take`]), so a component
+/// inside it takes none. Components given a plain `String` look for none.
+pub struct FollowedLabel(RefCell<Option<Followed>>);
+/// A label that changes, as [`FollowedLabel`] gives it: shared, so a
+/// component can name more than one node with it.
+#[derive(Clone)]
+pub struct Followed(Rc<RefCell<Box<dyn FnMut() -> String>>>);
+impl Followed {
+    /// What it says now (a tracked read, in an effect).
+    pub fn get(&self) -> String {
+        (self.0.borrow_mut())()
+    }
+}
+impl FollowedLabel {
+    /// `view` (a component), its label following `label`.
+    pub fn around(label: impl FnMut() -> String + 'static, view: View) -> View {
+        FOLLOWED.set(true);
+        let label: Box<dyn FnMut() -> String> = Box::new(label);
+        provide(
+            FollowedLabel(RefCell::new(Some(Followed(Rc::new(RefCell::new(label)))))),
+            view,
+        )
+    }
+    /// The label provided around the component building in `cx`, if any:
+    /// its own, so components inside it get none.
+    pub fn take(cx: &Context) -> Option<Followed> {
+        if !FOLLOWED.get() {
+            return None;
+        }
+        cx.try_service::<FollowedLabel>()?.0.borrow_mut().take()
+    }
+}
+
 /// `child` under a theme scope that changes `over` (another theme, some
 /// tokens) and follows the enclosing scope otherwise: a light card in a
 /// dark app, a subtree with its own accent. Overlays the subtree opens
@@ -2630,7 +2686,13 @@ fn mount_overlay(
             let trigger = view.rare.as_mut().and_then(|r| r.portal.as_mut());
             let mut anchor = match trigger.and_then(|p| p.trigger.take()) {
                 Some(trigger) => trigger,
-                None => menu_item(label.clone()),
+                // Its label followed (`accessible_label_when`) by the row too.
+                None => match followed_label(view.rare.as_deref_mut()) {
+                    Some(followed) => {
+                        menu_item(label.clone()).accessible_label_when(move || followed.get())
+                    }
+                    None => menu_item(label.clone()),
+                },
             };
             anchor.rare_mut().menu_trigger = Some(open.clone());
             if let Some(id) = view.rare.as_mut().and_then(|r| r.trigger_id.take()) {
@@ -3562,10 +3624,11 @@ fn open_element(
                         .accessible_hidden(),
                     );
                 }
+                let drawn = menu_text(label, rare.as_deref_mut());
                 if is_submenu_trigger || shortcut.is_some() {
-                    view.children.push(text(label).flex_grow(1.));
+                    view.children.push(drawn.flex_grow(1.));
                 } else {
-                    view.children.push(text(label));
+                    view.children.push(drawn);
                 }
                 if let Some(keys) = shortcut {
                     view.children.push(
@@ -5564,6 +5627,26 @@ pub(crate) struct Accessibility {
     hidden: bool,
     focus_group: Option<crate::input::FocusGroup>,
     label: Option<Box<dyn FnMut() -> String>>,
+}
+/// A menu item's text: `label`, or where its label changes
+/// (`accessible_label_when`: a translation, a state) what that says now, as
+/// its name does. Out of line: `mount_element`'s loop builds few menus, and
+/// inlined there it costs every element (measured: +0.6% of it).
+#[inline(never)]
+fn menu_text(label: String, rare: Option<&mut Rare>) -> View {
+    match followed_label(rare) {
+        Some(followed) => text_signal(move || followed.get()),
+        None => text(label),
+    }
+}
+/// The label a view follows (`accessible_label_when`), shared: what draws it
+/// reads it too, the view's name reading it still.
+fn followed_label(rare: Option<&mut Rare>) -> Option<Followed> {
+    let accessibility = rare?.accessibility.as_mut()?;
+    let label = Followed(Rc::new(RefCell::new(accessibility.label.take()?)));
+    let read = label.clone();
+    accessibility.label = Some(Box::new(move || read.get()));
+    Some(label)
 }
 /// `accessibility` on `root`, which is a `default` (a group, a picture)
 /// unless it gives a role.

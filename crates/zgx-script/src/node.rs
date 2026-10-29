@@ -3119,8 +3119,12 @@ fn fill_from(
                         | Kind::List { .. }
                         // A canvas named is read as a picture (a chart).
                         | Kind::Canvas(..)
-                ) =>
+                ) || !matches!(value, mlua::Value::String(_)) =>
             {
+                // A widget's label that changes (a message, a state, a
+                // function): its constructor read what it says now
+                // (`label`), and this follows it. A plain string stays the
+                // constructor's alone.
                 match value {
                     mlua::Value::String(label) => node.label = Some(label.to_string_lossy().into()),
                     // A state or function: followed (a recycled row's name).
@@ -3368,8 +3372,9 @@ fn owner_and_lint(lua: &Lua) -> mlua::Result<(Weak<Vm>, crate::DesignLint)> {
     Ok((env.vm.clone(), env.warnings.borrow().design))
 }
 pub(crate) fn label(table: &Table) -> mlua::Result<String> {
-    // A message (`ui.t`) names it in the locale shown as it mounts.
-    // Read once: most labels are strings, or none.
+    // A message (`ui.t`) or a state names it as it mounts; `fill` keeps it
+    // as the node's followed label (`A11y::label`), so it follows the locale
+    // or the state after. Read once: most labels are strings, or none.
     match table.get::<mlua::Value>("label")? {
         mlua::Value::String(s) => Ok(s.to_str()?.to_owned()),
         mlua::Value::Nil => Ok(String::new()),
@@ -3378,6 +3383,11 @@ pub(crate) fn label(table: &Table) -> mlua::Result<String> {
                 .map(|m| m.get())
                 .unwrap_or_default())
         }
+        value @ mlua::Value::UserData(_) if state_of(&value).is_some() => Ok(state_of(&value)
+            .map(|state| state.with_untracked(|v| v.to_string()))
+            .unwrap_or_default()),
+        // A function: what it says once its effect runs.
+        mlua::Value::Function(_) => Ok(String::new()),
         // A number, say: converted as a string label always was.
         _ => Ok(table.get::<Option<String>>("label")?.unwrap_or_default()),
     }

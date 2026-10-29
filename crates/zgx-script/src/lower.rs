@@ -2979,16 +2979,34 @@ fn styled(
         }
         if let Some(label) = &a11y.label {
             let (label, vm) = (resolve_owned(label), vm.clone());
-            view = view.accessible_label_when(move || match resolve(&label, Ty::Str, None, &vm) {
+            let label = move || match resolve(&label, Ty::Str, None, &vm) {
                 Some(Lit::Str(s)) => s.to_string(),
                 _ => String::new(),
-            });
+            };
+            view = if follows_label(node) {
+                // The component names its own inner node (a tab strip, a
+                // select's button) with it.
+                zgx::compose::FollowedLabel::around(label, view)
+            } else {
+                view.accessible_label_when(label)
+            };
         }
     }
     if let Some(layout) = node.layout.as_ref().filter(|_| node.sizes_layout()) {
         view = layout_box(view, layout, vm, low);
     }
     view
+}
+
+/// Whether `node` is a library component that names an inner node with
+/// its label (`FollowedLabel`), not its root.
+fn follows_label(node: &Node) -> bool {
+    #[cfg(feature = "components")]
+    if let Kind::Library(library) = &node.kind {
+        return crate::library::follows_label(library);
+    }
+    let _ = node;
+    false
 }
 
 /// How a container lays out its children, for the regions among them that

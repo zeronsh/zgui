@@ -80,6 +80,9 @@ pub fn tabs(
 ) -> View {
     let label = label.into();
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let runtime = cx.runtime();
         // Each tab's node, for dragging, scrolling into view and focus.
         let nodes: Rc<RefCell<HashMap<String, NodeHandle>>> = Rc::default();
@@ -367,7 +370,7 @@ pub fn tabs(
         let list = row()
             .shrink_0()
             .role(Role::TabList)
-            .accessible_label(label.clone())
+            .accessible_label_or(label.clone(), followed.as_ref())
             .focus_group(FocusGroup::Horizontal)
             .gap(2.)
             .p(2.)

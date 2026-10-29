@@ -59,6 +59,9 @@ pub fn select(
     let (label, placeholder) = (label.into(), placeholder.into());
     let options = Rc::new(options);
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let open = cx.runtime().signal(false);
         let shown = {
             let (value, options, placeholder) =
@@ -78,7 +81,7 @@ pub fn select(
         let (expanded, value_text, label_text) = (open.clone(), shown.clone(), shown.clone());
         let trigger = button()
             .role(Role::ComboBox)
-            .accessible_label(label.clone())
+            .accessible_label_or(label.clone(), followed.as_ref())
             .value_when(value_text)
             .expanded_when(move || expanded.get())
             .min_w(120.)
@@ -137,6 +140,7 @@ pub fn select(
                 cx.stop_propagation();
             });
         let mut list = menu(label.clone(), open.clone(), trigger)
+            .accessible_label_or(label.clone(), followed.as_ref())
             .match_anchor_width()
             .open_over({
                 let value = value.clone();

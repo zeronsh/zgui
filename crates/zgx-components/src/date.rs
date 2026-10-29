@@ -306,6 +306,9 @@ pub fn calendar(
 ) -> View {
     let label = label.into();
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let today = options.today.unwrap_or_else(CalendarDate::today);
         let start = value
             .with_untracked(|v| v.unwrap_or(today))
@@ -324,6 +327,7 @@ pub fn calendar(
         month_view(
             cx,
             label,
+            followed,
             value,
             cursor,
             options,
@@ -336,9 +340,11 @@ pub fn calendar(
 }
 
 /// The calendar's caption, arrows and grid.
+#[allow(clippy::too_many_arguments)]
 fn month_view(
     cx: &mut Context,
     label: String,
+    followed: Option<zgx::compose::Followed>,
     value: Signal<Option<CalendarDate>>,
     cursor: Signal<CalendarDate>,
     options: CalendarOptions,
@@ -436,7 +442,7 @@ fn month_view(
         .child(
             column()
                 .role(Role::Grid)
-                .accessible_label(label)
+                .accessible_label_or(label, followed.as_ref())
                 .focusable(true)
                 .rounded(6.)
                 .on_mount(move |handle| {
@@ -595,6 +601,9 @@ pub fn date_picker(
 ) -> View {
     let label = label.into();
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let runtime = cx.runtime();
         let open = runtime.signal(false);
         let today = options.today.unwrap_or_else(CalendarDate::today);
@@ -626,11 +635,14 @@ pub fn date_picker(
             }
         };
         let (named, written, opens, keyed) = (shown.clone(), shown, open.clone(), open.clone());
-        let name = label.clone();
+        let (name, spoken) = (label.clone(), followed.clone());
         let trigger = button()
-            .accessible_label_when(move || match named() {
-                Some(date) => format!("{name}: {date}"),
-                None => name.clone(),
+            .accessible_label_when(move || {
+                let name = spoken.as_ref().map_or_else(|| name.clone(), |f| f.get());
+                match named() {
+                    Some(date) => format!("{name}: {date}"),
+                    None => name,
+                }
             })
             .gap(8.)
             .flex_row()
@@ -676,6 +688,7 @@ pub fn date_picker(
         let panel = month_view(
             cx,
             label.clone(),
+            followed.clone(),
             value,
             cursor,
             options,
@@ -798,6 +811,7 @@ pub fn time_field(
 ) -> View {
     let label = label.into();
     component(move |cx| {
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let runtime = cx.runtime();
         let now = value.with_untracked(|v| *v);
         let clock = Rc::new(Clock {
@@ -844,7 +858,7 @@ pub fn time_field(
         let order = clock.order();
         let mut field = row()
             .role(Role::Group)
-            .accessible_label(label.clone())
+            .accessible_label_or(label.clone(), followed.as_ref())
             .direction(Direction::Ltr)
             .items_center()
             .gap(1.)

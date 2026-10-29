@@ -141,6 +141,9 @@ pub fn tree(
     let label = label.into();
     let (children, activate) = (Rc::new(children), Rc::new(activate));
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let runtime = cx.runtime();
         let shown = runtime.signal(Vec::<Row>::new());
         {
@@ -361,7 +364,7 @@ pub fn tree(
         let key_tree = tree_node.clone();
         div()
             .role(Role::Tree)
-            .accessible_label(label.clone())
+            .accessible_label_or(label.clone(), followed.as_ref())
             .focusable(true)
             .h_full()
             .on_mount(move |handle| *tree_node.borrow_mut() = Some(handle))

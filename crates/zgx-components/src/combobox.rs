@@ -82,6 +82,9 @@ pub fn combobox(
 ) -> View {
     let label = label.into();
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let runtime = cx.runtime();
         let open = runtime.signal(false);
         let highlight = runtime.signal(None::<usize>);
@@ -203,6 +206,7 @@ pub fn combobox(
             );
             let expanded = open.clone();
             text_input(label.clone(), text_value.clone())
+                .accessible_label_or(label.clone(), followed.as_ref())
                 .role(Role::ComboBox)
                 .expanded_when(move || expanded.get())
                 .w_full()
@@ -369,7 +373,12 @@ pub fn combobox(
                 })
             },
         );
-        popover(format!("{label} suggestions"), open.clone(), field)
+        let suggestions = match followed.clone() {
+            Some(followed) => popover(format!("{label} suggestions"), open.clone(), field)
+                .accessible_label_when(move || format!("{} suggestions", followed.get())),
+            None => popover(format!("{label} suggestions"), open.clone(), field),
+        };
+        suggestions
             .layer()
             .lazy()
             .autofocus(false)

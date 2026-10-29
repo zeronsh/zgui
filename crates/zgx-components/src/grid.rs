@@ -574,6 +574,9 @@ pub fn data_grid(
 ) -> View {
     let label = label.into();
     component(move |cx| {
+        // A label that changes (a translation, a state), where the caller
+        // gave one (`FollowedLabel::around`).
+        let followed = zgx::compose::FollowedLabel::take(cx);
         let runtime = cx.runtime();
         let defaults = columns.with_untracked(|cs| {
             cs.iter()
@@ -697,7 +700,7 @@ pub fn data_grid(
         let (width, keys, mount) = (grid.clone(), grid.clone(), grid.clone());
         div()
             .role(Role::Grid)
-            .accessible_label(label.clone())
+            .accessible_label_or(label.clone(), followed.as_ref())
             .focusable(true)
             .h_full()
             .on_mount(move |handle| {

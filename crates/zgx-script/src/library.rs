@@ -176,9 +176,8 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
             crate::form::apply_field(lua, &table, false)?;
-            let label: Option<String> = table.get("label")?;
             let value = expect_state(&table.get("value")?, "`value`")?;
-            let kind = build(label.unwrap_or_default(), value, &table)?;
+            let kind = build(label(&table)?, value, &table)?;
             node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })
     };
@@ -521,6 +520,21 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
 }
 
 /// The view `library`, a node of the interface, lowers to.
+/// Whether the component `library` lowers to names an inner node with its
+/// label (`zgx::compose::FollowedLabel`).
+pub(crate) fn follows_label(library: &Library) -> bool {
+    matches!(
+        library,
+        Library::Tree { .. }
+            | Library::DataGrid { .. }
+            | Library::Calendar { .. }
+            | Library::TimeField { .. }
+            | Library::Combobox { .. }
+            | Library::Tabs { .. }
+            | Library::Select { .. }
+    )
+}
+
 pub(crate) fn view(
     library: &Library,
     node: &Rc<Node>,

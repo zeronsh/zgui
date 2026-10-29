@@ -209,3 +209,105 @@ fn the_lint_compares_each_locale_with_the_source() {
     assert!(has("i18n-key", "no.such"), "{found:?}");
     assert!(!has("i18n-key", "greeting"), "{found:?}");
 }
+
+/// The labels the semantics give nodes of `role`, in no set order.
+fn labels(h: &mut Harness, role: zgx::semantics::Role) -> Vec<String> {
+    h.ui.semantics
+        .borrow()
+        .iter()
+        .filter(|(_, node)| node.role == role)
+        .map(|(_, node)| node.label.clone())
+        .collect()
+}
+
+#[test]
+fn widget_labels_follow_the_locale_and_their_state() {
+    use zgx::semantics::Role;
+    let code = r#"
+ui.i18n { dir = "locales", source = "en" }
+ui.command { id = "fr", run = function() ui.locale:set("fr") end }
+ui.command { id = "rename", run = function() ui.state("title", "Draft"):set("Final") end }
+local title = ui.state("title", "Draft")
+return ui.column {
+    ui.menu_item { label = ui.t("search"), id = "item" },
+    ui.modal { label = ui.t("greeting", { name = "Ada" }), open = ui.state("open", true), ui.text { "In the dialog" } },
+    ui.modal { label = title, open = ui.state("open2", true), layer = true, ui.text { "Another" } },
+}
+"#;
+    let path = app("labels", code, &[("en", EN), ("fr", FR)]);
+    let mut h = harness(&path);
+    zgx::i18n::set_system_languages(|| vec!["en-US".into()]);
+    h.ui.set_assistive_technology(true);
+    h.settle();
+    assert_eq!(h.error(), None);
+    assert_eq!(h.text("item"), "Search");
+    assert_eq!(labels(&mut h, Role::MenuItem), vec!["Search".to_string()]);
+    let mut dialogs = labels(&mut h, Role::Dialog);
+    dialogs.sort();
+    assert_eq!(dialogs, vec!["Draft".to_string(), "Hello, Ada".to_string()]);
+    assert!(h.host.run_command("fr"));
+    assert!(h.host.run_command("rename"));
+    h.settle();
+    assert_eq!(h.text("item"), "Rechercher", "drawn as it is named");
+    assert_eq!(
+        labels(&mut h, Role::MenuItem),
+        vec!["Rechercher".to_string()]
+    );
+    let mut dialogs = labels(&mut h, Role::Dialog);
+    dialogs.sort();
+    assert_eq!(
+        dialogs,
+        vec!["Bonjour, Ada".to_string(), "Final".to_string()]
+    );
+}
+
+#[test]
+fn tabs_and_selects_name_and_title_themselves_in_the_locale() {
+    use zgx::semantics::Role;
+    // A title follows the locale through a tracked read: a computed list
+    // whose labels read `ui.t(...):get()`.
+    let code = r#"
+ui.i18n { dir = "locales", source = "en" }
+ui.command { id = "fr", run = function() ui.locale:set("fr") end }
+local tabs = ui.computed(function()
+    return { { id = "g", label = ui.t("greeting", { name = "Ada" }):get() } }
+end)
+return ui.column {
+    ui.tabs {
+        label = ui.t("search"),
+        items = tabs,
+        value = ui.state("tab", "g"),
+        panel = function(id) return ui.text { id } end,
+    },
+    ui.select { label = ui.t("search"), value = ui.state("pick", "a"), options = { "a", "b" } },
+}
+"#;
+    let path = app("tabs", code, &[("en", EN), ("fr", FR)]);
+    let mut h = harness(&path);
+    zgx::i18n::set_system_languages(|| vec!["en-US".into()]);
+    h.ui.set_assistive_technology(true);
+    h.settle();
+    assert_eq!(h.error(), None);
+    assert!(
+        h.texts().contains(&"Hello, Ada".to_string()),
+        "{:?}",
+        h.texts()
+    );
+    assert_eq!(labels(&mut h, Role::TabList), vec!["Search".to_string()]);
+    assert_eq!(labels(&mut h, Role::ComboBox), vec!["Search".to_string()]);
+    assert!(h.host.run_command("fr"));
+    h.settle();
+    assert!(
+        h.texts().contains(&"Bonjour, Ada".to_string()),
+        "{:?}",
+        h.texts()
+    );
+    assert_eq!(
+        labels(&mut h, Role::TabList),
+        vec!["Rechercher".to_string()]
+    );
+    assert_eq!(
+        labels(&mut h, Role::ComboBox),
+        vec!["Rechercher".to_string()]
+    );
+}
