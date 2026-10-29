@@ -157,35 +157,54 @@ impl mlua::FromLua for Text {
     }
 }
 
+/// What was raised, as a person reads it: a string as it is; a table's
+/// `message`; anything else, a Rust function's error included, as its text
+/// without the traceback.
+fn message_of(lua: &Lua, raised: &mlua::Value) -> mlua::Result<String> {
+    Ok(match raised {
+        mlua::Value::String(text) => text.to_string_lossy(),
+        mlua::Value::Table(table) if table.raw_get::<mlua::Value>("message")?.is_string() => {
+            table.raw_get::<String>("message")?
+        }
+        other => {
+            let text: String = lua
+                .globals()
+                .get::<mlua::Function>("tostring")?
+                .call(other.clone())?;
+            let text = match text.find("\nstack traceback:") {
+                Some(cut) => text[..cut].to_string(),
+                None => text,
+            };
+            text.strip_prefix("runtime error: ")
+                .map(str::to_string)
+                .unwrap_or(text)
+        }
+    })
+}
+
+/// What a load raised (`ui.paged`'s), as a failure: an error's own, else a
+/// "raised" one with its message.
+pub(crate) fn failure_of(lua: &Lua, raised: &mlua::Value) -> Rc<Failure> {
+    if let mlua::Value::UserData(ud) = raised
+        && let Ok(error) = ud.borrow::<UiError>()
+    {
+        return error.failure.clone();
+    }
+    let message = message_of(lua, raised).unwrap_or_else(|e| e.to_string());
+    Rc::new(Failure::new(Kind::Raised, message))
+}
+
 /// `UiError`'s constructor for `ui.try` (`calls.rs`'s Luau, as
-/// `ui.__error`): what was raised, as a person reads it (a string as it
-/// is; a table's `message`; anything else, a Rust function's error
-/// included, as its text without the traceback), kept as it was
-/// (`err.value`) unless it is a string or already an error.
+/// `ui.__error`): what was raised, as a person reads it (`message_of`),
+/// kept as it was (`err.value`) unless it is a string or already an error.
 pub(crate) fn raised(lua: &Lua) -> mlua::Result<mlua::Function> {
     lua.create_function(|lua, raised: mlua::Value| {
-        let message = match &raised {
-            mlua::Value::UserData(ud) if ud.is::<UiError>() => {
-                return Ok(mlua::Value::UserData(ud.clone()));
-            }
-            mlua::Value::String(text) => text.to_string_lossy(),
-            mlua::Value::Table(table) if table.raw_get::<mlua::Value>("message")?.is_string() => {
-                table.raw_get::<String>("message")?
-            }
-            other => {
-                let text: String = lua
-                    .globals()
-                    .get::<mlua::Function>("tostring")?
-                    .call(other.clone())?;
-                let text = match text.find("\nstack traceback:") {
-                    Some(cut) => text[..cut].to_string(),
-                    None => text,
-                };
-                text.strip_prefix("runtime error: ")
-                    .map(str::to_string)
-                    .unwrap_or(text)
-            }
-        };
+        if let mlua::Value::UserData(ud) = &raised
+            && ud.is::<UiError>()
+        {
+            return Ok(mlua::Value::UserData(ud.clone()));
+        }
+        let message = message_of(lua, &raised)?;
         let kept = match &raised {
             mlua::Value::String(_) | mlua::Value::Nil => None,
             other => Some(other.clone()),

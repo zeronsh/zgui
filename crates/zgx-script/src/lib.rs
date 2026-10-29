@@ -64,6 +64,7 @@ mod meter;
 mod motion;
 mod node;
 mod opens;
+mod paged;
 mod persist;
 mod reorder;
 #[cfg(feature = "scene3d")]
@@ -2655,6 +2656,7 @@ impl ScriptHost {
             &["call", "fetch", "resource", "task", "try"],
             move |lua, ui| calls::install(lua, ui, actions, fetch),
         );
+        lazy.ui(&["paged", "debounced"], paged::install);
         let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());
         let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
         lazy.ui(

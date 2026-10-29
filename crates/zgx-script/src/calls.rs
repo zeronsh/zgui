@@ -291,7 +291,7 @@ fn hear(waiter: Waiter, settled: &Settled) {
 
 /// Run task `thread` from where it is until it ends, awaits a promise
 /// still pending, or `task` is cancelled.
-fn drive(vm: &Rc<Vm>, thread: Thread, args: impl IntoLuaMulti, task: &Rc<TaskState>) {
+pub(crate) fn drive(vm: &Rc<Vm>, thread: Thread, args: impl IntoLuaMulti, task: &Rc<TaskState>) {
     let mut args = Some(args.into_lua_multi(&vm.lua));
     loop {
         if task.cancelled.get() {

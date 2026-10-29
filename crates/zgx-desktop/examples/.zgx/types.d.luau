@@ -1021,6 +1021,27 @@ export type Resource<T> = {
 	reload: () -> (),
 }
 
+-- A list loaded a page at a time (`ui.paged`): `items` grows by a page on
+-- each `more()`.
+export type Paged<T> = {
+	-- The items of every page loaded so far, in order (a list's `data`).
+	items: State<{ T }>,
+	-- A page is under way.
+	loading: State<boolean>,
+	-- "loading" until the first page has answered (and again as it loads
+	-- from the start), then "ready" or "failed".
+	status: State<"loading" | "ready" | "failed">,
+	-- The last page had no `next`: `more()` asks nothing.
+	done: State<boolean>,
+	-- What the last load raised (tracked), or nil.
+	error: UiError?,
+	-- Load the next page (a list's `on_end`); nothing while one loads or
+	-- once `done`.
+	more: () -> (),
+	-- Load again from the first page, a load still out cancelled.
+	reload: () -> (),
+}
+
 -- A mounted node a script reaches: through `on_mount`, `on_resize`, a ref
 -- or an animation's function values.
 declare extern type Element with
@@ -12841,6 +12862,13 @@ export type ListProps = {
 	-- Rows built beyond each edge (2 by default).
 	overscan: number?,
 	offset: State<number>?,
+	-- Called as its end comes within `end_distance` points (200 unless
+	-- set) of the bottom of its view: an infinite scroll's next page. Once
+	-- each time, and again once its rows have grown; while its rows are
+	-- shorter than its view too, until they fill it or a call adds none.
+	-- Watched without running the script while it scrolls short of it.
+	on_end: (() -> ())?,
+	end_distance: number?,
 }
 -- Where a modal's panel sits in the window: lined up with its start,
 -- centre or end across (`x`) and down (`y`), `inset` points from the edges
@@ -16523,6 +16551,15 @@ declare ui: {
 	-- and when a state it read before its first await changes; only the
 	-- last load's answer is kept. `initial`: `data` until one answers.
 	resource: <T>(load: () -> T, opts: { initial: T }?) -> Resource<T>,
+	-- A list loaded a page at a time: `load(cursor)` (nil for the first
+	-- page) returns `{ items, next }` in a task (it may await); `more()`
+	-- loads the page at `next`. Keyed as `ui.resource`: a state its first
+	-- page reads changing, or `reload()`, loads again from the start.
+	paged: <T, C>(load: (cursor: C?) -> { items: { T }, next: C? }) -> Paged<T>,
+	-- `state` once it has stayed unchanged for `ms` (a search box's query):
+	-- read-only (as `ui.computed`'s: a write is an error), its timer begun
+	-- again on each change, gone with its owner.
+	debounced: <T>(state: State<T>, ms: number) -> State<T>,
 	-- A form's fields, checked as they are typed, and its submit with its
 	-- pending and failure states; controls bind with `field`.
 	form: (spec: FormSpec) -> Form,

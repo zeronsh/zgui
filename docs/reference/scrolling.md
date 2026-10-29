@@ -43,6 +43,8 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | `offset` | `State<number>` | its own | the scroll position in points, as `scroll`'s |
 | `scrollbar` | `boolean` | `false` | an interactive scrollbar, as `scroll`'s |
 | `keyboard` | `boolean` | `false` | its rows are one Tab stop, landing on the row last focused, and the arrows, Page Up/Down, Home and End move focus through every row (mounting it), as a list box's do; typing jumps to the next row whose text starts with what was typed (letters within 750 ms build a prefix, the same letter again cycles), rows not mounted read by `row_text`. A row with `role = "option"` (or `"listitem"`) takes the focus itself, so its `on_focus` can open it (selection following focus); other controls in a row keep their own keys |
+| `on_end` | `() -> ()` | none | called as its end comes within `end_distance` points of the bottom of the view (an infinite scroll's next page, `ui.paged`'s `more`): once each time, and again once its rows have grown; while its rows are shorter than the view too, until they fill it or a call adds none. Watched in Rust: no script runs while it scrolls short of it |
+| `end_distance` | `number` | `200` | how far from the end `on_end` is called |
 | `w`, `h` | `Length` | `320`, `240` | |
 
 With `heights`, rows differ in height but are still never measured: the list knows where each starts, so a changed list (a section folded, rows inserted) re-lays out without building anything offscreen. A host can publish the heights as a shared value (`ScriptHost::shared`), and the script never copies them.

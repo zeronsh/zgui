@@ -2349,13 +2349,17 @@ fn kind_view(
                 },
             )
         }
-        Kind::List { scrollbar, .. } => {
-            let list = lower_list(&node.kind, vm, low, &mut cx);
+        Kind::List {
+            scrollbar, rare, ..
+        } => {
+            let mut list = lower_list(&node.kind, vm, low, &mut cx);
             if *scrollbar {
-                list.scrollbar(true)
-            } else {
-                list
+                list = list.scrollbar(true);
             }
+            if let Some(end) = rare.as_ref().and_then(|rare| rare.end.as_ref()) {
+                list = list_end(list, end, vm);
+            }
+            list
         }
         Kind::Modal {
             label,
@@ -5186,6 +5190,19 @@ fn canvas_options(
     view
 }
 
+/// A list's `on_end`: watched in Rust, the script called as it is
+/// reached. Out of line, so `lower`'s match stays as it was for every other
+/// element.
+#[inline(never)]
+fn list_end(list: View, end: &crate::node::ListEnd, vm: &Rc<Vm>) -> View {
+    let (on_end, vm) = (end.on_end.clone(), vm.clone());
+    list.on_end(end.distance, move || {
+        if let Err(e) = vm.call::<()>(&on_end, ()) {
+            vm.report(e);
+        }
+    })
+}
+
 /// A `ui.list` (kept out of `build`, which recurses: its locals would
 /// weigh on every level of a deep interface's stack).
 #[inline(never)]
@@ -5195,13 +5212,11 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         items,
         height,
         heights,
-        sticky,
-        sticky_top,
+        rare,
         overscan,
         build: builder,
         key,
         measured,
-        row_text,
         follow,
         offset,
         keyboard,
@@ -5209,6 +5224,14 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
     } = kind
     else {
         unreachable!("lower_list takes lists")
+    };
+    let (sticky, sticky_top, row_text) = match rare.as_deref() {
+        Some(rare) => (
+            rare.sticky.as_ref(),
+            rare.sticky_top,
+            rare.row_text.as_ref(),
+        ),
+        None => (None, 0., None),
     };
     if let Some(items) = items {
         return lower_item_list(kind, items, vm, low, cx);
@@ -5271,7 +5294,7 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
     let copy = {
         let (builder, vm, count, list_key) =
             (builder.clone(), vm.clone(), count.clone(), list_key.clone());
-        let (explicit, keyed) = (row_text.clone(), key.is_some());
+        let (explicit, keyed) = (row_text.cloned(), key.is_some());
         let runtime = need(&mut cx).runtime();
         move |index: usize| -> Option<String> {
             if index >= count() {
@@ -5360,17 +5383,9 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         .row_text(copy);
         match sticky {
             None => list,
-            Some(sticky) => sticky_list(
-                list,
-                sticky,
-                *sticky_top,
-                offset,
-                rows,
-                builder,
-                vm,
-                low,
-                cx,
-            ),
+            Some(sticky) => {
+                sticky_list(list, sticky, sticky_top, offset, rows, builder, vm, low, cx)
+            }
         }
     } else {
         // Each row owns what it makes, as `each` rows do.
@@ -5506,7 +5521,7 @@ fn lower_item_list(
         build: builder,
         key,
         measured,
-        row_text,
+        rare,
         follow,
         offset,
         keyboard,
@@ -5594,8 +5609,12 @@ fn lower_item_list(
     // A row the list has not mounted copies as `row_text` says (given its
     // index), or as its row would show.
     let copy = {
-        let (items, builder, vm, explicit) =
-            (items.clone(), builder.clone(), vm.clone(), row_text.clone());
+        let (items, builder, vm, explicit) = (
+            items.clone(),
+            builder.clone(),
+            vm.clone(),
+            rare.as_ref().and_then(|rare| rare.row_text.clone()),
+        );
         let runtime = need(&mut cx).runtime();
         move |index: usize| -> Option<String> {
             let item = items.with_untracked(|l| l.list().get(index).cloned())?;

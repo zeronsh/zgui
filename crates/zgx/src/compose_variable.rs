@@ -322,7 +322,12 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
     });
     let (mut key, mut build, mounted_in) = (rows.key(), rows.build(), rows.mounted_in.clone());
     View::new(Kind::VirtualList(Box::new(
-        move |ui, root, environment, scrollbar, keyboard_navigation| {
+        move |ui, root, environment, options: crate::compose::ListOptions| {
+            let crate::compose::ListOptions {
+                scrollbar,
+                keyboard_navigation,
+                end,
+            } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
             if measured {
                 let changed = heights.index.borrow_mut().enforce_minimum(1.);
@@ -332,6 +337,16 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             }
             let size = ui.observe_content_size(root);
             let extent = ui.signal(0.0_f32);
+            if let Some(end) = end {
+                crate::compose::watch_end(
+                    ui,
+                    root,
+                    offset.clone(),
+                    size.clone(),
+                    extent.clone(),
+                    end,
+                );
+            }
             // Clip rows to the allocated content box, keeping root padding clear.
             let viewport = ui.container(root, Layout::Overlay, Default::default());
             let content = ui.container(viewport, Layout::Overlay, Default::default());

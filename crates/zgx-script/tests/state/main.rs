@@ -19,6 +19,8 @@ mod large_data;
 mod module_overrides;
 #[path = "../packages.rs"]
 mod packages;
+#[path = "../paged.rs"]
+mod paged;
 #[path = "../plugin_filters.rs"]
 mod plugin_filters;
 #[path = "../plugin_hooks.rs"]

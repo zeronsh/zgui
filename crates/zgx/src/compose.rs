@@ -225,7 +225,65 @@ impl From<Slot> for View {
 }
 type Builder = Box<dyn FnOnce(&mut Context) -> View>;
 type RegionBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment)>;
-type VirtualBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment, bool, bool)>;
+type VirtualBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment, ListOptions)>;
+/// What a virtual list is mounted with, beside its rows: its scrollbar,
+/// keyboard navigation, and what its end coming in reach calls.
+pub(crate) struct ListOptions {
+    pub(crate) scrollbar: bool,
+    pub(crate) keyboard_navigation: bool,
+    pub(crate) end: Option<EndWatch>,
+}
+/// `View::on_end`: what a virtual list calls as its end comes within
+/// `distance` points of the bottom of its viewport.
+pub(crate) struct EndWatch {
+    distance: f32,
+    reached: Box<dyn FnMut()>,
+}
+/// A virtual list's region: its mount, given its options. Out of line: a
+/// list's mount is rare beside the elements `open_element` makes, which it
+/// is inlined into.
+#[inline(never)]
+fn virtual_region(
+    build: VirtualBuilder,
+    scrollbar: bool,
+    keyboard_navigation: bool,
+    end: Option<EndWatch>,
+) -> RegionBuilder {
+    let options = ListOptions {
+        scrollbar,
+        keyboard_navigation,
+        end,
+    };
+    Box::new(move |ui: &mut Ui, root, environment| build(ui, root, environment, options))
+}
+/// Call `end.reached` once each time the end of a virtual list (its content
+/// `extent`, scrolled by `offset`, in a viewport `size`) comes within
+/// `end.distance`: again only once its content has grown, so a list
+/// shorter than its viewport asks until it fills or nothing comes. Rust
+/// watches; the script runs only as it is reached.
+pub(crate) fn watch_end(
+    ui: &mut Ui,
+    root: NodeId,
+    offset: Signal<f32>,
+    size: Signal<(f32, f32)>,
+    extent: Signal<f32>,
+    mut end: EndWatch,
+) {
+    let runtime = ui.runtime.clone();
+    let mut reached_at: Option<u32> = None;
+    let effect = ui.runtime.effect(move || {
+        let (offset, (_, height), extent) = (offset.get(), size.get(), extent.get());
+        if height <= 0. {
+            // Not laid out yet.
+            return;
+        }
+        if extent - offset - height <= end.distance && reached_at != Some(extent.to_bits()) {
+            reached_at = Some(extent.to_bits());
+            runtime.untracked(|| (end.reached)());
+        }
+    });
+    ui.retain(root, effect);
+}
 enum Kind {
     Container(Layout),
     Text(String),
@@ -362,6 +420,7 @@ pub(crate) struct Rare {
     follow_end: Option<bool>,
     animation: Option<animation::Animated>,
     keyboard_navigation: Option<bool>,
+    end: Option<EndWatch>,
     dismiss_backdrop: Option<bool>,
     /// Where an overlay opens and a submenu's own trigger row: boxed, as
     /// few views have them (views are moved through the mount recursion).
@@ -423,6 +482,9 @@ impl Rare {
         }
         if self.portal.is_some() {
             inner.portal = self.portal;
+        }
+        if self.end.is_some() {
+            inner.end = self.end;
         }
         if self.keyboard_navigation.is_some() {
             inner.keyboard_navigation = self.keyboard_navigation;
@@ -704,6 +766,19 @@ impl View {
     /// it was at the end (a chat transcript); scrolling away releases it.
     pub fn follow_end(mut self, follow: bool) -> Self {
         self.rare_mut().follow_end = Some(follow);
+        self
+    }
+    /// Call `reached` as a virtual list's end comes within `distance` points
+    /// of the bottom of its viewport (an infinite scroll's next page): once
+    /// each time, and again once its content has grown. Its content shorter
+    /// than its viewport is in reach too, so it asks until it fills or a
+    /// call adds nothing. Watched in Rust: nothing runs while it scrolls
+    /// short of it. For a virtual list.
+    pub fn on_end(mut self, distance: f32, reached: impl FnMut() + 'static) -> Self {
+        self.rare_mut().end = Some(EndWatch {
+            distance: distance.max(0.),
+            reached: Box::new(reached),
+        });
         self
     }
     /// Enable bounded keyboard row navigation on a virtual list.
@@ -2292,10 +2367,18 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
     let (mut key, mut build, mounted_in) = (rows.key(), rows.build(), rows.mounted_in.clone());
     let count = move || (count.borrow_mut())();
     View::new(Kind::VirtualList(Box::new(
-        move |ui, root, environment, scrollbar, keyboard_navigation| {
+        move |ui, root, environment, options: ListOptions| {
+            let ListOptions {
+                scrollbar,
+                keyboard_navigation,
+                end,
+            } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
             let size = ui.observe_content_size(root);
             let extent = ui.signal(0.0_f32);
+            if let Some(end) = end {
+                watch_end(ui, root, offset.clone(), size.clone(), extent.clone(), end);
+            }
             // Clip rows to the allocated content box, keeping root padding clear.
             let viewport = ui.container(root, Layout::Overlay, Default::default());
             let content = ui.container(viewport, Layout::Overlay, Default::default());
@@ -3861,9 +3944,12 @@ fn open_element(
             if keyboard_navigation && view.variants.focus.is_none() {
                 view.variants.defaults[2] = Some(focus_ring(&view.styles));
             }
-            region = Some(Box::new(move |ui: &mut Ui, root, environment| {
-                build(ui, root, environment, scrollbar, keyboard_navigation)
-            }) as RegionBuilder);
+            region = Some(virtual_region(
+                build,
+                scrollbar,
+                keyboard_navigation,
+                rare.as_deref_mut().and_then(|r| r.end.take()),
+            ));
             let root = ui.container(parent, Layout::Overlay, scroll_default_size(false));
             ui.semantics
                 .borrow_mut()

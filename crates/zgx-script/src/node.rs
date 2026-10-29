@@ -766,6 +766,29 @@ impl Events {
     }
 }
 
+/// What few lists set (`Kind::List`'s `rare`).
+#[derive(Clone)]
+pub(crate) struct ListRare {
+    /// Rows that stick to the top while their section scrolls by (with
+    /// `heights`): their indices, from 1, in order.
+    pub(crate) sticky: Option<Heights>,
+    /// How far below the top they stick (CSS's sticky `top`).
+    pub(crate) sticky_top: f32,
+    /// `row_text = function(i) … end`: the plain text of row `i`, what a
+    /// copy of a selection over rows the list has not mounted takes
+    /// (without it, the text each row's description shows).
+    pub(crate) row_text: Option<Function>,
+    /// `on_end` (with `end_distance`): what its end coming in reach calls.
+    pub(crate) end: Option<ListEnd>,
+}
+
+/// `ui.list`'s `on_end`, called as its end comes within `distance` points.
+#[derive(Clone)]
+pub(crate) struct ListEnd {
+    pub(crate) on_end: Function,
+    pub(crate) distance: f32,
+}
+
 /// An input's options few inputs set (`Kind::Input`'s `rare`).
 #[derive(Clone, Default)]
 pub(crate) struct InputRare {
@@ -899,11 +922,9 @@ pub(crate) enum Kind {
         /// Each row's own height (`heights`), instead of one `height`: the
         /// row count is its length.
         heights: Option<Heights>,
-        /// Rows that stick to the top while their section scrolls by (with
-        /// `heights`): their indices, from 1, in order.
-        sticky: Option<Heights>,
-        /// How far below the top they stick (CSS's sticky `top`).
-        sticky_top: f32,
+        /// What few lists set (`ListRare`), boxed: every node is as large as
+        /// its largest kind.
+        rare: Option<Box<ListRare>>,
         overscan: usize,
         build: Function,
         /// `key`: each row's item's key (a function of its index), so a row
@@ -913,10 +934,6 @@ pub(crate) enum Kind {
         /// `measured = true`: rows take their content's height, measured as
         /// they mount (`height` the estimate for the rest until then).
         measured: bool,
-        /// `row_text = function(i) … end`: the plain text of row `i`, what
-        /// a copy of a selection over rows the list has not mounted takes
-        /// (without it, the text each row's description shows).
-        row_text: Option<Function>,
         /// `follow = true` (with `measured` or `heights`): resting at the
         /// end, it stays there as rows come and are measured (a chat).
         follow: bool,
@@ -2629,13 +2646,15 @@ const LATE_FIELDS: &[&str] = &[
     "private",
     "reorder",
     "item_label",
+    "on_end",
+    "end_distance",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
 /// it, so no style key compares against it: an input's caret (few set it,
 /// read only from those that do), whether plugins may target the node
-/// (`hook`, `private`); `inputmode` is read by `ui.input` itself. Any other
-/// key is unknown.
+/// (`hook`, `private`); `inputmode` is read by `ui.input` itself, `on_end`
+/// and `end_distance` by `ui.list`. Any other key is unknown.
 #[cold]
 #[inline(never)]
 fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlua::Result<()> {
@@ -2655,6 +2674,8 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
         "inputmode" => {}
         // `ui.each`'s reorder, read by `ui.each` itself.
         "reorder" | "item_label" => {}
+        // `ui.list`'s, read as the list is made.
+        "on_end" | "end_distance" => {}
         "private" => node.private = lua.unpack(value)?,
         "hook" => match value {
             mlua::Value::String(name) => {
@@ -4286,11 +4307,30 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 o => Some(expect_state(&o, "`offset`")?),
             };
             let overscan = table.get::<Option<usize>>("overscan")?.unwrap_or(2);
+            let row_text = table.get::<Option<Function>>("row_text")?;
+            let end = match table.get::<Option<Function>>("on_end")? {
+                Some(on_end) => Some(ListEnd {
+                    on_end,
+                    distance: table
+                        .get::<Option<f32>>("end_distance")?
+                        .filter(|d| d.is_finite())
+                        .unwrap_or(200.),
+                }),
+                None => None,
+            };
             let sticky_top = table
                 .get::<Option<f32>>("sticky_top")?
                 .filter(|t| t.is_finite())
                 .unwrap_or(0.)
                 .max(0.);
+            let rare = (sticky.is_some() || row_text.is_some() || end.is_some()).then(|| {
+                Box::new(ListRare {
+                    sticky,
+                    sticky_top,
+                    row_text,
+                    end,
+                })
+            });
             node_ud(
                 lua,
                 fill(
@@ -4302,17 +4342,16 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             items,
                             height,
                             heights,
-                            sticky,
-                            sticky_top,
+                            rare,
                             overscan,
                             build,
                             key: table.get::<Option<Function>>("key")?,
                             measured,
-                            row_text: table.get::<Option<Function>>("row_text")?,
                             follow: table.get::<Option<bool>>("follow")?.unwrap_or(false),
                             offset,
                             scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
                             keyboard: table.get::<Option<bool>>("keyboard")?.unwrap_or(false),
+
                         },
                     ),
                     Some(&table),

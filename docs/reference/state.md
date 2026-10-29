@@ -226,6 +226,28 @@ return ui.switch(person.status, {
 
 [The team example](../../crates/zgx-script/examples/team) loads a list this way, and saves and removes people with `ui.task`s that write its `data`.
 
+### Pages and debouncing
+
+`ui.paged(load)` loads a list a page at a time (an inbox, a feed, search results): `load(cursor)` returns `{ items, next }` (in a task, so it may await), `cursor` nil for the first page and the last page's `next` after it. It returns `items` (the items of every page so far, a list state its rows show), `loading`, `status` (`"loading"` until the first page answers, then `"ready"` or `"failed"`), `done` (the last page had no `next`), `error` (the last load's `UiError`, tracked, or nil), `more()` and `reload()`. `more()` loads the next page, and does nothing while one loads or once `done`; give it to a list's `on_end` and the list asks as its end comes in reach, filling a short view by itself. As `ui.resource`, it is keyed by what its first page reads: a state it read changing (a search's query), or `reload()`, loads again from the start, a load still out cancelled and an answer to one superseded dropped; a later page's reads key nothing.
+
+`ui.debounced(state, ms)` is a read-only state following `state` once it has stayed unchanged for `ms` (as `ui.computed`'s, a write is an error): a search box's query, so a load keyed by it waits for the typing to stop. Each change begins one timer again (no frames meanwhile), and it is gone with its owner.
+
+```luau
+type Message = { subject: string }
+local query = ui.state("query", "")
+local settled = ui.debounced(query, 250)
+local mail = ui.paged(function(cursor)
+	local page = ui.fetch(`https://api.test/mail?q={settled:get()}&after={cursor or ""}`, { raise = true }):await()
+	return { items = page.json.items :: { Message }, next = page.json.next :: string? }
+end)
+return ui.column {
+	ui.input { value = query, placeholder = "Search" },
+	ui.list { data = mail.items, height = 48, on_end = mail.more,
+		row = function(message: Message) return ui.text { message.subject } end },
+	ui.text { function() local err = mail.error; return if err then `Couldn't load: {err}` else "" end },
+}
+```
+
 ### The network
 
 `ui.fetch(url, { method, headers, body })` makes an HTTP request through the host's transport, `ScriptHost::fetcher(|request| async { … })`: the app owns the HTTP stack, redirects, headers and credentials (a token minted per request), and zgx and zgx-script add no HTTP dependency. An app `zgx-run` runs has its fetcher, over HTTP and HTTPS ([Running a script](../scripting.md)). The promise settles with `{ status, ok, headers, body, json }`: `ok` for a 2xx status, header names in lower case, `json` the decoded body when the response says it is JSON (typed `any`, as JSON is to JavaScript: cast it to the shape the server sends); a transport error rejects it (a `"network"` error). With `raise = true`, a status outside 2xx rejects too, as an `"http"` error carrying the `status` and `body` (`if err.status == 404 then …`), for a load that should fail on one. A table `body` is sent as JSON with its content type. Without a fetcher, `ui.fetch` is an error.
