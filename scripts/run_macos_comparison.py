@@ -165,6 +165,9 @@ SCENES = {
         'binaries': {
             'zgx': ROOT / 'target/dist/examples/viewport_workload',
             'wgpu': ROOT / 'target/dist/examples/wgpu_viewport',
+            # The same app, its view composited into the window's frame (a
+            # view not opaque or not shown whole), for the plane's gain.
+            'zgx-composite': ROOT / 'target/dist/examples/viewport_composite',
         },
     },
     # A focused text field left alone, idle (zgx_workload::blink): each
@@ -183,12 +186,12 @@ SCENES = {
 }
 # The suite's frameworks: zgx (in Rust, and in Luau where a scene has it),
 # the stronger GPUI, MyGo and Rune.
-SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune', 'wgpu']
+SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune', 'wgpu', 'zgx-composite']
 # Scenes whose active trials report the frames they drew (`animation_frames=`,
 # `fps=`) rather than 60 updates a second.
 FRAMES = {'animate', 'viewport'}
 # Frameworks built as zgx-desktop examples beside zgx's (no checkout of their own).
-EXAMPLES = {'wgpu'}
+EXAMPLES = {'wgpu', 'zgx-composite'}
 SAMPLER, PACER, BLANK = Path('/tmp/zgx-macsample'), Path('/tmp/zgx-framepace'), Path('/tmp/zgx-blankprobe')
 READY = Path('/tmp/zgx-window-ready')
 # The one font file every adapter loads (comparisons/fonts), and how each

@@ -990,6 +990,10 @@ const ALIGN_PERIOD: std::time::Duration = std::time::Duration::from_millis(12);
 /// refresh point of a refresh `period` long, waits before it is handed over
 /// `ZGX_NATIVE_CARET=0`: the editor paints the caret, blinking through
 /// frames, as before Core Animation drew it (2026-10-27).
+/// When a GPU view's plane frame owed is drawn again if the wake its
+/// drawable brings (`Host::draw_owed_planes`) did not come.
+#[cfg(target_os = "macos")]
+const PLANE_RETRY: std::time::Duration = std::time::Duration::from_millis(100);
 #[cfg(target_os = "macos")]
 static NATIVE_CARET: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_NATIVE_CARET").is_none_or(|v| v != "0"));
@@ -1326,6 +1330,14 @@ struct Host {
     presentation: Presentation,
     native_occluded: bool,
     frame_paced: bool,
+    /// `zgx::gpu_view::plane_frames` as last drawn (`GpuRenderer::render_planes`).
+    plane_frames: u64,
+    /// When planes' frames were last drawn: once a refresh at most.
+    #[cfg(target_os = "macos")]
+    planes_drawn_at: Option<std::time::Instant>,
+    /// When to draw again a plane's frame left for a tick (its last drawable
+    /// not yet shown: `GpuRenderer::planes_owed`), though nothing else asks.
+    plane_retry: Option<std::time::Instant>,
     /// Until when input keeps frames at the display's full rate (`INPUT_FULL_RATE`).
     #[cfg(any(target_os = "macos", windows))]
     input_until: Option<std::time::Instant>,
@@ -1700,6 +1712,10 @@ impl Host {
             presentation: Presentation::default(),
             native_occluded: false,
             frame_paced: false,
+            plane_frames: 0,
+            #[cfg(target_os = "macos")]
+            planes_drawn_at: None,
+            plane_retry: None,
             #[cfg(any(target_os = "macos", windows))]
             input_until: None,
             #[cfg(any(target_os = "macos", windows))]
@@ -2176,6 +2192,47 @@ impl Host {
                 self.force = false;
             }
         }
+        // GPU views on planes of their own: their new frames, which damage
+        // nothing in the window (each presents itself). One a refresh at
+        // most: a frame input asks for while the display link runs waits for
+        // its next refresh (a plane's next drawable would else wait on the
+        // main thread), however many come before it.
+        #[cfg(target_os = "macos")]
+        let planes_due = !self
+            .display_link
+            .as_ref()
+            .is_some_and(|link| link.running())
+            || self
+                .planes_drawn_at
+                .is_none_or(|at| at.elapsed() >= self.frame_interval / 2);
+        #[cfg(not(target_os = "macos"))]
+        let planes_due = true;
+        let plane_frames = zgx::gpu_view::plane_frames();
+        // A frame left for a tick draws as soon as there is room: it is the
+        // one due, not one more.
+        if (plane_frames != self.plane_frames && planes_due || self.plane_retry.is_some())
+            && !(self.frame_paced && !self.present_ready)
+            && let Some(renderer) = &mut self.renderer
+        {
+            self.plane_frames = plane_frames;
+            renderer.render_planes(&scene)?;
+            // Drawn, not left for a tick: the next waits a half refresh.
+            #[cfg(target_os = "macos")]
+            if !renderer.planes_owed() {
+                self.planes_drawn_at = Some(std::time::Instant::now());
+            }
+        }
+        // A plane's frame owed: drawn when its drawable comes (the wake), or,
+        // that missed, `PLANE_RETRY` on, so an animating view never stalls in
+        // a window drawing nothing else.
+        #[cfg(target_os = "macos")]
+        {
+            self.plane_retry = self
+                .renderer
+                .as_ref()
+                .is_some_and(|renderer| renderer.planes_owed())
+                .then(|| std::time::Instant::now() + PLANE_RETRY);
+        }
         if self.presentation.ready(std::time::Instant::now()) && self.renderer.is_some() {
             if self.frame_paced && !self.present_ready {
                 // winit withholds RedrawRequested until the compositor grants a
@@ -2649,6 +2706,43 @@ impl Host {
     /// A renderer for `window`: on a context another window made, when its
     /// adapter suits the window, else on one of its own, which the app's
     /// fonts are installed in and other windows may share.
+    /// A GPU view's plane frame owed, drawn now its drawable has come
+    /// (`GpuRenderer::planes_room`), with nothing else of the window's.
+    #[cfg(target_os = "macos")]
+    fn draw_owed_planes(&mut self) {
+        if self.plane_retry.is_none() {
+            return;
+        }
+        let scene = self.context.ui.scene.clone();
+        let Some(renderer) = self
+            .renderer
+            .as_mut()
+            .filter(|renderer| renderer.planes_room())
+        else {
+            return;
+        };
+        if renderer.render_planes(&scene.borrow()).is_err() {
+            return;
+        }
+        self.plane_retry = renderer
+            .planes_owed()
+            .then(|| std::time::Instant::now() + PLANE_RETRY);
+        if self.plane_retry.is_none() {
+            self.planes_drawn_at = Some(std::time::Instant::now());
+        }
+    }
+    /// Wakes this window's loop from another thread, when a GPU view's plane
+    /// has room for a frame it owes (`GpuRenderer::set_plane_waker`).
+    #[cfg(target_os = "macos")]
+    fn plane_waker(&self) -> zgx_gpu::PlaneWaker {
+        let proxy = std::sync::Mutex::new(self.proxy.clone());
+        let token = self.context.window.token;
+        Arc::new(move || {
+            if let Ok(proxy) = proxy.lock() {
+                let _ = proxy.send_event(Event::Wake(token));
+            }
+        })
+    }
     fn make_renderer(&mut self, window: &Arc<Window>) -> Result<GpuRenderer, Box<dyn Error>> {
         // The context made while the window was (`Application::run`): the
         // first shared one. Failing, a context is made for the window as
@@ -2759,6 +2853,8 @@ impl Host {
                 self.context.ui.refresh_text_geometry();
                 #[cfg(target_os = "macos")]
                 renderer.set_display_key(&self.display_key);
+                #[cfg(target_os = "macos")]
+                renderer.set_plane_waker(self.plane_waker());
                 self.renderer = Some(renderer);
                 self.force = true;
                 eprintln!("zgx: drawing again on a new GPU renderer");
@@ -3009,6 +3105,8 @@ impl Host {
         zgx::profile::mark("text installed");
         #[cfg(target_os = "macos")]
         renderer.set_display_key(&self.display_key);
+        #[cfg(target_os = "macos")]
+        renderer.set_plane_waker(self.plane_waker());
         self.renderer = Some(renderer);
         self.adapter = adapter;
         window.set_maximized(self.state.maximized);
@@ -4792,6 +4890,12 @@ impl Host {
                 .renderer
                 .as_ref()
                 .is_some_and(|renderer| renderer.drawables_showing());
+            // A GPU view's plane keeps to the window's clock: on the view's
+            // link, skipping a tick when its drawables waited, its frames
+            // waited a refresh as often (M5 Max, window 36: p99 17.6 ms
+            // against 13.1 left alone). Skipping one on the display's link
+            // paced as well, but the window server's GPU rose from 1.9% to
+            // 8.0%, near a composited view's 9.1%.
             link.set_view_clock(drawables);
             // Once the link has reported the grid, the timer continues it:
             // a scroll starting after a pause, or the grid going stale, keeps
@@ -5930,6 +6034,13 @@ impl WindowManager {
                 }
             }
             Event::Wake(token) => {
+                // A plane's frame owed, its drawable come: drawn now, not at
+                // the window's next display cycle.
+                #[cfg(target_os = "macos")]
+                if let Some(host) = self.hosts.get_mut(&token) {
+                    host.draw_owed_planes();
+                }
+                #[cfg(not(target_os = "macos"))]
                 let _ = self.hosts.get(&token);
             }
             Event::Timers => {}
@@ -6130,10 +6241,20 @@ impl WindowManager {
         }
         let mut ready = false;
         for host in self.hosts.values_mut() {
-            // A renderer lost with its GPU device, due another try.
-            if host
-                .renderer_retry
-                .is_some_and(|at| at <= std::time::Instant::now())
+            // A renderer lost with its GPU device, due another try; or a
+            // plane's frame left for a tick.
+            let now = std::time::Instant::now();
+            #[cfg(target_os = "macos")]
+            let plane_room = host.plane_retry.is_some()
+                && host
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|renderer| renderer.planes_room());
+            #[cfg(not(target_os = "macos"))]
+            let plane_room = false;
+            if (host.renderer_retry.is_some_and(|at| at <= now)
+                || host.plane_retry.is_some_and(|at| at <= now)
+                || plane_room)
                 && let Some(window) = &host.window
             {
                 window.request_redraw();
@@ -6176,6 +6297,7 @@ impl WindowManager {
                     host.context.ui.next_interaction_deadline(),
                     host.frame_deadline,
                     host.renderer_retry,
+                    host.plane_retry,
                     host.touch.hold_deadline(),
                     host.trim_at,
                     host.frame_save_at,

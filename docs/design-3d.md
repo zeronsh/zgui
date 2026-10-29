@@ -345,4 +345,27 @@ Anything else draws composited, as today.
 
 **Measure.** A window cell after perf's PR lands: the viewport scene with zgx planed, wgpu, and zgx composited, compared on GPU Mcycles, WindowServer GPU, power, CPU, footprint and pacing.
 
+**Measured (window 36, M5 Max at 120 Hz, 37f8c17f).**
+- Planed against composited: WindowServer GPU 1.9% against 9.1%, and GPU power 92 against 208 mW. App CPU +1.0 point, WindowServer CPU +2.4, footprint +23 MB. Against wgpu alone it's level on GPU, at +0.25 app CPU.
+- The view's `CADisplayLink` with a skipped tick (the default then) showed doubled frames, p99 17.6 ms, every round. Skipping on the display's link paced well but put WindowServer's GPU back at 8%. The window's own clock was best.
+- Every mode blocked the main thread in `nextDrawable` (3–8 ms a frame).
+- So A3 landed on the window's clock and never blocks: a plane frame waits a tick while two of its pool of three are on their way, and each shows a refresh at least.
+- A per-launch "phase lottery" that held 30% of launches at 60 shown/s was a lost count, not a phase: drawables counted after their present, the window server sometimes showing one first. Counted before, 0 of 32 launches were.
+- Planes stay opt-in (`set_opaque`).
+
+**Direct flip or composited (window 37 and after, M5 Max).** Non-blocking, the window server's GPU read 7.8% busy again, against 1.9% at 37f8c17f. Presents traced against their shown times show the plane has two self-sustaining states:
+- **A, flipped:** a frame handed over about 1 ms after a refresh waits queued and shows at the next. The window server flips it straight to the screen (GPU 2%), 19 ms from its frame's start. While a frame waits queued, no drawable is free at the next tick, so the next frame waits for the refresh too. The blocking path of window 36 sat here, by chance.
+- **B, composited:** a frame handed over about 2.2 ms before a refresh shows on it. The window server composites it (GPU 7.6%), 10.8 ms from its frame's start. The last frame has always shown by the next tick, so a drawable is always free.
+- Ruled out first, each measured: the pool's size, minimum-duration presents, presented handlers, `presentDrawable:atTime:`, where in the refresh the present lands, how regular presents are, and main's changes since. A drawable thread per plane (waiting in `nextDrawable` off the main thread) still sat in B.
+- **Chosen: B**, by power, not busy time: the system's GPU 95 mW planed in B against wgpu's 89 and composited's 204 (IOReport, window 37). A would cost a refresh of latency and WindowServer CPU to save those 6 mW.
+
+**Paced by the drawable, not its showing (M1 Max, after window 37).** On the M1 the plane drew 80 frames a second at 120 Hz while wgpu and composited drew 120:
+- Little's law: two frames on their way, each 25 ms from its start to its showing, allow 80 a second. The cap held back nearly every frame (the wake that draws an owed frame fired 75 times a second).
+- The cap counted frames by their presented handlers, which Core Animation calls later than the drawable is free: forced to draw just after each refresh (A), the M5 showed 60 to 114 frames a second, frames 15.7 ms on their way. So it held back frames the pool could already take. A minimum duration of half a refresh changed nothing.
+- wgpu waits in `nextDrawable`, which returns when a drawable is free: 120 on the M1. So the plane waits there too, on a thread of its own (`plane_drawables`), and nothing counts handlers. Pool 3 (as wgpu's): 120 on the M1 (start-to-shown 27.4 ms) and the M5 (19.1 ms).
+- Pool 2 came a refresh sooner (M1 19.1 ms, M5 10.8) but missed more: M5 0.9% of frames late in the worst stretches, bursts of 36 in two seconds, against pool 3's 0.6% (the handler-paced path's own 0.3–0.55%); M1 0.5% against 0.2%. Pool 3 is kept.
+- Its cost on the M5: WindowServer CPU about 23% against 19% handler-paced (wgpu's own, 22–23%), so waiting in `nextDrawable` costs the window server, whoever waits. App CPU +0.1 to +1.2 points (the thread included). The system's GPU and WindowServer GPU are unchanged.
+- **Memory** (render lane, footprint regions): +26 MB planed against composited was the three view-size drawables (+22 MB of IOSurfaces) and the composited texture kept alive under the plane (~13 MB), now dropped once the plane shows: about +20 MB left (M5, 364–370 against 347 MB).
+- **Open before zgx-3d turns planes on:** app CPU (+1 to +2 points against composited) and memory (about +20 MB).
+
 **Windows next.** The same, with a DComp visual for the plane's swap chain (native_host/dcomp.rs), with the D3D11 lane.

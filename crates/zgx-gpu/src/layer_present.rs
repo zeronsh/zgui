@@ -407,6 +407,46 @@ pub(crate) struct Layer {
     /// flip's transaction, whose presented time says when that flip reached
     /// the screen (tiles have no feedback of their own).
     probe: Option<Probe>,
+    /// GPU views shown on layers of their own (`viewport`), by view and box:
+    /// above the frames, under the caret. Empty without such a view.
+    planes: Vec<Plane>,
+}
+/// A GPU view's own layer: its painter draws into the layer's drawables,
+/// the window server composites them as it does any Metal layer.
+struct Plane {
+    key: (u64, u64),
+    layer: Retained<CAMetalLayer>,
+    /// Its box in the host's points from the top left, while shown.
+    rect: Option<(f64, f64, f64, f64)>,
+    /// Its drawables, waited for on a thread of its own: a frame is drawn
+    /// when one is free, never waiting for one on the main thread.
+    drawables: crate::plane_drawables::Drawables,
+    /// When its drawables showed, while read (a log), as the window's; how
+    /// many it has drawn, and when it last logged, and how many had shown.
+    feedback: std::sync::Arc<Feedback>,
+    frames: u64,
+    logged: Option<(std::time::Instant, u64, u64)>,
+}
+/// A plane's drawables: the one shown and two on their way, as wgpu's own
+/// surfaces have. With two, frames came a refresh sooner but more were late
+/// (M5 Max: 0.9% against 0.6%, bursts of 36 in two seconds; M1 Max 0.5%
+/// against 0.2%).
+const PLANE_POOL: usize = 3;
+/// A GPU view plane's drawable to draw a frame into, and how to present it.
+pub(crate) struct PlaneFrame {
+    pub key: (u64, u64),
+    pub drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
+    /// Its box (the host's points from the top left).
+    rect: (f64, f64, f64, f64),
+    /// Its box moved or showed this frame: presented in the frame's
+    /// transaction, with the layer's new geometry, not by Metal on its own.
+    pub moved: bool,
+}
+impl PlaneFrame {
+    /// Its box (the host's points from the top left).
+    pub fn rect(&self) -> (f64, f64, f64, f64) {
+        self.rect
+    }
 }
 /// A caret drawn by Core Animation over the window's frames
 /// (`zgx::caret_blink::NativeCaret`): a box of one colour, shown or hidden as
@@ -512,6 +552,28 @@ struct FeedbackState {
     /// Shown frames that came over 1.5 refreshes after the one before: a
     /// refresh missed (the refresh, the shortest of the 8 gaps before).
     late: u64,
+}
+/// Record when the window server shows `drawable` in `feedback`, and, from
+/// `started` (host seconds), how long after its frame began.
+fn watch_presented(
+    drawable: &ProtocolObject<dyn CAMetalDrawable>,
+    feedback: &std::sync::Arc<Feedback>,
+    started: Option<f64>,
+) {
+    let feedback = feedback.clone();
+    let handler = block2::RcBlock::new(
+        move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+            // SAFETY: Metal passes the drawable presented, alive for the call.
+            let presented = unsafe { shown.as_ref() }.presentedTime();
+            feedback.record(presented);
+            if let Some(started) = started {
+                feedback.record_latency(started, presented);
+            }
+        },
+    );
+    // SAFETY: A live block taking the drawable, as the handler's type
+    // declares; Metal copies it.
+    unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
 }
 /// A point in a `Feedback`'s record (`Feedback::mark`).
 #[derive(Clone, Copy, Default)]
@@ -870,7 +932,7 @@ fn hide_tiles(plain: &CALayer, shown: Option<&CALayer>) {
     }
 }
 /// Run `change` as one Core Animation transaction, without animation.
-fn transaction(change: impl FnOnce()) {
+pub(crate) fn transaction(change: impl FnOnce()) {
     CATransaction::begin();
     CATransaction::setDisableActions(true);
     change();
@@ -974,7 +1036,213 @@ impl Layer {
             caret: None,
             drawables: None,
             probe: None,
+            planes: Vec::new(),
         }
+    }
+    /// The next drawable of GPU view plane `key`, `size` pixels, its box
+    /// `rect` (the host's points from the top left): the layer made on first
+    /// use, placed in the caller's transaction (moved: `PlaneFrame::moved`).
+    /// `None` if Metal gives none. While the present log reads it, when it
+    /// shows, from `started` (the frame's start, host seconds), is logged.
+    pub fn plane_frame(
+        &mut self,
+        key: (u64, u64),
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        size: (u32, u32),
+        rect: (f64, f64, f64, f64),
+        started: Option<f64>,
+        wake: Option<&crate::PlaneWaker>,
+    ) -> Option<PlaneFrame> {
+        let host = &self.host;
+        let at = match self.planes.iter().position(|plane| plane.key == key) {
+            Some(at) => at,
+            None => {
+                let layer = CAMetalLayer::new();
+                layer.setDevice(Some(device));
+                // sRGB: the painter shades in linear light, the window server
+                // reads it as the tiles' tagged sRGB.
+                layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm_sRGB);
+                layer.setMaximumDrawableCount(PLANE_POOL);
+                layer.setPresentsWithTransaction(false);
+                // SAFETY: CoreGraphics' constant CFString, read only.
+                if let Some(space) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })) {
+                    layer.setColorspace(Some(&space));
+                }
+                fill(&layer, host, true);
+                layer.setAutoresizingMask(CAAutoresizingMask::empty());
+                layer.setHidden(true);
+                // Over the frames (tiles, drawables), under the caret.
+                layer.setZPosition(0.5);
+                host.addSublayer(&layer);
+                crate::present_log::log(|| format!("plane-start {key:?}"));
+                self.planes.push(Plane {
+                    key,
+                    drawables: crate::plane_drawables::Drawables::new(layer.clone(), wake.cloned()),
+                    layer,
+                    rect: None,
+                    feedback: Default::default(),
+                    frames: 0,
+                    logged: None,
+                });
+                self.planes.len() - 1
+            }
+        };
+        let plane = &mut self.planes[at];
+        let drawable_size = CGSize::new(size.0 as f64, size.1 as f64);
+        if plane.layer.drawableSize() != drawable_size {
+            plane.layer.setDrawableSize(drawable_size);
+        }
+        // Moved or shown: its geometry changes in the frame's transaction
+        // (`show_plane`), with the frame.
+        let moved = plane.rect != Some(rect);
+        // The one its thread waited for (`plane_defers`); else, its layer
+        // hidden or new, its pool has one free now.
+        let asked = std::time::Instant::now();
+        let drawable = match plane.drawables.take() {
+            Some(drawable) => drawable,
+            None => plane.layer.nextDrawable()?,
+        };
+        let waited = asked.elapsed();
+        if waited > std::time::Duration::from_millis(1) {
+            crate::present_log::log(|| {
+                format!("plane-wait {key:?} {:.2} ms", waited.as_secs_f64() * 1e3)
+            });
+        }
+        let logging = crate::present_log::enabled();
+        if logging {
+            watch_presented(&drawable, &plane.feedback, started);
+            plane.frames += 1;
+            if plane.frames.is_multiple_of(240) {
+                let (shown, skipped, median, p99, late) = plane.feedback.summary();
+                let now = std::time::Instant::now();
+                // Frames shown, and drawables its thread handed over, a
+                // second since the last line.
+                let handed = plane.drawables.handed();
+                let (rate, waited) = plane.logged.map_or((0., 0.), |(at, before, had)| {
+                    let seconds = now.duration_since(at).as_secs_f64();
+                    (
+                        shown.saturating_sub(before) as f64 / seconds,
+                        handed.saturating_sub(had) as f64 / seconds,
+                    )
+                });
+                plane.logged = Some((now, shown, handed));
+                let (latency, latency_p99) = plane.feedback.latency().unwrap_or_default();
+                crate::present_log::log(|| {
+                    format!(
+                        "plane {key:?} shown={shown} shown_fps={rate:.1} handed_per_s={waited:.1} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late} start_to_shown_p50={latency:.2}ms p99={latency_p99:.2}ms"
+                    )
+                });
+            }
+        }
+        Some(PlaneFrame {
+            key,
+            drawable,
+            rect,
+            moved,
+        })
+    }
+    /// Present `frame` after the work on `queue` (its painter's) by Metal,
+    /// on its own: a frame of the view alone, its box where it was.
+    pub fn present_plane_now(
+        &self,
+        frame: PlaneFrame,
+        queue: &ProtocolObject<dyn MTLCommandQueue>,
+    ) {
+        let Some(plane) = self.planes.iter().find(|plane| plane.key == frame.key) else {
+            return;
+        };
+        let Some(buffer) = queue.commandBuffer() else {
+            return;
+        };
+        if plane.layer.presentsWithTransaction() {
+            plane.layer.setPresentsWithTransaction(false);
+        }
+        buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(
+            &*frame.drawable,
+        ));
+        buffer.commit();
+    }
+    /// Whether plane `key`'s next frame waits for a drawable: its thread
+    /// then waits for one (`Drawables::want`), the plane showing its last
+    /// frame meanwhile, and the host is woken to draw it when it comes, so
+    /// the main thread never waits for one.
+    pub fn plane_defers(&mut self, key: (u64, u64)) -> bool {
+        let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == key) else {
+            return false;
+        };
+        // Waited for on its thread; with none (it could not be made), taken
+        // as the frame is drawn (`plane_frame`).
+        !plane.drawables.ready() && plane.drawables.want()
+    }
+    /// Whether a shown plane has a drawable for the frame it owes.
+    pub fn planes_room(&self) -> bool {
+        self.planes
+            .iter()
+            .any(|plane| plane.rect.is_some() && plane.drawables.ready())
+    }
+    /// Before the frame's transaction: the work on `queue` (the painters' of
+    /// planes moving with it, and the frame's own) committed and scheduled,
+    /// so presents in the transaction wait for nothing there (the window's
+    /// commit keeps its time).
+    pub fn schedule_plane(queue: &ProtocolObject<dyn MTLCommandQueue>) {
+        if let Some(buffer) = queue.commandBuffer() {
+            buffer.commit();
+            buffer.waitUntilScheduled();
+        }
+    }
+    /// In the frame's transaction: `frame`'s box placed and shown, and its
+    /// drawable presented with it (`schedule_plane` first).
+    pub fn show_plane(&mut self, frame: PlaneFrame) {
+        let host = &self.host;
+        let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == frame.key) else {
+            return;
+        };
+        if plane.rect != Some(frame.rect) {
+            let (x, y, width, height) = frame.rect;
+            let y = if host.isGeometryFlipped() || host.contentsAreFlipped() {
+                y
+            } else {
+                host.bounds().size.height - y - height
+            };
+            plane.layer.setFrame(objc2_core_foundation::CGRect::new(
+                objc2_core_foundation::CGPoint::new(x, y),
+                CGSize::new(width, height),
+            ));
+            plane.rect = Some(frame.rect);
+        }
+        if plane.layer.isHidden() {
+            plane.layer.setHidden(false);
+        }
+        if !plane.layer.presentsWithTransaction() {
+            plane.layer.setPresentsWithTransaction(true);
+        }
+        frame.drawable.present();
+    }
+    /// Hide plane `key` (its view draws into the window again), in the
+    /// caller's transaction.
+    pub fn hide_plane(&mut self, key: (u64, u64)) {
+        if let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == key)
+            && plane.rect.take().is_some()
+        {
+            plane.drawables.cancel();
+            plane.layer.setHidden(true);
+            // Its last frame goes too: shown again, it shows nothing (the
+            // window's newer frame under it) until its next drawable does,
+            // never that old frame.
+            // SAFETY: `contents` is an id property; nil clears it.
+            unsafe { plane.layer.setContents(None) };
+            crate::present_log::log(|| format!("plane-hide {key:?}"));
+        }
+    }
+    /// Drop the planes `keep` says go, in the caller's transaction.
+    pub fn retain_planes(&mut self, mut keep: impl FnMut((u64, u64)) -> bool) {
+        self.planes.retain(|plane| {
+            let kept = keep(plane.key);
+            if !kept {
+                plane.layer.removeFromSuperlayer();
+            }
+            kept
+        });
     }
     /// Start the tile probe (`Layer::probe`), if not yet.
     pub fn start_probe(
@@ -1058,20 +1326,7 @@ impl Layer {
         // Feedback only while it is read (the trial, a log): a handler a
         // frame is work on Core Animation's thread.
         if feedback {
-            let feedback = drawables.feedback.clone();
-            let handler = block2::RcBlock::new(
-                move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
-                    // SAFETY: Metal passes the drawable presented, alive for the call.
-                    let presented = unsafe { shown.as_ref() }.presentedTime();
-                    feedback.record(presented);
-                    if let Some(started) = started {
-                        feedback.record_latency(started, presented);
-                    }
-                },
-            );
-            // SAFETY: A live block taking the drawable, as the handler's type
-            // declares; Metal copies it.
-            unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
+            watch_presented(&drawable, &drawables.feedback, started);
         }
         let texture = drawable.texture();
         let surface = texture.iosurface()?;
@@ -1095,20 +1350,39 @@ impl Layer {
     /// The pending drawable, for the frame's own command buffer to present
     /// (`metal_frame::Frame::commit_presenting`).
     pub fn take_drawable(&mut self) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
-        self.drawables.as_mut()?.pending.take()
+        let drawables = self.drawables.as_mut()?;
+        // By Metal: not with a transaction (one a plane's move left set).
+        if drawables.layer.presentsWithTransaction() {
+            drawables.layer.setPresentsWithTransaction(false);
+        }
+        drawables.pending.take()
     }
     /// Present the frame drawn into the pending drawable, if its command
-    /// buffer did not (a frame wgpu encoded), after the work already on
-    /// `queue`; the drawable layer shows over the hidden tiles.
-    pub fn present_drawable(&mut self, queue: Option<&ProtocolObject<dyn MTLCommandQueue>>) {
+    /// buffer did not (a frame wgpu encoded, or one a GPU view's plane moves
+    /// with), after the work already on `queue`; the drawable layer shows
+    /// over the hidden tiles. `transactional`: in the caller's transaction,
+    /// once that work is scheduled (a plane moving with it), not by Metal on
+    /// its own: the main thread waits for the commit on such a frame.
+    pub fn present_drawable(
+        &mut self,
+        queue: Option<&ProtocolObject<dyn MTLCommandQueue>>,
+        transactional: bool,
+    ) {
         let Some(drawables) = &mut self.drawables else {
             return;
         };
-        if let Some(drawable) = drawables.pending.take()
-            && let Some(buffer) = queue.and_then(|queue| queue.commandBuffer())
-        {
-            buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(&*drawable));
-            buffer.commit();
+        if drawables.layer.presentsWithTransaction() != transactional {
+            drawables.layer.setPresentsWithTransaction(transactional);
+        }
+        if let Some(drawable) = drawables.pending.take() {
+            if transactional {
+                // Its work scheduled before the transaction (`schedule_plane`
+                // on the same queue): shown with it, no wait in it.
+                drawable.present();
+            } else if let Some(buffer) = queue.and_then(|queue| queue.commandBuffer()) {
+                buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(&*drawable));
+                buffer.commit();
+            }
         }
         if !drawables.shown {
             drawables.shown = true;
@@ -1387,6 +1661,9 @@ impl Drop for Layer {
             }
             if let Some(probe) = &self.probe {
                 probe.layer.removeFromSuperlayer();
+            }
+            for plane in &self.planes {
+                plane.layer.removeFromSuperlayer();
             }
         });
     }

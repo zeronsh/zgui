@@ -7,6 +7,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 ### Added
 
 - **Input modes, as HTML's `inputmode`**: `View::input_mode(InputMode::Email)` (`Text`, `Decimal`, `Numeric`, `Tel`, `Search`, `Email`, `Url`, `None`), `EditorHandle::set_input_mode`, and Luau's `inputmode = "email"`, say what kind of text a field takes. It is a hint, never a check. On Windows (`ZGX_TSF=1`) it is the field's input scope, which the touch keyboard and input methods follow, and `None` shows no touch keyboard. Windows input methods also reconvert committed text in place (select it, press Convert or Hanja).
+- **macOS: an opaque GPU view gets a layer of its own** (`GpuView::set_opaque(true)`): where its box shows it whole and alone, the painter draws straight into a `CAMetalLayer`, and zgx no longer copies it into the window's frame. On an M5 Max the system's GPU power about halves, level with wgpu's own, for about 1–2 points more app CPU, about 4 more of the window server's (as wgpu's) and about 20 MB. It never makes the main thread wait for a drawable: a thread of the plane's own waits for its drawables. It shows every refresh at 120 Hz on an M5 Max and an M1 Max, 19 and 27 ms from a frame's start. A box moved, clipped, faded or drawn over goes back into the window's frame in the same transaction, so no frame shows the view nowhere. It's opt-in: views not marked opaque, and zgx-3d's for now, composite as before ([GPU views](docs/gpu-views.md#a-layer-of-its-own-macos)).
 
 ## 0.1.5 (2026-10-28)
 

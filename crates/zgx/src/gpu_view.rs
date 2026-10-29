@@ -33,11 +33,50 @@ pub struct GpuFrame {
     pub width: f32,
     /// Its box's height, in points.
     pub height: f32,
+    /// Its painter covers every pixel opaquely (`GpuView::set_opaque`): a
+    /// renderer may show it on a plane of its own.
+    pub opaque: bool,
 }
 
 thread_local! {
     /// Live views' painters by id: renderers look a frame's up as they draw it.
     static VIEWS: RefCell<HashMap<u64, Weak<Inner>>> = RefCell::default();
+    /// Boxes (view, `GpuFrame::shown_by`) a renderer shows on a plane of
+    /// their own (`set_planed`): their frames repaint nothing in the window.
+    static PLANED: RefCell<Vec<(u64, u64)>> = const { RefCell::new(Vec::new()) };
+    static PLANE_FRAMES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Whether the box `shown_by` of view `view` is shown on a plane of its own:
+/// a renderer that presents it there says so as it starts and stops, and
+/// the box's next frames then leave the window's paint alone
+/// (`Scene::show_plane_frame`), the renderer drawing them onto the plane.
+pub fn set_planed(view: u64, shown_by: u64, planed: bool) {
+    PLANED.with(|boxes| {
+        let mut boxes = boxes.borrow_mut();
+        let at = boxes.iter().position(|&b| b == (view, shown_by));
+        match (at, planed) {
+            (None, true) => boxes.push((view, shown_by)),
+            (Some(at), false) => {
+                boxes.swap_remove(at);
+            }
+            _ => {}
+        }
+    });
+}
+/// Frames shown on planes so far, on this thread (`Scene::show_plane_frame`):
+/// a host draws when it moves, damage or not, for its renderer to draw them.
+pub fn plane_frames() -> u64 {
+    PLANE_FRAMES.get()
+}
+pub(crate) fn count_plane_frame() {
+    PLANE_FRAMES.set(PLANE_FRAMES.get().wrapping_add(1));
+    // Woken, a host draws it, though nothing else changed.
+    crate::native_view::wake();
+}
+/// Whether the box `shown_by` of view `view` is on a plane (`set_planed`).
+pub fn planed(view: u64, shown_by: u64) -> bool {
+    PLANED.with(|boxes| boxes.borrow().contains(&(view, shown_by)))
 }
 
 /// The painter of view `view`, if it is alive: what its renderer downcasts
@@ -60,6 +99,7 @@ struct Inner {
     id: u64,
     painter: Rc<dyn Any>,
     animating: Cell<bool>,
+    opaque: Cell<bool>,
     mounted: RefCell<Vec<Mounted>>,
     next_key: Cell<u64>,
 }
@@ -84,6 +124,7 @@ impl GpuView {
             id,
             painter: Rc::new(painter),
             animating: Cell::new(false),
+            opaque: Cell::new(false),
             mounted: RefCell::default(),
             next_key: Cell::new(0),
         });
@@ -120,6 +161,20 @@ impl GpuView {
     /// Whether it animates (`animate`).
     pub fn animating(&self) -> bool {
         self.0.animating.get()
+    }
+    /// Promise that its painter covers every pixel of its frames opaquely
+    /// (a 3D scene with a background, a video): where its box shows it
+    /// whole, a renderer may then show it on a plane of its own, the
+    /// platform compositing it directly, rather than drawing it into the
+    /// window. Off by default: a frame may be translucent.
+    pub fn set_opaque(&self, opaque: bool) {
+        if self.0.opaque.replace(opaque) != opaque {
+            self.invalidate();
+        }
+    }
+    /// Whether its frames are opaque (`set_opaque`).
+    pub fn opaque(&self) -> bool {
+        self.0.opaque.get()
     }
     /// A box's signals, until the returned guard drops.
     pub(crate) fn mount(&self, requests: Signal<u64>, animating: Signal<bool>) -> MountGuard {

@@ -23,6 +23,8 @@ mod font_cache;
 pub mod iosurface;
 #[cfg(target_os = "macos")]
 mod layer_present;
+#[cfg(target_os = "macos")]
+mod plane_drawables;
 /// A caret Core Animation draws over the frames (`GpuRenderer::set_caret`).
 #[cfg(target_os = "macos")]
 pub use layer_present::Caret;
@@ -3239,6 +3241,10 @@ impl GpuError {
         self.0 == "surface is incompatible with the shared GPU adapter"
     }
 }
+/// Wakes a host's event loop from another thread (`GpuRenderer::set_plane_waker`).
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub type PlaneWaker = std::sync::Arc<dyn Fn() + Send + Sync>;
 /// Draws a [`zgx::scene::Scene`] with wgpu (Metal, Direct3D 12 or Vulkan),
 /// repainting only its damage, to an offscreen target or a window.
 pub struct GpuRenderer {
@@ -3451,6 +3457,10 @@ pub struct GpuRenderer {
     images: FxHashMap<u64, (wgpu::BindGroup, usize, Option<wgpu::Texture>)>,
     /// GPU views' textures, by view (`viewport`): none until one shows.
     views: Option<Box<viewport::Views>>,
+    /// Wakes the host when a GPU view's plane has a drawable for a frame it
+    /// owes (`set_plane_waker`), from the plane's drawables thread.
+    #[cfg(target_os = "macos")]
+    plane_wake: Option<PlaneWaker>,
     #[cfg(target_os = "macos")]
     native_surfaces: Option<native_surface::SurfaceCache>,
     /// The next present joins the Core Animation transaction that resized the layer.
@@ -4050,6 +4060,8 @@ impl GpuRenderer {
             images: FxHashMap::default(),
             views: None,
             #[cfg(target_os = "macos")]
+            plane_wake: None,
+            #[cfg(target_os = "macos")]
             native_surfaces: None,
             #[cfg(target_os = "macos")]
             transaction_present: false,
@@ -4345,18 +4357,60 @@ impl GpuRenderer {
         }
         stats
     }
+    /// Draw the new frames of GPU views shown on planes of their own
+    /// (`zgx::gpu_view::set_planed`), for a frame with nothing else to draw:
+    /// a host calls it when `zgx::gpu_view::plane_frames` moved and the
+    /// scene has no damage. Whether any was drawn (each presents itself).
+    pub fn render_planes(&mut self, scene: &Scene) -> Result<bool, GpuError> {
+        if self.views.is_none() {
+            return Ok(false);
+        }
+        self.render_planes_now(scene)
+    }
+    /// Whether a GPU view's plane still owes a frame (macOS): its last
+    /// drawable was not yet shown, so its new frame waits for a tick rather
+    /// than the main thread for a drawable. A host calls `render_planes`
+    /// again soon, though nothing else asks for a frame.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn planes_owed(&self) -> bool {
+        self.views.as_ref().is_some_and(|views| views.owed)
+    }
+    /// Wake the host (macOS), from a plane's drawables thread, when a GPU
+    /// view's plane that owed a frame has a drawable for it (`planes_owed`):
+    /// it then calls `render_planes` at once (`planes_room`).
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn set_plane_waker(&mut self, wake: PlaneWaker) {
+        self.plane_wake = Some(wake);
+    }
+    /// Whether a shown GPU view's plane has a drawable for its owed frame.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn planes_room(&self) -> bool {
+        self.layer_present
+            .as_ref()
+            .and_then(|present| present.layer.as_ref())
+            .is_some_and(|layer| layer.planes_room())
+    }
     /// Draw `scene`'s `damage` (logical rectangles) to the target, and report
     /// what it did.
     pub fn render(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
         #[cfg(target_os = "macos")]
         {
             self.idle = false;
+            if let Some(views) = &mut self.views {
+                views.owed = false;
+            }
         }
         let presented = std::mem::take(&mut self.present_stats);
         let mut stats = {
             let _span = zgx::profile::span(zgx::profile::Phase::Paint);
             self.render_inner(scene, damage)?
         };
+        if self.views.is_some() {
+            self.settle_planes(scene);
+        }
         if stats.shaped_nodes > 0 {
             // Words shaped by measurement or this frame are reused by the next
             // shaping frames (streaming text repeats nearly all of them, and a
@@ -4628,6 +4682,8 @@ impl GpuRenderer {
         let keep = keep
             && !stacked
             && self.effect_jobs.is_empty()
+            // A box on a plane draws nothing a patch could follow.
+            && !self.views.as_ref().is_some_and(|views| views.has_planes())
             && items
                 .iter()
                 .all(|item| !item.isolated && !changes_unmarked(item.kind));
@@ -6951,6 +7007,13 @@ impl GpuRenderer {
                         {
                             continue;
                         }
+                        // A GPU view's frame on a plane of its own: nothing
+                        // to draw here.
+                        if image.gpu_frame().is_some() && self.plane_item(scene, &item, image)? {
+                            stats.image_uploads += 1;
+                            continue;
+                        }
+                        // (A view taking its layer drew itself already.)
                         if !self.images.contains_key(&image.id()) {
                             self.upload_image(image)?;
                             stats.image_uploads += 1;
@@ -8384,14 +8447,21 @@ impl GpuRenderer {
                 from = end;
             }
             let _span = zgx::profile::span(zgx::profile::Phase::Submit);
-            // Into a drawable: presented by this command buffer, once done.
+            // Into a drawable: presented by this command buffer, once done;
+            // not when a GPU view's plane moves with this frame, both then
+            // presenting in its transaction (`present_layer`).
+            let planes_moved = self
+                .views
+                .as_ref()
+                .is_some_and(|views| views.planes_moved());
             let drawable = self
                 .layer_present
                 .as_mut()
                 .filter(|present| {
-                    present
-                        .current
-                        .is_some_and(|index| present.buffers[index].0.drawable)
+                    !planes_moved
+                        && present
+                            .current
+                            .is_some_and(|index| present.buffers[index].0.drawable)
                 })
                 .and_then(|present| present.layer.as_mut())
                 .and_then(|layer| layer.take_drawable());
@@ -10333,8 +10403,12 @@ impl GpuRenderer {
             layer.set_caret(present.caret);
         }
         let Some(index) = present.current.take() else {
-            // Nothing drawn since: the shown frame stands.
+            // Nothing drawn since: the shown frame stands (planes that moved
+            // show in a transaction of their own).
             self.layer_present = Some(present);
+            if self.views.is_some() {
+                self.apply_planes();
+            }
             return Ok(PresentationStatus::Presented);
         };
         // A drawable's frame encoded directly presented as it committed.
@@ -10400,17 +10474,44 @@ impl GpuRenderer {
         });
         let layer = present.layer.as_mut().expect("attached above");
         let buffer = &present.buffers[index].0;
-        if buffer.drawable {
-            // SAFETY: The raw queue is only retained; the guard is dropped at once.
-            let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
-                use objc2::Message;
-                hal.as_raw().retain()
-            });
-            layer.present_drawable(queue.as_deref());
-        } else if plain {
-            layer.show_plain(buffer, opaque);
-        } else {
-            layer.show(buffer, opaque, present.full_rate);
+        // A GPU view's plane moving with this frame: the frame's drawable
+        // presents in the transaction too, so the two show together.
+        let planes_moved = self
+            .views
+            .as_ref()
+            .is_some_and(|views| views.planes_moved());
+        let show = |layer: &mut layer_present::Layer| {
+            if buffer.drawable {
+                // SAFETY: The raw queue is only retained; the guard is dropped at once.
+                let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                    use objc2::Message;
+                    hal.as_raw().retain()
+                });
+                layer.present_drawable(queue.as_deref(), planes_moved);
+            } else if plain {
+                layer.show_plain(buffer, opaque);
+            } else {
+                layer.show(buffer, opaque, present.full_rate);
+            }
+        };
+        match self.views.as_deref_mut() {
+            // GPU views' planes that moved, showed or hid change with the
+            // window's frame, in one transaction: never a frame apart.
+            Some(views) => {
+                // SAFETY: The raw queue is only retained; the guard is dropped at once.
+                let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                    use objc2::Message;
+                    hal.as_raw().retain()
+                });
+                // Their work (and a drawable frame's) committed and scheduled
+                // first: the transaction itself waits for nothing.
+                viewport::schedule_planes(views, queue.as_deref());
+                layer_present::transaction(|| {
+                    show(layer);
+                    viewport::apply_planes(views, layer, queue.as_deref());
+                });
+            }
+            None => show(layer),
         }
         layer.keep(
             present

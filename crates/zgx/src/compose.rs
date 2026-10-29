@@ -5019,6 +5019,7 @@ fn mount_gpu_view(
     let mut ring = crate::gpu_view::FrameRing::default();
     let mut shown = None;
     let asked = requests.clone();
+    let view_opaque = view.clone();
     ui.bind(root, move || {
         asked.get();
         let (width, height) = size.get();
@@ -5034,9 +5035,15 @@ fn mount_gpu_view(
             shown_by,
             width,
             height,
+            opaque: view_opaque.opaque(),
         });
         if shown.replace((width, height)) == Some((width, height)) {
-            scene.set_image_frame(frame, image);
+            // On a plane of its own, the window has nothing to repaint.
+            if crate::gpu_view::planed(id, shown_by) {
+                scene.show_plane_frame(frame, image);
+            } else {
+                scene.set_image_frame(frame, image);
+            }
             return;
         }
         if matches!(scene.kind(frame), NodeKind::Image(_)) {
