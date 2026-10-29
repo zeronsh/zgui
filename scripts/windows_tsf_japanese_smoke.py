@@ -5,9 +5,11 @@ The Microsoft Japanese IME in zgx's editors: romaji typed compose kana
 in the editor's preedit, Space converts (日本語, or whatever the IME has
 learned to put first), and Enter commits the candidate it selected; while
 converted, the clause it marks shows underlined thick, as the target.
-Through Windows' Text Services Framework (`ZGX_TSF=1`) by default, its
-display attributes marking the clause; `--imm32` runs it through winit's
-IMM32 path.
+Through Windows' Text Services Framework by default (`ZGX_TSF` unset,
+removed if set: what an app gets), its display attributes marking the
+clause; `--imm32` runs it through winit's IMM32 path (`ZGX_TSF=0`, the
+opt-out), and `--force-tsf` with the framework forced (`ZGX_TSF=1`). It
+prints which.
 
 The Japanese IME needs its language's typing features installed for the
 user (Settings, Time & language, Language & region, Japanese). Without them
@@ -51,7 +53,7 @@ def installed():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
-    parser.add_argument("--imm32", action="store_true", help="through winit's IMM32 path, not the framework")
+    win.input_path_args(parser)
     parser.add_argument("--out", type=pathlib.Path, default=pathlib.Path("japanese-probe"))
     args = parser.parse_args()
     layout = win.loaded_layout(JAPANESE)
@@ -59,9 +61,7 @@ def main():
         print("PENDING: the Microsoft Japanese IME is not installed for this user")
         return
     env = dict(os.environ, ZGX_SECONDS="600")
-    env.pop("ZGX_TSF", None)
-    if not args.imm32:
-        env["ZGX_TSF"] = "1"
+    mode = win.input_path(env, win.mode_of(args))
     # Opened by the example itself, through IMM32 or the framework's
     # compartments: no on/off key is sent (it could land on a prompt).
     opener = "--open-ime" if args.imm32 else "--open-tsf-ime"
@@ -121,7 +121,7 @@ def main():
     heights = [float(m.group(1)) for line in marked if (m := re.search(r"height: ([\d.]+)", line))]
     if not any(h >= 2 for h in heights):
         raise AssertionError(f"the converted clause wasn't underlined thick (its display attribute): {marked}")
-    path = "IMM32" if args.imm32 else "the Text Services Framework"
+    path = mode
     print(f"PASS: Japanese IME through {path}: {final.strip()} (as selected), "
           f"the target clause underlined thick")
 

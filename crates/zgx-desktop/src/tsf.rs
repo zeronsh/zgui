@@ -6,8 +6,10 @@
 //! panel, dictation and the touch keyboard type into it, and an input
 //! method's composition is its preedit.
 //!
-//! Off unless `ZGX_TSF=1`: winit's IMM32 path stays the default until the
-//! staged rollout makes this one the default (docs/windows.md).
+//! The default; IMM32's path (winit's) instead with
+//! `Application::text_services(false)`, or `ZGX_TSF=0` (which, like
+//! `ZGX_TSF=1`, overrides what the app chose). It is IMM32's too where the
+//! framework does not start.
 //!
 //! Locks: Windows asks for one (`RequestLock`) to read or edit, and hears of
 //! edits it didn't make only when no lock is held. A request while another
@@ -87,11 +89,29 @@ pub(crate) struct Tsf {
     edits: Option<u32>,
 }
 
+/// Whether windows use the framework (`Application::text_services`).
+pub(crate) static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether a window uses the framework.
+fn enabled() -> bool {
+    choose(
+        zgx::env::var_os("ZGX_TSF").as_deref(),
+        ENABLED.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+/// `ZGX_TSF=0` or `1` if set (the user's), else what the app chose.
+fn choose(env: Option<&std::ffi::OsStr>, app: bool) -> bool {
+    match env {
+        Some(value) => value != "0",
+        None => app,
+    }
+}
+
 impl Tsf {
     /// The framework for window `hwnd` (`scale`: its physical pixels per
-    /// point), when `ZGX_TSF=1` and it starts; `None` keeps IMM32's path.
+    /// point), when it is on and starts; `None` keeps IMM32's path.
     pub(crate) fn new(hwnd: HWND, scale: f64) -> Option<Self> {
-        if std::env::var_os("ZGX_TSF").is_none_or(|v| v != "1") {
+        if !enabled() {
             return None;
         }
         // SAFETY: COM was initialized on this thread by winit (OLE, for drag
@@ -907,6 +927,17 @@ mod tests {
         },
     };
     use zgx::{compose::prelude::*, text_edit::InputMode, widgets::Ui};
+
+    /// The framework is the default; the app turns it off, and the user's
+    /// `ZGX_TSF` overrides the app either way.
+    #[test]
+    fn the_framework_is_the_default_and_the_environment_overrides_the_app() {
+        use std::ffi::OsStr;
+        assert!(choose(None, true), "the default");
+        assert!(!choose(None, false), "the app's IMM32");
+        assert!(!choose(Some(OsStr::new("0")), true), "the user's IMM32");
+        assert!(choose(Some(OsStr::new("1")), false), "the user's framework");
+    }
 
     /// A sink that keeps the attributes it was told changed.
     #[implement(ITextStoreACPSink)]

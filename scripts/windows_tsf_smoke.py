@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Windows' Text Services Framework in zgx's editors (`ZGX_TSF=1`), with no
+"""Windows' Text Services Framework in zgx's editors (the default: `ZGX_TSF`
+unset, removed if set; `--force-tsf` sets it to 1; it prints which), with no
 input method beyond English: a text service inserts at the caret through the
 text store, and keys typed after it reach the editor as before.
 
@@ -34,8 +35,10 @@ def emoji(text):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
+    win.input_path_args(parser, imm32=False)
     args = parser.parse_args()
-    env = dict(os.environ, ZGX_SECONDS="20", ZGX_TSF="1")
+    env = dict(os.environ, ZGX_SECONDS="20")
+    win.input_path(env, win.mode_of(args))
     proc = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     lines = []

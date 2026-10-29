@@ -85,8 +85,8 @@ fn open_input_method() {
     }
 }
 
-/// `--open-tsf-ime`: through Windows' Text Services Framework
-/// (`ZGX_TSF=1`), IMM32's context isn't the window's, so `--open-ime` can't
+/// `--open-tsf-ime`: through Windows' Text Services Framework (the
+/// default), IMM32's context isn't the window's, so `--open-ime` can't
 /// reach the input method. Open it as the framework's own switch does: its
 /// thread's keyboard open-close compartment on, and the conversion mode
 /// native and full-shape (hiragana, for the Japanese IME). No key is sent.

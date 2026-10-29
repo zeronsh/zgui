@@ -12,7 +12,10 @@ for the run and restores the user's list after. native_ime --open-ime opens it
     cargo build -p zgx-desktop --example native_ime
     python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean
 
-`--tsf` runs it through Windows' Text Services Framework (`ZGX_TSF=1`): the
+It runs through winit's IMM32 path (`ZGX_TSF=0`, the opt-out). `--tsf` runs
+it through Windows' Text Services Framework as the default (`ZGX_TSF` unset,
+removed if set), and `--force-tsf` with it forced (`ZGX_TSF=1`); it prints
+which. Through the framework, the
 composition is the editor's preedit through zgx's text store, not IMM32's
 events, so the editors' text is what is checked: 한글 committed into the
 first, nothing in the second.
@@ -78,7 +81,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
     parser.add_argument("--install-korean", action="store_true")
-    parser.add_argument("--tsf", action="store_true", help="through the Text Services Framework")
+    paths = parser.add_mutually_exclusive_group()
+    paths.add_argument("--tsf", action="store_true", help="through the Text Services Framework, the default")
+    paths.add_argument("--force-tsf", action="store_true", help="through the Text Services Framework, forced")
     parser.add_argument("--replace-while-composing", action="store_true",
                         help="the app sets the field's text mid-composition: the composition ends, "
                              "none of it committed")
@@ -92,8 +97,8 @@ def main():
                    f"$k.InputMethodTips.Clear(); $k.InputMethodTips.Add('{KOREAN_TIP}'); "
                    "Set-WinUserLanguageList $l -Force -WarningAction SilentlyContinue")
     env = dict(os.environ, ZGX_SECONDS="30")
-    if args.tsf:
-        env["ZGX_TSF"] = "1"
+    win.input_path(env, "force-tsf" if args.force_tsf else "default" if args.tsf else "imm32")
+    args.tsf = args.tsf or args.force_tsf
     command = [str(args.binary.resolve()), "--open-ime"]
     if args.replace_while_composing:
         command.append("--replace-while-composing")

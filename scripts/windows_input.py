@@ -263,6 +263,45 @@ def layout_of(hwnd):
     return user32.GetKeyboardLayout(user32.GetWindowThreadProcessId(hwnd, None)) or 0
 
 
+def input_path_args(parser, imm32=True):
+    """`--imm32` (winit's IMM32 path, the opt-out) and `--force-tsf`: which
+    input path the probe's app takes. Without either, the app's default."""
+    group = parser.add_mutually_exclusive_group()
+    if imm32:
+        group.add_argument("--imm32", action="store_true",
+                           help="through winit's IMM32 path (ZGX_TSF=0), not the default")
+    group.add_argument("--force-tsf", action="store_true",
+                       help="the Text Services Framework forced (ZGX_TSF=1), not the default")
+
+
+def input_path(env, mode):
+    """Set the app's ZGX_TSF in `env` for `mode` ("default", "imm32" or
+    "force-tsf") and print which ran. The default leaves it unset, removed
+    if the probe's own environment has it (or its old name), so the run
+    tests what an app gets with nothing set."""
+    for name in ("ZGX_TSF", "ZGUI_TSF"):  # rename-to-zgx: keep
+        env.pop(name, None)
+    if mode == "imm32":
+        env["ZGX_TSF"] = "0"
+        said = "IMM32 (ZGX_TSF=0, the opt-out)"
+    elif mode == "force-tsf":
+        env["ZGX_TSF"] = "1"
+        said = "the Text Services Framework, forced (ZGX_TSF=1)"
+    else:
+        said = "the default (ZGX_TSF unset): the Text Services Framework"
+    print(f"MODE: {said}", flush=True)
+    return said
+
+
+def mode_of(args):
+    """The mode `input_path_args`' flags name."""
+    if getattr(args, "imm32", False):
+        return "imm32"
+    if getattr(args, "force_tsf", False):
+        return "force-tsf"
+    return "default"
+
+
 def use_layout(hwnd, layout, timeout=3.0):
     """Ask Windows for keyboard layout `layout` in window `hwnd` alone, as
     the language bar does for the window in front: the user's languages are

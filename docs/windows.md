@@ -713,16 +713,17 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
   run and restores the list after. The Japanese and Chinese IMEs need their
   language's typing features (an administrator install) before they compose.
   `native_ime --open-ime` opens the IME itself: input methods ignore a
-  synthesized on/off key. `--tsf` runs it through the Text Services Framework
-  (`ZGX_TSF=1`, below), checking the editors' text. `--replace-while-composing`
+  synthesized on/off key. It runs through IMM32 (`ZGX_TSF=0`, the opt-out);
+  `--tsf` runs it through the Text Services Framework as the default (below),
+  `--force-tsf` with it forced, checking the editors' text. `--replace-while-composing`
   has the app set the field's text mid-composition (`native_ime
   --replace-while-composing`): the composition ends there and none of it is
   committed, through either path.
-- `windows_tsf_smoke.py` (`ZGX_TSF=1`): the emoji panel (Win+., Enter) inserts
+- `windows_tsf_smoke.py`: the emoji panel (Win+., Enter) inserts
   through zgx's text store, and typing after it reaches the editor. It needs
   no input method beyond English.
 - `windows_uia_find_smoke.py`: UI Automation finds text in a zgx document (`FindText`, AccessKit's zgx patch): a word forward, one without case, one backward, nothing for what it doesn't have, each match with its box.
-- `windows_tsf_reconvert_smoke.py` (`ZGX_TSF=1`): reconversion. 한, typed,
+- `windows_tsf_reconvert_smoke.py`: reconversion. 한, typed,
   committed and selected, goes to hanja in its place by the Korean IME's
   Hanja key and its first candidate. `--install-korean` as above.
 - `windows_tsf_chinese_smoke.py`: Microsoft Pinyin composes "nihao", the
@@ -777,10 +778,21 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
 
   A pass is not a review: look at each run's screenshots in `--out`.
 
-### The Text Services Framework (`ZGX_TSF=1`)
+The probes that choose an input path run the app's default unless told
+otherwise: `ZGX_TSF` unset, removed if the probe's own environment has it,
+so they test what an app gets with nothing set. `--imm32` runs winit's IMM32
+path (`ZGX_TSF=0`) and `--force-tsf` the framework forced (`ZGX_TSF=1`); each
+run prints a `MODE:` line saying which ran. `windows_ime_smoke.py` alone
+runs IMM32 unless given `--tsf` (the default) or `--force-tsf`.
 
-Editors take input methods through winit's IMM32 path by default. With
-`ZGX_TSF=1`, a window gives them Windows' Text Services Framework instead:
+### The Text Services Framework
+
+Editors take input methods and text services through Windows' Text Services
+Framework, the default from 0.1.6. An app keeps winit's IMM32 path instead
+with `Application::text_services(false)`, and a user with `ZGX_TSF=0` in the
+environment (`ZGX_TSF=1` forces the framework back on); a window where the
+framework does not start uses IMM32 too. IMM32 composes, but has none of what
+follows: no text store, reconversion, input scopes or clause underlines.
 - **The text store.** An `ITextStoreACP2` of zgx's own (`tsf.rs`, over
   `text_store.rs`, which is tested on every platform) holds the focused
   editor's text in UTF-16 offsets, with the composition in place of the
@@ -807,8 +819,7 @@ Editors take input methods through winit's IMM32 path by default. With
   to an editor of another mode tells them (`OnAttrsChange`). `None` shows no
   touch keyboard.
 
-The framework becomes the default once the Japanese and Chinese probes run on
-their installed languages.
+The probes for the rest of Windows:
 - `windows_platform_smoke.py`: selected display text copied as text and HTML
   and read by another process, text from another process pasted into an
   editor, the file picker, the save dialog (a name typed into it reaches the

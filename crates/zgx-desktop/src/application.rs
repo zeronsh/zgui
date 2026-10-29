@@ -848,6 +848,20 @@ impl Application {
         self.application_event = Some(Box::new(handler));
         self
     }
+    /// Windows: whether editors take input methods and text services through
+    /// the Text Services Framework (the default: a text store they read,
+    /// reconversion, input scopes, each clause underlined) or through winit's
+    /// IMM32 path (`false`), the older interface, without them
+    /// (docs/windows.md). For every window; one where the framework does not
+    /// start uses IMM32. `ZGX_TSF=0` or `ZGX_TSF=1` in the environment
+    /// overrides it, for the user. Elsewhere it does nothing.
+    pub fn text_services(self, on: bool) -> Self {
+        #[cfg(windows)]
+        crate::tsf::ENABLED.store(on, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(windows))]
+        let _ = on;
+        self
+    }
     /// Retain the event loop for native reopen/open-URL delivery after the last
     /// window closes. Call WindowFactory::quit to terminate a retained app.
     pub fn quit_on_last_window_close(mut self, quit: bool) -> Self {
@@ -1518,7 +1532,8 @@ struct Host {
     /// zgx brought the touch keyboard up, and puts it away.
     #[cfg(windows)]
     touch_keyboard: bool,
-    /// Windows' Text Services Framework for this window (`ZGX_TSF=1`), made
+    /// Windows' Text Services Framework for this window (unless
+    /// `text_services(false)` or `ZGX_TSF=0`), made
     /// when an editor first takes an input method; `tsf_tried` once tried.
     #[cfg(windows)]
     tsf: Option<crate::tsf::Tsf>,

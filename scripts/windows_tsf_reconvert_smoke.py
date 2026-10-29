@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reconversion through Windows' Text Services Framework (`ZGX_TSF=1`): the
+"""Reconversion through Windows' Text Services Framework (the default:
+`ZGX_TSF` unset, removed if set; `--force-tsf` sets it to 1; it prints which): the
 Microsoft Korean IME converts committed hangul, selected, to hanja. Typed 한
 is committed; selected and given the Hanja key, the input method opens its
 composition over it (zgx's text store makes that text the composition in its
@@ -33,6 +34,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
     parser.add_argument("--install-korean", action="store_true")
+    win.input_path_args(parser, imm32=False)
     args = parser.parse_args()
     saved = input_methods()
     if KOREAN_TIP.split(":")[1] not in saved:
@@ -42,7 +44,8 @@ def main():
         powershell("$l = Get-WinUserLanguageList; $l.Add('ko-KR'); $k = $l[$l.Count - 1]; "
                    f"$k.InputMethodTips.Clear(); $k.InputMethodTips.Add('{KOREAN_TIP}'); "
                    "Set-WinUserLanguageList $l -Force -WarningAction SilentlyContinue")
-    env = dict(os.environ, ZGX_SECONDS="30", ZGX_TSF="1")
+    env = dict(os.environ, ZGX_SECONDS="30")
+    win.input_path(env, win.mode_of(args))
     proc = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     lines = []

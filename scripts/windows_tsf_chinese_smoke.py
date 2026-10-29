@@ -5,7 +5,9 @@ Microsoft Pinyin (Simplified Chinese) composing in zgx's editors: "nihao"
 typed composes pinyin in the editor's preedit, the digit 1 takes the first
 candidate (你好) and commits it, and pinyin composed then cancelled with
 Escape commits nothing. Through Windows' Text Services Framework
-(`ZGX_TSF=1`) by default; `--imm32` runs it through winit's IMM32 path.
+by default (`ZGX_TSF` unset, removed if set: what an app gets); `--imm32`
+runs it through winit's IMM32 path (`ZGX_TSF=0`, the opt-out), and
+`--force-tsf` with the framework forced (`ZGX_TSF=1`). It prints which.
 
 Microsoft Pinyin must be installed for the user (Chinese (Simplified) in
 Settings, Time & language, Language & region). Without it this prints
@@ -53,7 +55,7 @@ def model(lines, field):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
-    parser.add_argument("--imm32", action="store_true", help="through winit's IMM32 path, not the framework")
+    win.input_path_args(parser)
     parser.add_argument("--out", type=pathlib.Path, default=pathlib.Path("pinyin-probe"))
     args = parser.parse_args()
     layout = win.loaded_layout(CHINESE)
@@ -62,9 +64,7 @@ def main():
         return
     saved = input_methods()
     env = dict(os.environ, ZGX_SECONDS="600")
-    env.pop("ZGX_TSF", None)
-    if not args.imm32:
-        env["ZGX_TSF"] = "1"
+    mode = win.input_path(env, win.mode_of(args))
     proc = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     lines = []
@@ -127,7 +127,7 @@ def main():
     final = next((line.strip() for line in lines if line.startswith("FINAL")), "")
     if final != f'FINAL first="{NIHAO}" second=""':
         raise AssertionError(f"expected 你好 alone: {final}\n{output}")
-    path = "IMM32" if args.imm32 else "the Text Services Framework"
+    path = mode
     print(f"PASS: Microsoft Pinyin through {path}: {final}")
 
 
