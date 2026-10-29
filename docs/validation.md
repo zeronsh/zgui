@@ -1013,6 +1013,22 @@ window light and dark (`set_theme`) and as the system does, checking
 `NSWindow.appearance` (Aqua, DarkAqua, none) and the appearance zgx's themes
 follow. Passed on macOS 26 (M5), 2026-10-28.
 
+## macOS window deactivation and return
+
+`scripts/macos_deactivation_probe.py` (the `deactivation_probe` example, run
+with `ZGX_NATIVE_CARET=0` so the editor paints the caret it reads) has a
+helper window of its own take key status, as another app's window would, and
+give it back; no other app is activated. With a field focused, Shift held and
+the pointer over a button: away, the field keeps its focus but draws no caret
+and nothing is hovered; back, its caret returns, a key types into it with no
+Shift held. A press held on the button is let go as the window goes to the
+back, and released after coming back it clicks nothing. 9 of 9 pass on an
+Apple M5 Max (macOS 26.4); with the host's deactivation reset
+(`cancel_interactions` and the pointer's leave) taken out, 4 fail. The app
+itself stays active: AppKit tells the window it lost key status the same way
+when another app takes it, but the application's own `resignActive` is not
+exercised.
+
 ## macOS cursors, Insert, held drags, file drops and title bars
 
 `scripts/macos_native_checks_probe.py` runs the native_checks_probe
