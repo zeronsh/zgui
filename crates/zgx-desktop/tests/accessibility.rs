@@ -854,3 +854,80 @@ fn overridden_button_role_names_itself_once_a_reader_listens() {
     ui.prepare_frame();
     assert_eq!(projected_name(&ui), "after");
 }
+
+/// An unnamed popover is named by its trigger (`aria-labelledby`), as the
+/// platform reads it, and follows the trigger's name; a named one keeps
+/// its own.
+#[test]
+fn an_unnamed_popover_is_named_by_its_trigger() {
+    use zgx::compose::prelude::*;
+    let name = |label: &str| {
+        let mut ui = Ui::new(400., 300.);
+        let open = ui.signal(true);
+        let trigger = ui.signal(String::from("Filters"));
+        let shown = trigger.clone();
+        ui.mount(
+            column().w(400.).h(300.).child(
+                popover(
+                    label,
+                    open,
+                    button()
+                        .w(80.)
+                        .h(30.)
+                        .child(text_signal(move || shown.get())),
+                )
+                .w(120.)
+                .h(60.),
+            ),
+        );
+        ui.prepare_frame();
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "App", 1.);
+        fn find(node: Node<'_>) -> Option<Option<String>> {
+            if node.role() == NativeRole::Dialog {
+                return Some(node.label());
+            }
+            node.children().find_map(find)
+        }
+        let dialog = |tree: &Tree| find(tree.state().root()).flatten();
+        let mut consumer = Tree::new(update, true);
+        let first = dialog(&consumer);
+        trigger.set("Sort".into());
+        ui.prepare_frame();
+        let update = adapter.update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "App", 1.);
+        consumer.update_and_process_changes(update, &mut Changes::default());
+        (first, dialog(&consumer))
+    };
+    assert_eq!(name(""), (Some("Filters".into()), Some("Sort".into())));
+    assert_eq!(
+        name("Options"),
+        (Some("Options".into()), Some("Options".into()))
+    );
+}
+
+/// What names an unnamed popover goes when the popover does.
+#[test]
+fn an_unmounted_popover_leaves_no_name_behind() {
+    use zgx::compose::prelude::*;
+    let mut ui = Ui::new(400., 300.);
+    let open = ui.signal(true);
+    let view = ui.mount(
+        column().w(400.).h(300.).child(
+            popover("", open, button().w(80.).h(30.).child(text("Filters")))
+                .w(120.)
+                .h(60.),
+        ),
+    );
+    ui.prepare_frame();
+    let panel = ui
+        .semantics
+        .borrow()
+        .iter()
+        .find(|(_, s)| s.role == Role::Dialog)
+        .map(|(id, _)| id)
+        .unwrap();
+    assert!(ui.semantics.borrow().labelled_by(panel).is_some());
+    view.unmount();
+    ui.prepare_frame();
+    assert_eq!(ui.semantics.borrow().labelled_by(panel), None);
+}

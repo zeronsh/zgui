@@ -298,6 +298,10 @@ pub struct Semantics {
     /// The text node showing a field's text (`set_text_node`), whose lines
     /// assistive technology is given the geometry of: few nodes have one.
     text_nodes: HashMap<NodeId, NodeId>,
+    /// What names a node with no name of its own (`set_labelled_by`): an
+    /// unnamed popover's or menu's trigger. Few nodes have one, and their
+    /// portal clears it as it goes (`unlabel_within`).
+    labelled_by: HashMap<NodeId, NodeId>,
 }
 impl Default for Semantics {
     fn default() -> Self {
@@ -316,6 +320,7 @@ impl Default for Semantics {
             long: HashMap::new(),
             errors: HashMap::new(),
             text_nodes: HashMap::new(),
+            labelled_by: HashMap::new(),
         }
     }
 }
@@ -624,6 +629,35 @@ impl Semantics {
     pub fn text_node(&self, id: NodeId) -> Option<NodeId> {
         self.text_nodes.get(&id).copied()
     }
+    /// `id`, which has no name of its own, is named by `by` (ARIA's
+    /// `aria-labelledby`): an unnamed popover by its trigger, read as the
+    /// trigger is named whenever assistive technology reads it.
+    pub fn set_labelled_by(&mut self, id: NodeId, by: NodeId) {
+        if self.buried(id) || self.labelled_by.get(&id) == Some(&by) {
+            return;
+        }
+        let Some(entry) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        self.labelled_by.insert(id, by);
+        self.revision = self.revision.wrapping_add(1);
+        entry.revision = self.revision;
+    }
+    /// Forget what names the nodes within `root` (a portal's overlay, as it
+    /// goes): the portal clears its own, so no node's removal looks.
+    pub(crate) fn unlabel_within(&mut self, scene: &Scene, root: NodeId) {
+        if !self.labelled_by.is_empty() {
+            self.labelled_by.retain(|id, _| !scene.is_within(*id, root));
+        }
+    }
+    /// What names `id` (`set_labelled_by`), if anything.
+    #[inline]
+    pub fn labelled_by(&self, id: NodeId) -> Option<NodeId> {
+        if self.labelled_by.is_empty() || self.buried(id) {
+            return None;
+        }
+        self.labelled_by.get(&id).copied()
+    }
     /// Remove `id`'s information.
     pub fn remove(&mut self, id: NodeId) {
         if self.buried(id) {
@@ -649,6 +683,9 @@ impl Semantics {
         if !self.errors.is_empty() {
             self.errors.retain(|id, _| scene.contains(*id));
         }
+        if !self.labelled_by.is_empty() {
+            self.labelled_by.retain(|id, _| scene.contains(*id));
+        }
         if self.nodes.len() != count {
             self.revision = self.revision.wrapping_add(1);
         }
@@ -669,6 +706,30 @@ impl Semantics {
 mod tests {
     use super::*;
     use crate::scene::{Color, NodeKind, Style};
+    /// What names a node is kept beside it, setting it again changes
+    /// nothing, and its portal clears it.
+    #[test]
+    fn labelled_by_is_kept_beside_the_node_and_its_portal_clears_it() {
+        let mut scene = Scene::new(100., 100.);
+        let root = scene.root();
+        let panel = scene.append(root, NodeKind::Rect(Color(0, 0, 0, 0)), Style::default());
+        let trigger = scene.append(root, NodeKind::Rect(Color(0, 0, 0, 0)), Style::default());
+        let mut semantics = Semantics::new();
+        // A node with no information has nothing to name.
+        semantics.set_labelled_by(panel, trigger);
+        assert_eq!(semantics.labelled_by(panel), None);
+        semantics.set(panel, SemanticNode::new(Role::Dialog, ""));
+        let before = semantics.node_revision(panel);
+        semantics.set_labelled_by(panel, trigger);
+        assert_eq!(semantics.labelled_by(panel), Some(trigger));
+        let named = semantics.node_revision(panel);
+        assert_ne!(named, before);
+        semantics.set_labelled_by(panel, trigger);
+        assert_eq!(semantics.node_revision(panel), named);
+        semantics.unlabel_within(&scene, root);
+        assert_eq!(semantics.labelled_by(panel), None);
+        assert!(semantics.labelled_by.is_empty());
+    }
     #[test]
     fn node_tokens_isolate_mutations_and_survive_retention() {
         let mut scene = Scene::new(100., 100.);

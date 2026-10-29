@@ -492,7 +492,15 @@ impl AccessibilityTree {
                 n.set_label(semantic.label.clone());
                 None
             } else {
-                n.set_label(semantic.label.clone());
+                // Named by another node (an unnamed popover by its trigger):
+                // no label of its own, which would hide the other's.
+                match semantics
+                    .labelled_by(id)
+                    .filter(|by| semantic.label.is_empty() && visible.contains(by))
+                {
+                    Some(by) => n.push_labelled_by(self.id(by)),
+                    None => n.set_label(semantic.label.clone()),
+                }
                 value
             };
             if let Some(active) = semantic.active_descendant.filter(|a| visible.contains(a)) {

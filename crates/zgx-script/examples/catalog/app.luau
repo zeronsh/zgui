@@ -265,7 +265,6 @@ local overlays = section(
 		size_item("large", "Large"),
 	},
 	ui.popover {
-		label = "Filters",
 		open = popover_open,
 		anchor = popover_button,
 		arrow = 8,

@@ -25,6 +25,10 @@ impl Drop for Owner {
             return;
         };
         unwind(&ui, self.overlay);
+        // What named its panel (`set_labelled_by`) goes with it.
+        ui.semantics
+            .borrow_mut()
+            .unlabel_within(&ui.scene.borrow(), self.overlay);
         ui.remove_portal(self.overlay);
         ui.remove(self.overlay);
     }

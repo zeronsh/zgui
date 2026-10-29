@@ -3174,6 +3174,7 @@ fn mount_portal_panel(
     }
     let open_signal = open.clone();
     let popup_open = open.clone();
+    let unnamed = label.is_empty();
     crate::compose_modal::activate(
         ui,
         owner,
@@ -3194,6 +3195,11 @@ fn mount_portal_panel(
         autofocus.unwrap_or(true),
         is_layer,
     );
+    // An unnamed popover or menu is named by its trigger, as a browser's
+    // popover target is (`aria-labelledby`).
+    if let Some(anchor) = anchor.filter(|_| unnamed && !is_submenu) {
+        ui.semantics.borrow_mut().set_labelled_by(panel, anchor);
+    }
     // A popover closes on a press outside it (in the window, in a parent
     // popover's panel), and the press goes on to what it lands on.
     if let Some(anchor) = anchor.filter(|_| dismiss_backdrop && !is_menu && !is_layer) {

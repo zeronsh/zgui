@@ -978,6 +978,9 @@ means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
   An unnamed image inside a button, check box, switch, radio button, tab,
   menu item, option, slider or progress bar is left out without asking: the
   control's name says what it is (ARIA's presentational children).
+- A popover or menu with no name (`popover("", …)`, a Luau `ui.popover`
+  without `label`) is named by its trigger, as it reads now
+  (`aria-labelledby`).
 - `.focus_group(FocusGroup::Vertical)` (or `Horizontal`, `Both`): one Tab stop
   for the focusable views inside, as ARIA's composite widgets are. Tab lands on
   the one last focused there (else the selected one, else the first), and the
