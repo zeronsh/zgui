@@ -17,6 +17,8 @@ mod example_scripts;
 mod examples;
 #[path = "../frame_profiler.rs"]
 mod frame_profiler;
+#[path = "../inbox_example.rs"]
+mod inbox_example;
 #[path = "../mail_example.rs"]
 mod mail_example;
 #[path = "../monitor_example.rs"]
