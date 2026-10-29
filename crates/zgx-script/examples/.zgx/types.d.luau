@@ -850,7 +850,8 @@ export type Router = {
 	-- Whether the route is `name` now (tracked).
 	is: (name: RouteName) -> boolean,
 	-- What each route shows: a node or a function of its params; the mouse's
-	-- back and forward buttons over it go back and forward.
+	-- back and forward buttons over it, and a trackpad's swipe between pages,
+	-- go back and forward.
 	view: (cases: RouteCases, props: ContainerProps?) -> Node,
 }
 export type FormSpec = {
@@ -1389,6 +1390,9 @@ export type PinchEvent = {
 	cmd: boolean,
 	scale: number,
 }
+-- A step back or forward the platform's gesture for it takes: a trackpad's
+-- swipe between pages (macOS).
+export type NavigateEvent = { direction: "back" | "forward" }
 -- What a drag carries to other apps (`drag_export`): text, a link, files
 -- (absolute paths).
 export type DragExport = { text: string?, url: string?, files: { string }? }
@@ -1875,6 +1879,9 @@ export type NodeProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: (((e: AuxClickEvent) -> ...unknown) | Action)?,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: (((e: NavigateEvent) -> ...unknown) | Action)?,
 	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
 	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
 	-- Return true to consume the key.
@@ -2206,6 +2213,9 @@ export type Props = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -2451,6 +2461,7 @@ export type Props_on_click = (ClickHandler | Handler | Action)?
 export type Props_on_press = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_release = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_aux_click = (((e: AuxClickEvent) -> ...unknown) | Action)?
+export type Props_on_navigate = (((e: NavigateEvent) -> ...unknown) | Action)?
 export type Props_on_hover = (((inside: boolean) -> ...unknown) | Action)?
 export type Props_on_pointer_move = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_key = (((e: KeyEvent) -> ...boolean?) | Action)?
@@ -2739,6 +2750,9 @@ export type ContainerProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3070,6 +3084,9 @@ export type ScrollProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3408,6 +3425,9 @@ export type TextProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3738,6 +3758,9 @@ export type MarkdownViewProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4116,6 +4139,9 @@ export type RichProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4440,6 +4466,9 @@ export type ImageProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4774,6 +4803,9 @@ export type SvgProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5188,6 +5220,9 @@ export type Scene3DProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5521,6 +5556,9 @@ export type CanvasProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5877,6 +5915,9 @@ export type CheckboxProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6211,6 +6252,9 @@ export type InputProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6608,6 +6652,9 @@ export type ProgressProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6933,6 +6980,9 @@ export type SliderProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7273,6 +7323,9 @@ export type SegmentedProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7609,6 +7662,9 @@ export type StepperProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7946,6 +8002,9 @@ export type DisclosureProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8280,6 +8339,9 @@ export type AccordionProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8602,6 +8664,9 @@ export type SectionProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8935,6 +9000,9 @@ export type SeparatorProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9265,6 +9333,9 @@ export type TabsProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9603,6 +9674,9 @@ export type TreeProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9951,6 +10025,9 @@ export type DataGridProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10295,6 +10372,9 @@ export type CalendarProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10631,6 +10711,9 @@ export type DatePickerProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10965,6 +11048,9 @@ export type TimeFieldProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11298,6 +11384,9 @@ export type ComboboxProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11640,6 +11729,9 @@ export type CommandPaletteProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11970,6 +12062,9 @@ export type SelectProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12307,6 +12402,9 @@ export type SplitProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12652,6 +12750,9 @@ export type ListProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13043,6 +13144,9 @@ export type LayerProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13373,6 +13477,9 @@ export type ModalProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13721,6 +13828,9 @@ export type PopoverProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14070,6 +14180,9 @@ export type MenuItemProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14403,6 +14516,9 @@ export type SubmenuProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15086,6 +15202,9 @@ export type TerminalProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15411,6 +15530,9 @@ export type SlotProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15782,6 +15904,9 @@ export type EachOptions = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -16122,6 +16247,9 @@ export type PresenceOptions = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.

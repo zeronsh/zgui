@@ -259,3 +259,40 @@ content purpose could not say email, URL, number, digits or phone (zgx's
 `Email`, `Url`, `Number`, `Digits` and `Phone` (`window.rs`), sent as
 those content purposes (`seat/text_input/mod.rs`); other platforms ignore a
 purpose, as before. zgx-desktop sets it as an editor takes the input method.
+
+## macOS: a trackpad's swipe between pages
+
+Safari, Finder and Xcode go back and forward on a trackpad's swipe between
+pages: two fingers across (the system's default) or three, as System
+Settings' Trackpad has it. Three fingers reach a view as `swipeWithEvent:`,
+which winit's left to the responder chain; two fingers are scroll events,
+which an app hands to AppKit's swipe tracking (`-[NSEvent
+trackSwipeEventWithOptions:…]`) when the gesture starts where nothing
+scrolls that way, and winit had no way to.
+
+15. `platform::macos::NavigationSwipes` and `set_navigation_swipes`: an
+    app's answer, kept on the main thread, to a swipe over a window that
+    went back or forward, from where it began (physical pixels in the
+    content, as `CursorMoved`'s). `view.rs`: `swipeWithEvent:` reports a
+    three-finger swipe by its `deltaX` (to the right, positive: back);
+    with no answer, or vertically, it goes up the chain as before.
+16. `platform::macos::begin_navigation_swipe`: the gesture scrolling over a
+    window swipes from its next scroll, for an app that found the gesture's
+    first scroll moved nothing it is over (each scroll view at its edge) and
+    something there navigates. As WebKit does once its web process says it
+    took no scroll, the view starts AppKit's tracking from that later scroll
+    of the gesture (`trackSwipeEventWithOptions` locked to its direction,
+    clamped, −1 to 1), the fingers still down and
+    `+[NSEvent isSwipeTrackingFromScrollEventsEnabled]` (the system's "Swipe
+    between pages" set to two fingers; `swipes_from_scrolls`). The app
+    hears its scroll gesture end there (a `MouseWheel` of nothing, phase
+    `Ended`); the gesture's remaining scrolls, momentum's too, are the
+    swipe's until a new touch or a mouse's wheel; one AppKit reports ended
+    (the fingers carried it through) reaches `swiped`, back when it went
+    right. A request no gesture takes is forgotten as its gesture ends.
+    `wantsScrollEventsForSwipeTrackingOnAxis:` answers yes across while an
+    app takes swipes. objc2-app-kit's `block2` feature, for the tracking's
+    handler (`Cargo.toml`).
+
+`scripts/macos_swipe_probe.py` (zgx) checks the three-finger path, and the
+two-finger one where the system swipes with two fingers.

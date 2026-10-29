@@ -56,6 +56,8 @@ mod scrollers;
 // `wayland_data`.
 #[cfg(all(target_os = "macos", zgx_winit_patched))]
 mod services;
+#[cfg(all(target_os = "macos", zgx_winit_patched))]
+mod swipes;
 #[cfg(any(
     all(any(target_os = "macos", windows), zgx_winit_patched),
     target_os = "linux"

@@ -2973,8 +2973,8 @@ fn styled(
     let handle_for = || handle.clone().expect("made for what reads it");
     if events.any_input() {
         view = with_events(view, node, vm, low, handle_for());
-        if let Some(handler) = &events.aux_click {
-            view = with_aux_click(view, handler.clone(), vm, low, handle_for());
+        if let Some(rare) = &events.rare {
+            view = with_rare(view, rare, vm, low, handle_for());
         }
     }
     if events.any_drag() || events.drag_preview.is_some() {
@@ -3989,6 +3989,25 @@ fn with_events(
     })
 }
 
+/// The handlers few nodes have (`RareEvents`), one check in `styled` for
+/// them all.
+#[inline(never)]
+fn with_rare(
+    mut view: View,
+    rare: &crate::node::RareEvents,
+    vm: &Rc<Vm>,
+    low: &Rc<Lowering>,
+    handle: Rc<OnceCell<NodeHandle>>,
+) -> View {
+    if let Some(handler) = &rare.aux_click {
+        view = with_aux_click(view, handler.clone(), vm, low, handle);
+    }
+    if let Some(handler) = &rare.navigate {
+        view = with_navigate(view, handler.clone(), vm, low);
+    }
+    view
+}
+
 /// `on_aux_click`: a listener of its own, so a node without one pays nothing
 /// for it. An aux click is a press and a release of one extra button on the
 /// node, as a click is of the primary. Over a child, the release takes the
@@ -4060,6 +4079,28 @@ fn with_aux_click(
         }
         InputEvent::PointerLeave => (pressed, armed) = (None, false),
         _ => {}
+    })
+}
+
+/// `on_navigate`: a listener of its own, so a node without one pays nothing
+/// for it; the node takes navigation (`View::on_navigate`), so a swipe
+/// between pages over it navigates where nothing under the fingers scrolls
+/// that way.
+#[inline(never)]
+fn with_navigate(view: View, handler: Handler, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
+    let (vm, actions) = (vm.clone(), low.actions.clone());
+    view.on_navigate(move |navigation| {
+        let direction = match navigation {
+            zgx::input::Navigation::Back => "back",
+            zgx::input::Navigation::Forward => "forward",
+        };
+        let table = vm.lua.create_table().and_then(|t| {
+            t.set("direction", direction)?;
+            Ok(t)
+        });
+        if let Ok(t) = table {
+            run(&handler, &vm, &actions, t);
+        }
     })
 }
 

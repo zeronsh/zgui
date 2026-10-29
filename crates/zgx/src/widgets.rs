@@ -2453,6 +2453,23 @@ impl Ui {
     pub fn set_elastic_scrolling(&self, elastic: bool) {
         self.storage.elastic.borrow_mut().enabled = elastic;
     }
+    /// Take a trackpad's swipe between pages as navigation, as Safari does:
+    /// a gesture that starts across where nothing under it scrolls that way
+    /// (each scroll view at its edge), over a view that takes navigation
+    /// (`View::on_navigate`), stretches and scrolls nothing. The host hears
+    /// of it (`take_navigation_swipe`), has the platform track it, and
+    /// steps back or forward as it completes (`InputDispatcher::navigate`).
+    /// It reads elastic scrolling's gesture phases (`set_elastic_scrolling`).
+    /// The host turns it on (macOS's, with the system's "Swipe between
+    /// pages" set to two fingers); off (the default), nothing of it runs.
+    pub fn set_navigation_swipes(&self, swipes: bool) {
+        self.storage.elastic.borrow_mut().swipes = swipes;
+    }
+    /// Whether a trackpad gesture just became a swipe between pages
+    /// (`set_navigation_swipes`), once: the host has the platform track it.
+    pub fn take_navigation_swipe(&self) -> bool {
+        std::mem::take(&mut self.storage.elastic.borrow_mut().asked)
+    }
     pub(crate) fn elastic_state(&self) -> &RefCell<crate::elastic::State> {
         &self.storage.elastic
     }

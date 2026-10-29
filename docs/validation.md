@@ -1074,6 +1074,22 @@ window light and dark (`set_theme`) and as the system does, checking
 `NSWindow.appearance` (Aqua, DarkAqua, none) and the appearance zgx's themes
 follow. Passed on macOS 26 (M5), 2026-10-28.
 
+## macOS swipe between pages
+
+`scripts/macos_swipe_probe.py` runs the swipe_probe example and sends
+trackpad scrolls (CGEvent scrolls with their phases) to its own window
+(`-[NSWindow sendEvent:]`; the trackpad and other apps hear nothing), over a
+page that goes back and forward (`View::on_navigate`): a row scrolling
+across takes what it can scroll (toward its end, back from the middle of its
+content) and nothing navigates, and a three-finger swipe (`swipeWithEvent:`)
+to the right goes back, to the left forward. With the system's "Swipe
+between pages" set to two fingers, a two-finger swipe over the plain box, or
+over the row at its start, goes back or forward instead of scrolling. Passed
+on macOS 26 (M5), 2026-10-29, where the setting is not two fingers: the
+two-finger swipes there scroll and navigate nothing, as they should. AppKit's
+tracking of a two-finger swipe (`trackSwipeEventWithOptions`) needs a real
+trackpad: `swipe_probe --manual` counts the steps.
+
 ## macOS window deactivation and return
 
 `scripts/macos_deactivation_probe.py` (the `deactivation_probe` example, run

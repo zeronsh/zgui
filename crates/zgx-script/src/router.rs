@@ -3,8 +3,8 @@
 //! the router holds the current one as a state, its history behind and
 //! ahead (`navigate` by name, `open` by path), and goes back and forward on
 //! the platform's own input: the mouse's
-//! back and forward buttons over its view, and Alt+←/→ (⌘[ and ⌘] on
-//! macOS) as commands. With a `scheme`, deep links the system opens the app
+//! back and forward buttons and a trackpad's swipe between pages (macOS)
+//! over its view, and Alt+←/→ (⌘[ and ⌘] on macOS) as commands. With a `scheme`, deep links the system opens the app
 //! with (`mail://thread/42`) navigate to their route; one that matches no
 //! route is reported once.
 //!
@@ -166,7 +166,7 @@ local function router(spec)
     end
     -- What the route shows: `cases[name]`, a node or a function of the
     -- route's params, made again as the route changes; the mouse's back and
-    -- forward buttons over it go back and forward.
+    -- forward buttons over it, and a trackpad's swipe, go back and forward.
     function self.view(cases, props)
         local view = props or {}
         if view.grow == nil and view.w == nil and view.h == nil then
@@ -176,6 +176,14 @@ local function router(spec)
             if e.button == 4 then
                 self.back()
             elseif e.button == 5 then
+                self.forward()
+            end
+        end
+        -- A trackpad's swipe between pages over it (macOS).
+        view.on_navigate = function(e)
+            if e.direction == "back" then
+                self.back()
+            else
                 self.forward()
             end
         end

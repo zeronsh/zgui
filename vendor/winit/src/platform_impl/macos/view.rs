@@ -7,8 +7,8 @@ use objc2::rc::{Retained, WeakId};
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{declare_class, msg_send_id, mutability, sel, ClassType, DeclaredClass};
 use objc2_app_kit::{
-    NSApplication, NSCursor, NSEvent, NSEventPhase, NSResponder, NSTextInputClient,
-    NSTrackingRectTag, NSView, NSViewFrameDidChangeNotification,
+    NSApplication, NSCursor, NSEvent, NSEventGestureAxis, NSEventPhase, NSResponder,
+    NSTextInputClient, NSTrackingRectTag, NSView, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSCopying,
@@ -139,6 +139,9 @@ pub struct ViewState {
 
     /// The state of the `Option` as `Alt`.
     option_as_alt: Cell<OptionAsAlt>,
+
+    /// zgx patch: a swipe between pages, asked for or tracked.
+    swipe: Cell<Swipe>,
 }
 
 // zgx patch: the app's answers to the Services menu
@@ -154,6 +157,35 @@ pub(crate) fn set_selection_services(
 }
 fn selection_services() -> Option<std::rc::Rc<dyn crate::platform::macos::SelectionServices>> {
     SELECTION_SERVICES.with(|cell| cell.borrow().clone())
+}
+
+// zgx patch: the app's answer to swipes between pages
+// (`platform::macos::set_navigation_swipes`).
+thread_local! {
+    static NAVIGATION_SWIPES: RefCell<Option<std::rc::Rc<dyn crate::platform::macos::NavigationSwipes>>> =
+        const { RefCell::new(None) };
+}
+pub(crate) fn set_navigation_swipes(
+    swipes: Option<std::rc::Rc<dyn crate::platform::macos::NavigationSwipes>>,
+) {
+    NAVIGATION_SWIPES.with(|cell| *cell.borrow_mut() = swipes);
+}
+fn navigation_swipes() -> Option<std::rc::Rc<dyn crate::platform::macos::NavigationSwipes>> {
+    NAVIGATION_SWIPES.try_with(|cell| cell.borrow().clone()).ok().flatten()
+}
+
+/// zgx patch: a two-finger swipe between pages over the view
+/// (`platform::macos::begin_navigation_swipe`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Swipe {
+    #[default]
+    None,
+    /// The app asked for one: the gesture's next scroll starts AppKit's
+    /// tracking of it.
+    Asked,
+    /// AppKit tracks it: the rest of the gesture (its momentum too) is the
+    /// swipe's, not scrolls.
+    Tracking,
 }
 
 declare_class!(
@@ -762,6 +794,11 @@ declare_class!(
         fn scroll_wheel(&self, event: &NSEvent) {
             trace_scope!("scrollWheel:");
 
+            // zgx patch: a swipe between pages takes its gesture's scrolls.
+            if self.navigation_swipe(event) {
+                return;
+            }
+
             self.mouse_motion(event);
 
             let delta = {
@@ -797,6 +834,31 @@ declare_class!(
                 delta,
                 phase,
             });
+        }
+
+        // zgx patch: a three-finger swipe (the system set to swipe between
+        // pages so) goes back or forward at once; with no app answer, or
+        // vertically, up the responder chain as before.
+        #[method(swipeWithEvent:)]
+        fn swipe_with_event(&self, event: &NSEvent) {
+            trace_scope!("swipeWithEvent:");
+
+            let delta = unsafe { event.deltaX() };
+            match navigation_swipes() {
+                Some(swipes) if delta != 0.0 => {
+                    let (x, y) = self.event_point(event);
+                    // Positive is to the right: back, as Safari goes.
+                    swipes.swiped(self.public_window_id(), x, y, delta > 0.0);
+                }
+                _ => unsafe { objc2::msg_send![super(self), swipeWithEvent: event] },
+            }
+        }
+
+        // zgx patch: horizontal scrolls are a swipe's to track while the app
+        // takes swipes between pages.
+        #[method(wantsScrollEventsForSwipeTrackingOnAxis:)]
+        fn wants_scroll_events_for_swipe_tracking(&self, axis: NSEventGestureAxis) -> bool {
+            axis == NSEventGestureAxis::Horizontal && navigation_swipes().is_some()
         }
 
         #[method(magnifyWithEvent:)]
@@ -906,6 +968,7 @@ impl WinitView {
             accepts_first_mouse,
             _ns_window: WeakId::new(&window.retain()),
             option_as_alt: Cell::new(option_as_alt),
+            swipe: Cell::new(Swipe::None),
         });
         let this: Retained<Self> = unsafe { msg_send_id![super(this), init] };
 
@@ -1021,6 +1084,102 @@ impl WinitView {
 
     pub(super) fn option_as_alt(&self) -> OptionAsAlt {
         self.ivars().option_as_alt.get()
+    }
+
+    /// zgx patch: the window's id as the app knows it.
+    fn public_window_id(&self) -> crate::window::WindowId {
+        crate::window::WindowId(self.window().id())
+    }
+
+    /// zgx patch: where `event` is, in physical pixels in the view (as
+    /// `CursorMoved`'s positions are).
+    fn event_point(&self, event: &NSEvent) -> (f64, f64) {
+        let view_point = self.convertPoint_fromView(unsafe { event.locationInWindow() }, None);
+        let point = LogicalPosition::new(view_point.x, view_point.y)
+            .to_physical::<f64>(self.scale_factor());
+        (point.x, point.y)
+    }
+
+    /// zgx patch: the gesture scrolling over the view swipes between pages
+    /// from its next scroll (`platform::macos::begin_navigation_swipe`).
+    pub(super) fn begin_navigation_swipe(&self) {
+        if self.ivars().swipe.get() == Swipe::None && navigation_swipes().is_some() {
+            self.ivars().swipe.set(Swipe::Asked);
+        }
+    }
+
+    /// zgx patch: whether `event` is a swipe between pages', not a scroll:
+    /// the one AppKit's tracking starts from, or one after it in the
+    /// gesture. A request no gesture took is forgotten as its gesture ends.
+    fn navigation_swipe(&self, event: &NSEvent) -> bool {
+        let (phase, momentum) = unsafe { (event.phase(), event.momentumPhase()) };
+        match self.ivars().swipe.get() {
+            Swipe::None => false,
+            Swipe::Asked => {
+                self.ivars().swipe.set(Swipe::None);
+                // The fingers still down on the gesture asked for, and the
+                // system set to swipe between pages with them.
+                if phase != NSEventPhase::Changed
+                    || momentum != NSEventPhase::None
+                    || !unsafe { NSEvent::isSwipeTrackingFromScrollEventsEnabled() }
+                {
+                    return false;
+                }
+                self.track_navigation_swipe(event);
+                self.ivars().swipe.set(Swipe::Tracking);
+                // The app's scroll gesture ends here.
+                self.queue_event(WindowEvent::MouseWheel {
+                    device_id: DEVICE_ID,
+                    delta: MouseScrollDelta::PixelDelta(Default::default()),
+                    phase: TouchPhase::Ended,
+                });
+                true
+            }
+            Swipe::Tracking => {
+                // A new touch, or a mouse's wheel (no phases), is the
+                // swipe's no more.
+                let ended = phase.intersects(NSEventPhase::Began | NSEventPhase::MayBegin)
+                    || (phase == NSEventPhase::None && momentum == NSEventPhase::None);
+                if ended {
+                    self.ivars().swipe.set(Swipe::None);
+                }
+                !ended
+            }
+        }
+    }
+
+    /// zgx patch: AppKit tracks the swipe from `event`, the gesture's: as
+    /// elastic as Safari's, locked to the way it started, given up if the
+    /// fingers bring it back. One the fingers carry through goes back
+    /// (to the right) or forward.
+    fn track_navigation_swipe(&self, event: &NSEvent) {
+        use objc2::runtime::Bool;
+        use objc2_app_kit::NSEventSwipeTrackingOptions as Options;
+        use objc2_foundation::CGFloat;
+        let window = self.public_window_id();
+        let (x, y) = self.event_point(event);
+        // The way it went: it is locked to that, and ends where the
+        // fingers lift.
+        let way = Cell::new(0.0);
+        let handler = block2::RcBlock::new(
+            move |amount: CGFloat, phase: NSEventPhase, _complete: Bool, _stop: ptr::NonNull<Bool>| {
+                if amount != 0.0 {
+                    way.set(amount);
+                }
+                if phase == NSEventPhase::Ended && way.get() != 0.0 {
+                    if let Some(swipes) = navigation_swipes() {
+                        swipes.swiped(window, x, y, way.get() > 0.0);
+                    }
+                }
+            },
+        );
+        let options = Options::NSEventSwipeTrackingLockDirection
+            | Options::NSEventSwipeTrackingClampGestureAmount;
+        unsafe {
+            event.trackSwipeEventWithOptions_dampenAmountThresholdMin_max_usingHandler(
+                options, -1.0, 1.0, &handler,
+            )
+        };
     }
 
     /// Update modifiers if `event` has something different

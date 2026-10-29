@@ -162,3 +162,6 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 objc2-core-foundation = "0.3.2"
 objc2-core-video = "0.3.2"
+# swipe_probe: trackpad scrolls posted to its own queue.
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGGeometry"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-graphics"] }

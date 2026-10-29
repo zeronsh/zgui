@@ -2,7 +2,7 @@
 //! reactive properties update individual nodes without rebuilding their component.
 use crate::{
     compose_style::{Typography, Variants, mount_style_with_intrinsic},
-    input::{EventContext, EventPhase, InputEvent, PointerButton},
+    input::{EventContext, EventPhase, InputEvent, Navigation, PointerButton},
     reactive::{Runtime, ServiceScope, Signal},
     scene::{Layout, NodeId, NodeKind},
     semantics::{Live, Role, SemanticNode},
@@ -1178,6 +1178,22 @@ impl View {
             if let Some(ui) = handle.ui.upgrade() {
                 ui.input.take_unfocused_keys(handle.node);
             }
+        })
+    }
+    /// Go back or forward on the platform's gesture for it over this view:
+    /// a trackpad's swipe between pages (macOS), where nothing under the
+    /// fingers scrolls that way (`Ui::set_navigation_swipes`). The nearest
+    /// such view around what is under the swipe takes it.
+    pub fn on_navigate(self, mut callback: impl FnMut(Navigation) + 'static) -> Self {
+        self.on_mount(|handle| {
+            if let Some(ui) = handle.ui.upgrade() {
+                ui.input.take_navigation(handle.node, &ui.scene.borrow());
+            }
+        })
+        .on_action(move |navigation: &Navigation, cx| {
+            callback(*navigation);
+            cx.prevent_default();
+            cx.stop_propagation();
         })
     }
     /// Hear every event the document is given while this view is mounted,

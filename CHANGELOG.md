@@ -2,6 +2,12 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
+## Unreleased
+
+### Added
+
+- **A trackpad's swipe between pages goes back and forward** (macOS): two fingers across (or three, as the system's Trackpad setting has it), as Safari does, over a view with `on_navigate` (zgx-script) or `View::on_navigate` (Rust), which hears `"back"` or `"forward"`. A two-finger swipe navigates only where it starts where nothing under the fingers scrolls that way, so a carousel mid-content still scrolls; AppKit tracks it from there. With nothing that navigates under it, it scrolls and stretches as before ([events](docs/reference/events.md)).
+
 ## 0.1.6 (2026-10-29)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.5 is an addition, and zgx-desktop and zgx-gpu 0.1.5 build against this zgx). zgx-gpu and zgx-desktop now need `zgx-cosmic-text` 0.19.3, published with it. One behaviour changes, below with what to check: Windows input methods go through the Text Services Framework by default.

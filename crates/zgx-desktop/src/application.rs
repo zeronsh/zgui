@@ -1901,6 +1901,12 @@ impl Host {
         }
         Ok(())
     }
+    /// After a scroll: a gesture that became a swipe between pages is
+    /// AppKit's to track from its next scroll (`swipes`).
+    fn after_scroll(&self) {
+        #[cfg(all(target_os = "macos", zgx_winit_patched))]
+        crate::swipes::after_scroll(&self.context.ui, self.window.as_deref());
+    }
     fn dispatch_prevented(
         &mut self,
         event: InputEvent,
@@ -3316,6 +3322,13 @@ impl Host {
         }
         #[cfg(all(target_os = "macos", zgx_winit_patched))]
         crate::services::add(window.id(), &self.context.ui);
+        #[cfg(all(target_os = "macos", zgx_winit_patched))]
+        {
+            let (proxy, token) = (self.proxy.clone(), self.context.window.token);
+            crate::swipes::add(&window, &self.context.ui, move || {
+                let _ = proxy.send_event(Event::Wake(token));
+            });
+        }
         #[cfg(all(
             any(target_os = "macos", windows, target_os = "linux"),
             zgx_winit_patched
@@ -4079,6 +4092,10 @@ impl Host {
                     | zgx::input::ScrollGesture::MomentumBegan),
                 ) = gesture
                 {
+                    #[cfg(all(target_os = "macos", zgx_winit_patched))]
+                    if gesture == zgx::input::ScrollGesture::Began {
+                        crate::swipes::gesture_began(&self.context.ui);
+                    }
                     self.dispatch(InputEvent::ScrollGesture(gesture))?;
                 }
                 let step = crate::scrollers::wheel_step(
@@ -4129,6 +4146,7 @@ impl Host {
                         delta_x: dx,
                         delta_y: dy,
                     })?;
+                    self.after_scroll();
                 }
                 if let Some(
                     gesture @ (zgx::input::ScrollGesture::Ended
@@ -4726,6 +4744,7 @@ impl Host {
                     delta_x,
                     delta_y,
                 })?;
+                self.after_scroll();
             }
         }
         // A finger held on selectable text selects the word there.
@@ -5777,6 +5796,8 @@ impl WindowManager {
             self.native.remove(&window.id());
             #[cfg(all(target_os = "macos", zgx_winit_patched))]
             crate::services::remove(window.id());
+            #[cfg(all(target_os = "macos", zgx_winit_patched))]
+            crate::swipes::remove(window.id());
             #[cfg(all(
                 any(target_os = "macos", windows, target_os = "linux"),
                 zgx_winit_patched

@@ -915,6 +915,11 @@ impl WindowDelegate {
         Ok(delegate)
     }
 
+    /// zgx patch: `platform::macos::begin_navigation_swipe`.
+    pub(crate) fn begin_navigation_swipe(&self) {
+        self.view().begin_navigation_swipe();
+    }
+
     #[track_caller]
     pub(super) fn view(&self) -> Retained<WinitView> {
         // SAFETY: The view inside WinitWindow is always `WinitView`

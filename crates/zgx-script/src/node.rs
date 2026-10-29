@@ -633,10 +633,8 @@ pub(crate) struct Events {
     /// dragging the window.
     pub press: Option<Handler>,
     pub release: Option<Handler>,
-    /// `fn({ button, x, y, local_x, local_y, … })`: a middle (or other
-    /// extra) button pressed and released on the node, as the DOM's
-    /// `auxclick`; the innermost node with one takes it.
-    pub aux_click: Option<Handler>,
+    /// Handlers few nodes have: `on_aux_click`, `on_navigate`.
+    pub rare: Option<Box<RareEvents>>,
     /// `fn(inside)` on pointer enter and leave.
     pub hover: Option<Handler>,
     /// `fn({ x, y, local_x, local_y })`.
@@ -710,6 +708,19 @@ pub(crate) struct Events {
     /// every node reads one flag rather than a dozen handlers.
     pub input: bool,
 }
+/// Handlers few nodes have, boxed: a node's `Events` stay small, and one
+/// check covers them all for a node with none (`with_rare`).
+#[derive(Default, Clone)]
+pub(crate) struct RareEvents {
+    /// `fn({ button, x, y, local_x, local_y, … })`: a middle (or other
+    /// extra) button pressed and released on the node, as the DOM's
+    /// `auxclick`; the innermost node with one takes it.
+    pub aux_click: Option<Handler>,
+    /// `fn({ direction })`: a step back or forward ("back", "forward") the
+    /// platform's gesture for it takes over the node (a trackpad's swipe
+    /// between pages, macOS); the nearest node with one takes it.
+    pub navigate: Option<Handler>,
+}
 impl Kind {
     /// Regions that become a box of any number of children, laid out as
     /// their parent lays out its own (`show`, `switch` and `presence` lay
@@ -723,7 +734,7 @@ impl Events {
         click: None,
         press: None,
         release: None,
-        aux_click: None,
+        rare: None,
         hover: None,
         pointer_move: None,
         key: None,
@@ -2751,7 +2762,8 @@ fn set_handler(
         "on_click" => &mut events.click,
         "on_press" => &mut events.press,
         "on_release" => &mut events.release,
-        "on_aux_click" => &mut events.aux_click,
+        "on_aux_click" => &mut events.rare.get_or_insert_default().aux_click,
+        "on_navigate" => &mut events.rare.get_or_insert_default().navigate,
         "on_hover" => &mut events.hover,
         "on_pointer_move" => &mut events.pointer_move,
         "on_key" => &mut events.key,

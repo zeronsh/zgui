@@ -117,6 +117,18 @@ pub enum ScrollGesture {
     /// Momentum scrolling ended.
     MomentumEnded,
 }
+/// A step back or forward through where an app has been, as a browser's
+/// Back and Forward go: a trackpad's swipe between pages (macOS) reaches
+/// the view under it as this action, in an [`InputEvent::Action`]
+/// ([`InputDispatcher::navigate`]); a view takes it with
+/// `View::on_navigate`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Navigation {
+    /// Back, to where it was.
+    Back,
+    /// Forward again, to where it went back from.
+    Forward,
+}
 /// An input event, routed to nodes by the [`InputDispatcher`]. Positions
 /// are in window points from the top left.
 #[derive(Clone, Debug, PartialEq)]
@@ -606,6 +618,8 @@ struct State {
     /// Views that take keys while nothing is focused (`take_unfocused_keys`),
     /// the last mounted first.
     unfocused_keys: Vec<NodeId>,
+    /// Views that take a step back or forward (`take_navigation`).
+    navigators: Vec<NodeId>,
     entries: crate::scene::NodeMap<Vec<Entry>>,
     options: crate::scene::NodeMap<NodeInput>,
     /// Boxes the pointer passes through while nothing they hold is displayed
@@ -760,6 +774,46 @@ impl InputDispatcher {
         let mut state = self.state.borrow_mut();
         state.unfocused_keys.retain(|n| *n != node);
         state.unfocused_keys.push(node);
+    }
+    /// `node` takes a step back or forward ([`Navigation`]) from what is
+    /// under it: a trackpad's swipe over it navigates rather than scrolls
+    /// where nothing between scrolls that way (`Ui::set_navigation_swipes`).
+    /// It hears the action with its listeners (`View::on_navigate`).
+    pub fn take_navigation(&self, node: NodeId, scene: &Scene) {
+        let mut state = self.state.borrow_mut();
+        state
+            .navigators
+            .retain(|n| *n != node && scene.contains(*n));
+        state.navigators.push(node);
+    }
+    /// Whether `target` or a view around it takes navigation
+    /// (`take_navigation`). Reads only.
+    pub(crate) fn navigates(&self, scene: &Scene, target: NodeId) -> bool {
+        let state = self.state.borrow();
+        !state.navigators.is_empty()
+            && std::iter::once(target)
+                .chain(scene.ancestors(target))
+                .any(|node| state.navigators.contains(&node))
+    }
+    /// Step back or forward from what is under `x`, `y`, as a swipe there
+    /// does: the view under it hears `navigation`, and the views around it
+    /// as it bubbles. Whether one took it.
+    pub fn navigate(
+        &self,
+        scene: &Rc<RefCell<Scene>>,
+        x: f32,
+        y: f32,
+        navigation: Navigation,
+    ) -> bool {
+        let Some(target) = self.hit_target(&scene.borrow(), x, y) else {
+            return false;
+        };
+        self.dispatch_to(
+            scene,
+            target,
+            InputEvent::Action(crate::actions::Action::new(navigation)),
+        )
+        .default_prevented
     }
     /// How soon after a press another on the same spot counts as a double
     /// (then triple) click: the system's double-click time, which the

@@ -1031,6 +1031,45 @@ fn a_span_with_an_href_is_a_link_and_its_click_carries_the_keys_held() {
 }
 
 #[test]
+fn a_swipe_between_pages_reaches_the_nearest_on_navigate() {
+    use zgx::input::{Navigation, ScrollGesture};
+    let mut h = Harness::inline(
+        r##"local seen = ui.state("seen", "")
+        return ui.column {
+            ui.column { id = "page", w = 200, h = 100,
+                on_navigate = function(e) seen:set(seen:peek() .. e.direction .. ";") end,
+                ui.div { id = "inner", w = 100, h = 40 } },
+            ui.div { id = "away", w = 50, h = 40 },
+            ui.text { "{seen}", id = "seen" } }"##,
+    );
+    h.frames(1);
+    let inner = h.bounds("inner");
+    let (x, y) = (inner.x + 10., inner.y + 10.);
+    assert!(h.ui.input.navigate(&h.ui.scene, x, y, Navigation::Back));
+    assert!(h.ui.input.navigate(&h.ui.scene, x, y, Navigation::Forward));
+    let away = h.bounds("away");
+    assert!(
+        !h.ui
+            .input
+            .navigate(&h.ui.scene, away.x + 5., away.y + 5., Navigation::Back),
+        "nothing there navigates"
+    );
+    h.frames(1);
+    assert_eq!(h.text("seen"), "back;forward;");
+    // A trackpad gesture across it, where nothing scrolls, is a swipe.
+    h.ui.set_elastic_scrolling(true);
+    h.ui.set_navigation_swipes(true);
+    h.ui.dispatch(InputEvent::ScrollGesture(ScrollGesture::Began));
+    h.ui.dispatch(InputEvent::Scroll {
+        x,
+        y,
+        delta_x: -20.,
+        delta_y: 0.,
+    });
+    assert!(h.ui.take_navigation_swipe());
+}
+
+#[test]
 fn a_middle_click_reaches_the_innermost_on_aux_click() {
     use zgx::input::PointerButton;
     let mut h = Harness::inline(

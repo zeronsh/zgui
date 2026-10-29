@@ -7,6 +7,7 @@ on_click: (Handler | Action)?
 on_press: (((e: PointerEvent) -> ()) | Action)?
 on_release: (((e: PointerEvent) -> ()) | Action)?
 on_aux_click: (((e: AuxClickEvent) -> ()) | Action)?
+on_navigate: (((e: NavigateEvent) -> ()) | Action)?
 on_hover: (((inside: boolean) -> ()) | Action)?
 on_pointer_move: (((e: PointerEvent) -> ()) | Action)?
 on_key: (((e: KeyEvent) -> boolean?) | Action)?
@@ -41,6 +42,7 @@ on_drag_spring: ((payload: any) -> boolean?)?
 | `on_press` | `{ x, y, local_x, local_y, clicks, shift, ctrl, alt, meta, cmd }` | the primary button goes down on the node or anything in it; `clicks` counts presses in a row (2 for a double click's second, 3 for a triple's, and on past it) |
 | `on_release` | the same | the primary button comes up |
 | `on_aux_click` | `{ button, x, y, local_x, local_y, shift, ctrl, alt, meta, cmd }` (`button`: `"middle"`, or the platform's number for another extra button) | the middle button (or another beyond the primary and secondary) goes down and comes back up on the node or anything in it, the pointer not leaving it in between, as the DOM's `auxclick`: a tab closing on a middle click, a link opening in the background. The innermost node with `on_aux_click` takes it. The secondary button opens `context_menu` |
+| `on_navigate` | `{ direction }` (`"back"` or `"forward"`) | the platform's gesture for a step back or forward is made over it: on macOS, a trackpad's swipe between pages (two fingers across, or three, as the system's Trackpad setting has it), as Safari goes back and forward. A two-finger swipe navigates only where it starts: where nothing under the fingers scrolls that way (each scroll view at its edge), so a carousel in the middle of its content still scrolls; with no `on_navigate` under it, it scrolls and stretches as before. The nearest node with `on_navigate` takes it. `ui.router`'s view goes back and forward on it |
 | `on_hover` | `true`, then `false` | once when the pointer comes inside the node or anything in it, once when it is outside all of them (the DOM's `mouseenter` and `mouseleave`); leaving the window, the window going to the back, and the pointer moving onto a page or a terminal count as leaving |
 | `on_pointer_move` | `{ x, y, local_x, local_y }` | the pointer moves over it (or anywhere, while it holds the pointer) |
 | `on_key` | `{ key, code, shift, ctrl, alt, meta, cmd, repeat, editing }` (`code`: the physical key, as the DOM's `KeyboardEvent.code`, `"KeyA"`, `"Digit1"`; `editing`: a text field holds focus, so a bare-key shortcut gives way) | a key goes down while it, or a node inside it, has focus. Return `true` to consume the key: the default action and the ancestors' handlers do not see it |

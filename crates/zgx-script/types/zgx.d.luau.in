@@ -824,7 +824,8 @@ export type Router = {
 	-- Whether the route is `name` now (tracked).
 	is: (name: RouteName) -> boolean,
 	-- What each route shows: a node or a function of its params; the mouse's
-	-- back and forward buttons over it go back and forward.
+	-- back and forward buttons over it, and a trackpad's swipe between pages,
+	-- go back and forward.
 	view: (cases: RouteCases, props: ContainerProps?) -> Node,
 }
 export type FormSpec = {
@@ -1319,6 +1320,9 @@ export type AuxClickEvent = Merge<PointerEvent, { button: "middle" | number }>
 -- A trackpad pinch: the fingers' spread changed by `scale` (0.05: 5%
 -- larger, zoom in; negative, out), at the pointer.
 export type PinchEvent = Merge<PointerEvent, { scale: number }>
+-- A step back or forward the platform's gesture for it takes: a trackpad's
+-- swipe between pages (macOS).
+export type NavigateEvent = { direction: "back" | "forward" }
 -- What a drag carries to other apps (`drag_export`): text, a link, files
 -- (absolute paths).
 export type DragExport = { text: string?, url: string?, files: { string }? }
@@ -1805,6 +1809,9 @@ export type NodeProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: (((e: AuxClickEvent) -> ...unknown) | Action)?,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: (((e: NavigateEvent) -> ...unknown) | Action)?,
 	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
 	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
 	-- Return true to consume the key.
