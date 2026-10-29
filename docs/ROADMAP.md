@@ -140,8 +140,9 @@ Keyboard/pointer opening, Left/Escape restoration, sibling replacement, disabled
 ownership, parent pointer handoff and outside-chain dismissal are implemented.
 Child-menu semantic ownership follows logical parentage through portals, with
 cycle/stale-reference protection. GPU readback, native AccessKit consumers and
-12 native X11 stages validate the public API. Hover opening is not automatic;
-submenus currently open explicitly by click or keyboard.
+12 native X11 stages validate the public API. Hovering a submenu's trigger row
+opens it and hovering another item of its menu closes it, as AppKit's menus do;
+a click or the keyboard opens it too.
 
 Owned component event hooks now compose through views, providers and slots, with
 explicit focusability and user listeners before built-in defaults. Native key
@@ -150,7 +151,9 @@ editor cleanup remains independent of cancellation. Native Wayland seat testing
 also exposed and fixed the X11-only clipboard backend. Standard Wayland data-device
 copy/paste now passes alongside pointer, keyboard, disabled controls and resize;
 native IBus/X11 IME now passes. Paced Wayland composition/cancellation is now
-validated below; burst-input reliability and native macOS interaction remain open.
+validated below; burst-input reliability remains open. On macOS, editing,
+Unicode clipboard exchange with TextEdit, Tab focus and resize are observed in the
+[Mac continuation packet](platform-validation/macos-continuation/README.md).
 
 Multiline editors now support inherited/reactive `.text_wrap(true)` using the
 allocated content width for rendering, hit testing, selections, caret and IME
@@ -159,7 +162,9 @@ the preferred column through short lines. Resizing, wheel scrolling, model edits
 and font changes preserve ownership and bounded invalidation. Trailing newline
 geometry includes its empty final row. Core, shaped Unicode/bidi, GPU differential
 and native X11 checks cover the public path. IBus/libpinyin X11 composition is
-now validated separately; Wayland/macOS input-method services remain open.
+now validated separately, and Wayland text-input-v3 composition passes a paced
+Sway/Fcitx5 smoke (below). macOS dead-key composition passes; macOS candidate
+(Pinyin) input remains open.
 
 Native Linux platform validation now includes live Wayland 1×/2×/1× scaling,
 X11 XSETTINGS DPI changes with stationary pointer input (normal and maximized
@@ -193,7 +198,9 @@ Percentage width/height now compose with fluent sparse styles, padding, flex,
 min/max constraints and absolute panels. Parent resize updates retained editors,
 images and viewport geometry. Indefinite normal-flow axes use intrinsic sizing
 instead of cyclic percentage solving. Component, core-layout and GPU damage tests
-cover the behavior; percentage min/max, margins and padding are not exposed.
+cover the behavior. Percentage min/max sizes, margins and padding are exposed too
+(`min_w_percent`, `m_percent`, `p_percent` and their per-edge forms), covered in
+`tests/advanced_layout.rs`.
 
 
 Inherited letter spacing now flows through component typography, font-aware
@@ -201,7 +208,7 @@ measurement, editors, GPU text and the software renderer. Normalized style keys
 preserve equal-write suppression; native logical-pixel tracking converts to
 shaper em units. Tests cover Unicode geometry, signed tracking, bounded extreme
 values, selections, cache invalidation and bitmap reuse. The core-only fallback
-remains approximate, and rich-text runs are not yet exposed.
+remains approximate. Rich-text spans take it too (`TextSpan::letter_spacing`).
 
 
 A lifecycle audit added regression coverage for repeated keyed/provider/slot

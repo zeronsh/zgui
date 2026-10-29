@@ -153,7 +153,7 @@ The script requires Xvfb, Openbox, xdotool, Weston, weston-screenshooter and Pyt
 
 ## Unverified platform behavior
 
-Real macOS windows, Metal presentation, native macOS clipboard/IME/accessibility interaction, Wayland/macOS transparent-window composition and hardware-GPU throughput/energy have not been validated here. Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11; Wayland and macOS IME services remain unvalidated.
+Real macOS windows, Metal presentation, the native clipboard (Unicode exchange with TextEdit), dead-key composition and the accessibility tree and actions are observed on an Apple M5 Max in the [Mac continuation packet](platform-validation/macos-continuation/README.md), and the macOS suite records hardware-GPU throughput and energy (`docs/results/suite-macos-*`: GPU Mcycles per second, GPU system watts). Still unvalidated: macOS candidate (Pinyin) input, Wayland/macOS transparent-window composition, and a complete VoiceOver usability audit. Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11, and Wayland text-input-v3 composition passes a paced Sway/Fcitx5 smoke ([below](#real-wayland-input-method-composition)), whose burst-input loss remains open. macOS candidate input is unvalidated.
 
 Use a real display and equivalent hardware renderer configurations for performance conclusions. In llvmpipe measurements, process CPU includes CPU execution of GPU shaders and driver allocations can dominate RSS. Keep these results distinct from hardware-backed measurements and from core microbenchmarks.
 
@@ -846,7 +846,9 @@ duplicate/constructor rollback, reactive notification suppression, empty/shrunk
 lists, disposal and explicit scroll requests made by callbacks. Fixed-height
 lists receive the same callback request preservation fix. GPU damage/full-redraw
 comparison and 13 native stages pass; at most 14 rows are mounted for 100,000
-items. Heights are application-supplied, not automatically measured from text.
+items. Heights here are application-supplied; `measured_virtual_list` (zgx-script's
+`ui.list { measured = true }`) now measures mounted rows' natural content, covered
+by `tests/composition_measured_list.rs`.
 The recorded core microbenchmark is separate from GUI CPU/RSS comparisons.
 
 
