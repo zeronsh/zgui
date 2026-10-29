@@ -154,3 +154,46 @@ pub(crate) fn builtin(
     })?;
     Ok(lua.load(bytecode.to_vec()).set_name(name))
 }
+
+/// Makes every module `lua` has not made, each into a `ui` (or globals)
+/// open to it, and checks that it sets exactly the names it is registered
+/// under: a name it sets and isn't registered under would read as nil
+/// until another of its module's names was read, and one it is registered
+/// under and doesn't set reads as nil always. For tests, under whichever
+/// features a build has (so each module's list is checked against what
+/// its maker does, not against a list kept beside it).
+pub(crate) fn check(lua: &Lua) -> Result<(), String> {
+    let ui: Table = lua.globals().get("ui").map_err(|e| e.to_string())?;
+    let modules = lua
+        .app_data_ref::<Lazy>()
+        .map_or(0, |lazy| lazy.0.borrow().len());
+    let mut wrong = Vec::new();
+    for at in 0..modules {
+        let taken = lua.app_data_ref::<Lazy>().and_then(|lazy| {
+            let mut modules = lazy.0.borrow_mut();
+            let module = &mut modules[at];
+            Some((module.names, module.global, module.make.take()?))
+        });
+        let Some((names, global, make)) = taken else {
+            continue;
+        };
+        let table = if global { lua.globals() } else { ui.clone() };
+        let before = keys(&table);
+        let frozen = table.is_readonly();
+        table.set_readonly(false);
+        let made = make(lua, &table);
+        table.set_readonly(frozen);
+        made.map_err(|e| format!("{}: {e}", names[0]))?;
+        let added: std::collections::BTreeSet<String> =
+            keys(&table).difference(&before).cloned().collect();
+        let registered: std::collections::BTreeSet<String> =
+            names.iter().map(|n| n.to_string()).collect();
+        if added != registered {
+            wrong.push(format!("registered as {registered:?}, made {added:?}"));
+        }
+    }
+    match wrong.is_empty() {
+        true => Ok(()),
+        false => Err(wrong.join("\n")),
+    }
+}

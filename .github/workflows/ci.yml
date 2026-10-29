@@ -110,6 +110,11 @@ jobs:
       # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
       # and macOS jobs test without it).
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
+      # Each `ui` module a script makes as it names it (`lazy.rs`) sets
+      # exactly the names it is made for, under every zgx-script feature,
+      # each of which may add modules (scene3d, i18n, …). Quoted, as the
+      # lines below are.
+      - run: "cargo test -p zgx-script --all-features --test ui --locked -- lazy_ui::"
       # Devtools tracing (zgx's `trace`, off by default; zgx-script's
       # `inspect` turns it on): what it keeps stays bounded. Quoted, as the
       # line below is.

@@ -1289,6 +1289,15 @@ impl ScriptHost {
     pub fn image_cache_stats(&self) -> (usize, usize, usize) {
         self.0.assets.stats()
     }
+    /// Makes every `ui` module the app's script has not named, checking
+    /// that each sets exactly the names it is made for (for tests).
+    #[doc(hidden)]
+    pub fn check_lazy_modules(&self) -> Result<(), String> {
+        let current = self.0.current.borrow().clone();
+        let current = current.ok_or("no script loaded")?;
+        let vm = current._vms.first().ok_or("no VM")?;
+        lazy::check(&vm.lua)
+    }
     /// Run scripts within `limits`: heap, and time to load and per call.
     pub fn limits(self, limits: Limits) -> Self {
         self.configure(|inner| inner.limits = limits)
