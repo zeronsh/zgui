@@ -150,6 +150,14 @@ impl ShapeRunCache {
         self.cache.insert(key, (self.age, glyphs));
     }
 
+    /// Remove everything: the fonts the runs were shaped with changed.
+    ///
+    /// zgx patch: `trim` sweeps only every `TRIM_PERIOD` ages, so it cannot
+    /// empty the cache when a font is replaced.
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
     /// Remove anything in the cache with an age older than `keep_ages`
     ///
     /// zgx patch: the sweep visits every word, and a frame that shapes a

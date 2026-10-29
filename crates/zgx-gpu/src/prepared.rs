@@ -799,6 +799,13 @@ struct Clamped {
 /// Clamped texts' sizes kept at most: past it they start again.
 const CLAMPED: usize = 4096;
 impl TextCache {
+    /// Forget every prepared text (a font changed): each shapes again when
+    /// next asked. Its counts are kept.
+    pub fn clear(&mut self) {
+        let (shaped, hits) = (self.shaped, self.hits);
+        *self = Self::default();
+        (self.shaped, self.hits) = (shaped, hits);
+    }
     /// Whether `rich` goes through the cache: clamped or ellipsized text is
     /// laid out by its own path.
     pub fn handles(rich: &RichText) -> bool {

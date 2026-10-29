@@ -4701,6 +4701,16 @@ impl Scene {
             ))
         }
     }
+    /// A font text shapes with was replaced (the renderer's text system
+    /// holds another face for a family): every text measures, lays out and
+    /// paints again.
+    pub fn fonts_replaced(&mut self) {
+        self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
+        let ids: Vec<_> = self.ids().collect();
+        for id in ids {
+            self.invalidate(id, LAYOUT | PAINT);
+        }
+    }
     /// Measure plain text with `measurer` (a platform shaper's metrics)
     /// instead of the built-in estimate; text lays out again.
     pub fn set_text_measurer(&mut self, measurer: impl TextMeasurer + 'static) {

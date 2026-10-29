@@ -3213,6 +3213,15 @@ impl GpuContext {
     pub fn text_cache(&self) -> Rc<RefCell<prepared::TextCache>> {
         self.inner.text_cache.clone()
     }
+    /// Shape the families `font` holds with it from now on, in place of
+    /// their faces (`FontData::replace_in`), and forget the text prepared
+    /// with them. Each renderer on this context then calls
+    /// [`GpuRenderer::fonts_replaced`], and each scene
+    /// `Scene::fonts_replaced`.
+    pub fn replace_font(&self, font: &crate::text::FontData) {
+        font.replace_in(&mut self.inner.fonts.borrow_mut());
+        self.inner.text_cache.borrow_mut().clear();
+    }
 }
 impl GpuError {
     /// The device was lost (`GpuContext::lost`): `reason` says why.
@@ -4195,6 +4204,17 @@ impl GpuRenderer {
     /// afterwards for a scene with mounted text.
     pub fn install_text(&self, scene: &mut Scene) {
         install_text(scene, &self.text_system(), &self.text_cache());
+    }
+    /// A font its context shapes with was replaced
+    /// (`GpuContext::replace_font`): the glyphs and text shapes it keeps are
+    /// given up, and the next frame draws them again.
+    pub fn fonts_replaced(&mut self) {
+        self.flush_pending();
+        self.recycle_atlas();
+        self.layers.clear();
+        self.shapes.clear();
+        self.shaped_bytes = 0;
+        self.fresh = true;
     }
     /// Physical pixels per logical point (at least 0.1; 1 if not finite).
     pub fn set_scale_factor(&mut self, scale: f32) {

@@ -51,6 +51,27 @@ impl FontData {
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
     }
+    /// Put it in `fonts` in place of the faces of every family it holds:
+    /// text in those families shapes with it from now on. The shaped runs
+    /// `fonts` keeps go too; callers must also drop retained text shapes and
+    /// layout caches (`GpuContext::replace_font` does).
+    pub fn replace_in(&self, fonts: &mut FontSystem) {
+        let db = fonts.db_mut();
+        let old: Vec<_> = db
+            .faces()
+            .filter(|face| {
+                face.families
+                    .iter()
+                    .any(|(name, _)| self.families.binary_search(name).is_ok())
+            })
+            .map(|face| face.id)
+            .collect();
+        for id in old {
+            db.remove_face(id);
+        }
+        self.install(fonts);
+        fonts.shape_run_cache.clear();
+    }
     /// Install before shaping text; callers replacing a live database must also
     /// invalidate retained text shapes and their layout caches.
     pub fn install(&self, fonts: &mut FontSystem) {

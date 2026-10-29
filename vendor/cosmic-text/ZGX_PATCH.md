@@ -176,3 +176,8 @@ forgotten when the font matches are (`db_mut`, or the cache's limit).
 keeps its code. zgx-gpu's `first_font` test shapes texts in turn under
 changing families, weights, sizes and scripts, with characters only another
 font has, to the same glyphs from the same fonts as each alone.
+
+`ShapeRunCache::clear` empties the word cache at once. `trim` sweeps only
+every `TRIM_PERIOD` ages (above), so it cannot drop runs shaped with a font
+that was just replaced; zgx-gpu's `FontData::replace_in` clears it, and its
+`font_replace` test checks a replaced font measures and draws as a fresh one.

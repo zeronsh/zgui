@@ -135,6 +135,9 @@ enum Event {
     MenuAction(u64, crate::MenuAction),
     MenuFallback(u64, crate::MenuAction),
     MenusChanged,
+    /// A font was replaced (`WindowFactory::replace_font`): every window's
+    /// text shapes and draws again.
+    FontsReplaced,
     #[cfg(target_os = "linux")]
     NativeFiles(u64, crate::wayland_data::FileEvent),
     /// The desktop's appearance settings changed (`linux_appearance`).
@@ -480,7 +483,8 @@ pub struct WindowFactory {
     /// notification on X11), for the next window made.
     #[cfg(target_os = "linux")]
     activation: Rc<RefCell<Option<winit::window::ActivationToken>>>,
-    fonts: Rc<Vec<zgx_gpu::text::FontData>>,
+    /// The app's fonts (`Application::font`, `WindowFactory::replace_font`).
+    fonts: Rc<RefCell<Vec<zgx_gpu::text::FontData>>>,
     menus: Rc<RefCell<Vec<crate::AppMenu>>>,
     pending: Rc<RefCell<VecDeque<WindowRequest>>>,
     next: Rc<Cell<u64>>,
@@ -497,6 +501,27 @@ pub struct WindowFactory {
     runtime: zgx::reactive::Runtime,
 }
 impl WindowFactory {
+    /// Shape the families `font` holds with it, in every window from now on,
+    /// in place of the font they had (a bundled font registered with
+    /// `Application::font`, or a system one): their text measures, lays out
+    /// and draws again. A family not had before is added. Costs nothing
+    /// until called.
+    pub fn replace_font(&self, font: zgx_gpu::text::FontData) -> Result<(), &'static str> {
+        if !self.alive.get() {
+            return Err("application is closed");
+        }
+        {
+            let mut fonts = self.fonts.borrow_mut();
+            fonts.retain(|old| !old.families().iter().any(|f| font.families().contains(f)));
+            fonts.push(font.clone());
+        }
+        for context in self.gpu_contexts.borrow().iter() {
+            context.replace_font(&font);
+        }
+        self.proxy
+            .send_event(Event::FontsReplaced)
+            .map_err(|_| "application event loop is closed")
+    }
     /// Replace the application menu model for existing and future windows.
     pub fn set_menus(&self, menus: Vec<crate::AppMenu>) -> Result<(), crate::AppMenuError> {
         crate::app_menu::validate(&menus)?;
@@ -843,7 +868,7 @@ impl Application {
             crate::app_menu::validate(&self.menus)?;
         }
         let factory = WindowFactory {
-            fonts: Rc::new(self.fonts),
+            fonts: Rc::new(RefCell::new(self.fonts)),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
@@ -2632,7 +2657,7 @@ impl Host {
         let early = self.context.windows.early_gpu.borrow_mut().take();
         #[cfg(any(target_os = "macos", windows))]
         if let Some(Ok(context)) = early.map(zgx_gpu::PendingGpuContext::join) {
-            for font in self.context.windows.fonts.iter() {
+            for font in self.context.windows.fonts.borrow().iter() {
                 font.install(&mut context.text_system().borrow_mut());
             }
             self.context.windows.gpu_contexts.borrow_mut().push(context);
@@ -2649,7 +2674,7 @@ impl Host {
             }
         }
         let renderer = (self.native).renderer_for(window.clone(), None, transparent)?;
-        for font in self.context.windows.fonts.iter() {
+        for font in self.context.windows.fonts.borrow().iter() {
             font.install(&mut renderer.text_system().borrow_mut());
         }
         self.context
@@ -5767,6 +5792,18 @@ impl WindowManager {
                     }
                 }
             }
+            Event::FontsReplaced => {
+                for host in self.hosts.values_mut() {
+                    if let Some(renderer) = &mut host.renderer {
+                        renderer.fonts_replaced();
+                    }
+                    host.context.ui.scene.borrow_mut().fonts_replaced();
+                    host.context.ui.refresh_text_geometry();
+                    if let Some(window) = &host.window {
+                        window.request_redraw();
+                    }
+                }
+            }
             Event::MenusChanged => {
                 let menus = self.factory.menus();
                 // A menu bar still to be made is made from them then.
@@ -7233,7 +7270,7 @@ mod tests {
             .build()
             .unwrap();
         let factory = WindowFactory {
-            fonts: Rc::new(Vec::new()),
+            fonts: Default::default(),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
@@ -7384,7 +7421,7 @@ mod tests {
             .build()
             .unwrap();
         let factory = WindowFactory {
-            fonts: Rc::new(Vec::new()),
+            fonts: Default::default(),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
@@ -7476,7 +7513,7 @@ mod tests {
             .build()
             .unwrap();
         let factory = WindowFactory {
-            fonts: Rc::new(Vec::new()),
+            fonts: Default::default(),
             file_routes: Default::default(),
             application_id: None,
             activation: Rc::default(),
@@ -7547,7 +7584,7 @@ mod tests {
             .build()
             .unwrap();
         let factory = WindowFactory {
-            fonts: Rc::new(Vec::new()),
+            fonts: Default::default(),
             file_routes: Default::default(),
             application_id: None,
             activation: Rc::default(),
@@ -7612,7 +7649,7 @@ mod tests {
             .build()
             .unwrap();
         let factory = WindowFactory {
-            fonts: Rc::new(Vec::new()),
+            fonts: Default::default(),
             file_routes: Default::default(),
             application_id: None,
             activation: Rc::default(),
