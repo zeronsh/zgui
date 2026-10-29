@@ -294,3 +294,106 @@ fn a_large_removal_stops_its_effects_at_once_and_frees_them_over_frames() {
     }
     assert_eq!(live.get(), 0, "everything the rows held is freed");
 }
+
+/// Writes its signal when dropped: a listener's or a component's resource
+/// whose destructor changes state.
+struct WriteOnDrop(zgx::reactive::Signal<u32>);
+impl Drop for WriteOnDrop {
+    fn drop(&mut self) {
+        self.0.set(1);
+    }
+}
+
+/// Removes `children` children under a parent whose listener's destructor
+/// writes a signal they read: none of them runs again, removed.
+fn removed_descendants_stop_before_listener_destructors(children: usize) {
+    use zgx::scene::{Layout, Style};
+    let mut ui = Ui::new(400., 300.);
+    let parent = ui.container(ui.root(), Layout::Column, Style::default());
+    let tick = ui.signal(0_u32);
+    let removed_runs = Rc::new(Cell::new(0));
+    for _ in 0..children {
+        let node = ui.container(parent, Layout::Column, Style::default());
+        let (signal, scene, count) = (tick.clone(), ui.scene.clone(), removed_runs.clone());
+        ui.bind(node, move || {
+            signal.get();
+            if !scene.borrow().contains(node) {
+                count.set(count.get() + 1);
+            }
+        });
+    }
+    let guard = WriteOnDrop(tick.clone());
+    ui.on_event(parent, false, move |_| {
+        let _ = &guard;
+    });
+    ui.remove(parent);
+    while ui.reclaiming() {
+        ui.reclaim(std::time::Duration::ZERO);
+    }
+    assert_eq!(tick.get(), 1);
+    assert_eq!(
+        removed_runs.get(),
+        0,
+        "removed descendants must stop before listener destructors write state"
+    );
+    assert_eq!(ui.runtime.effect_count(), 0);
+}
+
+#[test]
+fn a_small_removal_stops_descendants_before_listener_destructors() {
+    removed_descendants_stop_before_listener_destructors(1);
+}
+
+#[test]
+fn a_large_removal_stops_descendants_before_listener_destructors() {
+    removed_descendants_stop_before_listener_destructors(300);
+}
+
+#[test]
+fn removing_a_focused_large_tree_lets_a_listener_destructor_remove_a_node() {
+    use zgx::scene::{Layout, Style};
+    struct RemoveOnDrop(zgx::widgets::WeakUi, zgx::scene::NodeId);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            if let Some(mut ui) = self.0.upgrade() {
+                ui.remove(self.1);
+            }
+        }
+    }
+    let mut ui = Ui::new(400., 300.);
+    let sibling = ui.container(ui.root(), Layout::Column, Style::default());
+    let parent = ui.container(ui.root(), Layout::Column, Style::default());
+    for _ in 0..300 {
+        ui.container(parent, Layout::Column, Style::default());
+    }
+    let guard = RemoveOnDrop(ui.downgrade(), sibling);
+    ui.on_event(parent, true, move |_| {
+        let _ = &guard;
+    });
+    assert!(ui.input.focus(&ui.scene, Some(parent)));
+    ui.remove(parent);
+    assert!(!ui.scene.borrow().contains(sibling));
+}
+
+#[test]
+fn component_cleanup_stops_descendant_effects_before_its_resources_drop() {
+    let mut ui = Ui::new(400., 300.);
+    let tick = ui.signal(0_u32);
+    let cleanup_tick = tick.clone();
+    let view = ui.mount(component(move |cx| {
+        cx.retain(WriteOnDrop(cleanup_tick));
+        column().child(div().id("child"))
+    }));
+    let child = view.find("child").unwrap();
+    let after_removal = Rc::new(Cell::new(0));
+    let (scene, count, signal) = (ui.scene.clone(), after_removal.clone(), tick.clone());
+    ui.bind(child, move || {
+        signal.get();
+        if !scene.borrow().contains(child) {
+            count.set(count.get() + 1);
+        }
+    });
+    view.unmount();
+    assert_eq!(tick.get(), 1);
+    assert_eq!(after_removal.get(), 0);
+}

@@ -438,6 +438,19 @@ impl Runtime {
         let _guard = Guard(self);
         f()
     }
+    /// Holds the effects writes wake until the returned guard drops, as a
+    /// batch does, with no flush at all when none woke; nothing (`None`)
+    /// inside a batch or a flush, where writes already wait. For a removal,
+    /// whose destructors may write state its own effects read: those are
+    /// gone when the guard drops.
+    #[inline(always)]
+    pub(crate) fn hold_effects(&self) -> Option<HeldEffects> {
+        if self.deferring() {
+            return None;
+        }
+        self.inner.batch_depth.set(self.inner.batch_depth.get() + 1);
+        Some(HeldEffects(self.clone()))
+    }
     /// The effect whose reads subscribe it now.
     pub(crate) fn active_effect(&self) -> Option<EffectId> {
         self.inner.active.get()
@@ -784,6 +797,19 @@ struct SignalInner<T> {
 impl<T> Dependency for SignalInner<T> {
     fn unsubscribe(&self, id: EffectId) {
         self.subscribers.borrow_mut().remove(&id);
+    }
+}
+/// Effects held by [`Runtime::hold_effects`] until it drops.
+pub(crate) struct HeldEffects(Runtime);
+impl Drop for HeldEffects {
+    fn drop(&mut self) {
+        let inner = &self.0.inner;
+        inner.batch_depth.set(inner.batch_depth.get() - 1);
+        if !std::thread::panicking()
+            && (!inner.queued.borrow().is_empty() || !inner.pending.borrow().is_empty())
+        {
+            self.0.flush();
+        }
     }
 }
 /// A reactive value. Reading it in an effect subscribes the effect, and a write

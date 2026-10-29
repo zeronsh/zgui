@@ -1225,9 +1225,11 @@ impl InputDispatcher {
     /// focus, a press, a drag or a scope still names, as removing them does
     /// (`Ui::remove`, which leaves the others' registrations to be freed
     /// later: nothing routes to a node the scene no longer has, but through
-    /// these).
-    pub(crate) fn forget_removed(&self, scene: &Scene) {
+    /// these). The scene is read only to find them: unregistering drops
+    /// their listeners, whose destructors may remove nodes.
+    pub(crate) fn forget_removed(&self, scene: &RefCell<Scene>) {
         let named: Vec<NodeId> = {
+            let scene = scene.borrow();
             let s = self.state.borrow();
             s.focused
                 .into_iter()

@@ -701,7 +701,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                                             .ancestors(focused)
                                             .any(|ancestor| ancestor == *node));
                             }
-                            ui.remove(*node);
+                            ui.remove_in_effect(*node);
                             false
                         }
                     });

@@ -3360,9 +3360,24 @@ impl Ui {
     /// and what its components keep is dropped), and what else its nodes
     /// held is freed over the next frames (`Ui::reclaim`).
     pub fn remove(&mut self, node: NodeId) {
+        // Its destructors (a listener's captures, a component's resources)
+        // run during it: a write of theirs wakes the subtree's own effects
+        // only once they are gone, as `remove_large` stops them all first.
+        let _held = self.runtime.hold_effects();
         self.remove_as(node, usize::MAX);
     }
+    /// `remove` from inside an effect's run, where writes wait already
+    /// (a list's rows going as its effect runs): nothing to hold.
+    pub(crate) fn remove_in_effect(&mut self, node: NodeId) {
+        debug_assert!(
+            self.runtime.deferring(),
+            "remove_in_effect outside an effect"
+        );
+        self.remove_as(node, usize::MAX);
+    }
+    /// `remove_in_effect` of the child at `index` of its parent.
     pub(crate) fn remove_indexed(&mut self, node: NodeId, index: usize) {
+        debug_assert!(self.runtime.deferring(), "remove_indexed outside an effect");
         self.remove_as(node, index);
     }
     #[inline(never)]
@@ -3460,7 +3475,7 @@ impl Ui {
             storage.extract_if(|id, _| !scene.contains(*id)).collect()
         };
         self.semantics.borrow_mut().bury(&ids);
-        self.input.forget_removed(&self.scene.borrow());
+        self.input.forget_removed(&self.scene);
         self.storage.dying.borrow_mut().extend(ids);
         self.storage.removed.set(true);
         // User destructors, once nothing names the subtree.

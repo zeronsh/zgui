@@ -2015,7 +2015,7 @@ pub fn keyed<K: Eq + std::hash::Hash + Clone + 'static>(
                         if unique.contains(key) {
                             true
                         } else {
-                            ui.remove(*node);
+                            ui.remove_in_effect(*node);
                             false
                         }
                     });
