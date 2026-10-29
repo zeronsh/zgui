@@ -90,7 +90,11 @@ The host can also ask a capability before anyone adds beside a target: `host.exp
 
 A plugin sees nothing of the app's own `ui.state`. What it reads and changes, the host exposes:
 
-- **Shared state.** `host.shared("tasks", …)` is state Rust and every script share. `host.expose_shared("tasks", None)` lets plugins read and write it by key (`ui.shared("tasks", {})`); pass a capability instead of `None` to grant it per plugin. The example's tasks live in Rust and are shown to every script as shared state. The focus plugin reads them through its filter and keeps `focus`, also exposed, as its own toggle.
+- **Shared state.** `host.shared("tasks", …)` is state Rust and every script share. The host exposes a key to plugins in one of two ways:
+  - `host.expose_shared("focus", None)` lets plugins read and write it (`ui.shared("focus", false)`).
+  - `host.expose_shared_read("tasks", None)` lets them read it and follow it, but not change it. `get`, `peek`, `len`, `at`, templates (`{tasks}`), filters and a list's items read it. `set`, `update`, `push` and every other write from a plugin is an error naming the key, as is binding it where it is written (an input's `value`). The app's own scripts write it as before.
+
+  Pass a capability instead of `None` to expose it to the plugins granted that capability only. The example shares its tasks read only: the focus plugin counts the open ones on its button and filters the list, but only the app and the host's actions change them. `focus` is the plugin's to set.
 - **Actions.** `host.action("complete", …)` is a Rust handler that scripts call with `ui.action("complete", id)` (as a handler) or `ui.invoke`. `host.expose_action("complete", None)` lets plugins call it too. The example exposes completing a task but not adding one or clearing what is done: those stay the app's.
 - **Everything else** (fetching, the clipboard, files, windows, web views, terminals) takes its own capability; see the table in [scripting.md](scripting.md#plugins).
 

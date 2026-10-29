@@ -19,6 +19,8 @@ mod packages;
 mod plugin_filters;
 #[path = "../plugin_hooks.rs"]
 mod plugin_hooks;
+#[path = "../plugin_shared.rs"]
+mod plugin_shared;
 #[path = "../plugins.rs"]
 mod plugins;
 #[path = "../script.rs"]

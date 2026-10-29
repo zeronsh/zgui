@@ -833,6 +833,8 @@ impl Grants {
 /// capability each needs, if any. A plugin reaches nothing else of the
 /// app's; the app's own scripts reach all of it.
 pub(crate) type Exposed = Rc<RefCell<HashMap<String, Option<Capability>>>>;
+/// Shared keys plugins read but may not write (`expose_shared_read`).
+pub(crate) type ReadOnly = Rc<RefCell<std::collections::HashSet<String>>>;
 
 /// Where a host's files come from: the disk, or a bundle compiled into the
 /// app (which reads nothing from the disk).
@@ -948,6 +950,8 @@ struct Inner {
     /// Host actions and shared keys plugins reach (`expose_*`).
     exposed_actions: Exposed,
     exposed_shared: Exposed,
+    /// Of `exposed_shared`, the keys plugins only read.
+    read_only_shared: ReadOnly,
     exposed_hooks: Exposed,
     /// Tells `watch` to look at what it watches again (after a reload).
     rewatch: RefCell<Option<zgx::task::LatestSender<()>>>,
@@ -1103,6 +1107,7 @@ impl ScriptHost {
             managed: RefCell::default(),
             exposed_actions: Rc::default(),
             exposed_shared: Rc::default(),
+            read_only_shared: Rc::default(),
             exposed_hooks: Rc::default(),
             rewatch: RefCell::default(),
             platform: Rc::default(),
@@ -1413,10 +1418,19 @@ impl ScriptHost {
     /// them, or (`Some`) those granted `capability`. Plugins reach no shared
     /// state the app does not expose.
     pub fn expose_shared(&self, key: impl Into<String>, capability: Option<Capability>) {
-        self.0
-            .exposed_shared
-            .borrow_mut()
-            .insert(key.into(), capability);
+        let key = key.into();
+        self.0.read_only_shared.borrow_mut().remove(&key);
+        self.0.exposed_shared.borrow_mut().insert(key, capability);
+    }
+    /// Let plugins read shared state `key` and follow it, but not write it:
+    /// all of them, or (`Some`) those granted `capability`. A plugin's
+    /// `set`, `update`, `push` and the rest on it are errors that say so,
+    /// as is binding it where it is written (an input's `value`). The app's
+    /// own scripts read and write it as before.
+    pub fn expose_shared_read(&self, key: impl Into<String>, capability: Option<Capability>) {
+        let key = key.into();
+        self.0.read_only_shared.borrow_mut().insert(key.clone());
+        self.0.exposed_shared.borrow_mut().insert(key, capability);
     }
     /// Ask `capability` of a plugin adding before or after an element by
     /// `target`, written as plugins write it (`"#save"`, `"hook:toolbar.save"`):
@@ -2567,6 +2581,7 @@ impl ScriptHost {
             grants: grants.clone(),
             exposed_actions: self.0.exposed_actions.clone(),
             exposed_shared: self.0.exposed_shared.clone(),
+            read_only_shared: self.0.read_only_shared.clone(),
             exposed_hooks: self.0.exposed_hooks.clone(),
             owner: name.as_str().into(),
             persist_as: match &script {

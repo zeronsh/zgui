@@ -90,11 +90,11 @@ pub fn host(runtime: &Runtime) -> ScriptHost {
         }),
     );
     action("clear_done", Box::new(|tasks, _| tasks.retain(|t| !t.done)));
-    // What plugins may see and do of the app's: its tasks and whether
-    // focus is on (shared state), and completing a task. Adding and
-    // clearing stay the app's.
+    // What plugins may see and do of the app's: its tasks, read only (a
+    // plugin's write is an error), whether focus is on (theirs to set), and
+    // completing a task. Adding and clearing stay the app's.
     host.shared("focus", false);
-    host.expose_shared("tasks", None);
+    host.expose_shared_read("tasks", None);
     host.expose_shared("focus", None);
     host.expose_action("complete", None);
     let plugins = app.join("plugins");

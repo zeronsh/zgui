@@ -1075,7 +1075,7 @@ fn permute(
 
 /// `ui.sorted(list, spec)`.
 pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlua::Result<State> {
-    let source = crate::node::expect_state(&list, "ui.sorted's list")?;
+    let source = crate::node::expect_readable(&list, "ui.sorted's list")?;
     follow_writes(&source);
     let followed = source.clone();
     let spec = match spec {

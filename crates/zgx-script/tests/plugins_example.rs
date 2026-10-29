@@ -41,6 +41,11 @@ fn both_plugins_load_and_add_where_they_target() {
 fn the_focus_filter_follows_the_shared_state_it_reads() {
     let mut h = app();
     assert!(h.texts().contains(&"Review the plugins".to_string()));
+    assert!(
+        h.texts().contains(&"Focus (2)".to_string()),
+        "it reads the tasks: {:?}",
+        h.texts()
+    );
     h.click("focus");
     h.frames(1);
     let texts = h.texts();

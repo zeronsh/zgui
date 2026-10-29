@@ -409,7 +409,7 @@ A text template's `{name}` (in `ui.text`, a child string, a span) looks for the 
 
 ## Plugins and slots
 
-A host's plugins (`ScriptHost::plugins(dir)`) are scripts in their own sandboxed VMs. A plugin returns nothing; it adds nodes to the application's slots with `ui.contribute(name, node)`. `ui.slot(name, props)` is a column holding every contribution to `name`, in plugin order; `props` style it. Plugins see `ui.shared` state, never the application's `ui.state`.
+A host's plugins (`ScriptHost::plugins(dir)`) are scripts in their own sandboxed VMs. A plugin returns nothing; it adds nodes to the application's slots with `ui.contribute(name, node)`. `ui.slot(name, props)` is a column holding every contribution to `name`, in plugin order; `props` style it. Plugins see the `ui.shared` state the host exposes (`expose_shared`, or `expose_shared_read` to read and follow only: a plugin's write is an error), never the application's `ui.state`.
 
 ```lua
 -- file: app.luau

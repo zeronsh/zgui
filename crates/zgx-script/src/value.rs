@@ -617,6 +617,7 @@ fn convert_in(value: mlua::Value, old: Option<&Value>, depth: u32) -> mlua::Resu
             None => table(&t, old, depth)?,
         },
         mlua::Value::UserData(ud) if ud.is::<State>() => ud.borrow::<State>()?.0.get(),
+        mlua::Value::UserData(ud) if ud.is::<ReadState>() => ud.borrow::<ReadState>()?.0.0.get(),
         // `ui.raw(value, reason)` is its value; only the design lint looks.
         mlua::Value::UserData(ud) if ud.is::<crate::design::RawUd>() => {
             ud.borrow::<crate::design::RawUd>()?.0.clone()
@@ -2033,10 +2034,7 @@ fn fail(method: &str, error: String) -> mlua::Error {
 }
 impl UserData for State {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("get", |_, s, ()| Ok(s.fresh().get()));
-        methods.add_method("peek", |_, s, ()| {
-            Ok(s.fresh().with_untracked(Clone::clone))
-        });
+        add_reads(methods, |s: &State| s);
         methods.add_method("set", |lua, s, value: mlua::Value| {
             s.change(lua, |old| convert(value, Some(old)))
         });
@@ -2182,85 +2180,121 @@ impl UserData for State {
             s.write(lua, Value::List(next.into()));
             Ok(removed)
         });
-        // Of a derived list (a sorted view) as it is now: brought up to date
-        // first, as `at` is, inside a batch that wrote what it derives from.
-        methods.add_method("len", |_, s, ()| Ok(s.fresh().with(|v| v.list().len())));
-        // Where the first item whose `field` is `value` is (from 1), or nil,
-        // tracked as `get` is: `messages:index_of("id", 42)`, found without
-        // making the list a table.
-        methods.add_method(
-            "index_of",
-            |_, s, (field, value): (mlua::LuaString, mlua::Value)| {
-                let value = convert(value, None)?;
-                let field = field.to_str()?;
-                Ok(s.fresh().with(|v| {
-                    v.list()
-                        .iter()
-                        .position(|item| item.field(&field) == Some(&value))
-                        .map(|i| i + 1)
-                }))
-            },
-        );
-        // One item of a list (from 1), tracked as `get` is: read without
-        // converting the list (a long one's rows, as a list shows them).
-        methods.add_method("at", |_, s, index: usize| {
-            Ok(s.fresh().with(|v| {
-                index
-                    .checked_sub(1)
-                    .and_then(|i| v.list().get(i).cloned())
-                    .unwrap_or(Value::Nil)
-            }))
-        });
-        // Where `query` is in the string held (tracked, as `get` is), read
-        // where it is held: a long document is not copied into the script.
-        methods.add_method(
-            "find",
-            |lua, s, (query, options): (mlua::LuaString, Option<Table>)| {
-                let (case, limit) = search_options(options.as_ref())?;
-                let signal = s.fresh();
-                let needle = query.as_bytes();
-                // Tracked as `get` is, found here or not.
-                signal.with(|_| ());
-                let found = recent_find(signal, &needle, case, limit).unwrap_or_else(|| {
-                    let found = Rc::new(
-                        signal.with(|value| find_all(&string_pieces(value), &needle, case, limit)),
-                    );
-                    keep_find(signal, &needle, case, limit, found.clone());
-                    found
-                });
-                let (found, more) = (&found.0, found.1);
-                let list = lua.create_table_with_capacity(found.len(), 0)?;
-                for (i, &(start, end)) in found.iter().enumerate() {
-                    let pair = lua.create_table_with_capacity(2, 0)?;
-                    pair.raw_set(1, start + 1)?;
-                    pair.raw_set(2, end)?;
-                    list.raw_set(i + 1, pair)?;
-                }
-                Ok((list, more))
-            },
-        );
-        // How many times (`find`'s matches, at most `limit`, and whether
-        // there were more), with no list of them made for the script.
-        methods.add_method(
-            "count",
-            |_, s, (query, options): (mlua::LuaString, Option<Table>)| {
-                let (case, limit) = search_options(options.as_ref())?;
-                let signal = s.fresh();
-                let needle = query.as_bytes();
-                // Tracked as `get` is, found here or not; what it finds kept
-                // for `find` (the same search's matches) and the next count.
-                signal.with(|_| ());
-                let found = recent_find(signal, &needle, case, limit).unwrap_or_else(|| {
-                    let found = Rc::new(
-                        signal.with(|value| find_all(&string_pieces(value), &needle, case, limit)),
-                    );
-                    keep_find(signal, &needle, case, limit, found.clone());
-                    found
-                });
-                Ok((found.0.len(), found.1))
-            },
-        );
     }
+}
+/// A plugin's handle to shared state the host exposes read only
+/// (`ScriptHost::expose_shared_read`): it reads and follows the state as a
+/// `State` does, and writing it is an error naming the key. Its own type,
+/// so the app's states write without a check.
+#[derive(Clone)]
+pub(crate) struct ReadState(pub State, pub Rc<str>);
+/// What a `State` writes with: a `ReadState` refuses each.
+const WRITES: [&str; 10] = [
+    "set", "update", "set_key", "append", "patch", "toggle", "add", "push", "insert", "remove",
+];
+impl UserData for ReadState {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        add_reads(methods, |s: &ReadState| &s.0);
+        for name in WRITES {
+            methods.add_method(name, move |_, s, _: mlua::MultiValue| -> mlua::Result<()> {
+                Err(mlua::Error::runtime(format!(
+                    "`{name}` on shared state `{}`: the app shares it with plugins read only",
+                    s.1
+                )))
+            });
+        }
+    }
+}
+/// What a state's script handle reads: the same for a state and for a
+/// read-only one (`ReadState`).
+fn add_reads<T: 'static, M: UserDataMethods<T>>(
+    methods: &mut M,
+    state: impl Fn(&T) -> &State + Copy + 'static,
+) {
+    methods.add_method("get", move |_, s: &T, ()| Ok(state(s).fresh().get()));
+    methods.add_method("peek", move |_, s: &T, ()| {
+        Ok(state(s).fresh().with_untracked(Clone::clone))
+    });
+    // Of a derived list (a sorted view) as it is now: brought up to date
+    // first, as `at` is, inside a batch that wrote what it derives from.
+    methods.add_method("len", move |_, s: &T, ()| {
+        Ok(state(s).fresh().with(|v| v.list().len()))
+    });
+    // Where the first item whose `field` is `value` is (from 1), or nil,
+    // tracked as `get` is: `messages:index_of("id", 42)`, found without
+    // making the list a table.
+    methods.add_method(
+        "index_of",
+        move |_, s: &T, (field, value): (mlua::LuaString, mlua::Value)| {
+            let value = convert(value, None)?;
+            let field = field.to_str()?;
+            Ok(state(s).fresh().with(|v| {
+                v.list()
+                    .iter()
+                    .position(|item| item.field(&field) == Some(&value))
+                    .map(|i| i + 1)
+            }))
+        },
+    );
+    // One item of a list (from 1), tracked as `get` is: read without
+    // converting the list (a long one's rows, as a list shows them).
+    methods.add_method("at", move |_, s: &T, index: usize| {
+        Ok(state(s).fresh().with(|v| {
+            index
+                .checked_sub(1)
+                .and_then(|i| v.list().get(i).cloned())
+                .unwrap_or(Value::Nil)
+        }))
+    });
+    // Where `query` is in the string held (tracked, as `get` is), read
+    // where it is held: a long document is not copied into the script.
+    methods.add_method(
+        "find",
+        move |lua, s: &T, (query, options): (mlua::LuaString, Option<Table>)| {
+            let (case, limit) = search_options(options.as_ref())?;
+            let signal = state(s).fresh();
+            let needle = query.as_bytes();
+            // Tracked as `get` is, found here or not.
+            signal.with(|_| ());
+            let found = recent_find(signal, &needle, case, limit).unwrap_or_else(|| {
+                let found = Rc::new(
+                    signal.with(|value| find_all(&string_pieces(value), &needle, case, limit)),
+                );
+                keep_find(signal, &needle, case, limit, found.clone());
+                found
+            });
+            let (found, more) = (&found.0, found.1);
+            let list = lua.create_table_with_capacity(found.len(), 0)?;
+            for (i, &(start, end)) in found.iter().enumerate() {
+                let pair = lua.create_table_with_capacity(2, 0)?;
+                pair.raw_set(1, start + 1)?;
+                pair.raw_set(2, end)?;
+                list.raw_set(i + 1, pair)?;
+            }
+            Ok((list, more))
+        },
+    );
+    // How many times (`find`'s matches, at most `limit`, and whether
+    // there were more), with no list of them made for the script.
+    methods.add_method(
+        "count",
+        move |_, s: &T, (query, options): (mlua::LuaString, Option<Table>)| {
+            let (case, limit) = search_options(options.as_ref())?;
+            let signal = state(s).fresh();
+            let needle = query.as_bytes();
+            // Tracked as `get` is, found here or not; what it finds kept
+            // for `find` (the same search's matches) and the next count.
+            signal.with(|_| ());
+            let found = recent_find(signal, &needle, case, limit).unwrap_or_else(|| {
+                let found = Rc::new(
+                    signal.with(|value| find_all(&string_pieces(value), &needle, case, limit)),
+                );
+                keep_find(signal, &needle, case, limit, found.clone());
+                found
+            });
+            Ok((found.0.len(), found.1))
+        },
+    );
 }
 /// `{ case, limit }`: with case unless `case = false`; no limit unless one.
 fn search_options(options: Option<&Table>) -> mlua::Result<(bool, usize)> {

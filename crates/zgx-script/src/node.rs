@@ -1417,6 +1417,8 @@ pub(crate) struct Env {
     /// Host actions and shared keys plugins reach.
     pub exposed_actions: crate::Exposed,
     pub exposed_shared: crate::Exposed,
+    /// Of those, the keys plugins only read (`expose_shared_read`).
+    pub read_only_shared: crate::ReadOnly,
     /// Targets whose before/after need a capability (`expose_hook`).
     pub exposed_hooks: crate::Exposed,
     /// The script's name (a plugin's): what it contributes is its own.
@@ -1580,14 +1582,53 @@ fn location(lua: &Lua) -> Option<Rc<str>> {
     })
     .flatten()
 }
+/// The state `value` holds, to read and follow: a plugin's read-only
+/// shared state too.
 pub(crate) fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
+    match value {
+        mlua::Value::UserData(ud) => match ud.borrow::<State>() {
+            Ok(state) => Some(state.0.clone()),
+            Err(_) => read_state_of(ud),
+        },
+        _ => None,
+    }
+}
+#[cold]
+fn read_state_of(ud: &mlua::AnyUserData) -> Option<Signal<Value>> {
+    ud.borrow::<crate::value::ReadState>()
+        .ok()
+        .map(|s| s.0.0.clone())
+}
+/// The state `value` holds, to write as well (a two-way binding, an
+/// action's target): never a plugin's read-only shared state.
+pub(crate) fn writable_state_of(value: &mlua::Value) -> Option<Signal<Value>> {
     match value {
         mlua::Value::UserData(ud) => ud.borrow::<State>().ok().map(|s| s.0.clone()),
         _ => None,
     }
 }
 pub(crate) fn expect_state(value: &mlua::Value, what: &str) -> mlua::Result<Signal<Value>> {
+    writable_state_of(value).ok_or_else(|| match read_only_key(value) {
+        Some(key) => mlua::Error::runtime(format!(
+            "{what} is written, and shared state `{key}` is read only to plugins"
+        )),
+        None => mlua::Error::runtime(format!("{what} must be a ui.state")),
+    })
+}
+/// A state that is only read (what a list shows, an animation's source):
+/// a plugin's read-only shared state too.
+pub(crate) fn expect_readable(value: &mlua::Value, what: &str) -> mlua::Result<Signal<Value>> {
     state_of(value).ok_or_else(|| mlua::Error::runtime(format!("{what} must be a ui.state")))
+}
+#[cold]
+fn read_only_key(value: &mlua::Value) -> Option<Rc<str>> {
+    match value {
+        mlua::Value::UserData(ud) => ud
+            .borrow::<crate::value::ReadState>()
+            .ok()
+            .map(|s| s.1.clone()),
+        _ => None,
+    }
 }
 /// A plugin's module in place of one of the app's (`ui.override`): its file,
 /// the plugin's directory (what its own requires reach) and the plugin's
@@ -3776,12 +3817,19 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             commit: handler_of("on_commit")?,
                         }
                     }
-                    v => InputValue::State(state_of(&v).ok_or_else(|| {
-                        mlua::Error::runtime(
-                            "`value` must be a ui.state (two-way), or a function with on_change \
-                             or on_commit (the input shows it, and says what was typed)",
-                        )
-                    })?),
+                    v => InputValue::State(writable_state_of(&v).ok_or_else(
+                        || match read_only_key(&v) {
+                            Some(key) => mlua::Error::runtime(format!(
+                                "`value` is written as it is typed, and shared state `{key}` is \
+                                 read only to plugins: give a function with on_change instead"
+                            )),
+                            None => mlua::Error::runtime(
+                                "`value` must be a ui.state (two-way), or a function with \
+                                 on_change or on_commit (the input shows it, and says what was \
+                                 typed)",
+                            ),
+                        },
+                    )?),
                 };
                 let optional = |key: &str, ty: Ty| -> mlua::Result<Option<Source>> {
                     match table.get::<mlua::Value>(key)? {
@@ -3966,7 +4014,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         "each",
         lua.create_function(
             |lua, (items, build, table): (mlua::Value, Function, Option<Table>)| {
-                let items = expect_state(&items, "ui.each's list")?;
+                let items = expect_readable(&items, "ui.each's list")?;
                 // Every row is built and laid out: thousands are slow to
                 // mount and lay out, where `ui.list` builds what shows.
                 let rows = items.with_untracked(|list| list.list().len());
@@ -4006,7 +4054,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 mlua::Value::Nil => None,
                 mlua::Value::Function(f) => Some(Heights::Computed(f)),
                 t @ mlua::Value::Table(_) => Some(Heights::Lit(Value::from_lua(t, lua)?)),
-                s => Some(Heights::State(expect_state(
+                s => Some(Heights::State(expect_readable(
                     &s,
                     "`heights` (a list, a ui.state or a function)",
                 )?)),
@@ -4015,7 +4063,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 mlua::Value::Nil => None,
                 mlua::Value::Function(f) => Some(Heights::Computed(f)),
                 t @ mlua::Value::Table(_) => Some(Heights::Lit(Value::from_lua(t, lua)?)),
-                s => Some(Heights::State(expect_state(
+                s => Some(Heights::State(expect_readable(
                     &s,
                     "`sticky` (a list, a ui.state or a function)",
                 )?)),
@@ -4036,7 +4084,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let items = match table.get::<mlua::Value>("data")? {
                 mlua::Value::Nil => None,
-                data => Some(expect_state(&data, "ui.list's `data`")?),
+                data => Some(expect_readable(&data, "ui.list's `data`")?),
             };
             if items.is_some() && (heights.is_some() || table.contains_key("count")?) {
                 return Err(mlua::Error::runtime(
@@ -4800,7 +4848,14 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (key, initial): (String, Value)| {
             let env = env(lua)?;
             env.permits(&env.exposed_shared, &key, "ui.shared")?;
-            Ok(State::new(env.shared.state(&key, initial)))
+            let state = State::new(env.shared.state(&key, initial));
+            if matches!(*env.grants, crate::Grants::Only(_))
+                && env.read_only_shared.borrow().contains(&key)
+            {
+                let read = crate::value::ReadState(state, key.as_str().into());
+                return lua.create_userdata(read);
+            }
+            lua.create_userdata(state)
         })?,
     )?;
 
@@ -4883,7 +4938,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             anim(
                 lua,
-                Some(expect_state(&state, "ui.tween's source")?),
+                Some(expect_readable(&state, "ui.tween's source")?),
                 opts,
                 curve,
             )
@@ -4898,7 +4953,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             anim(
                 lua,
-                Some(expect_state(&state, "ui.spring's source")?),
+                Some(expect_readable(&state, "ui.spring's source")?),
                 opts,
                 curve,
             )

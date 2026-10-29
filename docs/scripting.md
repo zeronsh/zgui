@@ -379,7 +379,7 @@ A plugin can also add next to any element of the app, or in its place, without a
 |---|---|---|
 | its own `ui.state`, `ui.persist`, components and slots' contributions | yes | yes, its own only (a plugin named as an app script still has its own saved state) |
 | host actions (`ui.action`, `ui.invoke`, `ui.call`) | every one | those `expose_action(name, capability)` exposes, and only with the capability when it names one |
-| shared state (`ui.shared`, `{key}` in a template) | every key | those `expose_shared(key, capability)` exposes, likewise |
+| shared state (`ui.shared`, `{key}` in a template) | every key | those `expose_shared(key, capability)` exposes, likewise; those `expose_shared_read(key, capability)` exposes, to read and follow only (a write is an error naming the key) |
 | `ui.fetch`, remote images | yes | with `Capability::Fetch` |
 | the clipboard, file dialogs | yes | with `Capability::Clipboard`, `Capability::Files` |
 | terminals (`ui.term`) | yes | with `Capability::Terminals` |

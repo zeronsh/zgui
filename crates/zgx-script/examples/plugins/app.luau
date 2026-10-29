@@ -4,9 +4,9 @@
 -- - every `id` is a target; `hook = "toolbar.add"` is one it promises
 --   to keep across versions;
 -- - `hook = false` keeps the Clear button out of every plugin's reach;
--- - `tasks` is shared state the host exposes, and `complete` and
---   `clear_done` are host actions, so plugins see and change the list
---   only through what the host lets them;
+-- - `tasks` is shared state the host exposes to plugins read only, and
+--   `complete` and `clear_done` are host actions, so plugins see the list
+--   and change it only through what the host lets them;
 -- - rows come from `@app/components/task_row`, a module a trusted plugin
 --   may replace.
 local row = require("@app/components/task_row")
