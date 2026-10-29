@@ -96,6 +96,8 @@ pub(crate) struct Scene3dSpec {
     target: Option<Vec3Spec>,
     orbit: Option<OrbitSpec>,
     background: Option<ColorSpec>,
+    /// The sun casts shadows (`World::set_shadows`).
+    shadows: bool,
     objects: Vec<Rc<ObjectSpec>>,
 }
 
@@ -416,6 +418,16 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         target,
         orbit,
         background: opt_color(&table, "background")?,
+        shadows: match table.get::<mlua::Value>("shadows")? {
+            mlua::Value::Nil => false,
+            mlua::Value::Boolean(on) => on,
+            other => {
+                return Err(wrong(format_args!(
+                    "ui.scene3d `shadows` is true or false, not {}",
+                    other.type_name()
+                )));
+            }
+        },
         objects: objects(&table, "ui.scene3d")?,
     };
     // Its box's own properties: the table's named keys alone but
@@ -424,7 +436,10 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
     for pair in table.pairs::<mlua::Value, mlua::Value>() {
         let (key, value) = pair?;
         if let mlua::Value::String(name) = &key
-            && !matches!(&*name.as_bytes(), b"camera" | b"orbit" | b"background")
+            && !matches!(
+                &*name.as_bytes(),
+                b"camera" | b"orbit" | b"background" | b"shadows"
+            )
         {
             props.set(key, value)?;
         }
@@ -659,6 +674,7 @@ fn follow(cx: &mut Context, effect: Box<dyn FnMut()>) {
 pub(crate) fn lower(spec: &Scene3dSpec, vm: &Rc<Vm>, cx: &mut Context) -> zgx::compose::View {
     let world = World::new();
     let theme = cx.theme();
+    world.set_shadows(spec.shadows);
     let mut handled = Vec::new();
     for object in &spec.objects {
         add(&world, object, None, vm, cx, &theme, &mut handled);

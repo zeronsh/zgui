@@ -275,3 +275,80 @@ fn translucent_meshes_are_drawn_back_to_front_whatever_their_order() {
         );
     }
 }
+
+/// The pixel of the view (`SIZE` square) where the world shows point `p`.
+fn seen_at(world: &World, p: Vec3) -> (usize, usize) {
+    let camera = world.camera();
+    let ndc = (camera.projection(1.) * camera.view()).project(p);
+    let x = (ndc.x * 0.5 + 0.5) * SIZE;
+    let y = (0.5 - ndc.y * 0.5) * SIZE;
+    (x as usize, y as usize)
+}
+
+#[test]
+fn the_sun_casts_shadows_only_when_asked() {
+    // A cube on a floor, the sun going down and to the right: its shadow
+    // falls on the floor to its right.
+    let world = World::new();
+    world.add(Object::mesh(
+        Geometry::plane(8., 8.),
+        Material::rgb(0xcccccc),
+    ));
+    let cube = world.add(
+        Object::mesh(Geometry::cuboid(1., 1., 1.), Material::rgb(0xcccccc)).at([-1., 0.5, 0.]),
+    );
+    world.add_light(Light::Directional {
+        direction: vec3(1., -1., 0.),
+        color: [1., 1., 1.],
+        intensity: 3.,
+    });
+    world.set_camera(Camera::looking_at([0., 7., 2.], [0., 0., 0.]));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    // On the floor: in the cube's shadow, and well away from it.
+    let shaded = seen_at(&world, vec3(0.1, 0., 0.));
+    let lit = seen_at(&world, vec3(2.5, 0., 0.));
+    let level = |window: &Window, (x, y): (usize, usize)| window.pixel(x, y)[0];
+    window.draw();
+    let (off_shaded, off_lit) = (level(&window, shaded), level(&window, lit));
+    assert!(
+        off_shaded.abs_diff(off_lit) <= 6,
+        "without shadows the floor is even: {off_shaded} against {off_lit}"
+    );
+    world.set_shadows(true);
+    window.draw();
+    let (on_shaded, on_lit) = (level(&window, shaded), level(&window, lit));
+    assert!(
+        (on_shaded as f32) < on_lit as f32 * 0.6,
+        "the cube's shadow: {on_shaded} against {on_lit}"
+    );
+    assert!(
+        on_lit.abs_diff(off_lit) <= 3,
+        "lit floor unchanged (no self-shadowing): {on_lit} against {off_lit}"
+    );
+    // The camera moved alone: the map drawn before still holds, and shows.
+    world.set_camera(Camera::looking_at([0.3, 7., 2.2], [0., 0., 0.]));
+    window.draw();
+    let (moved_shaded, moved_lit) = (
+        level(&window, seen_at(&world, vec3(0.1, 0., 0.))),
+        level(&window, seen_at(&world, vec3(2.5, 0., 0.))),
+    );
+    assert!(
+        (moved_shaded as f32) < moved_lit as f32 * 0.6,
+        "the shadow, the camera moved: {moved_shaded} against {moved_lit}"
+    );
+    // The cube moved away: the map is drawn again, and that floor is lit.
+    world.set_camera(Camera::looking_at([0., 7., 2.], [0., 0., 0.]));
+    world.set_transform(cube, Transform::at([-3., 0.5, 0.]));
+    window.draw();
+    assert!(
+        level(&window, shaded).abs_diff(on_lit) <= 3,
+        "its old shadow lit: {} against {on_lit}",
+        level(&window, shaded)
+    );
+    // Off again, as before.
+    world.set_shadows(false);
+    window.draw();
+    assert!(level(&window, shaded).abs_diff(off_shaded) <= 2);
+}

@@ -256,6 +256,8 @@ pub(crate) struct Inner {
     /// Its clear colour, linear and premultiplied; `None`: transparent, the
     /// box's own background shows.
     pub(crate) background: Option<[f32; 4]>,
+    /// Whether the sun casts shadows (`World::set_shadows`).
+    pub(crate) shadows: bool,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -380,6 +382,7 @@ impl World {
             lights: Vec::new(),
             camera: Camera::default(),
             background: None,
+            shadows: false,
             revision: 0,
         }));
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
@@ -498,6 +501,14 @@ impl World {
             [m[0], m[1], m[2], 1.]
         });
         self.change(|inner| std::mem::replace(&mut inner.background, color) != color);
+    }
+    /// Whether the sun (its first directional light) casts shadows: opaque
+    /// meshes darken what they hide from it, their own faces included.
+    /// Off by default; on, each frame draws the opaque meshes once more,
+    /// from the sun, into a 2048 by 2048 depth map (16 MB) kept while
+    /// shadows are on.
+    pub fn set_shadows(&self, on: bool) {
+        self.change(|inner| std::mem::replace(&mut inner.shadows, on) != on);
     }
     /// Object `id`'s matrix in the world, its ancestors' applied; `None` if
     /// it is gone, hidden or under a hidden one.

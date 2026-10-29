@@ -5076,6 +5076,8 @@ export type Scene3DProps = {
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
+	-- The sun (the first directional light) casts shadows from opaque meshes.
+	shadows: boolean?,
 	[number]: Object3D,
 }
 export type CanvasProps = {

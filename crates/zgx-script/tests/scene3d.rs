@@ -230,3 +230,15 @@ fn hovering_says_over_and_out() {
 fn a_handler_must_be_a_function() {
     assert!(raised(r#"ui.scene3d { ui.mesh { on_click = 3 } }"#).contains("on_click"));
 }
+
+#[test]
+fn shadows_are_asked_for_with_true() {
+    let mut h = Harness::inline(
+        r#"return ui.scene3d { id = "scene", w = 100, h = 100, shadows = true,
+            ui.light { kind = "directional" }, ui.mesh { geometry = "box" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(frame_id(&mut h, "scene").is_some());
+    assert!(raised(r#"ui.scene3d { shadows = 1 }"#).contains("shadows"));
+}

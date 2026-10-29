@@ -2,7 +2,8 @@
 //! 4x multisampling: each geometry's meshes in one instanced draw, opaque
 //! ones first, then the translucent back to front. Pipelines and buffers are
 //! made with the first frame and kept; a geometry's buffers are uploaded
-//! once and dropped a while after the last frame drawing it.
+//! once and dropped a while after the last frame drawing it. With shadows,
+//! a pass before it draws the opaque meshes' depth as the sun sees them.
 use crate::{
     math::{Mat4, Vec3},
     world::{Inner, Light, POINT_LIGHTS},
@@ -17,6 +18,8 @@ const SAMPLES: u32 = 4;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Frames a geometry's buffers stay after the last that drew it.
 const KEEP_FRAMES: u64 = 240;
+/// The shadow map's side, in texels.
+const SHADOW_SIZE: u32 = 2048;
 
 /// Per mesh: its world matrix, its normals' (the inverse transpose, its
 /// fourth row metallic, roughness, unlit), its colour, its emission.
@@ -39,8 +42,13 @@ struct FrameUniforms {
     sky: [f32; 4],
     ground: [f32; 4],
     points: [[[f32; 4]; 2]; POINT_LIGHTS],
-    /// Point lights in use, whether to encode sRGB itself, exposure.
+    /// Point lights in use, whether to encode sRGB itself, exposure,
+    /// whether the sun casts shadows.
     params: [f32; 4],
+    /// The sun's view of the scene, onto the shadow map.
+    shadow: [[f32; 4]; 4],
+    /// A shadow map texel's size in the scene, and in the map (1 / side).
+    shadow_texel: [f32; 4],
 }
 
 struct Buffers {
@@ -54,7 +62,19 @@ struct Gpu {
     opaque: wgpu::RenderPipeline,
     translucent: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
+    layout: wgpu::BindGroupLayout,
     bind: wgpu::BindGroup,
+    /// Depth from the sun, and its pass's frame (the uniforms alone: the
+    /// map can't be read while drawn).
+    shadow: wgpu::RenderPipeline,
+    shadow_bind: wgpu::BindGroup,
+    sampler: wgpu::Sampler,
+    /// The shadow map while shadows are on; a 1 by 1 stand-in otherwise.
+    shadow_map: Option<wgpu::TextureView>,
+    stand_in: wgpu::TextureView,
+    /// What the shadow map holds: the sun's view and each opaque mesh's
+    /// geometry and place. A frame where only the camera moved keeps it.
+    shadow_drawn: Option<(Mat4, Vec<(u64, Mat4)>)>,
     instances: Option<(wgpu::Buffer, usize)>,
     geometries: HashMap<u64, Buffers>,
     targets: Option<((u32, u32), wgpu::TextureView, wgpu::TextureView)>,
@@ -120,15 +140,28 @@ impl Viewport for Renderer {
         let aspect = size.0 as f32 / size.1.max(1) as f32;
         let view = camera.view();
         let view_projection = camera.projection(aspect) * view;
-        frame.queue.write_buffer(
-            &gpu.uniforms,
-            0,
-            bytemuck::bytes_of(&frame_uniforms(&world, view_projection, encode)),
-        );
+        let mut uniforms = frame_uniforms(&world, view_projection, encode);
+        let all = world.drawn();
+        let sun = world
+            .shadows
+            .then(|| {
+                let [x, y, z, _] = uniforms.sun_direction;
+                (uniforms.sun_color != [0.; 4]).then_some(crate::vec3(x, y, z))
+            })
+            .flatten();
+        let shadow = sun.and_then(|sun| sun_view(&all, sun));
+        if let Some((matrix, texel)) = shadow {
+            uniforms.shadow = matrix.columns;
+            uniforms.shadow_texel = [texel, 1. / SHADOW_SIZE as f32, 0., 0.];
+            uniforms.params[3] = 1.;
+        }
+        gpu.shadows(frame.device, world.shadows);
+        frame
+            .queue
+            .write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         // Meshes by geometry, translucent ones after, back to front: by a
         // key of one integer (a sort of integers, not of meshes).
-        let all = world.drawn();
         let depth = |m: &Mat4| {
             let p = view.project(Vec3::from([
                 m.columns[3][0],
@@ -206,6 +239,61 @@ impl Viewport for Renderer {
         gpu.geometries
             .retain(|_, buffers| now - buffers.used <= KEEP_FRAMES);
 
+        // Runs of one geometry, of one pass (opaque, then translucent).
+        let mut runs = Vec::new();
+        let mut start = 0;
+        while start < drawn.len() {
+            let (geometry, glass) = (drawn[start].geometry.id(), translucent(drawn[start]));
+            let end = start
+                + drawn[start..]
+                    .iter()
+                    .take_while(|d| d.geometry.id() == geometry && translucent(d) == glass)
+                    .count();
+            runs.push((geometry, glass, start as u32..end as u32));
+            start = end;
+        }
+        // What the map would hold now; drawn only if it holds something else.
+        let casting = shadow.map(|(matrix, _)| {
+            let meshes = drawn
+                .iter()
+                .filter(|d| !translucent(d))
+                .map(|d| (d.geometry.id(), d.matrix))
+                .collect::<Vec<_>>();
+            (matrix, meshes)
+        });
+        if casting.is_some()
+            && casting != gpu.shadow_drawn
+            && let (Some(map), Some((instances_buffer, _))) = (&gpu.shadow_map, &gpu.instances)
+        {
+            let mut pass = frame
+                .encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("3D shadows"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: map,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    ..Default::default()
+                });
+            pass.set_pipeline(&gpu.shadow);
+            pass.set_bind_group(0, &gpu.shadow_bind, &[]);
+            pass.set_vertex_buffer(1, instances_buffer.slice(..));
+            // Translucent meshes cast none.
+            for (geometry, _, instances) in runs.iter().filter(|(_, glass, _)| !glass) {
+                let buffers = &gpu.geometries[geometry];
+                pass.set_vertex_buffer(0, buffers.vertices.slice(..));
+                pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..buffers.count, 0, instances.clone());
+            }
+            drop(pass);
+            gpu.shadow_drawn = casting;
+        }
+
         let (_, colour, depth_view) = gpu.targets.as_ref().unwrap();
         let clear = world
             .background
@@ -243,21 +331,12 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, &gpu.bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
-        // Runs of one geometry, of one pass (opaque, then translucent).
-        let mut start = 0;
-        while start < drawn.len() {
-            let (geometry, glass) = (drawn[start].geometry.id(), translucent(drawn[start]));
-            let end = start
-                + drawn[start..]
-                    .iter()
-                    .take_while(|d| d.geometry.id() == geometry && translucent(d) == glass)
-                    .count();
+        for (geometry, glass, instances) in runs {
             let buffers = &gpu.geometries[&geometry];
             pass.set_pipeline(if glass { &gpu.translucent } else { &gpu.opaque });
             pass.set_vertex_buffer(0, buffers.vertices.slice(..));
             pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..buffers.count, 0, start as u32..end as u32);
-            start = end;
+            pass.draw_indexed(0..buffers.count, 0, instances);
         }
     }
     fn device_changed(&mut self) {
@@ -317,6 +396,8 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
         ground: [0.; 4],
         points: [[[0.; 4]; 2]; POINT_LIGHTS],
         params: [0., if encode { 1. } else { 0. }, 1., 0.],
+        shadow: Mat4::IDENTITY.columns,
+        shadow_texel: [0.; 4],
     };
     // The point lights nearest the camera's target, nearest first, past the
     // four a frame shades with (ties in the order they were added).
@@ -377,7 +458,70 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
     uniforms
 }
 
+/// The sun going `direction` as it sees the opaque meshes of `all`: an
+/// orthographic view holding them all, onto the shadow map, and how wide a
+/// map texel is in the scene. `None` with nothing to cast a shadow.
+fn sun_view(all: &[crate::world::Drawn], direction: Vec3) -> Option<(Mat4, f32)> {
+    let corners = |d: &crate::world::Drawn| {
+        let (low, high) = d.geometry.bounds();
+        let matrix = d.matrix;
+        (0..8).map(move |i| {
+            matrix.project(crate::vec3(
+                if i & 1 == 0 { low.x } else { high.x },
+                if i & 2 == 0 { low.y } else { high.y },
+                if i & 4 == 0 { low.z } else { high.z },
+            ))
+        })
+    };
+    let opaque = || all.iter().filter(|d| d.material.color[3] >= 1.);
+    let (mut low, mut high) = (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3]));
+    for p in opaque().flat_map(corners) {
+        low = low.min(p);
+        high = high.max(p);
+    }
+    let direction = direction.normalized();
+    if !(low.is_finite() && high.is_finite()) || direction == Vec3::ZERO {
+        return None;
+    }
+    let centre = (low + high) * 0.5;
+    let radius = ((high - low).length() * 0.5).max(1e-3);
+    let view = Mat4::look_at(centre - direction * (radius * 2.), centre, Vec3::Y);
+    let (mut near, mut far) = (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3]));
+    for p in opaque().flat_map(corners) {
+        let p = view.project(p);
+        near = near.min(p);
+        far = far.max(p);
+    }
+    // A texel's margin about them, so the filter's edge falls outside.
+    let margin = (far.x - near.x).max(far.y - near.y) / SHADOW_SIZE as f32 * 2.;
+    let (l, r) = (near.x - margin, far.x + margin);
+    let (b, t) = (near.y - margin, far.y + margin);
+    // View space looks down -z: the nearest is the greatest z.
+    let (n, f) = (-far.z - margin, -near.z + margin);
+    let projection = Mat4 {
+        columns: [
+            [2. / (r - l), 0., 0., 0.],
+            [0., 2. / (t - b), 0., 0.],
+            [0., 0., 1. / (n - f), 0.],
+            [-(r + l) / (r - l), -(t + b) / (t - b), n / (n - f), 1.],
+        ],
+    };
+    let texel = (r - l).max(t - b) / SHADOW_SIZE as f32;
+    Some((projection * view, texel))
+}
+
 impl Gpu {
+    /// The shadow map made while `on` (dropped while off), and the frame's
+    /// binding following it.
+    fn shadows(&mut self, device: &wgpu::Device, on: bool) {
+        if on == self.shadow_map.is_some() {
+            return;
+        }
+        self.shadow_map = on.then(|| depth_map(device, SHADOW_SIZE, "3D shadow map"));
+        self.shadow_drawn = None;
+        let map = self.shadow_map.as_ref().unwrap_or(&self.stand_in);
+        self.bind = frame_binding(device, &self.layout, &self.uniforms, map, &self.sampler);
+    }
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
@@ -389,31 +533,63 @@ impl Gpu {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let uniform_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D frame"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                uniform_entry,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("3D frame"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniforms.as_entire_binding(),
-            }],
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("3D shadow map"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
         });
+        let stand_in = depth_map(device, 1, "3D shadow stand-in");
+        let bind = frame_binding(device, &layout, &uniforms, &stand_in, &sampler);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("3D"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
+        });
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("3D shadow frame"),
+            entries: &[uniform_entry],
+        });
+        let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("3D shadow frame"),
+            layout: &shadow_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            }],
         });
         let vertex_attributes =
             wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
@@ -476,18 +652,118 @@ impl Gpu {
                 cache: None,
             })
         };
+        let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("3D shadows"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("3D shadows"),
+                    bind_group_layouts: &[Some(&shadow_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("shadow_vertex"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &vertex_attributes,
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &instance_attributes,
+                    },
+                ],
+            },
+            fragment: None,
+            // Both faces: a plane or an open mesh casts from either side.
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                // Kept off the surfaces they're cast on (acne), more where
+                // they slope from the sun.
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.,
+                    clamp: 0.,
+                },
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         Self {
             format,
             opaque: pipeline(false),
             translucent: pipeline(true),
             uniforms,
+            layout,
             bind,
+            shadow,
+            shadow_bind,
+            sampler,
+            shadow_map: None,
+            stand_in,
+            shadow_drawn: None,
             instances: None,
             geometries: HashMap::new(),
             targets: None,
             frame: 0,
         }
     }
+}
+
+/// A depth texture `side` texels square, drawn to and sampled.
+fn depth_map(device: &wgpu::Device, side: u32, label: &str) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
+}
+/// The main pass's frame: the uniforms, and the shadow map (or stand-in).
+fn frame_binding(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniforms: &wgpu::Buffer,
+    map: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("3D frame"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }
 
 /// Metallic-roughness shading (GGX, Smith, Schlick) under a sun, up to four
@@ -503,8 +779,12 @@ struct Frame {
     ground: vec4<f32>,
     points: array<array<vec4<f32>, 2>, 4>,
     params: vec4<f32>,
+    shadow: mat4x4<f32>,
+    shadow_texel: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -527,7 +807,33 @@ struct Out {
     return Out(frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w));
 }
 
+@vertex fn shadow_vertex(
+    @location(0) position: vec3<f32>,
+    @location(3) m0: vec4<f32>, @location(4) m1: vec4<f32>, @location(5) m2: vec4<f32>, @location(6) m3: vec4<f32>,
+) -> @builtin(position) vec4<f32> {
+    return frame.shadow * mat4x4(m0, m1, m2, m3) * vec4(position, 1.0);
+}
+
 const PI: f32 = 3.14159265;
+
+// How much of the sun reaches `world` (facing `n`): 1 lit, 0 in shadow,
+// between at a shadow's edge (four filtered comparisons half a texel
+// about it: each blends 2 by 2 texels, so 3 by 3 in all).
+fn sunlit(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    // Off the surface by a texel or so, against its own shadow.
+    let p = frame.shadow * vec4(world + n * frame.shadow_texel.x * 1.5, 1.0);
+    let uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) || p.z > 1.0 {
+        return 1.0;
+    }
+    let half = frame.shadow_texel.y * 0.5;
+    var sum = 0.0;
+    sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2(-half, -half), p.z);
+    sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2(half, -half), p.z);
+    sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2(-half, half), p.z);
+    sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + vec2(half, half), p.z);
+    return sum * 0.25;
+}
 
 fn ggx(n_h: f32, a: f32) -> f32 {
     let a2 = a * a;
@@ -585,7 +891,11 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
         let v = normalize(frame.camera.xyz - in.world);
         let metallic = in.material.x;
         let roughness = in.material.y;
-        lit = shade(base, metallic, roughness, n, v, -frame.sun_direction.xyz, frame.sun_color.rgb);
+        var sun = frame.sun_color.rgb;
+        if frame.params.w > 0.5 {
+            sun *= sunlit(in.world, n);
+        }
+        lit = shade(base, metallic, roughness, n, v, -frame.sun_direction.xyz, sun);
         for (var i = 0u; i < u32(frame.params.x); i++) {
             let light = frame.points[i];
             let to = light[0].xyz - in.world;

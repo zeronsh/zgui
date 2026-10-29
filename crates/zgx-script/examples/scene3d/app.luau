@@ -60,6 +60,7 @@ return ui.column {
 		grow = 1,
 		rounded = 14,
 		background = "#10141b",
+		shadows = true,
 		camera = { position = { 2.2, 1.8, 4.2 }, target = { 0, 0, 0 }, fov = 40 },
 		orbit = {
 			auto_rotate = function()
