@@ -8,6 +8,10 @@
 //! a still scene costs nothing, and its pipelines and buffers are made with
 //! its first frame.
 //!
+//! With the `gltf` feature, `Model` reads glTF 2.0 files (`.glb`, or
+//! `.gltf` and the buffers beside it) and `World::add_model` adds one as a
+//! group to place, turn and scale as any object.
+//!
 //! ```no_run
 //! use zgx::compose::prelude::*;
 //! use zgx_3d::*;
@@ -27,6 +31,8 @@
 #![warn(missing_docs)]
 
 mod geometry;
+#[cfg(feature = "gltf")]
+mod gltf;
 mod math;
 mod orbit;
 mod pick;
@@ -34,6 +40,8 @@ mod render;
 mod world;
 
 pub use geometry::{Geometry, Vertex};
+#[cfg(feature = "gltf")]
+pub use gltf::{Model, ModelError};
 pub use math::{Mat4, Quat, Transform, Vec3, vec3};
 pub use orbit::Orbit;
 pub use pick::Hit;
