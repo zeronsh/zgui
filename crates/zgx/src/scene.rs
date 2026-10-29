@@ -2075,6 +2075,11 @@ const PERCENT_WIDTH: u8 = 8;
 const PERCENT_HEIGHT: u8 = 16;
 const OWN_PERCENT_WIDTH: u8 = 32;
 const OWN_PERCENT_HEIGHT: u8 = 64;
+/// `Node::reads`: a row or column whose children's natural sizes exceed
+/// its room, so it shrank them (each no further than its automatic
+/// minimum): set as its flex loop starts, cleared with the rest when its
+/// layout is (`floor_dropped`).
+const SHRANK: u8 = 128;
 /// Which way a node's lines run (CSS's `direction`), inherited by its
 /// subtree: rows run from the right, text starts at the right, and the
 /// arrows read the other way.
@@ -3741,6 +3746,9 @@ impl Scene {
     /// `min-width: auto` / `min-height: auto`): the smaller of its own size
     /// (when it sets one) and its content's min-content size, or 0 for one
     /// that clips, as CSS gives a scroll container.
+    // Inlined into both callers: the flex loop's closure would otherwise
+    // pay a call (its second caller, `floor_dropped`, would outline it).
+    #[inline(always)]
     fn automatic_minimum(
         &mut self,
         id: NodeId,
@@ -6160,6 +6168,41 @@ impl Scene {
                 || node.style.absolute
                 || (measured.size.0 >= width && measured.size.1 >= height))
     }
+    /// Whether `id`, a boundary just laid out alone under `constraints` at
+    /// `size`, is a row or column's shrinkable item its content's least size
+    /// held there and no longer holds: at its size under a parent that
+    /// shrank its children (`SHRANK`), it was held at its automatic minimum,
+    /// and that is now less than its size, so its parent would shrink it.
+    /// Asked only of the few boundaries a frame lays out alone.
+    #[inline(never)]
+    fn floor_dropped(&mut self, id: NodeId, constraints: Constraints, size: (f32, f32)) -> bool {
+        let node = self.node(id);
+        if node.style.flex_shrink <= 0. || node.style.absolute {
+            return false;
+        }
+        let Some(parent) = node.parent else {
+            return false;
+        };
+        let parent_node = self.node(parent);
+        // Only under a row or column that shrank its children (`SHRANK`).
+        if parent_node.reads.get() & SHRANK == 0 {
+            return false;
+        }
+        let horizontal = match parent_node.kind {
+            NodeKind::Container(Layout::Row) => true,
+            NodeKind::Container(Layout::Column) => false,
+            _ => return false,
+        };
+        let main = if horizontal { size.0 } else { size.1 };
+        // Its least content along that axis, the size its parent forced aside.
+        let mut asked = constraints;
+        if horizontal {
+            asked.force_width = None;
+        } else {
+            asked.force_height = None;
+        }
+        self.automatic_minimum(id, asked, horizontal, main) < main - 0.001
+    }
     /// Mark every ancestor up to the root, ignoring boundaries.
     fn invalidate_layout_to_root(&mut self, mut id: NodeId) {
         let mut own = true;
@@ -7222,7 +7265,8 @@ impl Scene {
             | if percent_h { PERCENT_HEIGHT } else { 0 }
             | if own_w { OWN_PERCENT_WIDTH } else { 0 }
             | if own_h { OWN_PERCENT_HEIGHT } else { 0 };
-        node.reads.set(bits);
+        // A row or column's own flex loop may have marked it already.
+        node.reads.set(bits | node.reads.get() & SHRANK);
         bits
     }
     /// `id`'s size under `constraints`, for a probe: a kept size serves,
@@ -7543,6 +7587,10 @@ impl Scene {
                     // clips (a scroll container's is 0) or sets its own.
                     floors.clear();
                     floors.resize(ids.len(), None);
+                    if natural_main > limit + 0.001 {
+                        let reads = &self.tree_node(id).reads;
+                        reads.set(reads.get() | SHRANK);
+                    }
                     for _ in 0..=ids.len() {
                         let used: f32 = sizes
                             .iter()
@@ -8584,7 +8632,9 @@ impl Scene {
                 self.invalidate_layout_to_root(id);
                 continue;
             };
-            if self.measure_full(id, constraints) != size {
+            if self.measure_full(id, constraints) != size
+                || self.floor_dropped(id, constraints, size)
+            {
                 // Not actually independent of its content: lay out normally.
                 relayout_all = true;
                 self.invalidate_layout_to_root(id);
