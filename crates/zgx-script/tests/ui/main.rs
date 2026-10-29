@@ -13,6 +13,8 @@ mod driver;
 mod failures;
 #[path = "../i18n_script.rs"]
 mod i18n_script;
+#[path = "../image_cache.rs"]
+mod image_cache;
 #[path = "../layout_gaps.rs"]
 mod layout_gaps;
 #[path = "../layout_motion.rs"]

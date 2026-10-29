@@ -26,11 +26,21 @@ use zgx::{
     text::TextValue,
 };
 
-/// Decoded images and SVGs by source, kept across reloads.
-#[derive(Default)]
+/// Decoded images and SVGs by source. What a mounted node shows stays;
+/// of the rest, the most recently shown stay while they fit `budget`, so a
+/// reload or a page shown again is instant without every picture a run
+/// ever showed staying in memory. Swept as nodes showing them unmount.
 pub(crate) struct Assets {
-    images: std::cell::RefCell<HashMap<String, Arc<ImageData>>>,
-    svgs: std::cell::RefCell<HashMap<String, Arc<SvgData>>>,
+    images: std::cell::RefCell<HashMap<String, Cached<ImageData>>>,
+    svgs: std::cell::RefCell<HashMap<String, Cached<SvgData>>>,
+    /// The bytes cached (the host's own images aside), and how many the
+    /// pictures no node shows may take (`ScriptHost::image_cache`).
+    held: std::cell::Cell<usize>,
+    budget: std::cell::Cell<usize>,
+    /// Counts uses, so the least recently shown go first.
+    clock: std::cell::Cell<u64>,
+    /// Pictures decoded or parsed: what a test reads to tell a hit.
+    decoded: std::cell::Cell<usize>,
     /// Each file's path and modification time when it was read, so a
     /// watching host sees an edited image (see `changed`).
     files: std::cell::RefCell<HashMap<String, (std::path::PathBuf, Option<std::time::SystemTime>)>>,
@@ -49,7 +59,159 @@ pub(crate) struct Assets {
     /// sources: what shows one follows its version.
     hosted: std::cell::RefCell<HashMap<String, zgx::reactive::Signal<u64>>>,
 }
+/// A cached picture, its size, and when it was last shown.
+struct Cached<T> {
+    value: Arc<T>,
+    bytes: usize,
+    used: std::cell::Cell<u64>,
+}
+/// What the image cache keeps by default of pictures no node shows.
+pub(crate) const IMAGE_CACHE_BUDGET: usize = 48 << 20;
+impl Default for Assets {
+    fn default() -> Self {
+        Self {
+            images: Default::default(),
+            svgs: Default::default(),
+            held: Default::default(),
+            budget: std::cell::Cell::new(IMAGE_CACHE_BUDGET),
+            clock: Default::default(),
+            decoded: Default::default(),
+            files: Default::default(),
+            source: Default::default(),
+            remote: Default::default(),
+            failed: Default::default(),
+            links: Default::default(),
+            hosted: Default::default(),
+        }
+    }
+}
+/// Held by a node showing a cached picture: as it unmounts, the cache
+/// sweeps if it holds more than its budget.
+struct Sweep(std::rc::Weak<Assets>);
+impl Drop for Sweep {
+    fn drop(&mut self) {
+        if let Some(assets) = self.0.upgrade()
+            && assets.held.get() > assets.budget.get()
+        {
+            assets.sweep();
+        }
+    }
+}
 impl Assets {
+    fn tick(&self) -> u64 {
+        let now = self.clock.get() + 1;
+        self.clock.set(now);
+        now
+    }
+    /// The image decoded from `src`, if it is cached.
+    fn image(&self, src: &str) -> Option<Arc<ImageData>> {
+        let images = self.images.borrow();
+        let cached = images.get(src)?;
+        cached.used.set(self.tick());
+        Some(cached.value.clone())
+    }
+    fn svg(&self, src: &str) -> Option<Arc<SvgData>> {
+        let svgs = self.svgs.borrow();
+        let cached = svgs.get(src)?;
+        cached.used.set(self.tick());
+        Some(cached.value.clone())
+    }
+    /// Cache `image` as `src`'s. The host's own are not counted: they go
+    /// only when the host says.
+    fn keep_image(&self, src: String, image: Arc<ImageData>) {
+        let bytes = match src.starts_with("host:") {
+            true => 0,
+            false => image.width() as usize * image.height() as usize * 4,
+        };
+        let cached = Cached {
+            value: image,
+            bytes,
+            used: std::cell::Cell::new(self.tick()),
+        };
+        self.held.set(self.held.get() + bytes);
+        if let Some(old) = self.images.borrow_mut().insert(src, cached) {
+            self.held.set(self.held.get() - old.bytes);
+        }
+        self.decoded.set(self.decoded.get() + 1);
+    }
+    fn keep_svg(&self, src: String, svg: Arc<SvgData>) {
+        let bytes = svg.bytes().len();
+        let cached = Cached {
+            value: svg,
+            bytes,
+            used: std::cell::Cell::new(self.tick()),
+        };
+        self.held.set(self.held.get() + bytes);
+        if let Some(old) = self.svgs.borrow_mut().insert(src, cached) {
+            self.held.set(self.held.get() - old.bytes);
+        }
+        self.decoded.set(self.decoded.get() + 1);
+    }
+    /// Forget `src`'s picture.
+    fn forget(&self, src: &str) {
+        let images = self
+            .images
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut i| i.remove(src));
+        let svgs = self
+            .svgs
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut s| s.remove(src));
+        let bytes = images.map_or(0, |c| c.bytes) + svgs.map_or(0, |c| c.bytes);
+        self.held.set(self.held.get() - bytes);
+    }
+    /// A guard for a node showing cached pictures: as it unmounts, the
+    /// cache drops what no node shows beyond its budget.
+    pub(crate) fn sweeper(self: &Rc<Self>) -> impl std::any::Any {
+        Sweep(Rc::downgrade(self))
+    }
+    pub(crate) fn set_budget(&self, bytes: usize) {
+        self.budget.set(bytes);
+    }
+    /// What is cached: pictures, bytes, and how many were decoded so far.
+    pub(crate) fn stats(&self) -> (usize, usize, usize) {
+        let count = self.images.borrow().len() + self.svgs.borrow().len();
+        (count, self.held.get(), self.decoded.get())
+    }
+    /// Keeps what a node shows (held elsewhere too), and of the rest the
+    /// most recently shown while they fit the budget; drops the others.
+    /// Run as nodes unmount, never per frame.
+    #[cold]
+    #[inline(never)]
+    fn sweep(&self) {
+        let (Ok(mut images), Ok(mut svgs)) =
+            (self.images.try_borrow_mut(), self.svgs.try_borrow_mut())
+        else {
+            return;
+        };
+        let mut idle: Vec<(u64, usize, bool, String)> = Vec::new();
+        for (src, c) in images.iter() {
+            if c.bytes > 0 && Arc::strong_count(&c.value) == 1 {
+                idle.push((c.used.get(), c.bytes, true, src.clone()));
+            }
+        }
+        for (src, c) in svgs.iter() {
+            if Arc::strong_count(&c.value) == 1 {
+                idle.push((c.used.get(), c.bytes, false, src.clone()));
+            }
+        }
+        idle.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
+        let (mut kept, mut freed) = (0, 0);
+        for (_, bytes, image, src) in idle {
+            if kept + bytes <= self.budget.get() {
+                kept += bytes;
+                continue;
+            }
+            match image {
+                true => drop(images.remove(&src)),
+                false => drop(svgs.remove(&src)),
+            }
+            freed += bytes;
+        }
+        self.held.set(self.held.get() - freed);
+    }
     /// `name`'s version signal, made with `runtime` the first time.
     fn hosted(&self, src: &str, runtime: &zgx::reactive::Runtime) -> zgx::reactive::Signal<u64> {
         self.hosted
@@ -67,9 +229,9 @@ impl Assets {
     ) {
         let src = format!("host:{name}");
         match image {
-            Some(image) => self.images.borrow_mut().insert(src.clone(), image),
-            None => self.images.borrow_mut().remove(&src),
-        };
+            Some(image) => self.keep_image(src.clone(), image),
+            None => self.forget(&src),
+        }
         let version = self.hosted(&src, runtime);
         version.update(|v| *v = v.wrapping_add(1));
     }
@@ -81,9 +243,7 @@ impl Assets {
     /// keeps its picture).
     fn forget_hosted(&self, name: &str) {
         let src = format!("host:{name}");
-        if let Ok(mut images) = self.images.try_borrow_mut() {
-            images.remove(&src);
-        }
+        self.forget(&src);
         if let Ok(mut hosted) = self.hosted.try_borrow_mut() {
             hosted.remove(&src);
         }
@@ -131,8 +291,7 @@ impl Assets {
             .collect();
         for src in &stale {
             self.files.borrow_mut().remove(src);
-            self.images.borrow_mut().remove(src);
-            self.svgs.borrow_mut().remove(src);
+            self.forget(src);
         }
         !stale.is_empty()
     }
@@ -1672,6 +1831,7 @@ fn kind_view(
                 .iter()
                 .find(|(p, _)| *p == Prop::Tint)
                 .map(|(_, source)| resolve_owned(source));
+            let sweeper = low.assets.clone();
             svg_signal(label.clone(), move || {
                 let source = match resolve(&src, Ty::Str, None, &vm2) {
                     Some(Lit::Str(path)) => path,
@@ -1692,6 +1852,7 @@ fn kind_view(
                     _ => data,
                 }
             })
+            .on_mount(move |handle| handle.retain(sweeper.sweeper()))
         }
         Kind::WebView(spec) => web_view_of(spec, vm, low),
         Kind::Terminal(term) => zgx::terminal::terminal(term),
@@ -3431,11 +3592,11 @@ fn remote_status(vm: &Rc<Vm>, low: &Lowering, src: &str, svg: bool) -> u8 {
         match decoded {
             Ok(Decoded::Image(image)) => {
                 assets.failed.borrow_mut().remove(&src);
-                assets.images.borrow_mut().insert(src, image);
+                assets.keep_image(src, image);
             }
             Ok(Decoded::Svg(svg)) => {
                 assets.failed.borrow_mut().remove(&src);
-                assets.svgs.borrow_mut().insert(src, svg);
+                assets.keep_svg(src, svg);
             }
             Err(error) => {
                 // A picture that doesn't come is the network's doing, not
@@ -3461,10 +3622,10 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
     // The host's own images, followed as it replaces them.
     if src.starts_with("host:") {
         low.assets.hosted(src, &low.runtime).get();
-        return low.assets.images.borrow().get(src).cloned();
+        return low.assets.image(src);
     }
-    if let Some(image) = low.assets.images.borrow().get(src) {
-        return Some(image.clone());
+    if let Some(image) = low.assets.image(src) {
+        return Some(image);
     }
     if is_remote(src) {
         remote_ready(vm, low, src, false);
@@ -3482,10 +3643,7 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
         });
     match decoded {
         Ok(image) => {
-            low.assets
-                .images
-                .borrow_mut()
-                .insert(src.to_owned(), image.clone());
+            low.assets.keep_image(src.to_owned(), image.clone());
             Some(image)
         }
         Err(e) => {
@@ -3533,8 +3691,8 @@ fn literal_site(vm: &Vm, src: &str) -> Option<String> {
     })
 }
 fn load_svg(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Arc<SvgData> {
-    if let Some(svg) = low.assets.svgs.borrow().get(src) {
-        return svg.clone();
+    if let Some(svg) = low.assets.svg(src) {
+        return svg;
     }
     if is_remote(src) {
         remote_ready(vm, low, src, true);
@@ -3557,10 +3715,7 @@ fn load_svg(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Arc<SvgData> {
     match parsed {
         Ok(svg) => {
             let svg = Arc::new(svg);
-            low.assets
-                .svgs
-                .borrow_mut()
-                .insert(src.to_owned(), svg.clone());
+            low.assets.keep_svg(src.to_owned(), svg.clone());
             svg
         }
         Err(e) => {
@@ -4687,7 +4842,9 @@ fn lower_image(node: &Node, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
             })
         }
     };
-    match fallback {
+    // As it unmounts, the cache lets go of pictures no node shows.
+    let sweeper = low.assets.clone();
+    let view = match fallback {
         None => picture(),
         Some(fallback) => {
             // The picture once a remote one has arrived (a local one, or a
@@ -4709,7 +4866,8 @@ fn lower_image(node: &Node, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 }
             })
         }
-    }
+    };
+    view.on_mount(move |handle| handle.retain(sweeper.sweeper()))
 }
 
 /// A list row's key: its index, or (`key`) its item's key, a number,

@@ -1267,6 +1267,21 @@ impl ScriptHost {
     pub fn open(&self, files: Vec<std::path::PathBuf>, urls: Vec<String>) {
         self.0.opens.open(&self.0.picked, files, urls);
     }
+    /// How many bytes of decoded images and SVGs that no node shows the
+    /// host keeps, the most recently shown first, so a reload or a page
+    /// shown again is instant (48 MiB by default). What a mounted node
+    /// shows is always kept; the rest go as nodes showing pictures unmount.
+    /// The host's own images (`ScriptHost::image`) are not counted.
+    pub fn image_cache(self, bytes: usize) -> Self {
+        self.0.assets.set_budget(bytes);
+        self
+    }
+    /// The pictures cached, their bytes, and how many were decoded so far
+    /// (for tests).
+    #[doc(hidden)]
+    pub fn image_cache_stats(&self) -> (usize, usize, usize) {
+        self.0.assets.stats()
+    }
     /// Run scripts within `limits`: heap, and time to load and per call.
     pub fn limits(self, limits: Limits) -> Self {
         self.configure(|inner| inner.limits = limits)

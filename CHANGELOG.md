@@ -17,6 +17,10 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - **Module overrides** (zgx-script): a plugin trusted with `Capability::Override` replaces one of the modules the app requires as `@app/…`: `ui.override { module = "@app/components/card", with = "./card" }`, the replacement reaching the original as `@app-original/…`. The replacement runs as the app's own code, so the grant is a trust grant.
 - **Packages** (zgx-script, zgx-run): `ScriptHost::package("kit", dir)`, or zgx.json's `"packages"`, lets an app require modules from a folder outside its directory, as `@kit/…` or through a `.luaurc` alias into it; read only, and plugins reach none. `build::bundle` brings the packages its zgx.json lists into the bundle.
 
+### Fixed
+
+- **Decoded images and SVGs no longer stay for the process's life** (zgx-script). Each `src` was decoded once and kept until its file changed, so a page of forty large images left ~80 MB behind after it unmounted. What a mounted node shows is still kept. Of the rest, the most recently shown stay within a budget (48 MiB by default, `ScriptHost::image_cache(bytes)`), so a reload or a page shown again is still instant. The others go as nodes showing pictures unmount, never per frame.
+
 ## 0.1.5 (2026-10-28)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.4 is an addition, and zgx-desktop and zgx-gpu 0.1.4 build against this zgx), and `zgx-3d` is a new crate. Two behaviours change, each below with what to check: a radio's, check box's, switch's or link's accessible name, and the button Enter or Space activates.

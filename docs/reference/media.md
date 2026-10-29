@@ -14,7 +14,7 @@ ui.shader(source: string, opts: { fps: number? }?) -> Shader
 
 ## image
 
-A PNG or JPEG, decoded once per `src` and kept across reloads.
+A PNG or JPEG, decoded once per `src` and kept while a node shows it. Of those no node shows, the most recently shown are kept within the host's budget (`ScriptHost::image_cache`, 48 MiB by default), so a reload or a page shown again decodes nothing.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
@@ -157,7 +157,7 @@ return ui.column {
 ## Gotchas
 
 - `ui.image` needs `src`; `code` is the SVG's (an image with only `code` fails to load). A missing or undecodable file shows the error in the window and an empty image.
-- Images and SVGs are decoded once per `src` and shared by every node showing it. A host that watches its scripts (`ScriptHost::watch`) also watches these files: saving an edited image reloads the scripts, state kept, and they show the new one.
+- Images and SVGs are decoded once per `src` and shared by every node showing it. Ones no node shows stay only while they fit the image cache's budget, the most recently shown first. A host that watches its scripts (`ScriptHost::watch`) also watches these files: saving an edited image reloads the scripts, state kept, and they show the new one.
 - An image is as large as its pixels in points unless sized; give it a `w` and `h` (or `aspect` and one of them).
 - `draw` runs again only for its size and the state it read; reading state through `peek` (or outside `draw`) does not redraw it. Keep it cheap: it runs in the script for every change it follows.
 - A drawn path cannot grow (`a drawn path cannot be extended`): build paths whole, then draw them.
