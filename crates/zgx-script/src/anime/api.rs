@@ -1030,9 +1030,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     let text = lua.create_table()?;
     text.set(
         "split",
-        lua.load(TEXT_SPLIT)
-            .set_name("=anime.text.split")
-            .eval::<mlua::Function>()?,
+        crate::lazy::builtin(lua, "=anime.text.split", TEXT_SPLIT)?.eval::<mlua::Function>()?,
     )?;
     anime.set("text", text)?;
     anime.set(

@@ -52,6 +52,7 @@ pub mod inspect;
 pub mod inspect_client;
 mod interrupt;
 mod io;
+mod lazy;
 #[cfg(feature = "components")]
 mod library;
 pub mod lint;
@@ -2609,30 +2610,68 @@ impl ScriptHost {
         });
         node::install(&lua).map_err(fail)?;
         let ui: mlua::Table = lua.globals().get("ui").map_err(fail)?;
-        term::install(&lua, &ui, self.0.terms.clone()).map_err(fail)?;
-        node::install_web(&lua, &ui, self.0.webs.clone()).map_err(fail)?;
-        command::install(&lua, &ui, self.0.commands.clone()).map_err(fail)?;
-        i18n::install(&lua, &ui, self.0.locales.clone(), self.0.files).map_err(fail)?;
-        windows::install(&lua, &ui, self.0.windows.clone(), &self.0.shared).map_err(fail)?;
+        // Each module made the first time a script names it (`lazy`).
+        let lazy = lazy::Lazy::default();
+        lazy.ui(&["path", "linear"], canvas::install);
+        #[cfg(feature = "scene3d")]
+        lazy.ui(&["scene3d", "mesh", "light", "group"], scene3d::install);
+        lazy.ui(&["json", "number", "sort"], data::install);
+        let terms = self.0.terms.clone();
+        lazy.ui(&["term"], move |lua, ui| term::install(lua, ui, terms));
+        let webs = self.0.webs.clone();
+        lazy.ui(&["web"], move |lua, ui| node::install_web(lua, ui, webs));
+        let commands = self.0.commands.clone();
+        lazy.ui(&["command", "shortcut_text"], move |lua, ui| {
+            command::install(lua, ui, commands)
+        });
+        i18n::install(&lazy, self.0.locales.clone(), self.0.files);
+        let (windows, shared) = (self.0.windows.clone(), self.0.shared.clone());
+        lazy.ui(&["window"], move |lua, ui| {
+            windows::install(lua, ui, windows, &shared)
+        });
         let may = |capability: Capability| grants.allows(&capability);
         let fetch = may(Capability::Fetch).then(|| self.0.fetcher.clone());
-        calls::install(&lua, &ui, self.0.async_actions.clone(), fetch).map_err(fail)?;
-        io::install(
-            &lua,
-            &ui,
-            self.0.platform.clone(),
-            self.0.picked.clone(),
-            may(Capability::Clipboard),
-            may(Capability::Files),
-        )
-        .map_err(fail)?;
-        theme::install(&lua, &ui, script.dir(), self.packages(plugin)).map_err(fail)?;
-        form::install(&lua, &ui).map_err(fail)?;
-        opens::install(&lua, &ui, self.0.opens.clone(), plugin).map_err(fail)?;
-        ui.set_readonly(true);
-        anime::api::install(&lua).map_err(fail)?;
+        let actions = self.0.async_actions.clone();
+        lazy.ui(
+            &["call", "fetch", "resource", "task", "try"],
+            move |lua, ui| calls::install(lua, ui, actions, fetch),
+        );
+        let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());
+        let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
+        lazy.ui(
+            &[
+                "clipboard",
+                "open_files",
+                "read_file",
+                "save_file",
+                "write_file",
+            ],
+            move |lua, ui| io::install(lua, ui, platform, picked, clipboard, files_allowed),
+        );
+        let (dir, packages) = (script.dir(), self.packages(plugin));
+        lazy.ui(&["prefers", "theme", "tokens"], move |lua, ui| {
+            theme::install(lua, ui, dir, packages)
+        });
+        lazy.ui(&["form"], form::install);
+        lazy.ui(&["contribute", "filter", "override"], node::install_plugins);
+        // `ui.selector(text)`: a plugin's target by role or name
+        // (`'role:button "Save"'`), the text itself at run time; its type
+        // tells it from a target the app declares (`zgx types`).
+        lazy.ui(&["selector"], |lua, ui| {
+            ui.raw_set(
+                "selector",
+                lua.create_function(|_, text: mlua::LuaString| Ok(text))?,
+            )
+        });
+        let opens = self.0.opens.clone();
+        lazy.ui(&["args", "on_open"], move |lua, ui| {
+            opens::install(lua, ui, opens, plugin)
+        });
+        lazy.global(&["anime"], |lua, _| anime::api::install(lua));
         self.install_require(&lua, script.dir(), files, plugin)
             .map_err(fail)?;
+        lazy::attach(&lua, &ui, lazy).map_err(fail)?;
+        ui.set_readonly(true);
         lua.sandbox(true).map_err(fail)?;
         // Building runs untracked: reading state while describing the tree
         // must not subscribe whatever is currently mounting.

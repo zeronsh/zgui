@@ -698,7 +698,7 @@ impl Kept {
         let judge = match &self.judge_all {
             Some(f) => f.clone(),
             None => {
-                let f: Function = vm.lua.load(JUDGE_ALL).set_name("=ui.sorted").eval()?;
+                let f: Function = crate::lazy::builtin(&vm.lua, "=ui.sorted", JUDGE_ALL)?.eval()?;
                 self.judge_all = Some(f.clone());
                 f
             }

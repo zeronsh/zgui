@@ -6,7 +6,7 @@
 //! One catalog per host, kept across reloads (a reload asking for the same
 //! directory keeps its signals); its files are read again when they change,
 //! setting only the messages whose text did (`reload_if_changed`).
-use crate::{Files, node::env, value::Value};
+use crate::{Files, lazy::Lazy, node::env, value::Value};
 use mlua::{Lua, Table, UserData, UserDataFields, UserDataMethods};
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::SystemTime};
 use zgx::i18n::{ArgValue, I18n, Message};
@@ -198,51 +198,27 @@ fn arg_value(value: &Value) -> ArgValue {
     }
 }
 
-/// `ui.i18n`, and `ui.t` and `ui.locale` made the first time a script
-/// names either: `ui.i18n`'s function is also `ui`'s `__index` (which keys
-/// `ui` has never reach), so a script that uses none pays for the one
-/// function and a small metatable as its VM is made, not three functions
-/// and a userdata type. `ui.selector` is made there too, the first time a
-/// plugin names it.
-pub(crate) fn install(
-    lua: &Lua,
-    ui: &Table,
-    locales: Rc<Locales>,
-    files: Files,
-) -> mlua::Result<()> {
+/// `ui.i18n`, and `ui.t` and `ui.locale`, each made the first time a
+/// script names it (`lazy`).
+pub(crate) fn install(lazy: &Lazy, locales: Rc<Locales>, files: Files) {
     let set = locales.clone();
-    let entry = lua.create_function(move |lua, (first, key): (mlua::Value, mlua::Value)| {
-        // `__index(ui, key)`: a key `ui` doesn't have.
-        if let mlua::Value::String(name) = &key {
-            if name.as_bytes().as_ref() == b"selector" {
-                return selector(lua);
-            }
-            if !matches!(name.as_bytes().as_ref(), b"t" | b"locale") {
-                return Ok(mlua::Value::Nil);
-            }
-            provide(lua, &set)?;
-            let ui: Table = lua.globals().get("ui")?;
-            return ui.raw_get::<mlua::Value>(key);
-        }
-        // `ui.i18n { dir, source }`.
-        let options = match first {
-            mlua::Value::Table(options) => Some(options),
-            mlua::Value::Nil => None,
-            other => {
-                return Err(mlua::Error::runtime(format!(
-                    "ui.i18n takes a table ({{ dir, source }}), not {}",
-                    other.type_name()
-                )));
-            }
-        };
-        load(lua, &set, files, options)?;
-        Ok(mlua::Value::Nil)
-    })?;
-    ui.set("i18n", entry.clone())?;
-    let meta = lua.create_table()?;
-    meta.raw_set("__index", entry)?;
-    ui.set_metatable(Some(meta))?;
-    Ok(())
+    lazy.ui(&["i18n"], move |lua, ui| {
+        let entry = lua.create_function(move |lua, options: mlua::Value| {
+            let options = match options {
+                mlua::Value::Table(options) => Some(options),
+                mlua::Value::Nil => None,
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "ui.i18n takes a table ({{ dir, source }}), not {}",
+                        other.type_name()
+                    )));
+                }
+            };
+            load(lua, &set, files, options)
+        })?;
+        ui.raw_set("i18n", entry)
+    });
+    lazy.ui(&["t", "locale"], move |lua, ui| add(lua, ui, &locales));
 }
 
 /// `ui.i18n { dir, source }`: loads the catalog (or keeps the one loaded
@@ -327,24 +303,13 @@ fn provide(lua: &Lua, locales: &Rc<Locales>) -> mlua::Result<()> {
     open(&ui, |ui| add(lua, ui, locales))
 }
 /// `f` with `ui` writable: it is frozen once the VM is made, and opened
-/// only to add what a script names first (`ui.t`, `ui.selector`).
+/// only to add what a script asks for (`ui.t` once a catalog loads).
 fn open(ui: &Table, f: impl FnOnce(&Table) -> mlua::Result<()>) -> mlua::Result<()> {
     let frozen = ui.is_readonly();
     ui.set_readonly(false);
     let made = f(ui);
     ui.set_readonly(frozen);
     made
-}
-/// `ui.selector(text)`: a plugin's target by role or name
-/// (`'role:button "Save"'`), the text itself at run time; its type tells it
-/// from a target the app declares (`zgx types`). Made the first time a
-/// script names it, which is as Luau loads one naming `ui.selector` (it
-/// resolves such paths then): a script that never does makes none.
-fn selector(lua: &Lua) -> mlua::Result<mlua::Value> {
-    let ui: Table = lua.globals().get("ui")?;
-    let made = lua.create_function(|_, text: mlua::LuaString| Ok(text))?;
-    open(&ui, |ui| ui.raw_set("selector", made.clone()))?;
-    Ok(mlua::Value::Function(made))
 }
 fn add(lua: &Lua, ui: &Table, locales: &Rc<Locales>) -> mlua::Result<()> {
     let catalog = locales.clone();

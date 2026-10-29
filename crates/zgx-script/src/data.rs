@@ -362,7 +362,7 @@ pub(crate) fn install(lua: &Lua, ui: &Table) -> mlua::Result<()> {
             }
             result.map_err(mlua::Error::runtime)
         })?;
-    let sort: mlua::Function = lua.load(SORT).set_name("=ui.sort").call(sort_by_keys)?;
+    let sort: mlua::Function = crate::lazy::builtin(lua, "=ui.sort", SORT)?.call(sort_by_keys)?;
     ui.set("sort", sort)?;
     ui.set(
         "number",

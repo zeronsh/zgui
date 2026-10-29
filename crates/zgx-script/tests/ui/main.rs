@@ -19,6 +19,8 @@ mod image_cache;
 mod layout_gaps;
 #[path = "../layout_motion.rs"]
 mod layout_motion;
+#[path = "../lazy_ui.rs"]
+mod lazy_ui;
 #[path = "../regions.rs"]
 mod regions;
 #[path = "../rtl.rs"]

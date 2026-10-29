@@ -790,7 +790,7 @@ pub(crate) fn install(
     fetcher: Option<SharedFetcher>,
 ) -> mlua::Result<()> {
     let (await_fn, try_fn): (Function, Function) =
-        lua.load(AWAIT_SOURCE).set_name("=await").eval()?;
+        crate::lazy::builtin(lua, "=await", AWAIT_SOURCE)?.eval()?;
     lua.set_named_registry_value(AWAIT, await_fn)?;
     ui.set("try", try_fn)?;
     ui.set(
@@ -918,7 +918,7 @@ fn resource(lua: &Lua, (load, opts): (Function, Option<Table>)) -> mlua::Result<
     let wrap: Function = match lua.named_registry_value::<Function>(RESOURCE) {
         Ok(wrap) => wrap,
         Err(_) => {
-            let wrap: Function = lua.load(RESOURCE_SOURCE).set_name("=resource").eval()?;
+            let wrap: Function = crate::lazy::builtin(lua, "=resource", RESOURCE_SOURCE)?.eval()?;
             lua.set_named_registry_value(RESOURCE, wrap.clone())?;
             wrap
         }

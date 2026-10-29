@@ -208,7 +208,7 @@ fn loaded(lua: &Lua) -> mlua::Result<(Function, Function)> {
         .create_function(|lua, initial: Value| Ok(State::new(env(lua)?.runtime.signal(initial))))?;
     let ui: Table = lua.globals().get("ui")?;
     let (form, bind): (Function, Function) =
-        lua.load(SOURCE).set_name("=form").call((ui, new_state))?;
+        crate::lazy::builtin(lua, "=form", SOURCE)?.call((ui, new_state))?;
     let made = lua.create_sequence_from([form.clone(), bind.clone()])?;
     lua.set_named_registry_value(BIND, made)?;
     Ok((form, bind))

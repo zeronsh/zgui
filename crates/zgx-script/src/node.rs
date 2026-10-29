@@ -3561,6 +3561,55 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
 }
 
 /// Installs the read-only `ui` global.
+/// `ui.override`, `ui.contribute` and `ui.filter`: what plugins (and an
+/// app's own extensions) hand the app, made once a script names one.
+pub(crate) fn install_plugins(lua: &Lua, ui: &Table) -> mlua::Result<()> {
+    ui.set(
+        "override",
+        lua.create_function(|lua, table: Table| {
+            let env = env(lua)?;
+            let replaced = module_override(&env, &table)?;
+            env.overrides.borrow_mut().push(replaced);
+            Ok(())
+        })?,
+    )?;
+    ui.set(
+        "contribute",
+        lua.create_function(|lua, (slot, node): (mlua::Value, Option<mlua::Value>)| {
+            let env = env(lua)?;
+            let owner = env.owner.clone();
+            match (slot, node) {
+                (mlua::Value::String(slot), Some(node)) => {
+                    let node = expect_node(node, "a contribution")?;
+                    let slot = slot.to_str()?.to_string();
+                    env.contributions.borrow_mut().push((slot, owner, node));
+                }
+                (mlua::Value::Table(table), None) => {
+                    let hook = hook_contribution(&env, &table, owner)?;
+                    env.hooks.borrow_mut().push(hook);
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "ui.contribute takes a slot's name and a node, or \
+                         { target = \"#id\", before = node | after = node | replace = node }",
+                    ));
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+    ui.set(
+        "filter",
+        lua.create_function(|lua, table: Table| {
+            let env = env(lua)?;
+            let hook = hook_filter(&env, &table, env.owner.clone())?;
+            env.hooks.borrow_mut().push(hook);
+            Ok(())
+        })?,
+    )?;
+    Ok(())
+}
+
 pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.set_app_data(StyleKeys::default());
     let ui = lua.create_table()?;
@@ -3811,10 +3860,6 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             )
         })?,
     )?;
-    crate::canvas::install(lua, &ui)?;
-    #[cfg(feature = "scene3d")]
-    crate::scene3d::install(lua, &ui)?;
-    crate::data::install(lua, &ui)?;
 
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
@@ -4818,49 +4863,6 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     table.as_ref(),
                 )?,
             )
-        })?,
-    )?;
-    ui.set(
-        "override",
-        lua.create_function(|lua, table: Table| {
-            let env = env(lua)?;
-            let replaced = module_override(&env, &table)?;
-            env.overrides.borrow_mut().push(replaced);
-            Ok(())
-        })?,
-    )?;
-    ui.set(
-        "contribute",
-        lua.create_function(|lua, (slot, node): (mlua::Value, Option<mlua::Value>)| {
-            let env = env(lua)?;
-            let owner = env.owner.clone();
-            match (slot, node) {
-                (mlua::Value::String(slot), Some(node)) => {
-                    let node = expect_node(node, "a contribution")?;
-                    let slot = slot.to_str()?.to_string();
-                    env.contributions.borrow_mut().push((slot, owner, node));
-                }
-                (mlua::Value::Table(table), None) => {
-                    let hook = hook_contribution(&env, &table, owner)?;
-                    env.hooks.borrow_mut().push(hook);
-                }
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "ui.contribute takes a slot's name and a node, or \
-                         { target = \"#id\", before = node | after = node | replace = node }",
-                    ));
-                }
-            }
-            Ok(())
-        })?,
-    )?;
-    ui.set(
-        "filter",
-        lua.create_function(|lua, table: Table| {
-            let env = env(lua)?;
-            let hook = hook_filter(&env, &table, env.owner.clone())?;
-            env.hooks.borrow_mut().push(hook);
-            Ok(())
         })?,
     )?;
     ui.set(
