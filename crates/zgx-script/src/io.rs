@@ -38,19 +38,61 @@ fn denied(what: &str, capability: &str) -> mlua::Error {
     ))
 }
 
-/// `{ path, name }`, as dialogs give files to scripts.
+/// `{ path, name, size, type }`, as dialogs and drops give files to
+/// scripts (the web's `File`): `size` in bytes (0 for what is not a file
+/// to read, a folder), `type` its media type by its extension
+/// (`"image/png"`), `""` when none is known.
 pub(crate) fn file_value(path: &Path) -> Value {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let size = std::fs::metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map_or(0, |m| m.len());
     Value::Map(
         vec![
             (Rc::from("name"), Value::Str(name.into())),
             (Rc::from("path"), Value::Str(path.to_string_lossy().into())),
+            (Rc::from("size"), Value::Num(size as f64)),
+            (Rc::from("type"), Value::Str(media_type(path).into())),
         ]
         .into(),
     )
+}
+
+/// A file's media type by its extension, as browsers give `File.type`:
+/// the common ones a person attaches, `""` for the rest.
+pub(crate) fn media_type(path: &Path) -> &'static str {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("heic") => "image/heic",
+        Some("avif") => "image/avif",
+        Some("bmp") => "image/bmp",
+        Some("pdf") => "application/pdf",
+        Some("zip") => "application/zip",
+        Some("json") => "application/json",
+        Some("txt" | "log") => "text/plain",
+        Some("md") => "text/markdown",
+        Some("csv") => "text/csv",
+        Some("html" | "htm") => "text/html",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("m4a") => "audio/mp4",
+        Some("mp4") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("webm") => "video/webm",
+        _ => "",
+    }
 }
 /// A dialog's options: `title`, `directory`, `name` (to save as),
 /// `filters` (`{ { "Images", { "png", "jpg" } } }`) and `multiple`.

@@ -727,6 +727,14 @@ export type FetchOptions = {
 	headers: { [string]: string }?,
 	-- Text, or data sent as JSON (with its content type).
 	body: unknown?,
+	-- A file sent as the body, read off the window's thread, its type the
+	-- file's (a POST unless `method` says).
+	file: File?,
+	-- A form's fields sent as `multipart/form-data`: text, or a `File`.
+	multipart: { [string]: string | number | boolean | File }?,
+	-- The body going out: `sent` of `total` bytes, as the transport writes
+	-- it (or all of it at the answer, from one that does not say).
+	on_progress: ((sent: number, total: number) -> ())?,
 	-- The body's text as it arrives (a reply streaming), in whole
 	-- characters; the response's `body` is then empty unless it failed.
 	on_chunk: ((text: string) -> ())?,
@@ -754,7 +762,9 @@ export type Response = {
 
 -- A file the user picked (`ui.open_files`, `ui.save_file`): the only
 -- files a script reads or writes.
-export type File = { path: string, name: string }
+-- A file a dialog, a drop or the system gives (the web's `File`): `size` in
+-- bytes, `type` its media type by its extension ("image/png"; "" unknown).
+export type File = { path: string, name: string, size: number, type: string }
 export type FilePickerOptions = {
 	title: string?,
 	-- Where the dialog opens.
@@ -1812,6 +1822,12 @@ export type NodeProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: (((e: NavigateEvent) -> ...unknown) | Action)?,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: ((files: { File }, e: PointerEvent) -> ...unknown)?,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: ((over: boolean) -> ...unknown)?,
 	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
 	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
 	-- Return true to consume the key.

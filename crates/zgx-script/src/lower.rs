@@ -4000,12 +4000,74 @@ fn with_rare(
     handle: Rc<OnceCell<NodeHandle>>,
 ) -> View {
     if let Some(handler) = &rare.aux_click {
-        view = with_aux_click(view, handler.clone(), vm, low, handle);
+        view = with_aux_click(view, handler.clone(), vm, low, handle.clone());
     }
     if let Some(handler) = &rare.navigate {
         view = with_navigate(view, handler.clone(), vm, low);
     }
+    if rare.file_drop.is_some() || rare.file_hover.is_some() {
+        view = with_file_drop(view, rare, vm, low, handle);
+    }
     view
+}
+
+/// `on_file_drop` and `on_file_hover`: files dragged in from outside the
+/// window, as react-dropzone hears them. A listener of their own, so a
+/// node without them pays nothing.
+#[inline(never)]
+fn with_file_drop(
+    view: View,
+    rare: &crate::node::RareEvents,
+    vm: &Rc<Vm>,
+    low: &Rc<Lowering>,
+    handle: Rc<OnceCell<NodeHandle>>,
+) -> View {
+    use zgx::input::{EventPhase, InputEvent};
+    let (drop, hover) = (rare.file_drop.clone(), rare.file_hover.clone());
+    let (vm, actions) = (vm.clone(), low.actions.clone());
+    let over = std::cell::Cell::new(false);
+    view.on_event(move |cx| {
+        if cx.phase == EventPhase::Capture {
+            return;
+        }
+        let now = match &cx.event {
+            InputEvent::FileHover { .. } => true,
+            InputEvent::FileHoverCancelled
+            | InputEvent::FilesDrop { .. }
+            | InputEvent::FilesDropRejected { .. } => false,
+            _ => return,
+        };
+        if over.replace(now) != now
+            && let Some(hover) = &hover
+        {
+            run(hover, &vm, &actions, now);
+        }
+        let InputEvent::FilesDrop { x, y, paths } = &cx.event else {
+            return;
+        };
+        let Some(drop) = &drop else { return };
+        if cx.default_prevented() {
+            return;
+        }
+        let files = Value::List(paths.iter().map(|p| crate::io::file_value(p)).collect());
+        let at = handle
+            .get()
+            .and_then(|handle| handle.scene())
+            .map(|scene| scene.borrow().transformed_bounds(cx.current_target))
+            .map_or((0., 0.), |bounds| (bounds.x, bounds.y));
+        let point = vm.lua.create_table().and_then(|t| {
+            t.set("x", *x)?;
+            t.set("y", *y)?;
+            t.set("local_x", *x - at.0)?;
+            t.set("local_y", *y - at.1)?;
+            Ok(t)
+        });
+        if let Ok(point) = point {
+            run(drop, &vm, &actions, (files, point));
+        }
+        cx.prevent_default();
+        cx.stop_propagation();
+    })
 }
 
 /// `on_aux_click`: a listener of its own, so a node without one pays nothing

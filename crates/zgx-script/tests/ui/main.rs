@@ -13,6 +13,8 @@ mod driver;
 mod each_reorder;
 #[path = "../failures.rs"]
 mod failures;
+#[path = "../file_drop.rs"]
+mod file_drop;
 #[path = "../i18n_script.rs"]
 mod i18n_script;
 #[path = "../image_cache.rs"]

@@ -2654,9 +2654,10 @@ impl ScriptHost {
         let may = |capability: Capability| grants.allows(&capability);
         let fetch = may(Capability::Fetch).then(|| self.0.fetcher.clone());
         let actions = self.0.async_actions.clone();
+        let upload_files = may(Capability::Files);
         lazy.ui(
             &["call", "fetch", "resource", "task", "try"],
-            move |lua, ui| calls::install(lua, ui, actions, fetch),
+            move |lua, ui| calls::install(lua, ui, actions, fetch, upload_files),
         );
         lazy.ui(&["paged", "debounced"], paged::install);
         let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());

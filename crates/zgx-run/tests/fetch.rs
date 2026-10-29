@@ -105,9 +105,13 @@ fn answer(mut stream: TcpStream, closed: &AtomicBool) {
 }
 
 fn app(base: &str) -> TestApp {
+    let upload = std::env::temp_dir().join(format!("zgx-run-upload-{}.txt", std::process::id()));
+    std::fs::write(&upload, "a file's text").unwrap();
+    let upload = upload.display();
     let script = format!(
         r#"
 local base = "{base}"
+local UPLOAD = "{upload}"
 local shown = ui.state("shown", "")
 local chunks = ui.state("chunks", "")
 local status = ui.state("status", "")
@@ -136,6 +140,16 @@ return ui.column {{
             end,
         }})
         p:after(function() status:set("settled") end, function(e) status:set(e) end)
+    end }},
+    ui.button {{ id = "upload", w = 40, h = 20, "u", on_click = function()
+        ui.task(function()
+            local sent = ""
+            local r = ui.fetch(base .. "/echo", {{
+                file = {{ path = UPLOAD }},
+                on_progress = function(n, total) sent = `{{n}}/{{total}}` end,
+            }}):await()
+            shown:set(`{{r.body}} {{sent}}`)
+        end)
     end }},
     ui.button {{ id = "nowhere", w = 40, h = 20, "n", on_click = function()
         ui.fetch("http://127.0.0.1:1/"):after(function() status:set("answered") end, function(e) status:set("failed") end)
@@ -196,4 +210,17 @@ fn a_request_nothing_answers_rejects() {
     app.click("nowhere");
     assert!(app.wait_until(|app| !app.text("status").is_empty()));
     assert_eq!(app.text("status"), "failed");
+}
+
+#[test]
+fn a_file_uploads_and_tells_its_progress() {
+    let (base, _) = serve();
+    let mut app = app(&base);
+    app.click("upload");
+    assert!(
+        app.wait_until(|app| !app.text("shown").is_empty()),
+        "{:?}",
+        app.error()
+    );
+    assert_eq!(app.text("shown"), "POST  a file's text 13/13");
 }

@@ -39,5 +39,7 @@ mod state;
 mod streaming;
 #[path = "../ui_errors.rs"]
 mod ui_errors;
+#[path = "../upload.rs"]
+mod upload;
 #[path = "../windows.rs"]
 mod windows;

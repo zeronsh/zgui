@@ -299,6 +299,35 @@ return ui.column {
 
 A desktop window gives scripts its clipboard and file dialogs (`zgx::platform`). `ui.clipboard.read()` returns its text, `ui.clipboard.write(text)` replaces it. `ui.clipboard.read_image()` settles with its image as a full-colour `Bitmap` (`w`, `h`; a screenshot, an image editor's copy, a browser's Copy Image), or nil, and `ui.clipboard.write_image(bitmap)` puts one there (a `ui.bitmap`, or one read before) for other apps to paste, settling with whether it took it: promises, as a large image is decoded and encoded off the main thread (a 4K one took 15 to 70 ms to read and 130 ms to write). State can keep a `Bitmap`, its pixels counted against a plugin's memory limit, and `ui.image { src = state }` shows the one it holds (a pasted picture: `ui.clipboard.read_image():after(function(b) if b then pasted:set(b) end end)`). `ui.open_files({ title, directory, filters = { { "Images", { "png" } } }, multiple })` settles with the files the user picks (an empty list if they cancel) and `ui.save_file({ name })` with where they choose to save (or nil), each a `{ path, name }`. A script reads and writes only files the user picked in this host's dialogs, as a web page does: `ui.read_file(file)` settles with its text and `ui.write_file(file, text)` writes beside it and renames over it (never half a file), both off the main thread. Headless, without a window, they are errors.
 
+A file, from `ui.open_files`, a drop (`on_file_drop`, [events](events.md)) or `ui.on_open`, is `{ path, name, size, type }` as the web's `File` is: `size` in bytes and `type` its media type by its extension (`"image/png"`, `""` when unknown). `ui.fetch(url, { file = f })` sends it as the request's body with its type (a POST unless `method` says otherwise), and `multipart = { caption = "Hi", attachment = f }` sends a form's fields, text or files, as `multipart/form-data` (the web's `FormData`). The files are read on a thread of their own, so a large one never holds up the window. `on_progress = function(sent, total)` hears the body go out: the transport tells it as it writes (zgx-run's does; a host's streaming fetcher calls `Body::sent`), and one that does not say reports it all at the answer. Cancelling the task or the promise stops the upload, as it stops any fetch. A plugin needs `Capability::Files` as well as `Fetch` to send files.
+
+```lua
+local progress = ui.state("progress", 0)
+local function upload(file: File)
+	ui.task(function()
+		local response = ui.fetch("https://files.example/upload", {
+			multipart = { attachment = file, room = "general" },
+			on_progress = function(sent: number, total: number)
+				progress:set(if total > 0 then sent / total else 1)
+			end,
+		}):await()
+		if not response.ok then
+			ui.toast { title = "Upload failed", body = `HTTP {response.status}`, kind = "error" }
+		end
+	end)
+end
+return ui.column {
+	h = 200,
+	on_file_drop = function(files: { File })
+		for _, file in files do
+			upload(file)
+		end
+	end,
+	ui.text { "Drop a file here" },
+	ui.progress { value = progress },
+}
+```
+
 `ui.args` is what the app was launched with after its script (`zgx-run app/ notes.txt` gives `{ "notes.txt" }`), and `ui.on_open(handler)` is handed the files and URLs the system asks it to open: those among its launch's arguments, and with an `application_id` (reverse-DNS, in `zgx.json` or `Application::application_id`) a file opened with the app, a link to it, or a second launch's on Windows. Its files are the user's choice, as a dialog's are, so `ui.read_file` takes them; what arrives before the script registers its handler waits for it. It is the app's: a plugin's `ui.on_open` is an error.
 
 Plugins reach the network, the clipboard and files only if the host grants each: `ScriptHost::grant("plugin.luau", Capability::Fetch)` (or `Clipboard`, `Files`; `Plugin::grants` for the plugins an app sets), and the app's actions and shared state only where it exposes them (see Plugins in `docs/scripting.md`). A plugin that fails to load is left out and its error reported; the app and the other plugins load.

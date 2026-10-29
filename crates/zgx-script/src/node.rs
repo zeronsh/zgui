@@ -720,6 +720,13 @@ pub(crate) struct RareEvents {
     /// platform's gesture for it takes over the node (a trackpad's swipe
     /// between pages, macOS); the nearest node with one takes it.
     pub navigate: Option<Handler>,
+    /// `fn(files, { x, y, local_x, local_y })`: files dropped on it from
+    /// outside the window (Finder, Explorer, a file manager), each a
+    /// `File`; the innermost node with one takes them.
+    pub file_drop: Option<Handler>,
+    /// `fn(over)`: files dragged from outside the window come over it
+    /// (`true`), then leave it, are dropped or the drag ends (`false`).
+    pub file_hover: Option<Handler>,
 }
 impl Kind {
     /// Regions that become a box of any number of children, laid out as
@@ -2764,6 +2771,8 @@ fn set_handler(
         "on_release" => &mut events.release,
         "on_aux_click" => &mut events.rare.get_or_insert_default().aux_click,
         "on_navigate" => &mut events.rare.get_or_insert_default().navigate,
+        "on_file_drop" => &mut events.rare.get_or_insert_default().file_drop,
+        "on_file_hover" => &mut events.rare.get_or_insert_default().file_hover,
         "on_hover" => &mut events.hover,
         "on_pointer_move" => &mut events.pointer_move,
         "on_key" => &mut events.key,

@@ -739,6 +739,14 @@ export type FetchOptions = {
 	headers: { [string]: string }?,
 	-- Text, or data sent as JSON (with its content type).
 	body: unknown?,
+	-- A file sent as the body, read off the window's thread, its type the
+	-- file's (a POST unless `method` says).
+	file: File?,
+	-- A form's fields sent as `multipart/form-data`: text, or a `File`.
+	multipart: { [string]: string | number | boolean | File }?,
+	-- The body going out: `sent` of `total` bytes, as the transport writes
+	-- it (or all of it at the answer, from one that does not say).
+	on_progress: ((sent: number, total: number) -> ())?,
 	-- The body's text as it arrives (a reply streaming), in whole
 	-- characters; the response's `body` is then empty unless it failed.
 	on_chunk: ((text: string) -> ())?,
@@ -766,7 +774,9 @@ export type Response = {
 
 -- A file the user picked (`ui.open_files`, `ui.save_file`): the only
 -- files a script reads or writes.
-export type File = { path: string, name: string }
+-- A file a dialog, a drop or the system gives (the web's `File`): `size` in
+-- bytes, `type` its media type by its extension ("image/png"; "" unknown).
+export type File = { path: string, name: string, size: number, type: string }
 export type FilePickerOptions = {
 	title: string?,
 	-- Where the dialog opens.
@@ -1868,6 +1878,12 @@ export type NodeProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: (((e: NavigateEvent) -> ...unknown) | Action)?,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: ((files: { File }, e: PointerEvent) -> ...unknown)?,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: ((over: boolean) -> ...unknown)?,
 	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
 	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
 	-- Return true to consume the key.
@@ -2202,6 +2218,12 @@ export type Props = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -2448,6 +2470,8 @@ export type Props_on_press = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_release = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_aux_click = (((e: AuxClickEvent) -> ...unknown) | Action)?
 export type Props_on_navigate = (((e: NavigateEvent) -> ...unknown) | Action)?
+export type Props_on_file_drop = ((files: { File }, e: PointerEvent) -> ...unknown)?
+export type Props_on_file_hover = ((over: boolean) -> ...unknown)?
 export type Props_on_hover = (((inside: boolean) -> ...unknown) | Action)?
 export type Props_on_pointer_move = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_key = (((e: KeyEvent) -> ...boolean?) | Action)?
@@ -2739,6 +2763,12 @@ export type ContainerProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3073,6 +3103,12 @@ export type ScrollProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3414,6 +3450,12 @@ export type TextProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3747,6 +3789,12 @@ export type MarkdownViewProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4128,6 +4176,12 @@ export type RichProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4455,6 +4509,12 @@ export type ImageProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4792,6 +4852,12 @@ export type SvgProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5209,6 +5275,12 @@ export type Scene3DProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5545,6 +5617,12 @@ export type CanvasProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5904,6 +5982,12 @@ export type CheckboxProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6241,6 +6325,12 @@ export type InputProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6641,6 +6731,12 @@ export type ProgressProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6969,6 +7065,12 @@ export type SliderProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7312,6 +7414,12 @@ export type SegmentedProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7651,6 +7759,12 @@ export type StepperProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7991,6 +8105,12 @@ export type DisclosureProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8328,6 +8448,12 @@ export type AccordionProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8653,6 +8779,12 @@ export type SectionProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8989,6 +9121,12 @@ export type SeparatorProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9322,6 +9460,12 @@ export type TabsProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9663,6 +9807,12 @@ export type TreeProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10014,6 +10164,12 @@ export type DataGridProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10361,6 +10517,12 @@ export type CalendarProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10700,6 +10862,12 @@ export type DatePickerProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11037,6 +11205,12 @@ export type TimeFieldProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11373,6 +11547,12 @@ export type ComboboxProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11718,6 +11898,12 @@ export type CommandPaletteProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12051,6 +12237,12 @@ export type SelectProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12391,6 +12583,12 @@ export type SplitProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12739,6 +12937,12 @@ export type ListProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13133,6 +13337,12 @@ export type LayerProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13466,6 +13676,12 @@ export type ModalProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13817,6 +14033,12 @@ export type PopoverProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14169,6 +14391,12 @@ export type MenuItemProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14505,6 +14733,12 @@ export type SubmenuProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14841,6 +15075,12 @@ export type WebViewProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15191,6 +15431,12 @@ export type TerminalProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15519,6 +15765,12 @@ export type SlotProps = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15891,6 +16143,12 @@ export type EachOptions = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -16234,6 +16492,12 @@ export type PresenceOptions = {
 	-- Back or forward on the platform's gesture over it (a trackpad's swipe
 	-- between pages, where nothing under the fingers scrolls that way).
 	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
