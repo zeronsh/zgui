@@ -6,6 +6,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Added
 
+- **glTF animations**: `Model::clips` (and `clip(name)`) reads a model's animations: channels moving its nodes' translation, rotation and scale, by STEP, LINEAR (rotations along the shorter arc) or CUBICSPLINE keys. `World::place_model` adds a model as `add_model` does and keeps its nodes' objects; `Placed::pose(world, clip, seconds)` poses a clip at any time. In Luau, `ui.model { animation = "Walk" }` (or its place, from 1) plays one round and round, posed in Rust a frame at a time. The `model` example plays a file's first clip. Skins and morph targets are not read yet.
 - **A trackpad's swipe between pages goes back and forward** (macOS): two fingers across (or three, as the system's Trackpad setting has it), as Safari does, over a view with `on_navigate` (zgx-script) or `View::on_navigate` (Rust), which hears `"back"` or `"forward"`. A two-finger swipe navigates only where it starts where nothing under the fingers scrolls that way, so a carousel mid-content still scrolls; AppKit tracks it from there. With nothing that navigates under it, it scrolls and stretches as before ([events](docs/reference/events.md)).
 
 ## 0.1.6 (2026-10-29)

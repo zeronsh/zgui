@@ -4919,6 +4919,9 @@ export type ModelProps = {
 	-- Scaled to this many units across (its largest side), centred on its
 	-- position; nil: as the file has it.
 	fit: number?,
+	-- The animation it plays, round and round: a clip's name, or its place
+	-- in the file (from 1).
+	animation: (string | number)?,
 	-- As a group's: it hears its meshes'.
 	on_click: ((hit: Hit3D) -> ())?,
 	on_hover: ((over: boolean) -> ())?,

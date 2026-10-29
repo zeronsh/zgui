@@ -1,6 +1,7 @@
 //! A glTF model in a zgx window: a `.glb`, or a `.gltf` and the files beside
-//! it, under a sun (casting shadows) and a sky. Drag to turn the camera
-//! about it, scroll or pinch to move in and out.
+//! it, under a sun (casting shadows) and a sky, playing its first
+//! animation if it has one. Drag to turn the camera about it, scroll or
+//! pinch to move in and out.
 //! Run: cargo run --release -p zgx-3d --features gltf --example model -- FILE
 //!
 //! `--smoke-test` shows it a moment and quits.
@@ -43,7 +44,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let size = high - low;
             let scale = 2. / size.x.max(size.y).max(size.z).max(1e-6);
             let centre = (low + high) * 0.5;
-            let id = world.add_model(&model);
+            let placed = world.place_model(&model);
+            let id = placed.root;
+            // Its first animation, if it has one, played round and round.
+            if let Some(clip) = model.clips().first().cloned() {
+                eprintln!(
+                    "playing {} ({:.2} s) of {} clips",
+                    clip.name().unwrap_or("its first clip"),
+                    clip.duration(),
+                    model.clips().len()
+                );
+                let (world, frames) = (world.clone(), cx.frames.clone());
+                cx.tasks.spawn(async move {
+                    let start = std::time::Instant::now();
+                    loop {
+                        frames.next().await;
+                        let seconds = start.elapsed().as_secs_f32();
+                        placed.pose(&world, &clip, seconds % clip.duration().max(1e-3));
+                    }
+                });
+            }
             world.set_transform(
                 id,
                 Transform {

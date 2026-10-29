@@ -9,9 +9,10 @@
 //! factors: colour, metal, roughness, emission, blending (`BLEND`) and
 //! `KHR_materials_unlit` and `KHR_materials_emissive_strength`, and their
 //! base colour, metal and roughness, normal, emission and occlusion
-//! textures (PNG or JPEG, in the file, inline or beside it). Not yet:
-//! skins, morph targets, animations, sparse accessors, points and lines
-//! (skipped).
+//! textures (PNG or JPEG, in the file, inline or beside it), and its
+//! animations' translations, rotations and scales (`Model::clips`,
+//! `Placed::pose`). Not yet: skins, morph targets, sparse accessors,
+//! points and lines (skipped).
 use crate::{
     Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
 };
@@ -36,6 +37,7 @@ fn error<T>(message: impl Into<String>) -> Result<T, ModelError> {
 pub struct Model {
     nodes: Vec<Node>,
     roots: Vec<usize>,
+    clips: Vec<crate::Clip>,
 }
 #[derive(Clone, Debug)]
 struct Node {
@@ -152,7 +154,23 @@ impl Model {
         if let Some(bad) = roots.iter().find(|&&r| r >= nodes.len()) {
             return error(format!("no node {bad}"));
         }
-        Ok(Self { nodes, roots })
+        let clips = list(&doc, "animations")
+            .iter()
+            .map(|animation| reader.clip(animation, nodes.len()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            nodes,
+            roots,
+            clips,
+        })
+    }
+    /// Its animations (pose one with `Placed::pose`).
+    pub fn clips(&self) -> &[crate::Clip] {
+        &self.clips
+    }
+    /// Its animation named `name`, if it has one.
+    pub fn clip(&self, name: &str) -> Option<&crate::Clip> {
+        self.clips.iter().find(|clip| clip.name() == Some(name))
     }
     /// The box holding its meshes, in its own frame: least and greatest
     /// corners. `None` if it has no meshes.
@@ -190,7 +208,13 @@ impl World {
     /// Add `model`: a group (at the origin, to place as any object) holding
     /// its nodes as groups and their meshes. Its id.
     pub fn add_model(&self, model: &Model) -> ObjectId {
+        self.place_model(model).root
+    }
+    /// Add `model` as `add_model` does: its root, and its nodes' objects,
+    /// to pose its clips on (`Placed::pose`).
+    pub fn place_model(&self, model: &Model) -> crate::Placed {
         let root = self.add(Object::group());
+        let mut nodes = vec![None; model.nodes.len()];
         let mut stack: Vec<(usize, ObjectId, usize)> =
             model.roots.iter().rev().map(|&r| (r, root, 0)).collect();
         while let Some((index, parent, depth)) = stack.pop() {
@@ -199,6 +223,7 @@ impl World {
             }
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
+            nodes[index] = Some(id);
             for (geometry, material, maps) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
                 for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
@@ -209,7 +234,7 @@ impl World {
             }
             stack.extend(node.children.iter().rev().map(|&c| (c, id, depth + 1)));
         }
-        root
+        crate::Placed { root, nodes }
     }
 }
 
@@ -395,6 +420,92 @@ struct Reader<'a> {
     buffers: &'a [Vec<u8>],
 }
 impl Reader<'_> {
+    /// An animation's channels moving nodes (of `nodes`): translations,
+    /// rotations and scales; morph target weights are skipped.
+    fn clip(&self, animation: &Value, nodes: usize) -> Result<crate::Clip, ModelError> {
+        use crate::animation::{Channel, Interpolation, Path};
+        let samplers = list(animation, "samplers");
+        let mut channels = Vec::new();
+        for channel in list(animation, "channels") {
+            let target = channel.get("target");
+            let node = target
+                .and_then(|t| t.get("node"))
+                .and_then(Value::as_u64)
+                .map(|n| n as usize);
+            let path = match target.and_then(|t| t.get("path")).and_then(Value::as_str) {
+                Some("translation") => Path::Translation,
+                Some("rotation") => Path::Rotation,
+                Some("scale") => Path::Scale,
+                _ => continue,
+            };
+            let Some(node) = node.filter(|&n| n < nodes) else {
+                continue;
+            };
+            let Some(sampler) = channel
+                .get("sampler")
+                .and_then(Value::as_u64)
+                .and_then(|s| samplers.get(s as usize))
+            else {
+                return error("an animation channel without its sampler");
+            };
+            let interpolation = match sampler.get("interpolation").and_then(Value::as_str) {
+                Some("STEP") => Interpolation::Step,
+                Some("CUBICSPLINE") => Interpolation::Cubic,
+                _ => Interpolation::Linear,
+            };
+            let accessor = |key: &str| {
+                sampler
+                    .get(key)
+                    .and_then(Value::as_u64)
+                    .map(|i| i as usize)
+                    .ok_or_else(|| ModelError(format!("an animation sampler without its {key}")))
+            };
+            let times = self.floats(accessor("input")?, 1)?;
+            let width = if path == Path::Rotation { 4 } else { 3 };
+            let flat = self.floats(accessor("output")?, width)?;
+            let values: Vec<[f32; 4]> = flat
+                .chunks_exact(width)
+                .map(|v| [v[0], v[1], v[2], if width == 4 { v[3] } else { 0. }])
+                .collect();
+            let per = if interpolation == Interpolation::Cubic {
+                3
+            } else {
+                1
+            };
+            if times.is_empty() || values.len() != times.len() * per {
+                return error("an animation sampler's keys and values don't match");
+            }
+            // Falling, or not numbers (NaN), times can't be keys.
+            let rising = |t: &[f32]| {
+                matches!(
+                    t[0].partial_cmp(&t[1]),
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                )
+            };
+            if !times.windows(2).all(rising) {
+                return error("an animation sampler's times don't rise");
+            }
+            channels.push(Channel {
+                node,
+                path,
+                interpolation,
+                times,
+                values,
+            });
+        }
+        let duration = channels
+            .iter()
+            .filter_map(|c| c.times.last().copied())
+            .fold(0., f32::max);
+        Ok(crate::Clip {
+            name: animation
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            duration,
+            channels,
+        })
+    }
     /// Image `index`'s encoded bytes: from a buffer view, a data URI or a
     /// file `resolve` gives.
     fn image(
@@ -871,6 +982,55 @@ mod tests {
         });
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
         assert!(model.nodes[0].meshes[0].2[0].is_none());
+    }
+
+    #[test]
+    fn a_clip_moves_its_node_when_posed() {
+        // The square's node slid from 0 to 2 along x over a second.
+        let (doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        let at = bin.len();
+        let times: [f32; 2] = [0., 1.];
+        let places: [f32; 6] = [0., 0., 0., 2., 0., 0.];
+        bin.extend(bytemuck::cast_slice(&times));
+        bin.extend(bytemuck::cast_slice(&places));
+        let mut doc = doc;
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 8 }));
+        views.push(json!({ "buffer": 0, "byteOffset": at + 8, "byteLength": 24 }));
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        accessors
+            .push(json!({ "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR" }));
+        accessors
+            .push(json!({ "bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3" }));
+        doc["animations"] = json!([{
+            "name": "slide",
+            "samplers": [{ "input": 2, "output": 3 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }],
+        }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let clip = model.clip("slide").expect("the clip");
+        assert_eq!((clip.duration(), model.clips().len()), (1., 1));
+        let world = World::new();
+        let placed = world.place_model(&model);
+        let node = placed.nodes[0].unwrap();
+        placed.pose(&world, clip, 0.5);
+        assert_eq!(
+            world.object(node).unwrap().transform.position,
+            vec3(1., 0., 0.)
+        );
+        let revision = world.revision();
+        placed.pose(&world, clip, 0.5);
+        assert_eq!(
+            world.revision(),
+            revision,
+            "posed the same: nothing to draw"
+        );
+        placed.pose(&world, clip, 7.);
+        assert_eq!(
+            world.object(node).unwrap().transform.position,
+            vec3(2., 0., 0.)
+        );
     }
 
     #[test]

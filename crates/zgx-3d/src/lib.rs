@@ -30,6 +30,8 @@
 //! ```
 #![warn(missing_docs)]
 
+#[cfg(feature = "gltf")]
+mod animation;
 mod geometry;
 #[cfg(feature = "gltf")]
 mod gltf;
@@ -40,6 +42,8 @@ mod render;
 mod texture;
 mod world;
 
+#[cfg(feature = "gltf")]
+pub use animation::{Clip, Placed};
 pub use geometry::{Geometry, Vertex};
 #[cfg(feature = "gltf")]
 pub use gltf::{Model, ModelError};

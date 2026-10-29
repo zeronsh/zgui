@@ -79,6 +79,14 @@ pub(crate) struct ModelSpec {
     src: String,
     /// Scaled to this many units across (its largest side), centred.
     fit: Option<f32>,
+    /// The clip it plays, round and round: by name, or by its place (from
+    /// 1, as Luau counts).
+    animation: Option<ClipChoice>,
+}
+#[cfg_attr(not(feature = "gltf"), allow(dead_code))]
+pub(crate) enum ClipChoice {
+    Name(String),
+    Index(usize),
 }
 /// An object of a scene (`ui.mesh`, `ui.light`, `ui.group`).
 pub(crate) struct ObjectSpec {
@@ -417,7 +425,29 @@ fn model(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         }
     }
     .filter(|fit| fit.is_finite() && *fit > 0.);
-    placed(lua, &table, Shape::Model(ModelSpec { src, fit }))
+    let animation = match table.get::<mlua::Value>("animation")? {
+        mlua::Value::Nil => None,
+        mlua::Value::String(name) => Some(ClipChoice::Name(name.to_str()?.to_owned())),
+        mlua::Value::Integer(n) if n >= 1 => Some(ClipChoice::Index(n as usize - 1)),
+        mlua::Value::Number(n) if n >= 1. && n.fract() == 0. => {
+            Some(ClipChoice::Index(n as usize - 1))
+        }
+        other => {
+            return Err(wrong(format_args!(
+                "ui.model `animation` is a clip's name or its place from 1, not {}",
+                other.type_name()
+            )));
+        }
+    };
+    placed(
+        lua,
+        &table,
+        Shape::Model(ModelSpec {
+            src,
+            fit,
+            animation,
+        }),
+    )
 }
 
 /// `ui.scene3d { camera, orbit, background, label, …objects, …box props }`.
@@ -1140,8 +1170,25 @@ fn load_model(
             .filter(|(at, _)| changed.is_some() && *at == changed)
             .map(|(_, model)| model.clone())
     });
+    let clip = spec.animation.as_ref().map(|choice| match choice {
+        ClipChoice::Name(name) => (Some(name.clone()), usize::MAX),
+        ClipChoice::Index(index) => (None, *index),
+    });
+    let (frames, report) = (cx.frames(), {
+        let (vm, src) = (Rc::downgrade(vm), spec.src.clone());
+        move |error: String| {
+            if let Some(vm) = vm.upgrade() {
+                vm.report(mlua::Error::runtime(format!("ui.model {src}: {error}")));
+            }
+        }
+    });
     if let Some(model) = kept {
-        place_model(world, group, &model, fit);
+        let placed = place_model(world, group, &model, fit);
+        if let Some(clip) = clip {
+            let world = world.clone();
+            cx.tasks()
+                .spawn(play(world, placed, model, clip, frames, report));
+        }
         return;
     }
     let bytes = match assets.read(&spec.src, &path) {
@@ -1168,7 +1215,7 @@ fn load_model(
         });
         tell.send(read.map_err(|e| e.to_string()));
     });
-    let (world, vm, src) = (world.clone(), Rc::downgrade(vm), spec.src.clone());
+    let world = world.clone();
     cx.tasks().spawn(async move {
         let Some(read) = heard.recv().await else {
             return;
@@ -1182,21 +1229,64 @@ fn load_model(
                     }
                     models.insert(path, (changed, model.clone()));
                 });
-                place_model(&world, group, &model, fit);
-            }
-            Err(error) => {
-                if let Some(vm) = vm.upgrade() {
-                    vm.report(mlua::Error::runtime(format!("ui.model {src}: {error}")));
+                let placed = place_model(&world, group, &model, fit);
+                if let Some(clip) = clip {
+                    play(world, placed, model, clip, frames, report).await;
                 }
             }
+            Err(error) => report(error),
         }
     });
+}
+/// Play `model`'s clip `choice` (a name, or else an index) on `placed`,
+/// round and round, a pose a frame: in Rust, no script per frame.
+#[cfg(feature = "gltf")]
+async fn play(
+    world: World,
+    placed: zgx_3d::Placed,
+    model: zgx_3d::Model,
+    (name, index): (Option<String>, usize),
+    frames: zgx::frame::FrameClock,
+    report: impl Fn(String),
+) {
+    let clip = match &name {
+        Some(name) => model.clip(name),
+        None => model.clips().get(index),
+    };
+    let Some(clip) = clip else {
+        let names: Vec<String> = model
+            .clips()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| c.name().map_or_else(|| format!("{}", i + 1), str::to_owned))
+            .collect();
+        let asked = name.unwrap_or_else(|| format!("{}", index + 1));
+        report(if names.is_empty() {
+            format!("no animation {asked}: it has none")
+        } else {
+            format!("no animation {asked}: it has {}", names.join(", "))
+        });
+        return;
+    };
+    let duration = clip.duration().max(1e-3);
+    let start = frames.next().await.time;
+    loop {
+        let frame = frames.next().await;
+        let seconds = frame.time.saturating_duration_since(start).as_secs_f32();
+        placed.pose(&world, clip, seconds % duration);
+    }
 }
 /// `model` added under `group`: scaled to `fit` across and centred, if
 /// asked, else as it is.
 #[cfg(feature = "gltf")]
-fn place_model(world: &World, group: ObjectId, model: &zgx_3d::Model, fit: Option<f32>) {
-    let root = world.add_model(model);
+fn place_model(
+    world: &World,
+    group: ObjectId,
+    model: &zgx_3d::Model,
+    fit: Option<f32>,
+) -> zgx_3d::Placed {
+    let placed = world.place_model(model);
+    let root = placed.root;
     let mut transform = Transform::default();
     if let (Some(fit), Some((low, high))) = (fit, model.bounds()) {
         let size = high - low;
@@ -1208,4 +1298,5 @@ fn place_model(world: &World, group: ObjectId, model: &zgx_3d::Model, fit: Optio
         object.parent = Some(group);
         object.transform = transform;
     });
+    placed
 }
