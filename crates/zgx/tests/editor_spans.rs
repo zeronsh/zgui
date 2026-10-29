@@ -24,33 +24,16 @@ fn between(line: &str, marker: &str) -> Option<std::ops::Range<usize>> {
 fn markdown(line: &str, _: u32) -> (LineSpans, u32) {
     let mut spans = Vec::new();
     if let Some(range) = between(line, "**") {
-        let style = SpanStyle {
-            weight: Some(600),
-            ..SpanStyle::default()
-        };
-        spans.push((range, style));
+        spans.push((range, SpanStyle::default().weight(600)));
     }
     if let Some(range) = between(line, "_") {
-        let style = SpanStyle {
-            italic: true,
-            ..SpanStyle::default()
-        };
-        spans.push((range, style));
+        spans.push((range, SpanStyle::default().italic()));
     }
     if let Some(range) = between(line, "~~") {
-        let style = SpanStyle {
-            strike: true,
-            ..SpanStyle::default()
-        };
-        spans.push((range, style));
+        spans.push((range, SpanStyle::default().strike()));
     }
     if let Some(range) = between(line, "`") {
-        let style = SpanStyle {
-            color: Some(CODE),
-            background: Some(WASH),
-            ..SpanStyle::default()
-        };
-        spans.push((range, style));
+        spans.push((range, SpanStyle::from(CODE).background(WASH)));
     }
     (spans, 0)
 }

@@ -43,7 +43,12 @@ pub type Highlighter = Rc<dyn Fn(&str, u32) -> (LineColors, u32)>;
 /// each of colour, weight and background is the first's (by start) that
 /// sets it, and the flags are any's: a code span inside bold text keeps the
 /// bold weight and shows its own colour.
+///
+/// Built from its default (or a colour) with its methods, so styles added
+/// later leave the code that builds these as it is:
+/// `SpanStyle::default().weight(600).italic()`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct SpanStyle {
     /// Its text's colour (none: the editor's).
     pub color: Option<crate::scene::Color>,
@@ -65,12 +70,41 @@ impl From<crate::scene::Color> for SpanStyle {
     }
 }
 impl SpanStyle {
+    /// Its text in `color`.
+    pub const fn color(mut self, color: crate::scene::Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+    /// Its text in font weight `weight` (`600`).
+    pub const fn weight(mut self, weight: u16) -> Self {
+        self.weight = Some(weight);
+        self
+    }
+    /// Its text italic.
+    pub const fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+    /// A line through its text.
+    pub const fn strike(mut self) -> Self {
+        self.strike = true;
+        self
+    }
+    /// A wash of `color` behind its text (inline code).
+    pub const fn background(mut self, color: crate::scene::Color) -> Self {
+        self.background = Some(color);
+        self
+    }
     fn merge(&mut self, style: &SpanStyle) {
         self.color = self.color.or(style.color);
         self.weight = self.weight.or(style.weight);
         self.italic |= style.italic;
         self.strike |= style.strike;
         self.background = self.background.or(style.background);
+    }
+    /// Whether it only colours its text.
+    fn colors_only(&self) -> bool {
+        self.weight.is_none() && !self.italic && !self.strike && self.background.is_none()
     }
     /// Whether it changes how its text is shaped (and so its width).
     fn shapes(&self) -> bool {
@@ -155,6 +189,34 @@ pub(crate) fn styled_line(
 ) -> Option<crate::rich_text::RichText> {
     if line.is_empty() || spans.is_empty() {
         return None;
+    }
+    // Spans that only colour (a code highlighter's): runs straight from
+    // them, as before styles, an earlier span keeping what it overlaps.
+    if spans.iter().all(|(_, style)| style.colors_only()) {
+        let run = |range: Range<usize>, color| crate::rich_text::TextRun {
+            range,
+            font: font.clone(),
+            font_size: size,
+            color,
+            ..Default::default()
+        };
+        let mut runs = Vec::with_capacity(spans.len() * 2 + 1);
+        let mut at = 0;
+        for (range, style) in spans {
+            let start = range.start.max(at);
+            if start >= range.end {
+                continue;
+            }
+            if start > at {
+                runs.push(run(at..start, color));
+            }
+            runs.push(run(start..range.end, style.color.unwrap_or(color)));
+            at = range.end;
+        }
+        if at < line.len() {
+            runs.push(run(at..line.len(), color));
+        }
+        return crate::rich_text::RichText::new(line, runs).ok();
     }
     let runs: Vec<_> = runs(line, spans)
         .into_iter()
@@ -891,6 +953,28 @@ impl TextLayout for LinesLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spans that only colour give their runs as before styles: in order,
+    /// an earlier span keeping what a later one overlaps, the rest the
+    /// editor's colour.
+    #[test]
+    fn colour_spans_give_runs_as_before_styles() {
+        use crate::scene::Color;
+        let (red, blue, ink) = (
+            Color(255, 0, 0, 255),
+            Color(0, 0, 255, 255),
+            Color(0, 0, 0, 255),
+        );
+        let spans: LineSpans = vec![(1..4, red.into()), (2..6, blue.into())];
+        let font = crate::text_layout::FontStyle::default();
+        let rich = styled_line("abcdefgh", &spans, ink, 14., &font).unwrap();
+        let runs: Vec<_> = rich
+            .runs()
+            .iter()
+            .map(|r| (r.range.clone(), r.color))
+            .collect();
+        assert_eq!(runs, [(0..1, ink), (1..4, red), (4..6, blue), (6..8, ink)]);
+    }
     use crate::text_layout::{FallbackTextLayout, FontStyle};
 
     fn rich() -> RichLineShaper {

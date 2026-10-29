@@ -1947,16 +1947,22 @@ fn kind_view(
             value,
             multiline,
             placeholder,
-            placeholder_color,
-            caret_color,
-            caret_width,
+            rare,
             select_on_focus,
             line_numbers,
             secure,
             input_mode,
-            spellcheck,
             code,
         } => {
+            let (placeholder_color, caret_color, caret_width, spellcheck) = match rare.as_deref() {
+                Some(rare) => (
+                    rare.placeholder_color.as_ref(),
+                    rare.caret_color.as_ref(),
+                    rare.caret_width,
+                    rare.spellcheck.as_ref(),
+                ),
+                None => (None, None, None, None),
+            };
             // What `find` searches: the state the text is in.
             let searched = match value {
                 crate::node::InputValue::State(state) => Some(state.clone()),
@@ -2048,7 +2054,7 @@ fn kind_view(
                 None => {}
             }
             if let Some(width) = caret_width {
-                view = view.caret_width(*width);
+                view = view.caret_width(width);
             }
             if let Some(control) = controlled {
                 view = view.on_event(control);
@@ -4312,16 +4318,15 @@ fn code_editor(
     let colors: Rc<std::cell::RefCell<HashMap<Rc<str>, Option<zgx::scene::Color>>>> = Rc::default();
     let color_of = {
         let theme = theme.clone();
-        move |text: &mlua::LuaString| -> Option<zgx::scene::Color> {
-            let text = text.to_str().ok()?;
-            if let Some(color) = colors.borrow().get(&*text) {
+        move |text: &str| -> Option<zgx::scene::Color> {
+            if let Some(color) = colors.borrow().get(text) {
                 return *color;
             }
             let color = match text.strip_prefix('$') {
                 Some(token) => theme.get(zgx::theme::token(token)).color(),
-                None => crate::node::parse_color(&text),
+                None => crate::node::parse_color(text),
             };
-            colors.borrow_mut().insert(Rc::from(&*text), color);
+            colors.borrow_mut().insert(Rc::from(text), color);
             color
         }
     };
@@ -4337,7 +4342,7 @@ fn code_editor(
                     continue;
                 };
                 let shade = match span.raw_get::<Option<mlua::LuaString>>(3) {
-                    Ok(Some(text)) => color_of(&text),
+                    Ok(Some(text)) => text.to_str().ok().and_then(|text| color_of(&text)),
                     _ => color,
                 };
                 if let Some(shade) = shade
@@ -4355,37 +4360,43 @@ fn code_editor(
     // bg = } }`: positional as `ranges`, its styles by name.
     let spans = {
         let color_of = color_of.clone();
-        // The style's keys, made once (a line's every token is read).
-        let keys = ["weight", "italic", "strike", "bg"].map(|key| vm.lua.create_string(key).ok());
         move |list: &mlua::Table| {
             let mut out = Vec::with_capacity(list.raw_len());
             for span in list.sequence_values::<mlua::Table>().flatten() {
-                let (Ok(from), Ok(to)) = (span.raw_get::<f64>(1), span.raw_get::<f64>(2)) else {
-                    continue;
+                // One walk of the span, its keys and strings read where they
+                // lie: a colour-only `{ from, to, color }` is three steps, its
+                // styles read only where it has them.
+                let (mut from, mut to) = (f64::NAN, f64::NAN);
+                let mut style = zgx::widgets::SpanStyle::default();
+                let number = |value: &mlua::StackValue| {
+                    (value.type_name() == "number")
+                        .then(|| value.get::<f64>().ok())
+                        .flatten()
                 };
-                if from < 1. || to < from {
+                let yes = |value: &mlua::StackValue| {
+                    value.type_name() == "boolean" && value.get::<bool>().unwrap_or(false)
+                };
+                let walked = span.for_each_borrowed(|key, value| {
+                    match key.as_bytes() {
+                        None => match number(&key) {
+                            Some(1.) => from = number(&value).unwrap_or(f64::NAN),
+                            Some(2.) => to = number(&value).unwrap_or(f64::NAN),
+                            Some(3.) => style.color = value.as_str().and_then(&*color_of),
+                            _ => {}
+                        },
+                        Some(b"weight") => {
+                            style.weight = number(&value).map(|w| w.clamp(1., 1000.) as u16);
+                        }
+                        Some(b"italic") => style.italic = yes(&value),
+                        Some(b"strike") => style.strike = yes(&value),
+                        Some(b"bg") => style.background = value.as_str().and_then(&*color_of),
+                        Some(_) => {}
+                    }
+                    Ok(())
+                });
+                if walked.is_err() || !(from >= 1. && to >= from) {
                     continue;
                 }
-                let color_at = |key: mlua::Value| match span.raw_get::<Option<mlua::LuaString>>(key)
-                {
-                    Ok(Some(text)) => color_of(&text),
-                    _ => None,
-                };
-                let [weight, italic, strike, bg] = keys.clone().map(|key| match key {
-                    Some(key) => span.raw_get::<mlua::Value>(key).unwrap_or(mlua::Value::Nil),
-                    None => mlua::Value::Nil,
-                });
-                let style = zgx::widgets::SpanStyle {
-                    color: color_at(mlua::Value::Integer(3)),
-                    weight: match weight {
-                        mlua::Value::Integer(w) => Some(w.clamp(1, 1000) as u16),
-                        mlua::Value::Number(w) => Some(w.clamp(1., 1000.) as u16),
-                        _ => None,
-                    },
-                    italic: italic.as_boolean() == Some(true),
-                    strike: strike.as_boolean() == Some(true),
-                    background: bg.as_string().and_then(|text| color_of(text)),
-                };
                 if style != zgx::widgets::SpanStyle::default() {
                     out.push((from as usize - 1..to as usize, style));
                 }

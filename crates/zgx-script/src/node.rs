@@ -766,6 +766,20 @@ impl Events {
     }
 }
 
+/// An input's options few inputs set (`Kind::Input`'s `rare`).
+#[derive(Clone, Default)]
+pub(crate) struct InputRare {
+    /// `placeholder_color`: the placeholder's colour.
+    pub(crate) placeholder_color: Option<Source>,
+    /// `caret_color` (the text's if unset) and `caret_width` (points; the
+    /// app's if unset).
+    pub(crate) caret_color: Option<Source>,
+    pub(crate) caret_width: Option<f32>,
+    /// `spellcheck = true` (or a state or function of one): the system's
+    /// checker marks misspellings.
+    pub(crate) spellcheck: Option<Source>,
+}
+
 #[derive(Clone)]
 pub(crate) enum Kind {
     Column,
@@ -822,14 +836,11 @@ pub(crate) enum Kind {
         label: String,
         value: InputValue,
         multiline: bool,
-        /// Shown while the value is empty (`placeholder`), in
-        /// `placeholder_color`.
+        /// Shown while the value is empty (`placeholder`).
         placeholder: Option<Source>,
-        placeholder_color: Option<Source>,
-        /// `caret_color` (the text's if unset) and `caret_width` (points;
-        /// the app's if unset).
-        caret_color: Option<Source>,
-        caret_width: Option<f32>,
+        /// What few inputs set (`InputRare`), boxed: every node is as large
+        /// as its largest kind.
+        rare: Option<Box<InputRare>>,
         /// `select_on_focus = true`: focusing it selects all its text.
         select_on_focus: bool,
         /// `line_numbers = true`: a textarea numbers its lines.
@@ -841,9 +852,6 @@ pub(crate) enum Kind {
         /// `inputmode = "email"` (HTML's): what kind of text it takes, a
         /// hint to touch keyboards and input methods.
         input_mode: zgx::text_edit::InputMode,
-        /// `spellcheck = true` (or a state or function of one): the system's
-        /// checker marks misspellings.
-        spellcheck: Option<Source>,
     },
     Progress {
         label: String,
@@ -2501,8 +2509,6 @@ const WIDGET_FIELDS: &[&str] = &[
     "initial",
     "placeholder",
     "placeholder_color",
-    "caret_color",
-    "caret_width",
     "mixed",
     "select_on_focus",
     "secure",
@@ -2553,7 +2559,28 @@ const WIDGET_FIELDS: &[&str] = &[
 /// every key is compared against `WIDGET_FIELDS`, so a field added there
 /// costs each style key of its length a comparison, and one added here
 /// costs them nothing.
-const LATE_FIELDS: &[&str] = &["inputmode"];
+const LATE_FIELDS: &[&str] = &["inputmode", "caret_color", "caret_width"];
+
+/// A `LATE_FIELDS` field the walk found, taken where it lies: an input's
+/// caret, which few set, read only from those that set it (`inputmode` is
+/// read by `ui.input` itself).
+fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlua::Result<()> {
+    let Kind::Input { rare, .. } = &mut node.kind else {
+        return Ok(());
+    };
+    match name {
+        "caret_color" => {
+            let color = source(lua, Ty::Color, name, value)?;
+            rare.get_or_insert_default().caret_color = Some(color);
+        }
+        "caret_width" => {
+            let width: f64 = lua.unpack(value)?;
+            rare.get_or_insert_default().caret_width = Some(width as f32);
+        }
+        _ => {}
+    }
+    Ok(())
+}
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
 fn set_handler(
@@ -3238,7 +3265,7 @@ fn fill_from(
             name => {
                 let Some(prop) = Prop::parse(name) else {
                     if LATE_FIELDS.contains(&name) {
-                        return Ok(());
+                        return late_field(lua, node, name, value);
                     }
                     return Err(mlua::Error::runtime(format!("unknown property `{name}`")));
                 };
@@ -3858,9 +3885,17 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     multiline: always_multiline
                         || table.get::<Option<bool>>("multiline")?.unwrap_or(false),
                     placeholder: optional("placeholder", Ty::Str)?,
-                    placeholder_color: optional("placeholder_color", Ty::Color)?,
-                    caret_color: optional("caret_color", Ty::Color)?,
-                    caret_width: table.get::<Option<f64>>("caret_width")?.map(|w| w as f32),
+                    rare: {
+                        // `caret_color` and `caret_width` are taken as
+                        // `fill` walks the table (`late_field`).
+                        let rare = InputRare {
+                            placeholder_color: optional("placeholder_color", Ty::Color)?,
+                            spellcheck: optional("spellcheck", Ty::Bool)?,
+                            ..InputRare::default()
+                        };
+                        (rare.placeholder_color.is_some() || rare.spellcheck.is_some())
+                            .then(|| Box::new(rare))
+                    },
                     select_on_focus: table
                         .get::<Option<bool>>("select_on_focus")?
                         .unwrap_or(false),
@@ -3881,7 +3916,6 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             )));
                         }
                     },
-                    spellcheck: optional("spellcheck", Ty::Bool)?,
                     line_numbers: table.get::<Option<bool>>("line_numbers")?.unwrap_or(false),
                     code: {
                         let highlight = table.get::<Option<Function>>("highlight")?;
