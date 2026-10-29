@@ -15289,6 +15289,9 @@ export type HookFilter = {
 	disabled: ((disabled: boolean) -> boolean)?,
 	tooltip: ((tooltip: string) -> string)?,
 	items: ((items: { any }) -> { any })?,
+	-- Its children's ids (a position, from 1, for one without): those it
+	-- returns go first, in that order, the rest after them.
+	order: ((ids: { string | number }) -> { string | number })?,
 }
 -- How `ui.each` rows slide when the list moves them: `true` (a spring,
 -- bounce .1 over 400 ms), an ease, `{ duration, ease }`, `{ bounce,

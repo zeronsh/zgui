@@ -1451,7 +1451,8 @@ impl HookContribution {
 }
 /// What a plugin's `ui.filter` may pass through a function of its own: the
 /// element's text and name, whether it is hidden or disabled, its tooltip's
-/// text and the items a `ui.each` shows. Nothing else of the element's: its
+/// text, the items a `ui.each` or a `ui.list` (`data`) shows and the order
+/// of its children. Nothing else of the element's: its
 /// handlers, styles and state stay the app's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Filtered {
@@ -1461,15 +1462,17 @@ pub(crate) enum Filtered {
     Disabled,
     Tooltip,
     Items,
+    Order,
 }
 impl Filtered {
-    pub(crate) const ALL: [(&'static str, Filtered); 6] = [
+    pub(crate) const ALL: [(&'static str, Filtered); 7] = [
         ("text", Filtered::Text),
         ("label", Filtered::Label),
         ("hidden", Filtered::Hidden),
         ("disabled", Filtered::Disabled),
         ("tooltip", Filtered::Tooltip),
         ("items", Filtered::Items),
+        ("order", Filtered::Order),
     ];
 }
 /// Each slot's contributions, by slot, with who added each.
@@ -1712,7 +1715,7 @@ fn hook_filter(env: &Env, table: &Table, owner: Rc<str>) -> mlua::Result<HookCon
         if key != "target" && !Filtered::ALL.iter().any(|(name, _)| *name == key) {
             return Err(mlua::Error::runtime(format!(
                 "ui.filter {{ target = \"{written}\" }}: `{key}` is not filtered; \
-                 one of text, label, hidden, disabled, tooltip or items"
+                 one of text, label, hidden, disabled, tooltip, items or order"
             )));
         }
     }

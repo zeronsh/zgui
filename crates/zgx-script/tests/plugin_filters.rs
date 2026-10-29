@@ -1,6 +1,7 @@
 //! Plugins passing an app's element's props through functions of their own
 //! (`ui.filter { target, text = fn, … }`): its text, name, whether it is
-//! hidden or disabled, its tooltip and a `ui.each`'s items. A filter takes
+//! hidden or disabled, its tooltip, a `ui.each`'s or `ui.list`'s items and
+//! the order of its children. A filter takes
 //! `Capability::Override`, as replacing does, and follows what it reads; one
 //! that fails shows the value as it was.
 mod common;
@@ -222,4 +223,110 @@ fn only_the_listed_props_are_filtered() {
         error.contains("on_click") && error.contains("not filtered"),
         "{error}"
     );
+}
+
+#[test]
+fn a_lists_data_is_filtered() {
+    const LIST: &str = r##"
+local mail = ui.state("mail", { { text = "hello" }, { text = "spam" }, { text = "bye" } })
+return ui.column {
+    ui.list {
+        id = "inbox",
+        w = 300,
+        h = 120,
+        height = 20,
+        data = mail,
+        row = function(m, index) return ui.text { m.text, literal = true } end,
+    },
+}
+"##;
+    let mut h = with(
+        LIST,
+        "nospam",
+        r##"
+ui.filter {
+    target = "#inbox",
+    items = function(items)
+        local kept = {}
+        for _, m in items do
+            if m.text ~= "spam" then table.insert(kept, m) end
+        end
+        return kept
+    end,
+}
+"##,
+        any(),
+    );
+    h.frames(1);
+    let texts = h.texts();
+    assert!(
+        texts.contains(&"hello".to_string()) && texts.contains(&"bye".to_string()),
+        "{texts:?}"
+    );
+    assert!(!texts.contains(&"spam".to_string()), "{texts:?}");
+}
+
+const TOOLBAR: &str = r##"
+local flip = ui.shared("flip", false)
+return ui.column {
+    ui.row {
+        id = "toolbar",
+        ui.text { id = "a", "A" },
+        ui.text { id = "b", "B" },
+        ui.text { "C" },
+    },
+    ui.button { id = "flip", w = 60, h = 24, on_click = ui.toggle(flip), "Flip" },
+}
+"##;
+
+fn order(h: &mut Harness) -> Vec<String> {
+    h.texts().into_iter().filter(|t| t.len() == 1).collect()
+}
+
+#[test]
+fn an_order_filter_moves_children() {
+    let mut h = with(
+        TOOLBAR,
+        "first",
+        r##"ui.filter { target = "#toolbar", order = function(ids) return { 3, "b" } end }"##,
+        any(),
+    );
+    assert_eq!(h.error(), None);
+    assert_eq!(
+        order(&mut h),
+        ["C", "B", "A"],
+        "the listed first, the rest after"
+    );
+}
+
+#[test]
+fn an_order_follows_what_the_filter_reads() {
+    const FLIPS: &str = r##"
+local flip = ui.shared("flip", false)
+ui.filter {
+    target = "#toolbar",
+    order = function(ids)
+        if flip:get() then return { "b", "a" } end
+        return ids
+    end,
+}
+"##;
+    let entry = plugin("flipper", FLIPS);
+    let mut h = Harness::new(move |runtime| {
+        let host = ScriptHost::inline(runtime, "app", TOOLBAR);
+        host.shared("flip", false);
+        host.expose_shared("flip", None);
+        host.set_plugins(vec![Plugin {
+            name: "flipper".into(),
+            entry,
+            grants: any(),
+        }]);
+        host
+    });
+    assert_eq!(h.error(), None);
+    assert_eq!(order(&mut h), ["A", "B", "C"]);
+    h.click("flip");
+    assert_eq!(order(&mut h), ["B", "A", "C"]);
+    h.click("flip");
+    assert_eq!(order(&mut h), ["A", "B", "C"]);
 }

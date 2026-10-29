@@ -470,7 +470,7 @@ fn filtered(
         return lowered(node, low);
     };
     let mut copy = (**node).clone();
-    let mut items = Vec::new();
+    let (mut items, mut order) = (Vec::new(), Vec::new());
     for &(hook, what, f) in filters {
         let plugin = &hook.vm;
         match what {
@@ -537,26 +537,102 @@ fn filtered(
                 }
             }
             Filtered::Items => {
-                if let Kind::Each { .. } = copy.kind {
+                if items_of(&mut copy.kind).is_some() {
                     items.push((plugin.clone(), f.clone()));
+                }
+            }
+            Filtered::Order => {
+                if !copy.children.is_empty() {
+                    order.push((plugin.clone(), f.clone()));
                 }
             }
         }
     }
-    if items.is_empty() {
-        return lowered(&Rc::new(copy), low);
+    let shown = move |copy: Node, low: &Rc<Lowering>| match items.is_empty() {
+        true => lowered(&Rc::new(copy), low),
+        false => filtered_items(copy, items.clone(), &app, low, lowered.clone()),
+    };
+    if order.is_empty() {
+        return shown(copy, low);
     }
-    // What a `ui.each` shows passed through: a state of the app's, kept
-    // current as long as the element is there.
+    // Its children in the order the filters put them: a region rebuilt
+    // when that order changes (what the filters read), kept while it does
+    // not.
+    let ids: Vec<Value> = copy
+        .children
+        .iter()
+        .enumerate()
+        .map(|(at, child)| match &child.id {
+            Some(id) => Value::Str(id.clone()),
+            None => Value::Num((at + 1) as f64),
+        })
+        .collect();
+    let low = low.clone();
+    switch(
+        move || {
+            let mut value = Value::List(Rc::from(ids.as_slice()));
+            for (plugin, f) in &order {
+                value = passed(plugin, f, value);
+            }
+            reordered(&ids, &value)
+        },
+        move |places: Vec<usize>, _| {
+            let mut copy = copy.clone();
+            copy.children = places.iter().map(|&at| copy.children[at].clone()).collect();
+            shown(copy, &low)
+        },
+    )
+}
+/// The places of `ids` in the order `value` lists them: those it names
+/// first, the rest after them as they were (an order filter moves
+/// children; `hidden` hides them).
+fn reordered(ids: &[Value], value: &Value) -> Vec<usize> {
+    let mut places = Vec::with_capacity(ids.len());
+    if let Value::List(listed) = value {
+        for listed in listed.iter() {
+            let at = ids.iter().position(|id| match (id, listed) {
+                (Value::Str(a), Value::Str(b)) => a == b,
+                (Value::Num(a), Value::Num(b)) => a == b,
+                _ => false,
+            });
+            if let Some(at) = at
+                && !places.contains(&at)
+            {
+                places.push(at);
+            }
+        }
+    }
+    let rest: Vec<usize> = (0..ids.len()).filter(|at| !places.contains(at)).collect();
+    places.extend(rest);
+    places
+}
+/// The state a `ui.each` or a `ui.list` with `data` shows, if it is one.
+fn items_of(kind: &mut Kind) -> Option<&mut Signal<Value>> {
+    match kind {
+        Kind::Each { items, .. } => Some(items),
+        Kind::List {
+            items: Some(items), ..
+        } => Some(items),
+        _ => None,
+    }
+}
+/// `copy` lowered with what its `ui.each` or `ui.list` shows passed
+/// through `items`' filters: a state of the app's, kept current while
+/// the element is there, written when the list or what the filters read
+/// changes.
+fn filtered_items(
+    mut copy: Node,
+    items: Vec<(std::rc::Weak<Vm>, mlua::Function)>,
+    app: &Rc<Vm>,
+    low: &Rc<Lowering>,
+    lowered: impl Fn(&Rc<Node>, &Rc<Lowering>) -> View + 'static,
+) -> View {
     let (low, runtime) = (low.clone(), app.runtime.clone());
     component(move |cx| {
-        let Kind::Each {
-            items: original, ..
-        } = &copy.kind
-        else {
-            unreachable!("items filter a ui.each")
+        let Some(list) = items_of(&mut copy.kind) else {
+            unreachable!("items filter lists")
         };
-        let (original, shown) = (original.clone(), runtime.signal(Value::Nil));
+        let (original, shown) = (list.clone(), runtime.signal(Value::Nil));
         let out = shown.clone();
         let effect = runtime.effect_now(move || {
             let mut value = original.get();
@@ -566,10 +642,7 @@ fn filtered(
             out.set(value);
         });
         cx.retain(effect);
-        let mut copy = copy;
-        if let Kind::Each { items, .. } = &mut copy.kind {
-            *items = shown;
-        }
+        *list = shown;
         lowered(&Rc::new(copy), &low)
     })
 }

@@ -453,12 +453,13 @@ With the app above, a plugin adds a button before its Save; nothing reaches the 
 ui.contribute { target = "#save", before = ui.button { label = "Preview" } }
 ```
 
-`ui.filter { target, text | label | hidden | disabled | tooltip | items = fn }` passes an element's prop through a function of the plugin's, which takes the value as it is and returns it changed. It runs in the plugin's script, again whenever what it reads changes (the app's state the value follows, the plugin's own), never per frame. It needs `Capability::Override`, as replacing does.
+`ui.filter { target, text | label | hidden | disabled | tooltip | items | order = fn }` passes an element's prop through a function of the plugin's, which takes the value as it is and returns it changed. It runs in the plugin's script, again whenever what it reads changes (the app's state the value follows, the plugin's own), never per frame. It needs `Capability::Override`, as replacing does.
 
 - `text` is the element's text, or a button's or item's (its first child's); `label` its accessible name.
 - `hidden` and `disabled` take and return a boolean.
 - `tooltip` is a written tooltip's text, passed through as the element is built.
-- `items` is what a `ui.each` shows: a list in, a list out.
+- `items` is what a `ui.each` or a `ui.list` with `data` shows: a list in, a list out.
+- `order` is the element's children's order: it gets their ids (a position from 1 for one without) and returns those it puts first; the rest follow as they were. A changed order rebuilds the element's children; an unchanged one keeps them.
 - Nothing else is filtered: its handlers, styles and state stay the app's. A filter that fails is reported as the plugin's error, and the value shows as it was.
 
 ```luau

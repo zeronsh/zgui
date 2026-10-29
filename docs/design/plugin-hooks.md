@@ -44,7 +44,7 @@ ui.filter { target = "#title", text = function(text) return string.upper(text) e
 ui.filter { target = "#save", disabled = function(disabled) return disabled or not signed_in:get() end }
 ```
 
-A filter passes one of an element's props through a function of the plugin's: `text` (its own, or a button's first child's), `label`, `hidden`, `disabled`, `tooltip` (its written text) and `items` (a `ui.each`'s). The function takes the value as it is and returns it changed; each is a computed source of the app's script that calls the plugin's function, so it runs in the plugin's VM again when what either reads changes, never per frame. Several apply in plugin order. It needs `Override`, as replacing does. The element is lowered as a copy with those props changed; its handlers, styles and state are the app's. A filter that fails is reported as the plugin's error and the value shows unchanged. `ui.list`'s data and a container's child order are not filtered yet.
+A filter passes one of an element's props through a function of the plugin's: `text` (its own, or a button's first child's), `label`, `hidden`, `disabled`, `tooltip` (its written text), `items` (a `ui.each`'s or a `ui.list`'s `data`) and `order` (its children's, by id: those returned first, the rest after; a changed order rebuilds the children in a region, an equal one keeps them). The function takes the value as it is and returns it changed; each is a computed source of the app's script that calls the plugin's function, so it runs in the plugin's VM again when what either reads changes, never per frame. Several apply in plugin order. It needs `Override`, as replacing does. The element is lowered as a copy with those props changed; its handlers, styles and state are the app's. A filter that fails is reported as the plugin's error and the value shows unchanged.
 
 ## Matching and reactivity
 
@@ -63,7 +63,7 @@ With no plugin contributing to a target, lowering checks one `Option` per childr
 ## Plan
 
 - **(a)** Hook points, before/after/replace, `Capability::Override`, `expose_hook`, private elements, the plugin's accessible description.
-- **(b)** Filters: `ui.filter { target, text = fn, … }` over text, label, hidden, disabled, tooltip and a `ui.each`'s items, run as computeds in the plugin's VM: when what they read changes, never per frame. Needs `Override`. Still to come: `ui.list` data and child order.
+- **(b)** Filters: `ui.filter { target, text = fn, … }` over text, label, hidden, disabled, tooltip, list items and child order, run as computeds in the plugin's VM: when what they read changes, never per frame. Needs `Override`.
 - **(c)** Overrides and packages: an `@app/…` module (only `@app` requires; a relative require stays private) replaced by a plugin's module with `Override`, with `@app-original/…` reachable only from inside the override, never from plugins. Packages: `ScriptHost::package`, `zgx.json`-listed `.luaurc` aliases outside the app's directory, an allowed-roots read-only sandbox in place of `within(root)`; `zgx bundle` includes them.
 - **(d)** Types: `zgx types` emits `HookName`, each hook's context type and typed `ui.contribute` overloads.
 - **(e)** Docs and a worked example.
