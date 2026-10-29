@@ -67,6 +67,9 @@ pub(crate) struct Node {
     pub shaders: Option<Box<Shaders>>,
     /// `window_drag = true`: a press on it moves the window.
     pub window_drag: bool,
+    /// `hook = false` or `private = true`: no plugin may target it
+    /// (`ui.contribute { target }`), whatever matches it.
+    pub private: bool,
     /// `selectable = true`: the pointer selects the text in it (`false`
     /// keeps a part of a selectable node out).
     pub selectable: Option<bool>,
@@ -472,6 +475,10 @@ pub(crate) struct LayoutAnim {
     pub clip: bool,
 }
 impl Node {
+    /// The hook the app declares here (`hook = "name"`), if any.
+    pub fn hook(&self) -> Option<&str> {
+        self.a11y.as_ref()?.hook.as_deref()
+    }
     pub(crate) fn new(owner: Weak<Vm>, kind: Kind) -> Self {
         Self {
             owner,
@@ -493,6 +500,7 @@ impl Node {
             mask: None,
             shaders: None,
             window_drag: false,
+            private: false,
             selectable: None,
             selection_colors: None,
             tooltip: None,
@@ -1355,6 +1363,8 @@ pub(crate) struct Env {
     /// What it contributed to slots: the slot, the script (`ui.slot`'s
     /// `from` takes only its own) and the node.
     pub contributions: RefCell<Vec<Contribution>>,
+    /// What it added at the app's elements (`ui.contribute { target }`).
+    pub hooks: RefCell<Vec<HookContribution>>,
     pub engine: Rc<crate::anime::Engine>,
     pub runtime: Runtime,
     /// The component instance being built, if any.
@@ -1378,6 +1388,8 @@ pub(crate) struct Env {
     /// Host actions and shared keys plugins reach.
     pub exposed_actions: crate::Exposed,
     pub exposed_shared: crate::Exposed,
+    /// Targets whose before/after need a capability (`expose_hook`).
+    pub exposed_hooks: crate::Exposed,
     /// The script's name (a plugin's): what it contributes is its own.
     pub owner: Rc<str>,
     /// Whose `ui.persist` state it reads: the script's name, or for a
@@ -1392,6 +1404,22 @@ pub(crate) struct Env {
 /// What a script adds to a slot: the slot, who added it (`ui.slot`'s
 /// `from`) and the node.
 pub(crate) type Contribution = (String, Rc<str>, Rc<Node>);
+/// Where a plugin's node goes against the element it targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Place {
+    Before,
+    After,
+    Replace,
+}
+/// What a script adds at an element of the app's (`ui.contribute { target,
+/// before | after | replace }`).
+pub(crate) struct HookContribution {
+    pub target: crate::driver::Static,
+    pub place: Place,
+    /// Who added it.
+    pub owner: Rc<str>,
+    pub node: Rc<Node>,
+}
 /// Each slot's contributions, by slot, with who added each.
 pub(crate) type Slots = std::collections::HashMap<String, Vec<(Rc<str>, Rc<Node>)>>;
 impl Env {
@@ -1491,6 +1519,59 @@ fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
 pub(crate) fn expect_state(value: &mlua::Value, what: &str) -> mlua::Result<Signal<Value>> {
     state_of(value).ok_or_else(|| mlua::Error::runtime(format!("{what} must be a ui.state")))
 }
+/// `ui.contribute { target, before | after | replace }`: the target read,
+/// one place, and what the script may do there. Adding before or after an
+/// element is open, unless the host asks a capability for that target
+/// (`expose_hook`); replacing one takes `Capability::Override` of the
+/// target as written, or of `"*"`.
+fn hook_contribution(env: &Env, table: &Table, owner: Rc<str>) -> mlua::Result<HookContribution> {
+    let written: String = table
+        .get::<Option<String>>("target")?
+        .ok_or_else(|| mlua::Error::runtime("ui.contribute: `target` names the element"))?;
+    let target = crate::driver::Static::parse(&written).map_err(mlua::Error::runtime)?;
+    let mut placed = Vec::new();
+    for (key, place) in [
+        ("before", Place::Before),
+        ("after", Place::After),
+        ("replace", Place::Replace),
+    ] {
+        let value: mlua::Value = table.get(key)?;
+        if !value.is_nil() {
+            placed.push((place, expect_node(value, &format!("`{key}`"))?));
+        }
+    }
+    let [(place, node)] = <[_; 1]>::try_from(placed).map_err(|_| {
+        mlua::Error::runtime(format!(
+            "ui.contribute {{ target = \"{written}\" }}: one of `before`, `after` or `replace`"
+        ))
+    })?;
+    let needs = match place {
+        Place::Replace => {
+            let own = crate::Capability::Override(written.clone());
+            let any = crate::Capability::Override("*".into());
+            (!env.grants.allows(&own) && !env.grants.allows(&any)).then_some(own)
+        }
+        Place::Before | Place::After => env
+            .exposed_hooks
+            .borrow()
+            .get(&written)
+            .cloned()
+            .flatten()
+            .filter(|needed| !env.grants.allows(needed)),
+    };
+    if let Some(needed) = needs {
+        return Err(mlua::Error::runtime(format!(
+            "ui.contribute {{ target = \"{written}\" }}: {owner} needs {needed:?}"
+        )));
+    }
+    Ok(HookContribution {
+        target,
+        place,
+        owner,
+        node,
+    })
+}
+
 pub(crate) fn expect_node(value: mlua::Value, what: &str) -> mlua::Result<Rc<Node>> {
     match value {
         mlua::Value::UserData(ud) if ud.is::<NodeUd>() => Ok(ud.borrow::<NodeUd>()?.0.clone()),
@@ -1963,7 +2044,8 @@ fn children(
 #[derive(Default)]
 pub(crate) struct A11y {
     pub role: Option<zgx::semantics::Role>,
-    pub level: Option<usize>,
+    /// A heading's level, 1 to 6 (a byte: the box's size class is kept).
+    pub level: Option<u8>,
     pub selected: Option<Source>,
     /// `checked` and `expanded`: a custom switch's state, a disclosure's.
     pub checked: Option<Source>,
@@ -1977,6 +2059,10 @@ pub(crate) struct A11y {
     /// What is wrong with its value (`aria-invalid`), followed: nil while
     /// it is fine.
     pub error: Option<Source>,
+    /// `hook = "toolbar.save"`: a point the app declares for plugins, as
+    /// they target it (`hook:toolbar.save`). Here, with what else names the
+    /// element to its readers, as few elements have one.
+    pub hook: Option<Rc<str>>,
 }
 /// `focus_group`'s axes.
 fn focus_group(axis: &str) -> mlua::Result<zgx::input::FocusGroup> {
@@ -2482,6 +2568,17 @@ fn fill_from(
             },
             "focusable" => node.focusable = Some(lua.unpack(value)?),
             "window_drag" => node.window_drag = lua.unpack(value)?,
+            "private" => node.private = lua.unpack(value)?,
+            "hook" => match value {
+                mlua::Value::String(name) => node.a11y.get_or_insert_default().hook = Some(name.to_str()?.as_ref().into()),
+                mlua::Value::Boolean(false) => node.private = true,
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "`hook` takes a name (a hook plugins target) or false (none may), not {}",
+                        other.type_name()
+                    )));
+                }
+            },
             "selectable" => node.selectable = lua.unpack(value)?,
             "selection_color" | "selected_text_color" => {
                 let at = usize::from(key == "selected_text_color");
@@ -2837,7 +2934,7 @@ fn fill_from(
                 }
                 let a11y = node.a11y.get_or_insert_default();
                 a11y.role = Some(zgx::semantics::Role::Heading);
-                a11y.level = Some(level as usize);
+                a11y.level = Some(level as u8);
             }
             "selected" => {
                 node.a11y.get_or_insert_default().selected =
@@ -4392,11 +4489,26 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     ui.set(
         "contribute",
-        lua.create_function(|lua, (slot, node): (String, mlua::Value)| {
-            let node = expect_node(node, "a contribution")?;
+        lua.create_function(|lua, (slot, node): (mlua::Value, Option<mlua::Value>)| {
             let env = env(lua)?;
             let owner = env.owner.clone();
-            env.contributions.borrow_mut().push((slot, owner, node));
+            match (slot, node) {
+                (mlua::Value::String(slot), Some(node)) => {
+                    let node = expect_node(node, "a contribution")?;
+                    let slot = slot.to_str()?.to_string();
+                    env.contributions.borrow_mut().push((slot, owner, node));
+                }
+                (mlua::Value::Table(table), None) => {
+                    let hook = hook_contribution(&env, &table, owner)?;
+                    env.hooks.borrow_mut().push(hook);
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "ui.contribute takes a slot's name and a node, or \
+                         { target = \"#id\", before = node | after = node | replace = node }",
+                    ));
+                }
+            }
             Ok(())
         })?,
     )?;

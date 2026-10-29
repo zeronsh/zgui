@@ -11,6 +11,8 @@
 //! - `role:button`: by role, ARIA's names (`button`, `textbox`, `option`…);
 //! - `@12`: a node by its number, as [`tree`] shows it (stable while the
 //!   node lives);
+//! - `hook:toolbar.save`: an element the app declared a hook (`hook =
+//!   "toolbar.save"`), for plugins (`ui.contribute { target }`);
 //! - parts together narrow (`role:button "Send"`), `>>` looks inside what
 //!   is before it (`#sidebar >> "Inbox"`), `row 3` is a list's third row
 //!   (`#messages row 3`), and `[2]` picks the second of several matches.
@@ -81,6 +83,7 @@ pub fn role_name(role: Role) -> &'static str {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Part {
     id: Option<String>,
+    hook: Option<String>,
     text: Option<String>,
     role: Option<String>,
     number: Option<u32>,
@@ -123,6 +126,12 @@ pub fn parse(text: &str) -> Result<Target, String> {
                         .map_err(|_| format!("`{text}`: `@` takes a number"))?,
                 );
                 rest = after[end..].trim_start();
+            } else if let Some(after) = rest.strip_prefix("hook:") {
+                let end = after
+                    .find(|c: char| c.is_whitespace() || c == '[')
+                    .unwrap_or(after.len());
+                part.hook = Some(after[..end].to_string());
+                rest = after[end..].trim_start();
             } else if let Some(after) = rest.strip_prefix("role:") {
                 let end = after
                     .find(|c: char| c.is_whitespace() || c == '[')
@@ -163,6 +172,42 @@ pub fn parse(text: &str) -> Result<Target, String> {
         parts.push(part);
     }
     Ok(Target(parts))
+}
+
+/// What a plugin's contribution targets (`ui.contribute { target }`): a
+/// target's static parts, matched against an element as the interface is
+/// built, not against the scene. An id, a declared hook, a role, a name
+/// (its label, or its text as written); together they narrow.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Static {
+    pub id: Option<String>,
+    pub hook: Option<String>,
+    pub role: Option<String>,
+    pub text: Option<String>,
+}
+impl Static {
+    /// `text` read as a target, of the parts known before the interface
+    /// shows: not a node's number, a row, the nth match or `>>`.
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        let Target(parts) = parse(text)?;
+        let [part] = parts.as_slice() else {
+            return Err(format!(
+                "`{text}`: a plugin's target is one element, without `>>`"
+            ));
+        };
+        if part.number.is_some() || part.row.is_some() || part.nth.is_some() {
+            return Err(format!(
+                "`{text}`: a plugin's target is matched as the interface is built: \
+                 an id, `hook:`, `role:` or a name, not `@n`, `row` or `[n]`"
+            ));
+        }
+        Ok(Self {
+            id: part.id.clone(),
+            hook: part.hook.clone(),
+            role: part.role.clone(),
+            text: part.text.clone(),
+        })
+    }
 }
 
 /// A node's number in targets and trees: its slot in the scene.
@@ -293,6 +338,11 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
             } else {
                 candidates[1..].to_vec()
             };
+            if let Some(hook) = &part.hook {
+                return Err(format!(
+                    "`hook:{hook}` names a plugin hook; target the element by its id or name"
+                ));
+            }
             let ids = part.id.as_ref().map(|id| handle.find_all(id));
             for node in candidates {
                 if let Some(ids) = &ids
@@ -374,6 +424,9 @@ fn describe_with(scene: &Scene, semantics: &zgx::semantics::Semantics, node: Nod
 
 fn show_part(part: &Part) -> String {
     let mut out = Vec::new();
+    if let Some(hook) = &part.hook {
+        out.push(format!("hook:{hook}"));
+    }
     if let Some(id) = &part.id {
         out.push(format!("#{id}"));
     }

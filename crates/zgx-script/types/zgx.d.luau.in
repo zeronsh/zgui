@@ -1603,6 +1603,11 @@ export type NodeProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
 	window_drag: boolean?,
+	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
+	-- a stable point the app declares. `false` keeps every plugin off the
+	-- element (a password field, a destructive confirm), as `private` does.
+	hook: (string | boolean)?,
+	private: boolean?,
 	-- The pointer selects the text in it and everything it holds, as on a
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
@@ -2414,6 +2419,15 @@ export type WebViewProps = Merge<Props, Merge<WebOptions, {
 export type TerminalProps = Merge<Props, { term: Term }>
 -- `from`: only what that plugin (by name) contributes.
 export type SlotProps = Merge<Props, { context: unknown?, from: string? }>
+-- A plugin's node at an element of the app's, by `target` (`"#save"`,
+-- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
+-- its place (replacing takes `Capability::Override`).
+export type HookContribution = {
+	target: string,
+	before: Node?,
+	after: Node?,
+	replace: Node?,
+}
 -- How `ui.each` rows slide when the list moves them: `true` (a spring,
 -- bounce .1 over 400 ms), an ease, `{ duration, ease }`, `{ bounce,
 -- duration }` or `{ spring = anime.spring {...} }`.
@@ -2604,7 +2618,7 @@ declare ui: {
 	-- it: a contributed component gets it as `props.slot` (one component,
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
-	contribute: (name: string, node: Node) -> (),
+	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
 	-- The script's (or module's) state for `key`, kept across reloads.
 	state: <T>(key: string, initial: T) -> State<T>,
 	-- State shared with Rust and every script.

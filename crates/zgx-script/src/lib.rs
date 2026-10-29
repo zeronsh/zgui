@@ -788,6 +788,11 @@ pub enum Capability {
     /// What the app defines (`expose_action`, `expose_shared`): a host
     /// action or shared state a plugin reaches only if granted it.
     Named(String),
+    /// Replacing an element of the app's (`ui.contribute { target,
+    /// replace }`): the target as the plugin writes it, or `"*"` for any.
+    /// Adding before or after one is open, as a slot is, unless the host
+    /// asks a capability for that target (`expose_hook`).
+    Override(String),
 }
 
 /// A plugin an app loads (`ScriptHost::set_plugins`): its name (what errors
@@ -936,6 +941,7 @@ struct Inner {
     /// Host actions and shared keys plugins reach (`expose_*`).
     exposed_actions: Exposed,
     exposed_shared: Exposed,
+    exposed_hooks: Exposed,
     /// Tells `watch` to look at what it watches again (after a reload).
     rewatch: RefCell<Option<zgx::task::LatestSender<()>>>,
     /// The window's clipboard and dialogs, once the view mounts in one.
@@ -1045,6 +1051,7 @@ type Ran = (
     Rc<Vm>,
     Option<Rc<node::Node>>,
     Vec<(String, Rc<str>, Rc<node::Node>)>,
+    Vec<node::HookContribution>,
 );
 
 impl ScriptHost {
@@ -1080,6 +1087,7 @@ impl ScriptHost {
             managed: RefCell::default(),
             exposed_actions: Rc::default(),
             exposed_shared: Rc::default(),
+            exposed_hooks: Rc::default(),
             rewatch: RefCell::default(),
             platform: Rc::default(),
             picked: Rc::default(),
@@ -1367,6 +1375,17 @@ impl ScriptHost {
             .exposed_shared
             .borrow_mut()
             .insert(key.into(), capability);
+    }
+    /// Ask `capability` of a plugin adding before or after an element by
+    /// `target`, written as plugins write it (`"#save"`, `"hook:toolbar.save"`):
+    /// every target is open to before and after, as a slot is, unless the
+    /// host says so. Replacing an element always takes
+    /// `Capability::Override`.
+    pub fn expose_hook(&self, target: impl Into<String>, capability: Option<Capability>) {
+        self.0
+            .exposed_hooks
+            .borrow_mut()
+            .insert(target.into(), capability);
     }
     /// State shared by the application and every script (`ui.shared`). Rust
     /// can publish model data here and observe what scripts write.
@@ -2105,13 +2124,14 @@ impl ScriptHost {
         self.0.required.borrow_mut().clear();
         let mut vms = Vec::new();
         let mut slots = node::Slots::new();
+        let mut hooks = lower::Hooks::default();
         let files = self.scripts();
         let mut broken = Vec::new();
         let managed = self.0.managed.borrow().clone();
         for script in self.0.plugins.iter().chain(&files).chain(&managed) {
             // A plugin that fails is left out, not the app: the error is
             // reported, and the app and the other plugins load.
-            let (vm, root, contributions) = match self.run(script, true) {
+            let (vm, root, contributions, added) = match self.run(script, true) {
                 Ok(ran) => ran,
                 Err(error) => {
                     broken.push(error);
@@ -2128,12 +2148,15 @@ impl ScriptHost {
             for (slot, owner, node) in contributions {
                 slots.entry(slot).or_default().push((owner, node));
             }
+            hooks.extend(added);
             vms.push(vm);
         }
-        let (vm, root, contributions) = self.run(&self.0.app, false)?;
+        let (vm, root, contributions, added) = self.run(&self.0.app, false)?;
+        hooks.set_app(&vm);
         for (slot, owner, node) in contributions {
             slots.entry(slot).or_default().push((owner, node));
         }
+        hooks.extend(added);
         vms.push(vm);
         let root = root.ok_or_else(|| {
             format!(
@@ -2159,6 +2182,9 @@ impl ScriptHost {
             root,
             lowering: Rc::new(lower::Lowering {
                 slots,
+                // Boxed, and none without plugins adding at the app's elements.
+                hooks: (!hooks.is_empty()).then(|| Box::new(hooks)),
+                sealed: Default::default(),
                 actions: self.0.actions.clone(),
                 elements: self.0.elements.clone(),
                 runtime: self.0.runtime.clone(),
@@ -2352,6 +2378,7 @@ impl ScriptHost {
             store,
             shared: self.0.shared.clone(),
             contributions: RefCell::default(),
+            hooks: RefCell::default(),
             engine: self.0.engine.clone(),
             runtime: self.0.runtime.clone(),
             scope: RefCell::default(),
@@ -2365,6 +2392,7 @@ impl ScriptHost {
             grants: grants.clone(),
             exposed_actions: self.0.exposed_actions.clone(),
             exposed_shared: self.0.exposed_shared.clone(),
+            exposed_hooks: self.0.exposed_hooks.clone(),
             owner: name.as_str().into(),
             persist_as: match &script {
                 Script::Plugin { .. } => script.key().into(),
@@ -2426,11 +2454,11 @@ impl ScriptHost {
                 ));
             }
         };
-        let contributions = lua
+        let (contributions, hooks) = lua
             .app_data_ref::<node::Env>()
-            .map(|env| env.contributions.take())
+            .map(|env| (env.contributions.take(), env.hooks.take()))
             .unwrap_or_default();
-        Ok((vm, root, contributions))
+        Ok((vm, root, contributions, hooks))
     }
 }
 

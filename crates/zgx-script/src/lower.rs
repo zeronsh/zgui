@@ -138,9 +138,220 @@ impl Assets {
     }
 }
 
+/// What plugins add at the app's elements (`ui.contribute { target }`),
+/// indexed so an element looks up only what could match it: the targets
+/// naming its id, its declared hook, and those naming neither (a role or a
+/// name alone). Matched as the interface is built, never per frame; empty,
+/// as without plugins, it costs a length compare per element.
+#[derive(Default)]
+pub(crate) struct Hooks {
+    all: Vec<crate::node::HookContribution>,
+    by_id: ContentMap<Rc<str>, Vec<usize>>,
+    by_hook: ContentMap<Rc<str>, Vec<usize>>,
+    loose: Vec<usize>,
+    /// The application's script: only its elements are targets, not what
+    /// plugins add (a replacement that matched its own target would
+    /// replace itself without end).
+    app: std::rc::Weak<Vm>,
+}
+impl Hooks {
+    pub(crate) fn extend(&mut self, added: Vec<crate::node::HookContribution>) {
+        for hook in added {
+            let at = self.all.len();
+            match (&hook.target.id, &hook.target.hook) {
+                (Some(id), _) => self.by_id.entry(id.as_str().into()).or_default().push(at),
+                (None, Some(name)) => self
+                    .by_hook
+                    .entry(name.as_str().into())
+                    .or_default()
+                    .push(at),
+                (None, None) => self.loose.push(at),
+            }
+            self.all.push(hook);
+        }
+    }
+    /// The application script's VM, whose elements plugins target.
+    pub(crate) fn set_app(&mut self, app: &Rc<Vm>) {
+        self.app = Rc::downgrade(app);
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.all.is_empty()
+    }
+    /// What is added at `node`, in the order the scripts added it: none at
+    /// a `private` element, inside one, or at one a plugin made.
+    /// `by_name`: whether its name may match (not the text that names its
+    /// parent, the button and its label being one thing).
+    fn at(
+        &self,
+        node: &Node,
+        by_name: bool,
+        low: &Lowering,
+    ) -> smallvec::SmallVec<[&crate::node::HookContribution; 2]> {
+        if (node.id.is_none() && node.hook().is_none() && self.loose.is_empty())
+            || node.private
+            || low.sealed.get() > 0
+            || !std::rc::Weak::ptr_eq(&node.owner, &self.app)
+        {
+            return smallvec::SmallVec::new();
+        }
+        let mut found: smallvec::SmallVec<[usize; 4]> = smallvec::SmallVec::new();
+        if let Some(by_id) = node.id.as_deref().and_then(|id| self.by_id.get(id)) {
+            found.extend_from_slice(by_id);
+        }
+        if let Some(by_hook) = node.hook().and_then(|name| self.by_hook.get(name)) {
+            found.extend_from_slice(by_hook);
+        }
+        found.extend_from_slice(&self.loose);
+        found.sort_unstable();
+        found
+            .into_iter()
+            .map(|at| &self.all[at])
+            .filter(|hook| (by_name || hook.target.text.is_none()) && targets(&hook.target, node))
+            .collect()
+    }
+}
+/// Whether `node` is what `target` names, by what is known of it before it
+/// shows: its id, declared hook, role and name as written.
+fn targets(target: &crate::driver::Static, node: &Node) -> bool {
+    target
+        .id
+        .as_deref()
+        .is_none_or(|id| node.id.as_deref() == Some(id))
+        && target
+            .hook
+            .as_deref()
+            .is_none_or(|name| node.hook() == Some(name))
+        && target
+            .role
+            .as_deref()
+            .is_none_or(|role| static_role(node) == Some(role))
+        && target
+            .text
+            .as_deref()
+            .is_none_or(|text| static_name(node) == Some(text))
+}
+/// A node's role as `role:` targets name it: the one it sets, else its
+/// kind's.
+fn static_role(node: &Node) -> Option<&'static str> {
+    if let Some(role) = node.a11y.as_ref().and_then(|a11y| a11y.role) {
+        return Some(crate::driver::role_name(role));
+    }
+    Some(match node.kind {
+        Kind::Button => "button",
+        Kind::Text(_) | Kind::Rich(_) => "text",
+        Kind::Checkbox { .. } => "checkbox",
+        Kind::Input { .. } => "textbox",
+        Kind::Slider { .. } => "slider",
+        Kind::Progress { .. } => "progressbar",
+        Kind::Scroll { .. } => "scroll",
+        Kind::Modal { .. } => "dialog",
+        Kind::Image { .. } | Kind::Svg { .. } => "img",
+        Kind::Menu { .. } => "menu",
+        Kind::MenuItem(..) => "menuitem",
+        _ => return None,
+    })
+}
+/// A node's name as written: its `label`, its own text, or a button's or
+/// item's text (its first child's).
+fn static_name(node: &Node) -> Option<&str> {
+    if let Some(label) = node.label.as_deref() {
+        return Some(label);
+    }
+    fn literal(node: &Node) -> Option<&str> {
+        match &node.kind {
+            Kind::Text(Text::Literal(text)) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+    if let Kind::MenuItem(label, _) = &node.kind {
+        return Some(label.as_str());
+    }
+    literal(node).or_else(|| node.children.first().and_then(|child| literal(child)))
+}
+/// A plugin's node at an element of the app's: lowered as its own, and
+/// told apart as the plugin's, so a contributed "Confirm" beside the app's
+/// is traced to it (assistive technology hears whose it is; the layout
+/// inspector shows the plugin's line that made it).
+fn contributed(hook: &crate::node::HookContribution, low: &Rc<Lowering>) -> View {
+    let view = lower(&hook.node, low);
+    let from = format!("from the plugin {}", hook.owner);
+    let described = match hook
+        .node
+        .a11y
+        .as_ref()
+        .and_then(|a11y| a11y.description.as_deref())
+    {
+        Some(own) => format!("{own}, {from}"),
+        None => format!("From the plugin {}", hook.owner),
+    };
+    view.accessible_description(described)
+}
+/// A component inside a `private` element: built later, as it mounts,
+/// and still sealed from plugins then.
+#[cold]
+#[inline(never)]
+fn sealed_component(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, sealed: u32) -> View {
+    let (node, low, vm) = (node.clone(), low.clone(), vm.clone());
+    component(move |cx| {
+        let outer = low.sealed.replace(sealed);
+        let view = build(&node, &vm, &low, Some(cx));
+        low.sealed.set(outer);
+        view
+    })
+}
+/// `node`'s children, with what plugins add before and after each or in
+/// its place (the last script's replacement if several); none inside a
+/// `private` element, which seals what it holds as it lowers. A child whose
+/// text is its parent's name is not matched by that name (the parent is: a
+/// button and its label are one thing). `flow`: the container's, for
+/// regions among them. Apart from `build`, which lowers children without
+/// plugins as before.
+#[cold]
+#[inline(never)]
+fn hooked_children(
+    view: View,
+    node: &Node,
+    low: &Rc<Lowering>,
+    hooks: &Hooks,
+    flow: Option<&[(Prop, Lit)]>,
+) -> View {
+    let lowered = |child: &Rc<Node>| {
+        let view = lower(child, low);
+        match flow {
+            Some(flow) if child.kind.flows() => apply_all(view, flow),
+            _ => view,
+        }
+    };
+    if node.private {
+        low.sealed.set(low.sealed.get() + 1);
+        let view = view.children(node.children.iter().map(lowered));
+        low.sealed.set(low.sealed.get() - 1);
+        return view;
+    }
+    let parent = static_name(node);
+    let mut children = Vec::with_capacity(node.children.len());
+    for child in &node.children {
+        let names_parent = parent.is_some_and(|name| static_name(child) == Some(name));
+        let at = hooks.at(child, !names_parent, low);
+        let place = |place| at.iter().filter(move |hook| hook.place == place);
+        children.extend(place(crate::node::Place::Before).map(|hook| contributed(hook, low)));
+        children.push(match place(crate::node::Place::Replace).next_back() {
+            Some(hook) => contributed(hook, low),
+            None => lowered(child),
+        });
+        children.extend(place(crate::node::Place::After).map(|hook| contributed(hook, low)));
+    }
+    view.children(children)
+}
+
 pub(crate) struct Lowering {
     /// What each slot shows: its contributions and who made them.
     pub slots: crate::node::Slots,
+    /// What plugins add at the app's elements.
+    pub hooks: Option<Box<Hooks>>,
+    /// How many `private` elements the lowering running now is inside:
+    /// nothing in them is a plugin's target.
+    pub sealed: std::cell::Cell<u32>,
     pub actions: Actions,
     pub elements: Rc<crate::element::Elements>,
     pub runtime: zgx::reactive::Runtime,
@@ -167,8 +378,13 @@ fn lower_node(node: &Rc<Node>, low: &Rc<Lowering>) -> View {
         return div();
     };
     let view = if node.needs_context() {
-        let (node, low, vm) = (node.clone(), low.clone(), vm.clone());
-        component(move |cx| build(&node, &vm, &low, Some(cx)))
+        match low.sealed.get() {
+            0 => {
+                let (node, low, vm) = (node.clone(), low.clone(), vm.clone());
+                component(move |cx| build(&node, &vm, &low, Some(cx)))
+            }
+            sealed => sealed_component(node, &vm, low, sealed),
+        }
     } else {
         build(node, &vm, low, None)
     };
@@ -1845,13 +2061,19 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             .iter()
             .any(|child| child.kind.flows())
             .then(|| flow(node));
-        view = view.children(node.children.iter().map(|child| {
-            let view = lower(child, low);
-            match &flow {
-                Some(flow) if child.kind.flows() => apply_all(view, flow),
-                _ => view,
+        match &low.hooks {
+            None => {
+                view = view.children(node.children.iter().map(|child| {
+                    let view = lower(child, low);
+                    match &flow {
+                        Some(flow) if child.kind.flows() => apply_all(view, flow),
+                        _ => view,
+                    }
+                }));
             }
-        }));
+            // What plugins add at an element is its sibling, or in its place.
+            Some(hooks) => view = hooked_children(view, node, low, hooks, flow.as_deref()),
+        }
     }
     styled(view, node, vm, low, cx, element)
 }
@@ -2413,7 +2635,7 @@ fn styled(
             view = view.role(role);
         }
         if let Some(level) = a11y.level {
-            view = view.heading(level);
+            view = view.heading(usize::from(level));
         }
         if let Some(selected) = &a11y.selected {
             let (selected, vm) = (resolve_owned(selected), vm.clone());

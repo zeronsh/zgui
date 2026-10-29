@@ -371,6 +371,8 @@ A key is read from disk the first time a run asks for it, while the script loads
 
 A plugin is a script that runs beside the app in a VM of its own and adds to the app's slots: `ui.slot(name, { context, from })` is where contributions go, and `ui.contribute(name, node)` adds one. A contributed component is an instance per slot, and gets the slot's `context` as `props.slot`: one panel component, a panel per pane. `from = "notes"` shows only what the plugin `notes` contributes.
 
+A plugin can also add next to any element of the app, or in its place, without a slot: `ui.contribute { target = "#save", after = node }` (or `before`, or `replace`). A target is an `id`, a declared `hook = "name"` (`hook:name`), or a role and a name as the app writes them (`role:button "Save"`); `private = true` takes an element and what it holds out of reach. Replacing asks `Capability::Override`, and `expose_hook(target, capability)` makes adding at a target ask one; what a plugin adds is described to assistive technology as the plugin's ([plugin hooks](design/plugin-hooks.md)). Every `id` is reachable, so a plugin targeting one that is not a declared hook may break with the app's next version.
+
 `ScriptHost::plugins(dir)` loads every script in a directory; `set_plugins(vec![Plugin { name, entry, grants }])` sets the plugins an app manages itself (one that asks its user first), from the next `reload` on, read from the disk even in a bundled app and watched for edits. What a plugin may do is what the app grants it, and nothing else of the app's is in reach:
 
 | | the app's scripts | a plugin |

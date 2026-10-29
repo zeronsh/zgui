@@ -19,6 +19,7 @@ ui.component<P>(build: (props: P) -> Node) -> (props: P) -> Node
 ui.on_mount(f: () -> ...unknown) -> ()
 ui.slot(name: string, props: Props?) -> Node
 ui.contribute(name: string, node: Node) -> ()
+ui.contribute({ target: string, before: Node?, after: Node?, replace: Node? }) -> ()
 ui.set<T>(state: State<T>, value: T) -> Action
 ui.toggle(state: State<boolean>) -> Action
 ui.add(state: State<number>, by: number?) -> Action
@@ -413,7 +414,14 @@ A host's plugins (`ScriptHost::plugins(dir)`) are scripts in their own sandboxed
 ```lua
 -- file: app.luau
 local user = ui.shared("user", "")
-return ui.column { p = 16, gap = 8, ui.text { "Hello, {user}" }, ui.slot("sidebar", { gap = 6 }) }
+return ui.column {
+	p = 16,
+	gap = 8,
+	ui.text { "Hello, {user}" },
+	ui.slot("sidebar", { gap = 6 }),
+	ui.button { id = "save", label = "Save" },
+	ui.input { private = true, value = ui.state("password", "") },
+}
 ```
 
 ```lua
@@ -428,6 +436,24 @@ ui.contribute(
 	}
 )
 ```
+
+### Hooks
+
+`ui.contribute { target, before | after | replace = node }` adds at an element of the app's without a slot. `target` is one part of the inspector's syntax: `#id`, `hook:name` (an element declaring `hook = "name"`), `role:button "Save"` or a name, matched against what the app's source writes (its `role` or its kind's, its `label` or literal text). `>>`, `@n`, `row` and `[n]` are refused: they are known only once the interface shows.
+
+- `before` and `after` add beside the element, in plugin order, wherever it is built; the host can make a target ask a capability with `expose_hook(target, Some(capability))`.
+- `replace` takes the element's place (an element in a container's children: not the app's root, nor a split's panes) and needs `Capability::Override(target)` or `Capability::Override("*")`; the last plugin's wins.
+- `private = true` (or `hook = false`) on an element puts it and everything in it out of reach.
+- What a plugin adds has the accessible description "From the plugin `<name>`".
+
+With the app above, a plugin adds a button before its Save; nothing reaches the password field:
+
+```lua
+-- file: plugins/preview.luau
+ui.contribute { target = "#save", before = ui.button { label = "Preview" } }
+```
+
+A plugin targeting an `id` that is not a declared `hook` reaches the app's internals: the app's next version may move or drop it ([design](../design/plugin-hooks.md)).
 
 ## Gotchas
 
