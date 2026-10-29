@@ -92,9 +92,19 @@ impl Buffer {
         // sRGB, as a `CAMetalLayer` without a colour space shows its drawables:
         // untagged layer contents would be taken as the display's space.
         // SAFETY: CoreGraphics' constant CFString, read only.
-        if let Some(list) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
-            .and_then(|space| CGColorSpace::property_list(&space))
-        {
+        // Scratch (not for merge): `ZGX_WS_SPACE=none` leaves surfaces
+        // untagged (shown in the display's space: colours off, for measuring
+        // WindowServer's colour matching only), `p3` tags them Display P3.
+        let space = match std::env::var("ZGX_WS_SPACE").as_deref() {
+            Ok("none") => None,
+            // SAFETY: CoreGraphics' constant CFString, read only.
+            Ok("p3") => CGColorSpace::with_name(Some(unsafe {
+                objc2_core_graphics::kCGColorSpaceDisplayP3
+            })),
+            // SAFETY: CoreGraphics' constant CFString, read only.
+            _ => CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })),
+        };
+        if let Some(list) = space.and_then(|space| CGColorSpace::property_list(&space)) {
             // SAFETY: IOSurface's colour-space key and a colour space's
             // property list form, as it documents.
             unsafe { surface.set_value(kIOSurfaceColorSpace, &list) };
@@ -750,7 +760,7 @@ impl Uncover {
         if shown || this.tries > 60 {
             crate::present_log::log(|| format!("uncover tries={} confirmed={shown}", this.tries));
             transaction(|| {
-                hide_tiles(&this.plain, None);
+                hide_tiles(&this.plain, None, false);
                 this.video.setOpacity(1.);
             });
             this.shows.set(false);
@@ -917,16 +927,55 @@ fn fill(layer: &CALayer, host: &CALayer, opaque: bool) {
         let _: () = msg_send![layer, setActions: actions];
     }
 }
+/// Scratch (not for merge): `ZGX_WS_ALT=oneflip|opacityflip|lead35` turns
+/// that variant on in even Unix seconds and off in odd ones, for paired-second
+/// WindowServer measurement (alt_nf.py credits WindowServer's CPU per second
+/// to each parity). `ZGX_WS_ALT_FIXED=1` keeps the variant on throughout.
+pub fn ws_alt(name: &str) -> bool {
+    use std::sync::OnceLock;
+    static ALT: OnceLock<(Option<String>, bool)> = OnceLock::new();
+    let (alt, fixed) = ALT.get_or_init(|| {
+        (
+            std::env::var("ZGX_WS_ALT").ok(),
+            std::env::var_os("ZGX_WS_ALT_FIXED").is_some(),
+        )
+    });
+    if alt.as_deref() != Some(name) {
+        return false;
+    }
+    *fixed
+        || std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+            % 2
+            == 0
+}
 /// Shows `plain`'s tile of the surface `shown` (none: hides them all),
 /// changing only the tiles whose state differs.
-fn hide_tiles(plain: &CALayer, shown: Option<&CALayer>) {
+///
+/// Scratch variants (`ws_alt`): `oneflip` keeps the bottom tile shown under
+/// an opaque window, so a flip changes one layer (the top tile's `hidden`),
+/// not two; `opacityflip` leaves every tile unhidden and flips `opacity`
+/// instead, so the visible tree never changes.
+fn hide_tiles(plain: &CALayer, shown: Option<&CALayer>, opaque: bool) {
+    let one = opaque && ws_alt("oneflip");
+    let by_opacity = ws_alt("opacityflip");
     // SAFETY: The layer's live sublayer array, read on the main thread while
     // nothing else changes it.
     if let Some(tiles) = unsafe { plain.sublayers() } {
-        for tile in tiles.iter() {
-            let hidden = shown.is_none_or(|shown| !std::ptr::eq(&*tile, shown));
+        for (at, tile) in tiles.iter().enumerate() {
+            let this = shown.is_some_and(|shown| std::ptr::eq(&*tile, shown));
+            let (hidden, opacity) = match () {
+                _ if shown.is_none() => (true, 1.),
+                _ if by_opacity => (false, if this { 1. } else { 0. }),
+                _ if one => (!(this || at == 0), 1.),
+                _ => (!this, 1.),
+            };
             if tile.isHidden() != hidden {
                 tile.setHidden(hidden);
+            }
+            if tile.opacity() != opacity {
+                tile.setOpacity(opacity);
             }
         }
     }
@@ -1389,7 +1438,7 @@ impl Layer {
             let layer = drawables.layer.clone();
             transaction(|| {
                 layer.setHidden(false);
-                hide_tiles(&self.plain, None);
+                hide_tiles(&self.plain, None, false);
             });
             self.plain_shows.set(false);
         }
@@ -1514,7 +1563,7 @@ impl Layer {
                 each.setFrame(bounds);
             }
         }
-        hide_tiles(&self.plain, Some(tile));
+        hide_tiles(&self.plain, Some(tile), self.opaque.get());
         self.hide_drawables();
         if let Some(probe) = &self.probe {
             probe.present();

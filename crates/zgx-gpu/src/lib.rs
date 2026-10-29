@@ -28,6 +28,9 @@ mod plane_drawables;
 /// A caret Core Animation draws over the frames (`GpuRenderer::set_caret`).
 #[cfg(target_os = "macos")]
 pub use layer_present::Caret;
+/// Scratch (not for merge): paired-second WindowServer variants.
+#[cfg(target_os = "macos")]
+pub use layer_present::ws_alt;
 #[cfg(target_os = "macos")]
 mod metal_frame;
 #[cfg(target_os = "macos")]

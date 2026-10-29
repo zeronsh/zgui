@@ -1189,7 +1189,13 @@ impl Latch {
             None => (period_ns - origin.duration_since(ready).as_nanos() % period_ns) % period_ns,
         };
         let phase = std::time::Duration::from_nanos(since as u64);
-        let point = ready - phase + period.saturating_sub(Self::LEAD);
+        // Scratch (not for merge): `ZGX_WS_ALT=lead35` hands over 3.5 ms
+        // before a refresh in even seconds.
+        let lead = match zgx_gpu::ws_alt("lead35") {
+            true => std::time::Duration::from_micros(3500),
+            false => Self::LEAD,
+        };
+        let point = ready - phase + period.saturating_sub(lead);
         let first = if point >= ready {
             point
         } else {
