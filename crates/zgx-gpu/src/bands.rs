@@ -275,6 +275,11 @@ impl GpuRenderer {
             },
         ])
         .meet(target);
+        // Its box nowhere in this target (a popup's, scrolled or folded out
+        // of it): no bands here, and nothing to clamp them into.
+        if outer.empty() {
+            return None;
+        }
         let [ol, ot, or, ob] = outer.0;
         let inner = Pixels([
             if left > 0. {
@@ -761,5 +766,31 @@ impl GpuRenderer {
     pub(crate) fn viewport_uniform(&mut self, viewport: Rect) -> (wgpu::Buffer, wgpu::BindGroup) {
         let key = self.viewport_entry(viewport.width, viewport.height);
         self.viewports.get(&key).cloned().expect("made")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A faded box wholly outside the target (a popup's list scrolled or
+    /// folded out of it) has no bands there: none, not a clamp into an
+    /// inverted box.
+    #[test]
+    fn a_faded_box_outside_the_target_has_no_bands() {
+        let gpu = GpuRenderer::new(200, 200).unwrap();
+        let scene = Scene::new(200., 200.);
+        let target = Pixels([0., 0., 200., 200.]);
+        for rect in [
+            Rect::new(20., -700., 160., 200.),
+            Rect::new(20., 900., 160., 200.),
+            Rect::new(-900., 20., 160., 160.),
+        ] {
+            let mask = (rect, [40., 40., 40., 40.]);
+            assert!(
+                gpu.band_strips(&scene, &[], mask, target, target).is_none(),
+                "{rect:?}"
+            );
+        }
     }
 }

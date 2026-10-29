@@ -22,6 +22,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- **A faded clip wholly outside a popup no longer panics the app** (zgx-gpu). Drawing a fade's bands as one, its box was clipped to what the window draws and clamped into; a box entirely outside it (seen with a folding list in an out-of-window popover) left that box inverted, `f32::clamp` panicked on every frame, and after a run of contained panics the app quit. Such a box now has no bands there and fades item by item, as it did.
 - **Decoded images and SVGs no longer stay for the process's life** (zgx-script). Each `src` was decoded once and kept until its file changed, so a page of forty large images left ~80 MB behind after it unmounted. What a mounted node shows is still kept. Of the rest, the most recently shown stay within a budget (48 MiB by default, `ScriptHost::image_cache(bytes)`), so a reload or a page shown again is still instant. The others go as nodes showing pictures unmount, never per frame.
 
 ## 0.1.5 (2026-10-28)
