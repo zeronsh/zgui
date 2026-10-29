@@ -2555,40 +2555,35 @@ const WIDGET_FIELDS: &[&str] = &[
     "hour12",
     "minute_step",
 ];
-/// Constructor fields looked for only once a key is no style property:
-/// every key is compared against `WIDGET_FIELDS`, so a field added there
-/// costs each style key of its length a comparison, and one added here
-/// costs them nothing.
-const LATE_FIELDS: &[&str] = &["inputmode", "caret_color", "caret_width"];
+/// The keys `late_field` takes: looked for only once a key is no style
+/// property. Every key is compared against `WIDGET_FIELDS`, so a field
+/// added there costs each style key of its length a comparison, and one
+/// added here costs them nothing (a test checks none is a property).
+#[cfg(test)]
+const LATE_FIELDS: &[&str] = &["inputmode", "caret_color", "caret_width", "hook", "private"];
 
-/// A `LATE_FIELDS` field the walk found, taken where it lies: an input's
-/// caret, which few set, read only from those that set it (`inputmode` is
-/// read by `ui.input` itself).
-fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlua::Result<()> {
-    let Kind::Input { rare, .. } = &mut node.kind else {
-        return Ok(());
-    };
-    match name {
-        "caret_color" => {
-            let color = source(lua, Ty::Color, name, value)?;
-            rare.get_or_insert_default().caret_color = Some(color);
-        }
-        "caret_width" => {
-            let width: f64 = lua.unpack(value)?;
-            rare.get_or_insert_default().caret_width = Some(width as f32);
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// A key no style property names, of those few nodes set: whether plugins
-/// may target the node (`hook`, `private`). Looked for after the style
-/// keys, so none of those compares against them.
+/// A key no style property names, taken where it lies once the walk finds
+/// it, so no style key compares against it: an input's caret (few set it,
+/// read only from those that do), whether plugins may target the node
+/// (`hook`, `private`); `inputmode` is read by `ui.input` itself. Any other
+/// key is unknown.
 #[cold]
 #[inline(never)]
 fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlua::Result<()> {
     match name {
+        "caret_color" | "caret_width" => {
+            let Kind::Input { rare, .. } = &mut node.kind else {
+                return Ok(());
+            };
+            if name == "caret_color" {
+                let color = source(lua, Ty::Color, name, value)?;
+                rare.get_or_insert_default().caret_color = Some(color);
+            } else {
+                let width: f64 = lua.unpack(value)?;
+                rare.get_or_insert_default().caret_width = Some(width as f32);
+            }
+        }
+        "inputmode" => {}
         "private" => node.private = lua.unpack(value)?,
         "hook" => match value {
             mlua::Value::String(name) => {
@@ -3277,9 +3272,6 @@ fn fill_from(
             name if WIDGET_FIELDS.contains(&name) => {}
             name => {
                 let Some(prop) = Prop::parse(name) else {
-                    if LATE_FIELDS.contains(&name) {
-                        return late_field(lua, node, name, value);
-                    }
                     return late_field(lua, node, name, value);
                 };
                 if let Some(keys) = &keys {
