@@ -276,6 +276,9 @@ jobs:
           path: ${{ runner.temp }}/gate-functions
           if-no-files-found: ignore
           retention-days: 14
+      - name: Callgrind probe
+        continue-on-error: true
+        run: bash scripts/perf/probe_cg.sh
       - name: Comment
         if: github.event_name == 'pull_request' && hashFiles('perf.md') != ''
         continue-on-error: true
