@@ -1,4 +1,5 @@
--- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`).
+-- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`)
+-- and the ids and hooks its plugins may target.
 -- Written by `zgx types` (and `zgx check`, and the debug host after a
 -- reload that changes the names): don't edit it, and leave it out of
 -- version control. Editors list it in place of zgx.d.luau.
@@ -789,6 +790,27 @@ export type Readable<T> = { read get: (self: never) -> T }
 -- What `ui` element functions return; children and arguments of others.
 declare extern type Node with
 end
+-- `ui.t(key, args)`: a localized message. Accepted wherever text is
+-- (children, `ui.text`, `placeholder`), it follows its locale, its locale
+-- file and the states its arguments read.
+declare extern type Message with
+	-- Its text now (tracked: a computed reading it follows it).
+	function get(self): string
+	function key(self): string
+end
+-- A message's key (`ui.t`): any string here; `zgx types` writes the app's
+-- source locale's keys in its place, so an editor completes them and a
+-- typo is a type error (up to 1,000 keys: luau-lsp takes no longer union).
+export type MessageKey = string
+-- `ui.locale`: the locale asked for (nil follows the system's preferred
+-- languages), and the one shown.
+declare extern type Locale with
+	-- The locale shown: the one asked for, or preferred, as the app has it.
+	read current: string
+	function get(self): string?
+	function peek(self): string?
+	function set(self, locale: string?): ()
+end
 -- `ui.span { … }`: a run of rich text, used once.
 declare extern type Span with
 end
@@ -1289,10 +1311,10 @@ export type Reactive<T> = T | Readable<T> | (() -> T) | Binding
 export type TextValue = (string | number | boolean)?
 -- Text: a string (`"{name}"` shows the state named `name`), a number, or
 -- a function of state.
-export type Text = string | number | (() -> TextValue)
+export type Text = string | number | (() -> TextValue) | Message
 -- Children: nodes, strings (text), functions (computed text) and lists of
 -- them, which flatten; `false` and `nil` are skipped.
-export type Child = Node | string | (() -> TextValue) | { read [number]: Child } | false | nil
+export type Child = Node | string | (() -> TextValue) | Message | { read [number]: Child } | false | nil
 
 -- Event handlers: a function, or an action Rust runs.
 export type Handler = () -> ...unknown
@@ -6265,7 +6287,7 @@ export type InputProps = {
 	multiline: boolean?,
 	-- Shown while the value is empty (never part of it), in the input's
 	-- typography and `placeholder_color`.
-	placeholder: Reactive<string>?,
+	placeholder: (Reactive<string> | Message)?,
 	placeholder_color: Reactive<Color>?,
 	-- Focusing it selects all its text (an address bar).
 	select_on_focus: boolean?,
@@ -15419,9 +15441,15 @@ export type SlotProps = {
 	context: unknown?,
 	from: string?,
 }
--- A plugin's node at an element of the app's, by `target` (`"#save"`,
--- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
--- its place (replacing takes `Capability::Override`).
+-- What a plugin targets: an element by its `id` (`"#save"`) or declared hook
+-- (`"hook:toolbar.save"`). An app's own definitions (`zgx types`) name every
+-- one it declares, so a typo is an error.
+-- The hooks this app declares (`hook = "…"`).
+export type HookName = never
+export type HookTarget = "#agent:" | "#ask" | "#best" | "#consent-allow" | "#consent-deny" | "#consent-later" | "#cta" | "#editor-new" | "#editor-open" | "#editor-text" | "#hn-" | "#new" | "#open:" | "#palette-query" | "#portal" | "#show" | "#sidebar_toggle" | "#slot" | "#top"
+-- A target by role or name (`ui.selector('role:button "Save"')`): the app's
+-- internals, which may change with its next version.
+export type Selector = { __zgx_selector: never }
 -- `ui.override`'s table.
 export type ModuleOverride = {
 	-- The app's module: "@app/components/card".
@@ -15429,9 +15457,11 @@ export type ModuleOverride = {
 	-- The plugin's replacement, relative to the plugin: "./card".
 	with: string,
 }
-
+-- A plugin's node at an element of the app's, by `target` (`"#save"`,
+-- `"hook:toolbar.save"`, `ui.selector('role:button "Save"')`): before it,
+-- after it, or in its place (replacing takes `Capability::Override`).
 export type HookContribution = {
-	target: string,
+	target: HookTarget | Selector,
 	before: Node?,
 	after: Node?,
 	replace: Node?,
@@ -15441,7 +15471,7 @@ export type HookContribution = {
 -- what it reads changes (it takes `Capability::Override`). A tooltip's text
 -- passes through as the element is built.
 export type HookFilter = {
-	target: string,
+	target: HookTarget | Selector,
 	text: ((text: string) -> string)?,
 	label: ((label: string?) -> string?)?,
 	hidden: ((hidden: boolean) -> boolean)?,
@@ -16285,6 +16315,9 @@ declare ui: {
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
+	-- A plugin's target by role or name, as written (`'role:button "Save"'`):
+	-- the app's internals, which may change with its next version.
+	selector: (text: string) -> Selector,
 	-- A plugin's filter over an element of the app's (`HookFilter`).
 	filter: (HookFilter) -> (),
 	-- From a plugin: one of the app's `@app/…` modules replaced by the
@@ -16445,6 +16478,13 @@ declare ui: {
 	-- JSON: `encode(value, { pretty = true })` writes what state could hold
 	-- (lists as arrays, tables as objects, `ui.null` as null); `decode(text)`
 	-- gives tables the script may change, and fails saying where.
+	-- Localized messages: `i18n { dir, source }` loads `dir/<locale>.json`
+	-- (ICU MessageFormat; "locales" and "en" by default), read again as they
+	-- change; `t(key, args)` is a message, its arguments numbers, strings,
+	-- states or functions; `locale` asks for a locale.
+	i18n: (opts: { dir: string?, source: string? }?) -> (),
+	t: (key: MessageKey, args: { [string]: number | string | boolean | Readable<any> | (() -> any) }?) -> Message,
+	locale: Locale,
 	json: {
 		encode: (value: any, opts: { pretty: boolean? }?) -> string,
 		decode: (text: string) -> any,

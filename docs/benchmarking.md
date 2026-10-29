@@ -390,6 +390,29 @@ still shows: report the median and the range). Each idle trial keeps the
 and `idle-5-20s.json` summarizes them: runs before 2026-10-24 sampled idle
 that way, once.
 
+### The driver floor comes with any frame drawn
+
+The floor is the Metal driver's, per command queue, not zgx's. It comes back
+with the first frame submitted after an idle spell and goes about 10 s after
+the last; every Metal app pays it while drawing (GPUI Fast alike, above).
+Measured on 2026-10-29 with `popup_memory` (an M5 Max, a release build,
+`footprint` 13 s idle and then 3 s and 14 s after one change):
+
+| what changed | idle | after 3 s | after 14 s |
+|---|---|---|---|
+| a menu shown in a popup window | 1.8 MB | 178 MB | 1.8 MB |
+| the same menu inside the window (`ZGX_POPUP_WINDOWS=0`) | 1.8 MB | 178 MB | 1.9 MB |
+| a box's colour, no texture written | 1.8 MB | 178 MB | 1.8 MB |
+
+So a popover past the window's edge, or a page transition animating, holds
+it only while it draws, as any change does; a popup window's own cost is its
+surface (0.7 MB of IOSurface), and popup windows share their window's queue.
+zgx keeps an idle window at about 2 MB by submitting nothing while nothing
+changes; the caret is a Core Animation layer for this reason, as its blink
+would otherwise keep the floor (`ZGX_NATIVE_CARET=0` draws it the old way). Releasing the queue
+after an idle spell gives the memory back sooner, but cost about 6 ms of
+CPU on the next frame, and was declined.
+
 Both start with a preflight (`scripts/perf/preflight.py`): they wait while
 anything heavy runs (compilers and linkers of any agent, VMs, Instruments,
 Spotlight indexing, Time Machine, software updates) or the rest of the

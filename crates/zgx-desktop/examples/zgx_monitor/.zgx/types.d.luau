@@ -1,4 +1,5 @@
--- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`).
+-- zgx's definitions with this app's own theme tokens (`ui.theme.tokens`)
+-- and the ids and hooks its plugins may target.
 -- Written by `zgx types` (and `zgx check`, and the debug host after a
 -- reload that changes the names): don't edit it, and leave it out of
 -- version control. Editors list it in place of zgx.d.luau.
@@ -406,6 +407,13 @@ export type Tokens = {
 	menu: {
 		bg: string,
 		hover: string,
+	},
+	monitor: {
+		cpu: string,
+		gpu: string,
+		memory: string,
+		panel: string,
+		wash: string,
 	},
 	motion: {
 		duration: {
@@ -15287,9 +15295,13 @@ export type SlotProps = {
 	context: unknown?,
 	from: string?,
 }
--- A plugin's node at an element of the app's, by `target` (`"#save"`,
--- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
--- its place (replacing takes `Capability::Override`).
+-- What a plugin targets: an element by its `id` (`"#save"`) or declared hook
+-- (`"hook:toolbar.save"`). An app's own definitions (`zgx types`) name every
+-- one it declares, so a typo is an error.
+export type HookTarget = string
+-- A target by role or name (`ui.selector('role:button "Save"')`): the app's
+-- internals, which may change with its next version.
+export type Selector = string
 -- `ui.override`'s table.
 export type ModuleOverride = {
 	-- The app's module: "@app/components/card".
@@ -15297,9 +15309,11 @@ export type ModuleOverride = {
 	-- The plugin's replacement, relative to the plugin: "./card".
 	with: string,
 }
-
+-- A plugin's node at an element of the app's, by `target` (`"#save"`,
+-- `"hook:toolbar.save"`, `ui.selector('role:button "Save"')`): before it,
+-- after it, or in its place (replacing takes `Capability::Override`).
 export type HookContribution = {
-	target: string,
+	target: HookTarget | Selector,
 	before: Node?,
 	after: Node?,
 	replace: Node?,
@@ -15309,7 +15323,7 @@ export type HookContribution = {
 -- what it reads changes (it takes `Capability::Override`). A tooltip's text
 -- passes through as the element is built.
 export type HookFilter = {
-	target: string,
+	target: HookTarget | Selector,
 	text: ((text: string) -> string)?,
 	label: ((label: string?) -> string?)?,
 	hidden: ((hidden: boolean) -> boolean)?,
@@ -16033,7 +16047,7 @@ export type ThemeApi = {
 	-- Declare the app's tokens with defaults in terms of the standard ones.
 	tokens: (tokens: { [string]: string | number | { [string]: any } }) -> (),
 	-- A token's value (tracked): colours as "#rrggbbaa", numbers, font names.
-	get: (name: TokenName | string) -> any,
+	get: (name: TokenName | "monitor.cpu" | "monitor.gpu" | "monitor.memory" | "monitor.panel" | "monitor.wash" | string) -> any,
 	follow_system: (themes: { dark: string, light: string } | false) -> (),
 	-- The design lint: styles that hard-code a colour, spacing, radius,
 	-- type size, weight, font or shadow warn ("warn", true) or fail
@@ -16153,6 +16167,9 @@ declare ui: {
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
+	-- A plugin's target by role or name, as written (`'role:button "Save"'`):
+	-- the app's internals, which may change with its next version.
+	selector: (text: string) -> Selector,
 	-- A plugin's filter over an element of the app's (`HookFilter`).
 	filter: (HookFilter) -> (),
 	-- From a plugin: one of the app's `@app/…` modules replaced by the
