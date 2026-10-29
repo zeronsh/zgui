@@ -36,6 +36,7 @@ mod data;
 mod design;
 pub mod driver;
 mod element;
+mod errors;
 #[cfg(target_os = "macos")]
 mod file_events;
 #[cfg(windows)]

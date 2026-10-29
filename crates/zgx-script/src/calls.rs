@@ -11,7 +11,12 @@
 //! settles. A rejection nothing handles is reported as a script error.
 //! Everything a promise calls back runs on the script's budget; a script
 //! that has reloaded since hears nothing.
-use crate::{Vm, node::env, value::Value};
+use crate::{
+    Vm,
+    errors::{Failure, Kind, UiError},
+    node::env,
+    value::Value,
+};
 use mlua::{
     Function, IntoLuaMulti, Lua, MetaMethod, MultiValue, Table, Thread, UserData, UserDataFields,
     UserDataMethods,
@@ -128,7 +133,7 @@ pub(crate) type AsyncActions = Rc<RefCell<HashMap<String, AsyncAction>>>;
 enum Settled {
     Pending,
     Value(Value),
-    Error(String),
+    Error(Rc<Failure>),
 }
 
 /// Who hears a promise settle.
@@ -193,7 +198,7 @@ pub(crate) struct Promise {
 pub(crate) struct PromiseUd(pub(crate) Rc<Promise>);
 
 impl Promise {
-    fn settle(self: &Rc<Self>, result: Result<Value, String>) {
+    fn settle(self: &Rc<Self>, result: Result<Value, Failure>) {
         // Cancelled first, a late answer changes nothing.
         if self.state.with_untracked(|s| *s != Settled::Pending) {
             return;
@@ -201,7 +206,7 @@ impl Promise {
         self.abort.borrow_mut().take();
         let settled = match result {
             Ok(value) => Settled::Value(value),
-            Err(error) => Settled::Error(error),
+            Err(error) => Settled::Error(Rc::new(error)),
         };
         self.state.set(settled.clone());
         let waiters = std::mem::take(&mut *self.waiters.borrow_mut());
@@ -211,8 +216,8 @@ impl Promise {
             && let Some(vm) = self.caller.upgrade()
         {
             vm.report(mlua::Error::runtime(format!(
-                "ui.call(\"{}\"): {error} (nothing handled it: `:after(_, on_error)`, `.error` or `:await()` in a pcall)",
-                self.name
+                "ui.call(\"{}\"): {} (nothing handled it: `:after(_, on_error)`, `.error` or `:await()` in a pcall)",
+                self.name, error.message
             )));
         }
         for waiter in waiters {
@@ -253,7 +258,11 @@ fn hear(waiter: Waiter, settled: &Settled) {
             let Some(vm) = vm.upgrade() else { return };
             let result = match settled {
                 Settled::Value(value) => on_value.map(|f| vm.call::<()>(&f, value.clone())),
-                Settled::Error(error) => on_error.map(|f| vm.call::<()>(&f, error.clone())),
+                Settled::Error(error) => on_error.map(|f| {
+                    vm.lua
+                        .create_userdata(UiError::of(error.clone()))
+                        .and_then(|error| vm.call::<()>(&f, error))
+                }),
                 Settled::Pending => None,
             };
             if let Some(Err(error)) = result {
@@ -266,11 +275,16 @@ fn hear(waiter: Waiter, settled: &Settled) {
                 return;
             }
             let resumed = match settled {
-                Settled::Value(value) => (true, value.clone()),
-                Settled::Error(error) => (false, Value::Str(error.as_str().into())),
+                Settled::Value(value) => (true, value.clone()).into_lua_multi(&vm.lua),
+                Settled::Error(error) => {
+                    (false, UiError::of(error.clone())).into_lua_multi(&vm.lua)
+                }
                 Settled::Pending => return,
             };
-            drive(&vm, thread, resumed, &task);
+            match resumed {
+                Ok(resumed) => drive(&vm, thread, resumed, &task),
+                Err(error) => vm.report(error),
+            }
         }
     }
 }
@@ -318,7 +332,7 @@ fn drive(vm: &Rc<Vm>, thread: Thread, args: impl IntoLuaMulti, task: &Rc<TaskSta
             }
             Settled::Value(value) => args = Some((true, value).into_lua_multi(&vm.lua)),
             Settled::Error(error) => {
-                args = Some((false, Value::Str(error.as_str().into())).into_lua_multi(&vm.lua))
+                args = Some((false, UiError::of(error.clone())).into_lua_multi(&vm.lua))
             }
         }
     }
@@ -341,7 +355,7 @@ impl UserData for PromiseUd {
         fields.add_field_method_get("error", |_, p| {
             p.0.handled.set(true);
             Ok(p.0.state.with(|s| match s {
-                Settled::Error(error) => Some(error.clone()),
+                Settled::Error(error) => Some(UiError::of(error.clone())),
                 _ => None,
             }))
         });
@@ -371,7 +385,7 @@ impl UserData for PromiseUd {
             p.0.handled.set(true);
             p.0.abort();
             let runtime = env(lua)?.runtime.clone();
-            batch(&runtime, || p.0.settle(Err("cancelled".into())));
+            batch(&runtime, || p.0.settle(Err(Failure::cancelled())));
             Ok(())
         });
         // `await` is Luau (it yields its coroutine): found through `__index`.
@@ -390,19 +404,19 @@ const AWAIT: &str = "zgx.await";
 /// `(ok, value)` when it settles.
 ///
 /// The same chunk (one made for every script) gives `ui.try(f, ...)`:
-/// `f(...)`'s value and nil, or nil and what it raised as a person reads
-/// it (an error object's text, without its traceback). Luau, so a task's
-/// await inside `f` yields through it as through `pcall`.
+/// `f(...)`'s value and nil, or nil and what it raised as a `UiError`
+/// (`ui.__error`, `errors::raised`: made the first time one is, so a script
+/// that never fails makes none). Luau, so a task's await inside `f` yields
+/// through it as through `pcall`. Kept short: it is compiled once a process.
 const AWAIT_SOURCE: &str = r#"
-local yield, yieldable = coroutine.yield, coroutine.isyieldable
-local pcall, tostring, type = pcall, tostring, type
+local ui = ...
+local yield, yieldable, pcall = coroutine.yield, coroutine.isyieldable, pcall
 local function await(promise)
     if not yieldable() then
         error("await runs inside ui.task(function() ... end)", 2)
     end
     local ok, value = yield(promise)
     if not ok then
-        -- The host's message as it wrote it.
         error(value, 0)
     end
     return value
@@ -412,18 +426,7 @@ local function try(f, ...)
     if ok then
         return value, nil
     end
-    if type(value) == "string" then
-        return nil, value
-    end
-    local text = tostring(value)
-    local cut = text:find("\nstack traceback:", 1, true)
-    if cut then
-        text = text:sub(1, cut - 1)
-    end
-    if text:sub(1, 15) == "runtime error: " then
-        text = text:sub(16)
-    end
-    return nil, text
+    return nil, ui.__error(value)
 end
 return await, try
 "#;
@@ -444,7 +447,19 @@ pub(crate) fn pending(lua: &Lua, name: String) -> mlua::Result<Rc<Promise>> {
 pub(crate) fn settle_with(
     lua: &Lua,
     promise: &Rc<Promise>,
+    kind: Kind,
     future: impl Future<Output = Result<Value, String>> + 'static,
+) -> mlua::Result<()> {
+    settle_failing(lua, promise, async move {
+        future.await.map_err(|message| Failure::new(kind, message))
+    })
+}
+/// As `settle_with`, for a future that tells its failures apart (a fetch:
+/// the transport, a cancel, a status).
+fn settle_failing(
+    lua: &Lua,
+    promise: &Rc<Promise>,
+    future: impl Future<Output = Result<Value, Failure>> + 'static,
 ) -> mlua::Result<()> {
     let env = env(lua)?;
     let (settling, runtime) = (promise.clone(), env.runtime.clone());
@@ -553,14 +568,18 @@ impl Stop {
     async fn or_stopped<T>(
         self: Rc<Self>,
         future: impl Future<Output = Result<T, String>>,
-    ) -> Result<T, String> {
+    ) -> Result<T, Failure> {
         let mut future = std::pin::pin!(future);
         std::future::poll_fn(move |cx| {
             if self.stopped.get() {
-                return std::task::Poll::Ready(Err("cancelled".into()));
+                return std::task::Poll::Ready(Err(Failure::cancelled()));
             }
             *self.waker.borrow_mut() = Some(cx.waker().clone());
-            future.as_mut().poll(cx)
+            // What the transport says failed: no answer came.
+            future
+                .as_mut()
+                .poll(cx)
+                .map(|done| done.map_err(|message| Failure::new(Kind::Network, message)))
         })
         .await
     }
@@ -790,9 +809,16 @@ pub(crate) fn install(
     fetcher: Option<SharedFetcher>,
 ) -> mlua::Result<()> {
     let (await_fn, try_fn): (Function, Function) =
-        crate::lazy::builtin(lua, "=await", AWAIT_SOURCE)?.eval()?;
+        crate::lazy::builtin(lua, "=await", AWAIT_SOURCE)?.call(ui.clone())?;
     lua.set_named_registry_value(AWAIT, await_fn)?;
     ui.set("try", try_fn)?;
+    // `ui.try`'s error maker, made on the first error (`errors::raised`):
+    // registered here, so only a VM that names these pays even that.
+    if let Some(lazy) = lua.app_data_ref::<crate::lazy::Lazy>() {
+        lazy.ui(&["__error"], |lua, ui| {
+            ui.set("__error", crate::errors::raised(lua)?)
+        });
+    }
     ui.set(
         "call",
         lua.create_function(move |lua, (name, arg): (String, Option<Value>)| {
@@ -805,7 +831,7 @@ pub(crate) fn install(
             let action = actions.borrow().get(&name).cloned();
             let plain = env(lua)?.actions.borrow().get(&name).cloned();
             if let Some(action) = action {
-                settle_with(lua, &promise, action(arg))?;
+                settle_with(lua, &promise, Kind::Action, action(arg))?;
             } else if let Some(action) = plain {
                 action(arg);
                 promise.state.set(Settled::Value(Value::Nil));
@@ -836,6 +862,12 @@ pub(crate) fn install(
                 Some(opts) => Listener::of(lua, opts, &promise)?,
                 None => None,
             };
+            // `raise = true`: a status outside 2xx rejects, as an `http`
+            // error with its status and body (else it resolves, `ok` false).
+            let raise = match &opts {
+                Some(opts) => opts.get::<Option<bool>>("raise")?.unwrap_or(false),
+                None => false,
+            };
             let request = request(lua, url.clone(), opts)?;
             let body = match &listener {
                 Some(listener) => {
@@ -855,7 +887,7 @@ pub(crate) fn install(
                     stop.stop();
                 }
             }));
-            settle_with(lua, &promise, async move {
+            settle_failing(lua, &promise, async move {
                 let mut response = stop.or_stopped(future).await?;
                 response.body = match listener {
                     // Heard in pieces: the body only to tell a failure.
@@ -870,7 +902,21 @@ pub(crate) fn install(
                     }
                     None => body.whole(response.body),
                 };
-                Ok(response_value(response))
+                let status = response.status;
+                let value = response_value(response);
+                if raise && !(200..300).contains(&status) {
+                    let body = match value.field("json") {
+                        Some(json) if *json != Value::Nil => json.clone(),
+                        _ => value.field("body").cloned().unwrap_or(Value::Nil),
+                    };
+                    return Err(Failure {
+                        kind: Kind::Http,
+                        message: format!("HTTP {status}").into(),
+                        status: Some(status),
+                        body,
+                    });
+                }
+                Ok(value)
             })?;
             Ok(PromiseUd(promise))
         })?,
@@ -964,6 +1010,9 @@ fn resource(lua: &Lua, (load, opts): (Function, Option<Table>)) -> mlua::Result<
                     } else {
                         Err(mlua::Error::runtime(match &value {
                             mlua::Value::String(s) => s.to_string_lossy(),
+                            mlua::Value::UserData(ud) if ud.is::<UiError>() => {
+                                ud.borrow::<UiError>()?.message().to_string()
+                            }
                             other => format!("{other:?}"),
                         }))
                     };

@@ -48,7 +48,7 @@ local function remove()
 			end
 			confirm_open:set(false)
 		else
-			removal_error:set(err)
+			removal_error:set(err.message)
 		end
 	end)
 end

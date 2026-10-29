@@ -28,8 +28,8 @@ ui.invoke(name: string, arg: unknown?) -> ()
 ui.call(name: string, arg: unknown?) -> Promise
 ui.task<A...>(f: (A...) -> (), A...) -> Task
 ui.async<A...>(f: (A...) -> ()) -> (A...) -> ()
-ui.optimistic<T>(state: State<T>, next: T, save: () -> ...any) -> string?
-ui.try<T, A...>(f: (A...) -> ...T, A...) -> (T?, string?)
+ui.optimistic<T>(state: State<T>, next: T, save: () -> ...any) -> UiError?
+ui.try<T, A...>(f: (A...) -> ...T, A...) -> (T?, UiError?)
 ui.resource<T>(load: () -> T, opts: { initial: T }?) -> Resource<T>
 ui.fetch(url: string, opts: FetchOptions?) -> Promise<Response>
 ui.clipboard.read() -> string?
@@ -109,7 +109,9 @@ Handlers take a function or an action Rust runs without calling the script:
 | --- | --- |
 | `p:after(on_value, on_error)` | calls one of them once it settles (at once if it has), on the script's budget |
 | `p.done`, `p.value`, `p.error` | tracked fields: an interface reading them shows loading, the result and errors as they come, with no handler |
-| `p:await()` | inside `ui.task(function() ... end)` only: waits for it, returns its value or raises its error (the host's message as it wrote it, so `pcall` catches it) |
+| `p:await()` | inside `ui.task(function() ... end)` only: waits for it, returns its value or raises its error (so `pcall` catches it) |
+
+What a promise rejects with (its `error`, `on_error`'s argument, what `:await()` raises) is a `UiError`, the same as `ui.try` gives (below): its `message` is the host's as it wrote it, `kind` is `"action"`, `"network"`, `"cancelled"`, `"http"` or `"io"`.
 
 ```luau
 local user = ui.call("load_user", id) -- the interface follows it
@@ -134,7 +136,7 @@ end)
 
 `ui.async(f)` is a handler that awaits, as React's async handlers do: each call runs `f` as a task with the call's arguments (`on_click = ui.async(save)`, a toast's `action.run`). Its tasks are cancelled as what made the handler goes (a component unmounting, a reload), and what one raises and doesn't catch is reported once as the script's error.
 
-`ui.optimistic(state, next, save)`, inside a task (a `ui.async` handler), writes `next` to `state` now and runs `save`, which may await. If `save` succeeds the write stays and it returns nil; if it raises, the state goes back to what this write replaced and the error comes back as text, as React's `useOptimistic` does. Calls on one state may overlap: the newest write shows, a failure puts back only what its own write replaced (never over a newer write still out or kept), and a write kept settles the older ones still out.
+`ui.optimistic(state, next, save)`, inside a task (a `ui.async` handler), writes `next` to `state` now and runs `save`, which may await. If `save` succeeds the write stays and it returns nil; if it raises, the state goes back to what this write replaced and the error comes back (a `UiError`, as `ui.try` gives), as React's `useOptimistic` does. Calls on one state may overlap: the newest write shows, a failure puts back only what its own write replaced (never over a newer write still out or kept), and a write kept settles the older ones still out.
 
 ```lua
 local liked = ui.state("liked", false)
@@ -155,7 +157,16 @@ return ui.checkbox {
 }
 ```
 
-`ui.try(f, ...)` is `pcall` with its error typed: `f(...)`'s value and nil, or nil and what it raised as text a person reads (an error object's message, without its traceback), where Luau types `pcall`'s error as `f`'s result. Awaits inside `f` work in a task as through `pcall`:
+`ui.try(f, ...)` is `pcall` with its error typed: `f(...)`'s value and nil, or nil and a `UiError` for what it raised, where Luau types `pcall`'s error as `f`'s result. Awaits inside `f` work in a task as through `pcall`. A `UiError` is one shape from every source, to branch on:
+
+| field | |
+| --- | --- |
+| `message` | what a person reads: the text raised (an error object's, without its traceback; a raised table's `message` field), or the host's |
+| `kind` | `"raised"` (`error(...)` in the script), `"action"` (a host action rejected), `"network"` (no answer came), `"cancelled"`, `"http"` (a fetch with `raise = true` answered outside 2xx), `"io"` (a file, the clipboard) |
+| `status`, `body` | `"http"`: the response's status, and its body (the JSON decoded, else the text) |
+| `value` | `"raised"`: what was raised, as it was (`error({ code = 409 })` gives that table back) |
+
+It is still text where text was expected: `tostring(err)`, `"Couldn't load: " .. err`, `` `{err}` `` and string methods (`err:find("404")`) read its message, a state set to it holds its message, and a toast's `title` or `body`, a prop or a text given it show it. Comparing it with `==` to a string, or `type(err) == "string"`, no longer holds: compare `err.message` or `err.kind`. Making one costs nothing until something fails.
 
 ```lua
 local status = ui.state("status", "")
@@ -217,9 +228,9 @@ return ui.switch(person.status, {
 
 ### The network
 
-`ui.fetch(url, { method, headers, body })` makes an HTTP request through the host's transport, `ScriptHost::fetcher(|request| async { … })`: the app owns the HTTP stack, redirects, headers and credentials (a token minted per request), and zgx and zgx-script add no HTTP dependency. An app `zgx-run` runs has its fetcher, over HTTP and HTTPS ([Running a script](../scripting.md)). The promise settles with `{ status, ok, headers, body, json }`: `ok` for a 2xx status, header names in lower case, `json` the decoded body when the response says it is JSON (typed `any`, as JSON is to JavaScript: cast it to the shape the server sends); a transport error rejects it. A table `body` is sent as JSON with its content type. Without a fetcher, `ui.fetch` is an error.
+`ui.fetch(url, { method, headers, body })` makes an HTTP request through the host's transport, `ScriptHost::fetcher(|request| async { … })`: the app owns the HTTP stack, redirects, headers and credentials (a token minted per request), and zgx and zgx-script add no HTTP dependency. An app `zgx-run` runs has its fetcher, over HTTP and HTTPS ([Running a script](../scripting.md)). The promise settles with `{ status, ok, headers, body, json }`: `ok` for a 2xx status, header names in lower case, `json` the decoded body when the response says it is JSON (typed `any`, as JSON is to JavaScript: cast it to the shape the server sends); a transport error rejects it (a `"network"` error). With `raise = true`, a status outside 2xx rejects too, as an `"http"` error carrying the `status` and `body` (`if err.status == 404 then …`), for a load that should fail on one. A table `body` is sent as JSON with its content type. Without a fetcher, `ui.fetch` is an error.
 
-A response can be read as it arrives (a model's reply, a log): `on_chunk = function(text)` gets the body's text piece by piece, in whole characters, and `on_event = function(e)` each server-sent event (`text/event-stream`) as it ends, `e.event` (`"message"` unless named), `e.data` (its `data:` lines joined by line breaks) and `e.id`. The promise settles once the body has ended, with the status and headers, and with an empty `body` unless the request failed (then the body's start, an error's JSON). `p:cancel()` stops a fetch at once (the promise rejects with `"cancelled"`, reported nowhere), as does cancelling the task that awaits it; a reload stops the rest of a stream. The host streams with `ScriptHost::streaming_fetcher(|request, body| async { … })`, writing each piece to `body` as it comes and answering with the status once it ends; a plain `fetcher`'s body arrives as one piece.
+A response can be read as it arrives (a model's reply, a log): `on_chunk = function(text)` gets the body's text piece by piece, in whole characters, and `on_event = function(e)` each server-sent event (`text/event-stream`) as it ends, `e.event` (`"message"` unless named), `e.data` (its `data:` lines joined by line breaks) and `e.id`. The promise settles once the body has ended, with the status and headers, and with an empty `body` unless the request failed (then the body's start, an error's JSON). `p:cancel()` stops a fetch at once (the promise rejects with a `"cancelled"` error, reported nowhere), as does cancelling the task that awaits it; a reload stops the rest of a stream. The host streams with `ScriptHost::streaming_fetcher(|request, body| async { … })`, writing each piece to `body` as it comes and answering with the status once it ends; a plain `fetcher`'s body arrives as one piece.
 
 ```lua
 local reply = ui.state("reply", "")

@@ -113,7 +113,7 @@ fn off_thread(
     std::thread::spawn(move || {
         tell.send(work());
     });
-    settle_with(lua, &promise, async move {
+    settle_with(lua, &promise, crate::errors::Kind::Io, async move {
         match heard.recv().await {
             Some(Ok(Some(text))) => Ok(Value::Str(text.into())),
             Some(Ok(None)) => Ok(Value::Nil),
@@ -175,7 +175,7 @@ pub(crate) fn install(
                     .0
                     .clipboard_image();
                 let promise = pending(lua, "clipboard.read_image".into())?;
-                settle_with(lua, &promise, async move {
+                settle_with(lua, &promise, crate::errors::Kind::Io, async move {
                     Ok(reading
                         .await
                         .map_or(Value::Nil, |image| Value::Image(Arc::new(image))))
@@ -198,7 +198,9 @@ pub(crate) fn install(
                         .0
                         .set_clipboard_image(image.0.clone());
                     let promise = pending(lua, "clipboard.write_image".into())?;
-                    settle_with(lua, &promise, async move { Ok(Value::Bool(writing.await)) })?;
+                    settle_with(lua, &promise, crate::errors::Kind::Io, async move {
+                        Ok(Value::Bool(writing.await))
+                    })?;
                     Ok(PromiseUd(promise))
                 },
             )?,
@@ -219,7 +221,7 @@ pub(crate) fn install(
                     .open_files(picker(opts, "Open")?);
                 let promise = pending(lua, "open_files".into())?;
                 let picked = picked.clone();
-                settle_with(lua, &promise, async move {
+                settle_with(lua, &promise, crate::errors::Kind::Io, async move {
                     let paths = dialog.await?;
                     picked.borrow_mut().extend(paths.iter().cloned());
                     Ok(Value::List(paths.iter().map(|p| file_value(p)).collect()))
@@ -241,7 +243,7 @@ pub(crate) fn install(
                     .save_file(picker(opts, "Save")?);
                 let promise = pending(lua, "save_file".into())?;
                 let picked = picked.clone();
-                settle_with(lua, &promise, async move {
+                settle_with(lua, &promise, crate::errors::Kind::Io, async move {
                     Ok(match dialog.await? {
                         Some(path) => {
                             picked.borrow_mut().insert(path.clone());

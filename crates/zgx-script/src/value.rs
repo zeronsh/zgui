@@ -628,6 +628,12 @@ fn convert_in(value: mlua::Value, old: Option<&Value>, depth: u32) -> mlua::Resu
         mlua::Value::UserData(ud) if ud.is::<crate::node::BitmapUd>() => {
             Value::Image(ud.borrow::<crate::node::BitmapUd>()?.0.clone())
         }
+        // An error (`ui.try`'s, a promise's) is its message here: a state, a
+        // prop or a call's argument holds text, as it did before errors had
+        // fields.
+        mlua::Value::UserData(ud) if ud.is::<crate::errors::UiError>() => {
+            Value::Str(ud.borrow::<crate::errors::UiError>()?.message().into())
+        }
         mlua::Value::UserData(ud) if ud.is::<crate::element::RefUd>() => {
             return Err(mlua::Error::runtime(
                 "state holds elements, not refs: keep the ref itself, or store ref:get()",

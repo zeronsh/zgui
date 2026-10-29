@@ -1442,10 +1442,13 @@ fn toast(lua: &Lua, table: Table) -> mlua::Result<u64> {
     drop(env);
     let mut toast = Toast::new(
         table
-            .get::<String>("title")
-            .map_err(|_| mlua::Error::runtime("ui.toast needs a `title`"))?,
+            .get::<crate::errors::Text>("title")
+            .map_err(|_| mlua::Error::runtime("ui.toast needs a `title`"))?
+            .0,
     );
-    toast.body = table.get("body")?;
+    toast.body = table
+        .get::<Option<crate::errors::Text>>("body")?
+        .map(|text| text.0);
     toast.kind = match table.get::<Option<String>>("kind")?.as_deref() {
         None | Some("info") => ToastKind::Info,
         Some("success") => ToastKind::Success,

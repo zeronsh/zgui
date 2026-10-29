@@ -718,6 +718,35 @@ end
 declare extern type Brush with
 end
 
+-- What failed (`ui.try`'s error, a promise's `error`, `:after`'s
+-- `on_error`): the same from every source. Still text where text goes:
+-- `tostring(err)`, `"…" .. err`, `{err}` and string methods read its
+-- `message`; a state set to it, or a prop given it, holds its message.
+declare extern type UiError with
+	-- What a person reads: no traceback.
+	message: string
+	-- Where it came from: "raised" (`error(...)`), "action" (a host action
+	-- rejected), "network" (no answer came), "cancelled", "http" (a fetch
+	-- with `raise = true` answered outside 2xx), "io" (a file, the
+	-- clipboard).
+	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io"
+	-- "http": the response's status.
+	status: number?
+	-- "http": the response's body, its JSON decoded, else its text.
+	body: unknown?
+	-- "raised": what `error(value)` raised, as it was (a table stays it).
+	value: unknown?
+	function __tostring(self): string
+	function __concat(self, other: string | number): string
+	function find(self, pattern: string, init: number?, plain: boolean?): (number?, number?)
+	function match(self, pattern: string, init: number?): ...string
+	function gsub(self, pattern: string, replacement: string | { [string]: string } | ((...string) -> string), n: number?): (string, number)
+	function sub(self, i: number, j: number?): string
+	function lower(self): string
+	function upper(self): string
+	function len(self): number
+end
+
 export type FetchOptions = {
 	-- "GET" unless set.
 	method: string?,
@@ -730,6 +759,9 @@ export type FetchOptions = {
 	-- Each server-sent event (`text/event-stream`) as it ends: `event`
 	-- ("message" unless named), `data` (its lines joined), `id`.
 	on_event: ((event: ServerEvent) -> ())?,
+	-- A status outside 2xx rejects, as an "http" error with its `status`
+	-- and `body` (else the response resolves, `ok` false).
+	raise: boolean?,
 }
 -- One server-sent event (`ui.fetch`'s `on_event`).
 export type ServerEvent = { event: string, data: string, id: string? }
@@ -767,16 +799,16 @@ export type Promise<T = unknown> = {
 	-- It settled, with a value or an error.
 	done: boolean,
 	value: T?,
-	error: string?,
-	-- `on_value(value)` or `on_error(message)` once it settles (at once if
-	-- it has). Without `on_error` (or a read of `error`, or an `await` in a
+	error: UiError?,
+	-- `on_value(value)` or `on_error(err)` once it settles (at once if it
+	-- has). Without `on_error` (or a read of `error`, or an `await` in a
 	-- pcall), a rejection is reported as a script error.
-	after: (self: Promise<T>, on_value: ((value: T) -> ())?, on_error: ((message: string) -> ())?) -> (),
+	after: (self: Promise<T>, on_value: ((value: T) -> ())?, on_error: ((err: UiError) -> ())?) -> (),
 	-- Inside `ui.task`: wait for it, and return its value (or raise its
-	-- error, the host's message as it wrote it).
+	-- error, a `UiError` whose message is the host's as it wrote it).
 	await: (self: Promise<T>) -> T,
-	-- Reject it with "cancelled" (reported nowhere), stopping a fetch's
-	-- request; an action's work goes on, its answer unheard.
+	-- Reject it with a "cancelled" error (reported nowhere), stopping a
+	-- fetch's request; an action's work goes on, its answer unheard.
 	cancel: (self: Promise<T>) -> (),
 }
 
@@ -922,8 +954,8 @@ declare extern type Ref with
 end
 
 export type ToastOptions = {
-	title: string,
-	body: string?,
+	title: string | UiError,
+	body: (string | UiError)?,
 	kind: ("info" | "success" | "warning" | "error")?,
 	duration: number?,
 	-- A button on it: "Undo"; the toast goes after `run`.
@@ -16336,12 +16368,13 @@ declare ui: {
 	-- Inside a task (a `ui.async` handler's): write `next` to `state` now
 	-- and run `save`, which may await. Kept if it succeeds; if it raises,
 	-- the state goes back to what this write replaced (never over a newer
-	-- write) and the error comes back as text, nil on success.
-	optimistic: <T>(state: State<T>, next: T, save: () -> ...any) -> string?,
-	-- `f(...)`'s value and nil, or nil and what it raised, as a string a
-	-- person reads (an error's text, no traceback): `pcall` with its error
-	-- typed. Awaits inside `f` work in a task, as through `pcall`.
-	try: <T, A...>(f: (A...) -> ...T, A...) -> (T?, string?),
+	-- write) and the error comes back as a `UiError`, nil on success.
+	optimistic: <T>(state: State<T>, next: T, save: () -> ...any) -> UiError?,
+	-- `f(...)`'s value and nil, or nil and what it raised as a `UiError`
+	-- (its `kind`, its `message` a person reads, a raised value kept as
+	-- `value`; still text where text goes): `pcall` with its error typed.
+	-- Awaits inside `f` work in a task, as through `pcall`.
+	try: <T, A...>(f: (A...) -> ...T, A...) -> (T?, UiError?),
 	-- What `load` returns, loaded in a task (it may await), as states:
 	-- `data`, `loading`, `error` and `status`. It loads again on `reload()`
 	-- and when a state it read before its first await changes; only the
