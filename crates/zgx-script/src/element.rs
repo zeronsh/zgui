@@ -844,9 +844,10 @@ pub(crate) fn sort_by_document_order(elements: &mut [Rc<Element>]) {
     };
     let scene = scene.borrow();
     // Each node's place among its siblings, a parent's children indexed
-    // once: a thousand rows of one list are not each searched for.
-    let mut places: HashMap<NodeId, usize> = HashMap::new();
-    let mut indexed = std::collections::HashSet::new();
+    // once: a thousand rows of one list are not each searched for. Node ids
+    // hash by a multiply (Fx), not SipHash: these lookups are all it does.
+    let mut places: rustc_hash::FxHashMap<NodeId, usize> = Default::default();
+    let mut indexed: rustc_hash::FxHashSet<NodeId> = Default::default();
     let mut path = |element: &Rc<Element>| {
         let mut path = Vec::new();
         let mut node = element.node();

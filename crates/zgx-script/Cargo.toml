@@ -57,6 +57,8 @@ serde_json = "1"
 # Markdown for `ui.markdown` and `zgx_script::markdown`.
 pulldown-cmark = { version = "0.13", default-features = false }
 smallvec = "1.16"
+# Small integer keys (nodes) hashed by a multiply, not SipHash.
+rustc-hash = "2.1"
 # Devtools' snapshots (`inspect`).
 png = { version = "0.18", optional = true }
 

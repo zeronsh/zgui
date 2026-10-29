@@ -5164,6 +5164,7 @@ dependencies = [
  "memchr",
  "png 0.18.1",
  "pulldown-cmark",
+ "rustc-hash 2.1.3",
  "serde_json",
  "smallvec",
  "windows",
