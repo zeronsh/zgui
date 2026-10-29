@@ -13,7 +13,14 @@ Primary platforms: **Linux and macOS**, per user preference. Windows remains a p
 - [x] Keyed child reconciliation, dynamic conditional/list views and reusable components.
 - [x] Event dispatch, focus navigation, pointer capture and keyboard activation.
 - [x] Unicode text editing, selection, clipboard, IME composition, bounded undo/redo.
-- [ ] Known issue, for 0.1.6: a fixed-size row or column item held at its automatic minimum while its parent shrinks it (an 80-wide shrinkable column whose 80-wide child keeps it from narrowing, in a row too small for it and an 80-wide sibling) keeps its width when its content's least size drops (the child made narrower, clipped or absolute). A fresh layout makes it narrower, and the boxes after it move up. The item is a layout boundary (`is_layout_boundary`), so the change is laid out at the item alone, under its old room. Fixed on branch `layout/boundary-minimum` (tests in `crates/zgx/tests/layout_history.rs`), parked because every form so far adds work to hot layout paths (0.1% to 0.5% in app scenes).
+- [ ] Known issue, for 0.1.6: a fixed-size row or column item held at its automatic minimum while its parent shrinks it (an 80-wide shrinkable column whose 80-wide child keeps it from narrowing, in a row too small for it and an 80-wide sibling) keeps its width when its content's least size drops (the child made narrower, clipped or absolute). A fresh layout makes it narrower, and the boxes after it move up. The item is a layout boundary (`is_layout_boundary`), so the change is laid out at the item alone, under its old room. Parked: every form found so far fixes it but costs on hot layout paths, against fixes' no-loss rule. The best is on branch `layout-boundary-min` (draft #904, tests in `crates/zgx/tests/layout_history.rs`, which fail on main). Forms measured (x86 CI, worst cells):
+  - recording rows that shrink and laying out from them (`layout/boundary-minimum`): 0.1% to 0.5% in app scenes;
+  - a bit set where the flex loop floors an item, read by `is_layout_boundary`: app-dashboard-sort +0.15%, micro-state +0.11% (parent relayouts that change nothing);
+  - held items in a map, checked when laid out alone: micro-state +0.23% (`automatic_minimum` outlined by its second caller), then +0.14% and +0.12% with the map write out of line and leaves skipped;
+  - only a check when laid out alone, from the siblings' sizes: wrong (rows full by `grow` read as shrunk: widgets +228%);
+  - a bit on a row or column that shrank its children (one comparison per flex loop) plus that check: script-update +0.16%, vscroll-fixed +0.14%, widgets +0.12% (arm64 gate at most +0.06%; the form on the branch).
+
+  Any instruction per measure or per boundary laid out alone shows as +0.03% to +0.15%, and a test in the invalidation walk changes `set_box`'s inlining (+1.4 to 3.4 M on heavy). Taffy's cache can't hold the answer: zgx lays out rows and columns itself (Taffy only takes `layout_options` containers).
 
 ## Rendering and platform
 
