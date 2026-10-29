@@ -846,6 +846,15 @@ impl Application {
         // take AppKit's Services menu meanwhile.
         #[cfg(target_os = "macos")]
         winit::platform::macos::EventLoopBuilderExtMacOS::with_default_menu(&mut event_loop, false);
+        // Scratch (not for merge): `ZGX_ACTIVATION=accessory` runs as an
+        // accessory (no Dock icon, no menu bar of its own): diagnostic only.
+        #[cfg(target_os = "macos")]
+        if std::env::var("ZGX_ACTIVATION").as_deref() == Ok("accessory") {
+            winit::platform::macos::EventLoopBuilderExtMacOS::with_activation_policy(
+                &mut event_loop,
+                winit::platform::macos::ActivationPolicy::Accessory,
+            );
+        }
         let event_loop = event_loop.build()?;
         zgx::profile::mark("event loop");
         let proxy = event_loop.create_proxy();
@@ -927,7 +936,11 @@ impl Application {
             #[cfg(target_os = "macos")]
             native_menu: None,
             #[cfg(target_os = "macos")]
-            menu_bar_due: Some(std::time::Instant::now() + MENU_BAR_LATEST),
+            menu_bar_due: match menu_install().as_deref() {
+                Some("none") => None,
+                Some("late") => Some(std::time::Instant::now() + MENU_BAR_LATE),
+                _ => Some(std::time::Instant::now() + MENU_BAR_LATEST),
+            },
             hosts: HashMap::from([(token, root)]),
             panics: Vec::new(),
             native: HashMap::new(),
@@ -5698,6 +5711,10 @@ impl WindowManager {
         let Some(latest) = self.menu_bar_due else {
             return;
         };
+        // Scratch: `late` waits out its deadline, well after activation.
+        if menu_install().as_deref() == Some("late") && std::time::Instant::now() < latest {
+            return;
+        }
         if !FIRST_PRESENT.is_completed()
             && std::time::Instant::now() < latest
             && self
@@ -5940,7 +5957,7 @@ impl WindowManager {
                 let menus = self.factory.menus();
                 // A menu bar still to be made is made from them then.
                 #[cfg(target_os = "macos")]
-                if self.menu_bar_due.is_none() {
+                if self.menu_bar_due.is_none() && menu_install().as_deref() != Some("none") {
                     let replacement = match crate::app_menu::NativeMenu::new(&menus) {
                         Ok(menu) => menu,
                         Err(error) => {
@@ -6895,6 +6912,15 @@ static FIRST_PRESENT: std::sync::Once = std::sync::Once::new();
 /// a first frame showed (`WindowManager::install_menu_bar`).
 #[cfg(target_os = "macos")]
 const MENU_BAR_LATEST: std::time::Duration = std::time::Duration::from_secs(1);
+/// Scratch (not for merge): `ZGX_MENU_INSTALL=late` makes the menu bar this
+/// long after launch, after the first activation, rather than with the
+/// first frame; `none` makes none (diagnostic only: no ⌘Q).
+#[cfg(target_os = "macos")]
+const MENU_BAR_LATE: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(target_os = "macos")]
+fn menu_install() -> Option<String> {
+    std::env::var("ZGX_MENU_INSTALL").ok()
+}
 /// A `zgx::profile::mark` the first time only (the process's first frame).
 fn first_mark(once: &std::sync::Once, what: &str) {
     once.call_once(|| zgx::profile::mark(what));
