@@ -476,8 +476,18 @@ removing SetValue. Native X11 clipboard/input tests and isolated real IBus
 composition cancellation pass, along with the existing two IME suites.
 [Archived source, commands and results](platform-validation/read-only/README.md)
 include 497 tests, 29 doctests, Clippy, formatting and the macOS cross-check.
-Native macOS behavior and arbitrary delayed Wayland server commits remain
-outside this evidence.
+Arbitrary delayed Wayland server commits remain outside this evidence.
+
+On macOS, `scripts/macos_read_only_probe.py` (the `read_only_probe` example)
+posts AppKit events to its own window and calls its own text input view: a
+click focuses the read-only editor, a letter, Backspace and Return change
+nothing, Command-A selects the whole text and an arrow then moves the caret,
+and an input method's marked and committed text sent straight to the view
+leave no composition and no text (a real input method never gets that far:
+winit hands keys to input methods only while IME is allowed, and a read-only
+editor disallows it). 10 of 10 pass on an Apple M5 Max (macOS 26.4); with the
+editor made editable, 7 fail. Copying is not probed: it would write the
+user's pasteboard.
 
 ## Initial binding ownership and disposal
 

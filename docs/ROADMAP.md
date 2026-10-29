@@ -276,7 +276,10 @@ and retained handles. Selection, navigation, copying and external model writes
 remain available; user mutation paths are blocked. Native IME permission follows
 editability without changing logical focus, including reset guards for rapid
 toggles during composition. AccessKit projection and real X11 clipboard/IBus
-checks cover the integrated behavior; native macOS validation remains open.
+checks cover the integrated behavior, and on macOS a probe of its own
+window (`scripts/macos_read_only_probe.py`) checks typing, Backspace, Return
+and input-method text change nothing while focus, selection and navigation
+work.
 
 Public mount initialization now carries temporary ownership through deferred
 first bindings, including initial keyed/conditional children. Failure removes
