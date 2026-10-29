@@ -35,6 +35,9 @@ pub struct FileDropHandlerData {
                              * `HoveredFileCancelled` emitted */
     /// zgx patch: the drag carries text, not files (`platform::text_drop`).
     text: bool,
+    /// zgx patch: where a drag carrying files was last said to be
+    /// (`CursorMoved`), in the content's physical pixels.
+    file_point: Option<(f64, f64)>,
 }
 
 pub struct FileDropHandler {
@@ -52,6 +55,7 @@ impl FileDropHandler {
             cursor_effect: DROPEFFECT_NONE,
             hovered_is_valid: false,
             text: false,
+            file_point: None,
         });
         FileDropHandler { data: Box::into_raw(data) }
     }
@@ -92,14 +96,19 @@ impl FileDropHandler {
     ) -> HRESULT {
         use crate::event::WindowEvent::HoveredFile;
         let drop_handler = unsafe { Self::from_interface(this) };
-        let hdrop = unsafe {
-            Self::iterate_filenames(pDataObj, |filename| {
-                drop_handler.send_event(Event::WindowEvent {
-                    window_id: RootWindowId(WindowId(drop_handler.window)),
-                    event: HoveredFile(filename),
-                });
-            })
-        };
+        drop_handler.file_point = None;
+        let mut files = Vec::new();
+        let hdrop = unsafe { Self::iterate_filenames(pDataObj, |filename| files.push(filename)) };
+        // zgx patch: the files are where the drag is (ZGX_PATCH 12).
+        if !files.is_empty() {
+            unsafe { drop_handler.files_at(pt) };
+        }
+        for filename in files {
+            drop_handler.send_event(Event::WindowEvent {
+                window_id: RootWindowId(WindowId(drop_handler.window)),
+                event: HoveredFile(filename),
+            });
+        }
         drop_handler.hovered_is_valid = hdrop.is_some();
         // zgx patch: text, not files, goes where the window says.
         drop_handler.text = hdrop.is_none()
@@ -129,6 +138,9 @@ impl FileDropHandler {
             unsafe { *pdwEffect = drop_handler.text_over(pt) };
             return S_OK;
         }
+        if drop_handler.hovered_is_valid {
+            unsafe { drop_handler.files_at(pt) };
+        }
         unsafe {
             *pdwEffect = drop_handler.cursor_effect;
         }
@@ -150,6 +162,13 @@ impl FileDropHandler {
                 window_id: RootWindowId(WindowId(drop_handler.window)),
                 event: HoveredFileCancelled,
             });
+            // zgx patch: the drag, and the pointer with it, left.
+            if drop_handler.file_point.take().is_some() {
+                drop_handler.send_event(Event::WindowEvent {
+                    window_id: RootWindowId(WindowId(drop_handler.window)),
+                    event: crate::event::WindowEvent::CursorLeft { device_id: super::DEVICE_ID },
+                });
+            }
         }
 
         S_OK
@@ -179,14 +198,20 @@ impl FileDropHandler {
             unsafe { *_pdwEffect = if taken { DROPEFFECT_COPY } else { DROPEFFECT_NONE } };
             return S_OK;
         }
-        let hdrop = unsafe {
-            Self::iterate_filenames(pDataObj, |filename| {
-                drop_handler.send_event(Event::WindowEvent {
-                    window_id: RootWindowId(WindowId(drop_handler.window)),
-                    event: DroppedFile(filename),
-                });
-            })
-        };
+        let mut files = Vec::new();
+        let hdrop = unsafe { Self::iterate_filenames(pDataObj, |filename| files.push(filename)) };
+        // zgx patch: dropped where the drag was let go of, not where the
+        // pointer last moved (an OLE drag sends the window no mouse moves).
+        if !files.is_empty() {
+            unsafe { drop_handler.files_at(pt) };
+        }
+        for filename in files {
+            drop_handler.send_event(Event::WindowEvent {
+                window_id: RootWindowId(WindowId(drop_handler.window)),
+                event: DroppedFile(filename),
+            });
+        }
+        drop_handler.file_point = None;
         if let Some(hdrop) = hdrop {
             unsafe { DragFinish(hdrop) };
         }
@@ -235,9 +260,9 @@ impl FileDropHandler {
         unsafe { &mut *(this as *mut _) }
     }
 
-    unsafe fn iterate_filenames<F>(data_obj: *const IDataObject, callback: F) -> Option<HDROP>
+    unsafe fn iterate_filenames<F>(data_obj: *const IDataObject, mut callback: F) -> Option<HDROP>
     where
-        F: Fn(PathBuf),
+        F: FnMut(PathBuf),
     {
         let drop_format = FORMATETC {
             cfFormat: CF_HDROP,
@@ -298,6 +323,25 @@ impl FileDropHandlerData {
 
     /// zgx patch: screen point `pt` (COM passes it by value) in the
     /// window's client pixels.
+    /// zgx patch: a drag carrying files holds the pointer, so the window
+    /// hears no mouse moves while it is over it: say where it is, as
+    /// `CursorMoved` (in the content's physical pixels), whenever it moves,
+    /// as macOS's window delegate does (ZGX_PATCH 12).
+    unsafe fn files_at(&mut self, pt: POINTL) {
+        let point = unsafe { self.client_point(pt) };
+        if self.file_point == Some(point) {
+            return;
+        }
+        self.file_point = Some(point);
+        self.send_event(Event::WindowEvent {
+            window_id: RootWindowId(WindowId(self.window)),
+            event: crate::event::WindowEvent::CursorMoved {
+                device_id: super::DEVICE_ID,
+                position: crate::dpi::PhysicalPosition::new(point.0, point.1),
+            },
+        });
+    }
+
     unsafe fn client_point(&self, pt: POINTL) -> (f64, f64) {
         let mut point = windows_sys::Win32::Foundation::POINT { x: pt.x, y: pt.y };
         unsafe { ScreenToClient(self.window, &mut point) };

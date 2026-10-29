@@ -93,8 +93,9 @@ execution and captured-value destruction occur outside keymap registry borrows.
 
 Run `cargo run -p zgx-desktop --example actions` for the editor/F5/chord example.
 It also accepts native file drops. `InputEvent::FileHover`, `FileDrop` and
-`FileHoverCancelled` route to the region under the host's last logical pointer
-position. Paths remain `PathBuf`; the native host sends one event per path,
+`FileHoverCancelled` route to the region under the drag's point (zgx's winit
+fork reports it as the drag moves: a drag holds the pointer), a hover following
+it as it moves. Paths remain `PathBuf`; the native host sends one event per path,
 matching winit's event interface. This is not a batched `ExternalPaths` payload,
 and it does not implement initiating an operating-system file drag. Native
 backends that do not report a current pointer position during external drags

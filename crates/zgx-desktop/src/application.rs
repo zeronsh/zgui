@@ -1356,6 +1356,10 @@ struct Host {
     title_press: Option<(f32, f32)>,
     cursor: (f32, f32),
     pending_file_drops: crate::file_drop::FileDropBatch,
+    /// The files dragged over the window, while they are: a drag holds the
+    /// pointer, and each move it reports (`CursorMoved`) hovers them where
+    /// it now is, so what would take them follows it.
+    hovered_files: Vec<std::path::PathBuf>,
     modifiers: Modifiers,
     ime_active: bool,
     ime_restart: crate::native_ime::RestartBarrier,
@@ -1750,6 +1754,7 @@ impl Host {
             trackpad: Trackpad::Idle,
             wheel_tape,
             pending_file_drops: Default::default(),
+            hovered_files: Vec::new(),
             modifiers: Modifiers::default(),
             ime_active: false,
             ime_restart: Default::default(),
@@ -3856,6 +3861,17 @@ impl Host {
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.to_logical::<f32>(self.scale_factor);
                 self.cursor = (p.x, p.y);
+                // Files dragged in hover where the drag now is: a target
+                // they move onto hears them, the one left behind its cancel.
+                if !self.hovered_files.is_empty() {
+                    for path in self.hovered_files.clone() {
+                        self.dispatch(InputEvent::FileHover {
+                            x: p.x,
+                            y: p.y,
+                            path,
+                        })?;
+                    }
+                }
 
                 self.pointer_inside = true;
                 // An undecorated window's edge resizes it: the content
@@ -3913,12 +3929,16 @@ impl Host {
                 self.native.pointer_left();
                 self.dispatch(InputEvent::PointerLeave)?
             }
-            WindowEvent::HoveredFile(path) => self.dispatch(InputEvent::FileHover {
-                x: self.cursor.0,
-                y: self.cursor.1,
-                path,
-            })?,
+            WindowEvent::HoveredFile(path) => {
+                self.hovered_files.push(path.clone());
+                self.dispatch(InputEvent::FileHover {
+                    x: self.cursor.0,
+                    y: self.cursor.1,
+                    path,
+                })?
+            }
             WindowEvent::DroppedFile(path) => {
+                self.hovered_files.clear();
                 self.pending_file_drops.push(path.clone());
                 self.dispatch(InputEvent::FileDrop {
                     x: self.cursor.0,
@@ -3926,7 +3946,10 @@ impl Host {
                     path,
                 })?;
             }
-            WindowEvent::HoveredFileCancelled => self.dispatch(InputEvent::FileHoverCancelled)?,
+            WindowEvent::HoveredFileCancelled => {
+                self.hovered_files.clear();
+                self.dispatch(InputEvent::FileHoverCancelled)?
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 #[cfg(windows)]
                 {

@@ -185,13 +185,13 @@ shows no copy badge and every release would look taken.
       passes it (`definitions.rs` declared a pointer, never read before).
     Wayland's drags reach zgx's own data device, not winit.
 
-## Where dragged files are (macOS)
+## Where dragged files are (macOS, Windows, X11)
 
-A drag holds the pointer: while files from Finder are over a window, AppKit
-sends it no mouse moves, only its dragging destination's calls, and winit's
-`HoveredFile` and `DroppedFile` carry no position. An app placing them at the
-pointer's last place dropped them on whatever it was last over before the
-drag came in.
+A drag holds the pointer: while files from Finder, Explorer or a file
+manager are over a window, the window hears no mouse moves, only the drag's
+own calls, and winit's `HoveredFile` and `DroppedFile` carry no position. An
+app placing them at the pointer's last place dropped them on whatever it was
+last over before the drag came in.
 
 12. `window_delegate.rs`: a drag carrying files sends `CursorMoved`, at the
     drag's point in the content, as it enters (before `HoveredFile`), as it
@@ -199,6 +199,20 @@ drag came in.
     `DroppedFile`), and `CursorLeft` as it leaves (after
     `HoveredFileCancelled`). `scripts/macos_native_checks_probe.py` drops
     two files on a box with the pointer last elsewhere.
+    - Windows (`drop_handler.rs`): the same, from `IDropTarget`'s
+      `DragEnter`, `DragOver` (when the point moved) and `Drop`, whose
+      `POINTL` is in the screen's pixels (`ScreenToClient`), and
+      `CursorLeft` after `DragLeave`'s `HoveredFileCancelled`. An OLE drag
+      from Explorer sends the window no `WM_MOUSEMOVE` at all.
+    - X11 (`event_processor.rs`, `dnd.rs`): each `XdndPosition` of a drag
+      carrying files, translated to the window, sends `CursorMoved` when it
+      moved (before the first `HoveredFile`, which waits for the data), and
+      `XdndLeave` `CursorLeft` after `HoveredFileCancelled`; `XdndDrop`
+      carries no point, so files drop at the last position's.
+      `scripts/file_drop_smoke.py` drops with the pointer last over a card,
+      at scale 1 and 1.5 (`file-drop-scaled`).
+    Wayland's drags reach zgx's own data device, whose drop carries its
+    point.
 
 ## X11: a closing window, or an ending app, waits on no input method
 

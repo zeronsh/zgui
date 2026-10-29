@@ -54,6 +54,7 @@ SMOKES = [
     ("native-menus-wayland", "python3 scripts/native_menu_smoke.py {bin}/dynamic_menus --wayland --output {out}", False),
     ("native-services", "python3 scripts/native_services_smoke.py {bin}/platform_services --native-prompts --output {out}", False),
     ("file-drop", "python3 scripts/file_drop_smoke.py {bin}/drag_drop --output {out}", False),
+    ("file-drop-scaled", "python3 scripts/file_drop_smoke.py {bin}/drag_drop --output {out} --scale 1.5", False),
     ("file-drop-wayland", "python3 scripts/wayland_file_drop_smoke.py {bin}/drag_drop --output {out}", False),
     ("variable-virtual-list", "python3 scripts/variable_virtual_list_smoke.py {bin}/variable_virtual_list --output {out}", False),
     ("measured-virtual-list", "python3 scripts/measured_virtual_list_smoke.py {bin}/measured_virtual_list --output {out}", False),
