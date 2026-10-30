@@ -2,7 +2,9 @@
 //! paragraphs of plain spans again each pass (`ui.span` read, lowered,
 //! mounted, removed), `spans-follow` builds them once and restyles every run
 //! through a state each pass (the options that follow), and `spans-md` builds
-//! paragraphs shaped as markdown's are (bold, code chips, links).
+//! paragraphs shaped as markdown's are (bold, code chips, links). Those are
+//! Luau spans in markdown's shape: `markdown_view` builds its runs in Rust and
+//! does not go through `ui.span`, so that row does not cover it.
 //! `REPS` passes over `N` paragraphs; the gate's rows are sized in
 //! `scripts/perf/gate.py`. Prints instructions and setup's share on macOS.
 //! Run: SCENE=spans-follow cargo run --release -p zgx-script --example span_bench
