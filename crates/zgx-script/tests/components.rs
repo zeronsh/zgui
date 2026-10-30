@@ -326,6 +326,67 @@ fn a_select_chooses_values_from_its_menu_and_by_typing() {
 }
 
 #[test]
+fn what_a_control_with_a_popup_is_given_lands_on_the_control() {
+    let mut h = Harness::inline(
+        r#"local v = ui.state("v", "a")
+        local q = ui.state("q", "")
+        local d = ui.state("d", nil :: string?)
+        local options = { "a", "b" }
+        local items = ui.state("items", options)
+        return ui.column { w = 500,
+            ui.select { id = "fills", label = "A", value = v, options = options },
+            ui.select { id = "sized", label = "B", value = v, options = options, w = 300 },
+            ui.combobox { id = "field", label = "C", text = q, items = items, w = 240 },
+            ui.date_picker { id = "date", label = "D", value = d, w = 200 },
+            ui.row { h = 60, items = "center",
+                ui.select { id = "fits", label = "E", value = v, options = options },
+                ui.date_picker { id = "fits-date", label = "F", value = d },
+            },
+            ui.text { id = "typed", "{q}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    assert_eq!(
+        h.bounds("fills").width,
+        500.,
+        "fills a column, as a field does"
+    );
+    assert_eq!(h.bounds("sized").width, 300.);
+    assert_eq!(h.bounds("field").width, 240.);
+    assert_eq!(h.bounds("date").width, 200.);
+    assert_eq!(h.bounds("fits").height, 39., "centred, not stretched");
+    assert!(h.bounds("fits").y > h.bounds("date").y + h.bounds("date").height);
+    assert!(
+        h.bounds("fits").width < 200.,
+        "a row leaves it its own width"
+    );
+    assert!(h.bounds("fits-date").x >= h.bounds("fits").width);
+
+    // The trigger is all of that box: nothing beside it to click, its menu
+    // as wide as it.
+    for id in ["fills", "sized", "field", "date"] {
+        let held = h.bounds(id);
+        let filled = with_role(&mut h, Role::ComboBox)
+            .into_iter()
+            .chain(with_role(&mut h, Role::Button))
+            .any(|n| h.ui.scene.borrow().bounds(n) == held);
+        assert!(filled, "{id}");
+    }
+    h.click("sized");
+    h.frames(2);
+    assert!(
+        with_role(&mut h, Role::MenuItem)
+            .iter()
+            .any(|n| h.ui.scene.borrow().bounds(*n).width >= 280.),
+        "open, under the whole trigger"
+    );
+    h.key(Key::Escape);
+    h.frames(2);
+    h.type_text("field", "x");
+    assert_eq!(h.text("typed"), "x");
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")

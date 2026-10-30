@@ -637,6 +637,8 @@ pub fn date_picker(
         let (named, written, opens, keyed) = (shown.clone(), shown, open.clone(), open.clone());
         let (name, spoken) = (label.clone(), followed.clone());
         let trigger = button()
+            .w_full()
+            .justify_between()
             .accessible_label_when(move || {
                 let name = spoken.as_ref().map_or_else(|| name.clone(), |f| f.get());
                 match named() {
@@ -698,7 +700,9 @@ pub fn date_picker(
                 close.set(false);
             }),
         );
-        popover(label.clone(), open, trigger).lazy().child(panel)
+        // What the picker is given (its `id`, its size) lands on this box,
+        // which the trigger fills: on the popover it would reach the panel.
+        column().child(popover(label.clone(), open, trigger).lazy().child(panel))
     })
 }
 

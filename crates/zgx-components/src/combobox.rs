@@ -378,17 +378,21 @@ pub fn combobox(
                 .accessible_label_when(move || format!("{} suggestions", followed.get())),
             None => popover(format!("{label} suggestions"), open.clone(), field),
         };
-        suggestions
-            .layer()
-            .lazy()
-            .autofocus(false)
-            .placement(Placement {
-                side: PlacementSide::Bottom,
-                align: PlacementEdge::Start,
-                offset: 4.,
-            })
-            .match_anchor_width()
-            .p(4.)
-            .child(column().child(content).child(div()))
+        // What the combobox is given (its `id`, its size) lands on this box,
+        // which the field fills: on the popover it would reach the panel.
+        column().child(
+            suggestions
+                .layer()
+                .lazy()
+                .autofocus(false)
+                .placement(Placement {
+                    side: PlacementSide::Bottom,
+                    align: PlacementEdge::Start,
+                    offset: 4.,
+                })
+                .match_anchor_width()
+                .p(4.)
+                .child(column().child(content).child(div())),
+        )
     })
 }

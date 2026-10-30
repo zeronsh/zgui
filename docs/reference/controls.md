@@ -21,6 +21,8 @@ ui.time_field(props: TimeFieldProps) -> Node
 
 Every control dims while `disabled` (to 45% opacity, as native controls do) unless it says how it looks then.
 
+`select`, `combobox` and `date_picker` are the box you size: `id`, `w`, `grow` and the like land on it, and the trigger or field fills it, so in a `ui.column` one fills the column as an `input` does (`w` or `items = "start"` narrows it). Their popups are styled apart from that.
+
 ## button
 
 A focusable box whose children lie in a row; `on_click` runs on a click, Enter (as it goes down) or Space (as it comes up), as a browser's button does.
