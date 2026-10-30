@@ -110,6 +110,36 @@ metal::float4 tinted(
     return metal::float4(rgb_1 * premultiplied.w, premultiplied.w);
 }
 
+float faded(
+    metal::float4 b_1,
+    metal::float4 f,
+    metal::float2 p_1
+) {
+    float k = 1.0;
+    if (f.x > 0.0) {
+        float t_1 = metal::clamp((p_1.y - b_1.y) / f.x, 0.0, 1.0);
+        float _e16 = k;
+        k = _e16 * (t_1 * t_1);
+    }
+    if (f.y > 0.0) {
+        float t_2 = metal::clamp((b_1.z - p_1.x) / f.y, 0.0, 1.0);
+        float _e30 = k;
+        k = _e30 * (t_2 * t_2);
+    }
+    if (f.z > 0.0) {
+        float t_3 = metal::clamp((b_1.w - p_1.y) / f.z, 0.0, 1.0);
+        float _e44 = k;
+        k = _e44 * (t_3 * t_3);
+    }
+    if (f.w > 0.0) {
+        float t_4 = metal::clamp((p_1.x - b_1.x) / f.w, 0.0, 1.0);
+        float _e58 = k;
+        k = _e58 * (t_4 * t_4);
+    }
+    float _e61 = k;
+    return _e61;
+}
+
 float region(
     float index_1,
     metal::float2 position_1,
@@ -117,35 +147,24 @@ float region(
     device type_4 const& regions,
     constant _mslBufferSizes& _buffer_sizes
 ) {
-    float k = {};
+    float k_1 = {};
     Region g_1 = regions[naga_f2u32(index_1) - 1u];
     float _e10 = viewport.z;
-    metal::float2 p_1 = position_1 / metal::float2(_e10);
-    float _e17 = rounded(g_1.round0_, g_1.radii0_, g_1.tint.y, p_1, viewport);
-    float _e22 = rounded(g_1.round1_, g_1.radii1_, g_1.tint.z, p_1, viewport);
-    k = _e17 * _e22;
-    if (g_1.fade.x > 0.0) {
-        float t_1 = metal::clamp((p_1.y - g_1.fade_box.y) / g_1.fade.x, 0.0, 1.0);
-        float _e39 = k;
-        k = _e39 * (t_1 * t_1);
+    metal::float2 p_2 = position_1 / metal::float2(_e10);
+    float _e17 = rounded(g_1.round0_, g_1.radii0_, g_1.tint.y, p_2, viewport);
+    float _e22 = rounded(g_1.round1_, g_1.radii1_, g_1.tint.z, p_2, viewport);
+    k_1 = _e17 * _e22;
+    float _e25 = k_1;
+    float _e28 = faded(g_1.fade_box, g_1.fade, p_2);
+    k_1 = _e25 * _e28;
+    if (g_1.tint.w > 0.5) {
+        Region o_2 = regions[naga_f2u32(g_1.tint.w) - 1u];
+        float _e42 = k_1;
+        float _e45 = faded(o_2.fade_box, o_2.fade, p_2);
+        k_1 = _e42 * _e45;
     }
-    if (g_1.fade.y > 0.0) {
-        float t_2 = metal::clamp((g_1.fade_box.z - p_1.x) / g_1.fade.y, 0.0, 1.0);
-        float _e56 = k;
-        k = _e56 * (t_2 * t_2);
-    }
-    if (g_1.fade.z > 0.0) {
-        float t_3 = metal::clamp((g_1.fade_box.w - p_1.y) / g_1.fade.z, 0.0, 1.0);
-        float _e73 = k;
-        k = _e73 * (t_3 * t_3);
-    }
-    if (g_1.fade.w > 0.0) {
-        float t_4 = metal::clamp((p_1.x - g_1.fade_box.x) / g_1.fade.w, 0.0, 1.0);
-        float _e90 = k;
-        k = _e90 * (t_4 * t_4);
-    }
-    float _e93 = k;
-    return _e93;
+    float _e47 = k_1;
+    return _e47;
 }
 
 metal::float2 centred(
@@ -242,8 +261,8 @@ metal::float4 shade_texel(
             float _e165 = v_5.shape.x;
             uint a = naga_f2u32(_e165);
             float _e169 = v_5.shape.z;
-            uint b_1 = naga_f2u32(_e169);
-            metal::float4 sides = metal::float4(static_cast<float>(a & 4095u), static_cast<float>(a >> 12u), static_cast<float>(b_1 & 4095u), static_cast<float>(b_1 >> 12u)) / metal::float4(16.0);
+            uint b_2 = naga_f2u32(_e169);
+            metal::float4 sides = metal::float4(static_cast<float>(a & 4095u), static_cast<float>(a >> 12u), static_cast<float>(b_2 & 4095u), static_cast<float>(b_2 >> 12u)) / metal::float4(16.0);
             float _e189 = v_5.point.x;
             float _e192 = v_5.fade.x;
             float _e195 = v_5.fade.z;
@@ -335,11 +354,11 @@ metal::float4 shade_texel(
         metal::float2 _e467 = v_5.point;
         metal::float2 distance_1 = metal::min(_e454 - _e456.xy, (_e460.xy + _e463.zw) - _e467);
         float _e475 = v_5.options.x;
-        float f = metal::clamp(metal::min(distance_1.x, distance_1.y) / _e475, 0.0, 1.0);
+        float f_1 = metal::clamp(metal::min(distance_1.x, distance_1.y) / _e475, 0.0, 1.0);
         float _e481 = color_1.w;
-        color_1.w = _e481 * f;
+        color_1.w = _e481 * f_1;
         float _e483 = scale;
-        scale = _e483 * f;
+        scale = _e483 * f_1;
     }
     float _e487 = v_5.mask.x;
     if (_e487 > 0.5) {
@@ -419,13 +438,13 @@ vertex vsOutput vs(
     float w = 1.0;
     Out o = {};
     metal::float2 corner_1 = metal::float2(static_cast<float>(i & 1u), static_cast<float>(i >> 1u));
-    metal::float2 p_2 = v.rect.xy + (corner_1 * v.rect.zw);
-    position = p_2;
+    metal::float2 p_3 = v.rect.xy + (corner_1 * v.rect.zw);
+    position = p_3;
     if (v.options.z > 0.5) {
-        position = metal::float2(metal::dot(v.shape.xy, p_2) + v.border.x, metal::dot(v.shape.zw, p_2) + v.border.y);
+        position = metal::float2(metal::dot(v.shape.xy, p_3) + v.border.x, metal::dot(v.shape.zw, p_3) + v.border.y);
     }
     if (v.options.z > 1.5) {
-        w = metal::max(metal::dot(v.border.zw, p_2) + 1.0, 0.0001);
+        w = metal::max(metal::dot(v.border.zw, p_3) + 1.0, 0.0001);
     }
     float _e49 = position.x;
     float _e52 = viewport.x;
@@ -437,7 +456,7 @@ vertex vsOutput vs(
     o.position = metal::float4(((_e49 / _e52) * 2.0) - _e56, _e58 - ((_e60 / _e63) * 2.0), 0.0, _e68);
     o.uv = v.uv.xy + (corner_1 * v.uv.zw);
     o.color = v.color;
-    o.point = p_2;
+    o.point = p_3;
     o.fade = v.fade;
     o.options = v.options;
     o.shape = v.shape;
@@ -544,10 +563,10 @@ vertex vs_basicOutput vs_basic(
     const auto options = varyings_3.options;
     Basic o_1 = {};
     metal::float2 corner_2 = metal::float2(static_cast<float>(i_1 & 1u), static_cast<float>(i_1 >> 1u));
-    metal::float2 p_3 = rect.xy + (corner_2 * rect.zw);
+    metal::float2 p_4 = rect.xy + (corner_2 * rect.zw);
     float _e21 = viewport.x;
     float _e30 = viewport.y;
-    o_1.position = metal::float4(((p_3.x / _e21) * 2.0) - 1.0, 1.0 - ((p_3.y / _e30) * 2.0), 0.0, 1.0);
+    o_1.position = metal::float4(((p_4.x / _e21) * 2.0) - 1.0, 1.0 - ((p_4.y / _e30) * 2.0), 0.0, 1.0);
     o_1.uv = uv.xy + (corner_2 * uv.zw);
     o_1.color = color;
     o_1.texture = options.y;

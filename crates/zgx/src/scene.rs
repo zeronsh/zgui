@@ -2461,6 +2461,8 @@ pub struct PaintExtras {
     pub matrix: Option<crate::affine::Affine>,
     /// See `PaintItem::mask`.
     pub mask: Option<FadeMask>,
+    /// See `PaintItem::outer_mask`.
+    pub outer_mask: Option<FadeMask>,
     /// See `PaintItem::rounded`.
     pub rounded: RoundedClip,
     /// See `PaintItem::color`.
@@ -2491,10 +2493,12 @@ pub struct Inherited {
 /// and colour filters.
 struct Own {
     mask: Option<FadeMask>,
+    outer_mask: Option<FadeMask>,
     rounded: RoundedClip,
     parent_color: Option<ColorMatrix>,
     color: Option<ColorMatrix>,
     child_mask: Option<FadeMask>,
+    child_outer_mask: Option<FadeMask>,
     child_rounded: RoundedClip,
     item_rounded: RoundedClip,
 }
@@ -2519,6 +2523,7 @@ pub fn translate_items(items: &mut [PaintItem<'_>], dx: f32, dy: f32) {
         let from = std::rc::Rc::as_ptr(extras);
         let mut shifted = PaintExtras::clone(extras);
         shifted.mask = shifted.mask.map(|(rect, bands)| (shift(rect), bands));
+        shifted.outer_mask = shifted.outer_mask.map(|(rect, bands)| (shift(rect), bands));
         for clip in shifted.rounded.iter_mut().flatten() {
             clip.rect = shift(clip.rect);
         }
@@ -2548,6 +2553,12 @@ impl PaintItem<'_> {
     /// The nearest `fade_edges` ancestor's clip and bands (top, bottom).
     pub fn mask(&self) -> Option<FadeMask> {
         self.extras.as_ref().and_then(|extras| extras.mask)
+    }
+    /// The next fading ancestor's out from `mask`'s, which fades the item
+    /// too (its mask is the two multiplied). Nested fades apply the nearest
+    /// two; a third further out is left off.
+    pub fn outer_mask(&self) -> Option<FadeMask> {
+        self.extras.as_ref().and_then(|extras| extras.outer_mask)
     }
     /// Rounded clips around it (see `RoundedClip`).
     pub fn rounded(&self) -> RoundedClip {
@@ -9583,10 +9594,16 @@ impl Scene {
             } else {
                 let inherited = context.as_deref();
                 let mask = inherited.and_then(|c| c.mask);
+                let outer_mask = inherited.and_then(|c| c.outer_mask);
                 let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
                 let parent_color = inherited.and_then(|c| c.color);
                 let color = compose_color(parent_color, own_color);
                 let child_mask = fade_mask(mask, clip, &node.style, self.overflow_of(id, node));
+                // A fade of its own: the one it replaces fades its children too.
+                let child_outer_mask = match child_mask != mask {
+                    true => mask,
+                    false => outer_mask,
+                };
                 if child_mask != mask {
                     self.painted_fades.set(true);
                 }
@@ -9619,10 +9636,12 @@ impl Scene {
                 }
                 let own = Own {
                     mask,
+                    outer_mask,
                     rounded,
                     parent_color,
                     color,
                     child_mask,
+                    child_outer_mask,
                     child_rounded,
                     item_rounded,
                 };
@@ -9645,6 +9664,7 @@ impl Scene {
                         matrix: matrix
                             .map(|map| map.affine().unwrap_or_else(|| node.flat_matrix(bounds))),
                         mask: own.mask,
+                        outer_mask: own.outer_mask,
                         rounded: own.item_rounded,
                         color: own.color,
                         projective: matrix.filter(|map| map.affine().is_none()),
@@ -9684,6 +9704,7 @@ impl Scene {
                     Some(own) => PaintExtras {
                         matrix: None,
                         mask: own.child_mask,
+                        outer_mask: own.child_outer_mask,
                         rounded: own.child_rounded,
                         color: own.color,
                         projective: None,
@@ -9906,6 +9927,7 @@ impl<'a> Iterator for PaintIter<'a> {
         let (id, parent_transform, parent_opacity, parent_clip, extras) = self.stack.pop()?;
         let inherited = extras.as_deref();
         let mask = inherited.and_then(|c| c.mask);
+        let outer_mask = inherited.and_then(|c| c.outer_mask);
         let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
         let parent_color = inherited.and_then(|c| c.color);
         let node = self.scene.node(id);
@@ -9952,6 +9974,7 @@ impl<'a> Iterator for PaintIter<'a> {
             PaintExtras {
                 matrix: None,
                 mask,
+                outer_mask,
                 rounded,
                 color,
                 projective: None,
@@ -9964,6 +9987,10 @@ impl<'a> Iterator for PaintIter<'a> {
             PaintExtras {
                 matrix: None,
                 mask: child_mask,
+                outer_mask: match child_mask != mask {
+                    true => mask,
+                    false => outer_mask,
+                },
                 rounded: child_rounded,
                 color,
                 projective: None,

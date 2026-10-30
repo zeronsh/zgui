@@ -305,7 +305,9 @@ impl Interior {
     fn of(region: &Region, scale: f32) -> Self {
         // (Slack past the edges, so rounding never reads a band's last step.)
         const SLACK: f32 = 1e-3;
-        if region.tint[0] != 0. {
+        // A colour filter changes every pixel; an outer fade (`tint[3]`, a
+        // nested fade's, rare) is left to the shader everywhere.
+        if region.tint[0] != 0. || region.tint[3] != 0. {
             return Self::NONE;
         }
         let all = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
@@ -421,6 +423,38 @@ fn mark_region(
             quad.mask[lane] = region;
         }
     }
+}
+/// `item`'s region's index (`region_index`). Under two fades (a faded label
+/// in a faded scroll) the outer one is a record of its own, which the
+/// item's names in `tint[3]` (draw.wgsl's `region` multiplies it in).
+#[inline(always)]
+fn item_region(regions: &mut Vec<Region>, item: &zgx::scene::PaintItem<'_>) -> f32 {
+    let mut region = Region::of(item);
+    if let Some(region) = &mut region
+        && let Some(outer) = item.outer_mask()
+    {
+        region.tint[3] = outer_fade(regions, outer);
+    }
+    region_index(regions, region)
+}
+/// An outer fade's record (`item_region`), out of line: nested fades are rare.
+#[cold]
+#[inline(never)]
+fn outer_fade(regions: &mut Vec<Region>, (rect, bands): zgx::scene::FadeMask) -> f32 {
+    let none = [0., 0., -1., -1.];
+    region_index(
+        regions,
+        Some(Region {
+            round0: none,
+            radii0: [0.; 4],
+            round1: none,
+            radii1: [0.; 4],
+            fade_box: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height],
+            fade: bands,
+            color: [[0.; 4]; 3],
+            tint: [0.; 4],
+        }),
+    )
 }
 fn region_index(regions: &mut Vec<Region>, region: Option<Region>) -> f32 {
     let Some(region) = region else {
@@ -795,6 +829,11 @@ fn copy_blocker(
             return Some(CopyBlocker::Between(item.id));
         }
         if item.isolated || item.effects.blur_radius > 0. {
+            return Some(CopyBlocker::Effect(item.id));
+        }
+        // Under two fades: copied pixels would carry the outer one's bands
+        // to where its content moves.
+        if item.outer_mask().is_some() {
             return Some(CopyBlocker::Effect(item.id));
         }
         if let Some(mask) = item.mask() {
@@ -6557,7 +6596,7 @@ impl GpuRenderer {
                             (None, _) => [0.; 4],
                         },
                         mask: [
-                            region_index(&mut clips, Region::of(&item)),
+                            item_region(&mut clips, &item),
                             filter.as_ref().map_or(0., |(_, uniforms)| {
                                 region_index(&mut clips, Some(Region::uniforms(*uniforms)))
                             }),
@@ -7552,9 +7591,8 @@ impl GpuRenderer {
                 };
                 // Inside rounded clips or a `fade_edges` container: cut and faded
                 // in the shader (its quads' lane is set once they're culled).
-                let item_region = Region::of(&item);
-                let in_region = item_region.is_some();
-                let region = region_index(&mut clips, item_region);
+                let region = item_region(&mut clips, &item);
+                let in_region = region > 0.;
                 // When the clip only culls whole quads, apply it on the CPU and
                 // draw under the viewport, so a change of clip never splits a
                 // batch: neighbouring text, icons and rows become one draw. Quads

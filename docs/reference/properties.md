@@ -86,7 +86,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `backdrop_blur` | `number` | `0` | blurs what is behind it: frosted glass |
 | `fade` | `Pair` | | a clipping view's top and bottom edges fade over those widths |
 | `fade_x` | `Pair` | | its left and right edges |
-| `fade_sides` | `Sides` | | each edge: `{ top, right, bottom, left }` |
+| `fade_sides` | `Sides` | | each edge: `{ top, right, bottom, left }`. A fade inside another fade is faded by both (the nearest two apply) |
 | `layer` | `boolean` | `false` | paint the subtree into its own layer |
 | `fit` | `"fill" \| "contain" \| "cover" \| "none" \| "scale_down"` | `"fill"` | how an image fills its box |
 | `tint` | `Color` | | recolors an SVG (a state or function re-tints it) |

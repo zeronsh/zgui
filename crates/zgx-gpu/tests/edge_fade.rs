@@ -579,3 +579,93 @@ fn a_fade_folded_shut_in_a_popup_draws() {
     gpu.render(&scene, &[Rect::new(0., 0., 400., 400.)])
         .unwrap();
 }
+
+/// A 160 × 160 clip at (20, 20) fading 40 px at its top and bottom, holding
+/// a clip of its own 160 × 60 at its top, fading `inner_y` (top, bottom)
+/// and `inner_x` (left, right), filled by `fill` (one rect, or two stacked
+/// to draw the bands as one).
+fn nested(inner_y: [f32; 2], inner_x: [f32; 2], stacked: bool) -> Scene {
+    let mut scene = Scene::new(SIZE as f32, SIZE as f32);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let outer = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(160.),
+            height: Some(160.),
+            clip: true,
+            fade_edges: [40., 40.],
+            ..Default::default()
+        },
+    );
+    scene.set_transform(outer, Transform { x: 20., y: 20. });
+    let inner = scene.append(
+        outer,
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(160.),
+            height: Some(60.),
+            clip: true,
+            fade_edges: inner_y,
+            fade_edges_x: inner_x,
+            ..Default::default()
+        },
+    );
+    let colors: &[Color] = match stacked {
+        true => &[Color(40, 40, 80, 255), Color(255, 0, 0, 255)],
+        false => &[Color(255, 0, 0, 255)],
+    };
+    for color in colors {
+        scene.append(
+            inner,
+            NodeKind::Rect(*color),
+            Style {
+                width: Some(160.),
+                height: Some(60.),
+                ..Default::default()
+            },
+        );
+    }
+    scene
+}
+
+#[test]
+fn a_fade_inside_a_fade_takes_both() {
+    // A label fading its right end in a list fading its top (x inside y),
+    // and a fade inside another on the same edge (y inside y): each pixel
+    // takes both masks, multiplied, on both paths, one item or stacked
+    // (bands drawn as one). The nearest fade alone cut the outer's off.
+    let _gpu_fixture = gpu_fixture();
+    let near = |got: u8, want: f32| (got as f32 - want * 255.).abs() <= 2.;
+    let square = |d: f32, w: f32| (d / w).powi(2);
+    for direct in [true, false] {
+        for stacked in [false, true] {
+            // x inside y: the outer's top band (y 20 to 60), the inner's
+            // right band (x 150 to 180).
+            let p = render(direct, &mut nested([0., 0.], [0., 30.], stacked));
+            let outer = square(10.5, 40.);
+            let a = alpha(&p, 60, 30);
+            assert!(
+                near(a, outer),
+                "outer alone {a} (direct {direct}, stacked {stacked})"
+            );
+            let a = alpha(&p, 165, 30);
+            let both = outer * square(14.5, 30.);
+            assert!(
+                near(a, both),
+                "both {a} want {} (direct {direct})",
+                both * 255.
+            );
+            // Below the outer's band, the inner's right band alone.
+            let a = alpha(&p, 165, 70);
+            assert!(near(a, square(14.5, 30.)), "inner alone {a}");
+            // y inside y: both fade the top, over 40 and 20 px.
+            let p = render(direct, &mut nested([20., 0.], [0., 0.], stacked));
+            let a = alpha(&p, 60, 30);
+            let both = square(10.5, 40.) * square(10.5, 20.);
+            assert!(near(a, both), "y in y {a} want {}", both * 255.);
+            let a = alpha(&p, 60, 50);
+            assert!(near(a, square(30.5, 40.)), "past the inner's band {a}");
+        }
+    }
+}

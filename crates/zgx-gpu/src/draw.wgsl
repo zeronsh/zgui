@@ -17,6 +17,8 @@ struct Out { @builtin(position) position:vec4<f32>, @location(0) uv:vec2<f32>, @
 // of straight RGB (brightness, contrast, saturate), applied as the colour
 // is written. `tint.y`, `tint.z`: the rounded boxes' feathers, how far
 // inside their edges their content fades out from (0: cut at the edge).
+// `tint.w`: a second fade's region (index plus one; 0 for none), the next
+// fading ancestor's out, multiplied in (nested fades apply the nearest two).
 struct Region { round0:vec4<f32>, radii0:vec4<f32>, round1:vec4<f32>, radii1:vec4<f32>, fade_box:vec4<f32>, fade:vec4<f32>, color0:vec4<f32>, color1:vec4<f32>, color2:vec4<f32>, tint:vec4<f32> }
 @group(1) @binding(1) var<storage, read> regions:array<Region>;
 fn rounded(b:vec4<f32>, r:vec4<f32>, feather:f32, p:vec2<f32>)->f32 {
@@ -39,10 +41,17 @@ fn tinted(index:f32, premultiplied:vec4<f32>)->vec4<f32> {
 fn region(index:f32, position:vec2<f32>)->f32 {
  let g=regions[u32(index)-1u]; let p=position/viewport.z;
  var k=rounded(g.round0,g.radii0,g.tint.y,p)*rounded(g.round1,g.radii1,g.tint.z,p);
- if g.fade.x>0. {let t=clamp((p.y-g.fade_box.y)/g.fade.x,0.,1.); k*=t*t;}
- if g.fade.y>0. {let t=clamp((g.fade_box.z-p.x)/g.fade.y,0.,1.); k*=t*t;}
- if g.fade.z>0. {let t=clamp((g.fade_box.w-p.y)/g.fade.z,0.,1.); k*=t*t;}
- if g.fade.w>0. {let t=clamp((p.x-g.fade_box.x)/g.fade.w,0.,1.); k*=t*t;}
+ k*=faded(g.fade_box,g.fade,p);
+ // Under a second fade (`tint.w`: its record's index plus one), its too.
+ if g.tint.w>.5 {let o=regions[u32(g.tint.w)-1u]; k*=faded(o.fade_box,o.fade,p);}
+ return k;
+}
+fn faded(b:vec4<f32>, f:vec4<f32>, p:vec2<f32>)->f32 {
+ var k=1.;
+ if f.x>0. {let t=clamp((p.y-b.y)/f.x,0.,1.); k*=t*t;}
+ if f.y>0. {let t=clamp((b.z-p.x)/f.y,0.,1.); k*=t*t;}
+ if f.z>0. {let t=clamp((b.w-p.y)/f.z,0.,1.); k*=t*t;}
+ if f.w>0. {let t=clamp((p.x-b.x)/f.w,0.,1.); k*=t*t;}
  return k;
 }
 @group(0) @binding(2) var tex_sampler:sampler;
