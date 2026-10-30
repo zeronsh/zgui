@@ -60,7 +60,7 @@ def main():
                 else:
                     deadline=time.monotonic()+20
                     while True:
-                        found=subprocess.run(['xdotool','search','--name','^'+title+'$'],env=env,text=True,stdout=subprocess.PIPE)
+                        found=subprocess.run(['xdotool','search','--onlyvisible','--name','^'+title+'$'],env=env,text=True,stdout=subprocess.PIPE)
                         if found.returncode==0:target=found.stdout.strip().splitlines()[0];break
                         if time.monotonic()>deadline:raise RuntimeError('Missing native menu window '+title)
                         time.sleep(.05)
@@ -73,7 +73,7 @@ def main():
                 subprocess.run(['swaymsg','[title="^zgx dynamic menus secondary$"]','move','position','600','40'],env=env,check=True,stdout=subprocess.DEVNULL)
             elif not a.overlap_debug:
                 for title,x in [('zgx dynamic menus',20),('zgx dynamic menus secondary',600)]:
-                    target=subprocess.check_output(['xdotool','search','--name','^'+title+'$'],env=env,text=True).strip().splitlines()[0];xdo('windowmove',target,x,40)
+                    target=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^'+title+'$'],env=env,text=True).strip().splitlines()[0];xdo('windowmove',target,x,40)
             focus('zgx dynamic menus')
             key('ctrl+s');time.sleep(.15);assert 'ACTION save' not in (a.output/'application.log').read_text()
             key('ctrl+b');wait('CHECKED true');key('ctrl+s');wait('ACTION save')

@@ -61,7 +61,7 @@ def main():
         deadline = time.monotonic() + 20
         window = None
         while time.monotonic() < deadline:
-            result = subprocess.run(["xdotool", "search", "--name", "^zgx actions$"], env=env, text=True, capture_output=True)
+            result = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^zgx actions$"], env=env, text=True, capture_output=True)
             if result.returncode == 0:
                 window = result.stdout.splitlines()[0]
                 break
