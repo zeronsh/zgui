@@ -210,7 +210,7 @@ return ui.combobox { label = "City", text = query, items = matches, value = city
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `text` | `State<string>` | required | what the field holds, both ways |
-| `items` | `State<{ string \| { label, value?, detail? } }>` | required | the options to show; a `detail` shows after the label |
+| `items` | a list of `string \| { label, value?, detail? }`, or a state of one | required | the options to show; a `detail` shows after the label |
 | `value` | `State<any>` | none | the chosen option's value |
 | `loading` | `State<boolean>` | none | while true, the list says it is searching |
 | `empty` | `string` | `"No results"` | what the list says with no options |

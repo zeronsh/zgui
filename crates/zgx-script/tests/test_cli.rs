@@ -210,6 +210,33 @@ return ui.column {
 }
 
 #[test]
+fn a_test_reads_a_fields_value_and_selection_and_part_of_a_text() {
+    let dir = app(
+        "reads",
+        &[(
+            "reads.test.luau",
+            r##"
+test("reads", function()
+    local app = mount()
+    app:type("#name", "Ada")
+    expect(app:text("#name")).to_be("Ada")
+    local anchor, focus = app:selection("#name")
+    expect(anchor).to_be(3)
+    expect(focus).to_be(3)
+    expect(app:selection("#label")).to_be_nil()
+    expect(app:text('~"Hello, A"')).to_be("Hello, Ada")
+    expect(app:has('~"nothing like it"')).to_be(false)
+    expect(app:tree("#echo")).to_contain("Hello, Ada")
+    expect(app:tree("#echo")).never.to_contain("Count")
+end)
+"##,
+        )],
+    );
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",

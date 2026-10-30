@@ -434,10 +434,10 @@ end)
   - `mount(path?)` mounts the app headless (`path` from the app's directory).
   - `expect(actual)` checks a value: `to_be` (`==`), `to_equal` (tables field by field), `to_contain` (a substring, or a member of a list), `to_be_truthy` and `to_be_nil`. Each also has a negated form under `never`.
 - **Failures** name the test file's line: an `expect` that fails, a target that matches nothing, an unknown key.
-- **Targets are devtools' own** (`zgx inspect`): `#id`, `"label or text"`, `role:button`, `role:checkbox "Done"`, `#list row 3`, `"Copy"[2]`, `#dialog >> "OK"`.
+- **Targets are devtools' own** (`zgx inspect`): `#id`, `"label or text"`, `~"part of it"`, `role:button`, `role:checkbox "Done"`, `#list row 3`, `"Copy"[2]`, `#dialog >> "OK"`.
 - **An app's methods:**
   - acting: `click`, `type` (click a field and type), `fill` (replace its whole text), `hover`, `drag(from, to)`, `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)`, `command(id)` (a `ui.command`) and `resize(width, height)`;
-  - reading: `text`, `has`, `count` and `tree`;
+  - reading: `text` (a field's value, or the text in the target), `selection` (a field's, in bytes from 0), `has`, `count` and `tree` (all of it, or from a target);
   - waiting: `frames(n)`, and `wait(target, { text?, gone?, timeout_ms? })`, which delivers frames until the target shows (holding `text`) or is gone and answers whether it did;
   - state: `state(name)` and `set_state(name, value)`;
   - `error()`, the script error showing, if any.
