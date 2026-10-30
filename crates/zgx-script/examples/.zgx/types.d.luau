@@ -1151,6 +1151,16 @@ export type StrokeOptions = {
 	draw: Pair?,
 }
 -- What a canvas's `draw(c, w, h)` paints with.
+export type CanvasTextOptions = {
+	size: number?,
+	color: Color?,
+	weight: number?,
+	italic: boolean?,
+	tabular: boolean?,
+	font: string?,
+	align: ("start" | "center" | "end")?,
+	baseline: ("top" | "middle" | "bottom")?,
+}
 declare extern type Canvas with
 	function rect(self, x: number, y: number, w: number, h: number, paint: Paint, radius: number?): ()
 	function circle(self, cx: number, cy: number, r: number, paint: Paint): ()
@@ -1160,6 +1170,10 @@ declare extern type Canvas with
 	-- Clips what follows to the path, until `restore`.
 	function clip(self, path: Path): ()
 	function restore(self): ()
+	-- A line of text at (x, y), over the shapes whatever their order.
+	function text(self, text: string, x: number, y: number, opts: CanvasTextOptions?): ()
+	-- Its width and height, for placing what goes around it.
+	function measure_text(self, text: string, opts: CanvasTextOptions?): (number, number)
 end
 
 -- `ui.web(opts)`: a web page's controller. Its fields are tracked, so a

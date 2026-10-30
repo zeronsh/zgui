@@ -3,7 +3,11 @@ use crate::{
     affine::Affine,
     scene::{Color, Rect},
 };
-use std::sync::{Arc, OnceLock};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, OnceLock},
+};
 
 /// A point in the canvas's local logical coordinates, y down.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -516,10 +520,106 @@ pub enum Draw {
         style: Stroke,
     },
 }
+/// Where a text's point falls across it (`Canvas::text`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextAnchor {
+    /// The text starts there.
+    #[default]
+    Start,
+    /// It is centred on it.
+    Center,
+    /// It ends there.
+    End,
+}
+/// Where a text's point falls down it (`Canvas::text`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextBaseline {
+    /// Its line's top.
+    #[default]
+    Top,
+    /// Its line's middle.
+    Middle,
+    /// Its line's bottom.
+    Bottom,
+}
+/// A line of text on a canvas. It is shaped and drawn as any text is, over
+/// the canvas's shapes whatever their order: no clip of the canvas applies,
+/// and assistive technology doesn't read it (a canvas's `label` speaks for
+/// the drawing).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasText {
+    /// The text.
+    pub text: Arc<str>,
+    /// Across, in the canvas's coordinates.
+    pub x: f32,
+    /// Down.
+    pub y: f32,
+    /// Its font size, in logical points.
+    pub size: f32,
+    /// Its colour.
+    pub color: Color,
+    /// Its font.
+    pub font: crate::text_layout::FontStyle,
+    /// Where `x` falls across it.
+    pub anchor: TextAnchor,
+    /// Where `y` falls down it.
+    pub baseline: TextBaseline,
+}
+impl CanvasText {
+    /// Its top left, given its size.
+    pub(crate) fn origin(&self, (width, height): (f32, f32)) -> (f32, f32) {
+        let x = match self.anchor {
+            TextAnchor::Start => self.x,
+            TextAnchor::Center => self.x - width / 2.,
+            TextAnchor::End => self.x - width,
+        };
+        let y = match self.baseline {
+            TextBaseline::Top => self.y,
+            TextBaseline::Middle => self.y - height / 2.,
+            TextBaseline::Bottom => self.y - height,
+        };
+        (x, y)
+    }
+}
+
+thread_local! {
+    /// The scene a canvas is drawing for: what `measure_text` measures in.
+    static DRAWING_FOR: RefCell<Option<Rc<RefCell<crate::scene::Scene>>>> =
+        const { RefCell::new(None) };
+}
+/// Runs `draw` with `scene` as what `measure_text` measures in.
+pub(crate) fn drawing_for<R>(
+    scene: &Rc<RefCell<crate::scene::Scene>>,
+    draw: impl FnOnce() -> R,
+) -> R {
+    let previous = DRAWING_FOR.with(|slot| slot.replace(Some(scene.clone())));
+    let drawn = draw();
+    DRAWING_FOR.with(|slot| *slot.borrow_mut() = previous);
+    drawn
+}
+/// The width and height `text` takes at `size` in `font`, while a canvas
+/// draws: what placing a label around another needs. `None` outside a
+/// canvas's drawing.
+pub fn measure_text(
+    text: &str,
+    size: f32,
+    font: &crate::text_layout::FontStyle,
+) -> Option<(f32, f32)> {
+    DRAWING_FOR.with(|slot| {
+        let scene = slot.borrow();
+        let scene = scene.as_ref()?;
+        let scene = scene.try_borrow().ok()?;
+        Some(scene.measure_text_with_font(text, size, None, font))
+    })
+}
+
 /// Equal command lists preserve pixels, uploads and retained layout.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Canvas {
     commands: Vec<Draw>,
+    /// Beside the commands: `Draw` is public and exhaustive. Empty, it
+    /// allocates nothing.
+    text: Vec<CanvasText>,
 }
 impl Canvas {
     /// An empty canvas.
@@ -562,10 +662,20 @@ impl Canvas {
     pub fn commands(&self) -> &[Draw] {
         &self.commands
     }
+    /// Add a line of text, over the canvas's shapes.
+    pub fn text(&mut self, text: CanvasText) -> &mut Self {
+        self.text.push(text);
+        self
+    }
+    /// The canvas's lines of text.
+    pub fn texts(&self) -> &[CanvasText] {
+        &self.text
+    }
     /// `other`'s commands after these, as drawn: a drawing made of parts
     /// kept apart (each item's, drawn again only when it changes).
     pub fn extend(&mut self, other: &Canvas) -> &mut Self {
         self.commands.extend_from_slice(&other.commands);
+        self.text.extend_from_slice(&other.text);
         self
     }
 }

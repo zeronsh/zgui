@@ -4212,3 +4212,149 @@ fn a_paste_is_heard_first_and_may_be_taken() {
     );
     assert_eq!(h.error(), None);
 }
+
+/// `c:text` lays a line over the drawing, placed by its anchor, measured by
+/// `c:measure_text`, and follows a state as the drawing does.
+#[test]
+fn a_canvas_draws_text_where_it_says() {
+    let mut h = Harness::inline(
+        r##"local label = ui.state("label", "first")
+        local measured = ui.state("measured", 0)
+        local seen = 0
+        return ui.column { w = 400, h = 300,
+            ui.button { id = "read", on_click = function() measured:set(seen) end, "read" },
+            ui.button { id = "change", on_click = function() label:set("second") end, "change" },
+            ui.button { id = "fewer", on_click = function() label:set("") end, "fewer" },
+            ui.text { id = "measured", function() return tostring(measured:get()) end },
+            ui.canvas { id = "c", w = 200, h = 100,
+                draw = function(c, w, h)
+                    c:rect(0, 0, w, h, "#333")
+                    local text = label:get()
+                    if text ~= "" then
+                        c:text(text, 10, 20)
+                        c:text("right", w, 50, { align = "end", baseline = "middle", size = 10 })
+                    end
+                    seen = c:measure_text("right", { size = 10 })
+                end } }"##,
+    );
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    let find = |h: &mut Harness, text: &str| {
+        let canvas = h.find("c").unwrap();
+        let scene = h.ui.scene.borrow();
+        let mut stack = vec![canvas];
+        while let Some(n) = stack.pop() {
+            if let zgx::scene::NodeKind::Text { text: t, .. } = scene.kind(n)
+                && &**t == text
+            {
+                let b = scene.transformed_bounds(n);
+                let top = scene.bounds(canvas);
+                return Some((b.x - top.x, b.y - top.y, b.width, b.height));
+            }
+            stack.extend(scene.children(n).iter().copied());
+        }
+        None
+    };
+    let first = find(&mut h, "first").expect("the text is drawn");
+    assert_eq!((first.0, first.1), (10., 20.));
+    let right = find(&mut h, "right").unwrap();
+    assert!(
+        (right.0 + right.2 - 200.).abs() < 0.5,
+        "ends at the edge: {right:?}"
+    );
+    assert!(
+        (right.1 + right.3 / 2. - 50.).abs() < 0.5,
+        "middle: {right:?}"
+    );
+    h.click("read");
+    h.ui.prepare_frame();
+    let measured: f32 = h.text("measured").parse().unwrap();
+    assert!((measured - right.2).abs() < 0.5, "{measured} and {right:?}");
+    h.click("change");
+    h.ui.prepare_frame();
+    assert!(find(&mut h, "first").is_none());
+    assert!(find(&mut h, "second").is_some());
+    h.click("fewer");
+    h.ui.prepare_frame();
+    assert!(find(&mut h, "second").is_none() && find(&mut h, "right").is_none());
+    assert_eq!(h.host.error().get(), None);
+}
+
+/// A canvas without text makes no nodes for it, and text takes a canvas's
+/// pan and zoom.
+#[test]
+fn canvas_text_costs_nothing_unused_and_follows_a_view() {
+    let mut h = Harness::inline(
+        r##"local view = ui.state("view", { x = 0, y = 0, zoom = 1 })
+        return ui.column { w = 400, h = 300,
+            ui.button { id = "zoom", on_click = function() view:set({ x = 20, y = 10, zoom = 2 }) end, "zoom" },
+            ui.canvas { id = "plain", w = 100, h = 50, draw = function(c) c:rect(0, 0, 10, 10, "#333") end },
+            ui.canvas { id = "c", w = 100, h = 50, view = view,
+                draw = function(c) c:text("mark", 10, 5) end } }"##,
+    );
+    h.ui.prepare_frame();
+    let plain = h.find("plain").unwrap();
+    assert_eq!(
+        h.ui.scene.borrow().children(plain).len(),
+        1,
+        "the drawing alone"
+    );
+    let canvas = h.find("c").unwrap();
+    let mark = |h: &mut Harness| {
+        let scene = h.ui.scene.borrow();
+        let group = *scene.children(canvas).last().unwrap();
+        let text = scene.children(group)[0];
+        let (b, top) = (scene.transformed_bounds(text), scene.bounds(canvas));
+        (b.x - top.x, b.y - top.y, b.height)
+    };
+    let before = mark(&mut h);
+    assert_eq!((before.0, before.1), (10., 5.));
+    // Read by the canvas's `label`, not line by line.
+    let text = {
+        let scene = h.ui.scene.borrow();
+        scene.children(*scene.children(canvas).last().unwrap())[0]
+    };
+    assert!(h.ui.semantics.borrow().get(text).is_none());
+    h.click("zoom");
+    h.ui.prepare_frame();
+    let zoomed = mark(&mut h);
+    assert_eq!((zoomed.0, zoomed.1), (40., 20.));
+    assert!(
+        (zoomed.2 - before.2 * 2.).abs() < 0.5,
+        "{zoomed:?} {before:?}"
+    );
+}
+
+/// A canvas redrawn keeps its text nodes: a line's node is reused by place,
+/// changed or not, and only lines beyond the new count go.
+#[test]
+fn a_redrawn_canvas_reuses_its_text_nodes() {
+    let mut h = Harness::inline(
+        r##"local t = ui.state("t", 0)
+        return ui.column { w = 400, h = 300,
+            ui.button { id = "tick", on_click = function() t:add(1) end, "tick" },
+            ui.canvas { id = "c", w = 300, h = 100,
+                draw = function(c)
+                    local v = t:get()
+                    for i = 1, 50 do
+                        c:text(`{i}: {if i % 2 == 0 then v else 0}`, i * 5, 10)
+                    end
+                end } }"##,
+    );
+    h.ui.prepare_frame();
+    let canvas = h.find("c").unwrap();
+    let nodes = |h: &Harness| -> Vec<_> {
+        let scene = h.ui.scene.borrow();
+        scene
+            .children(*scene.children(canvas).last().unwrap())
+            .to_vec()
+    };
+    let first = nodes(&h);
+    assert_eq!(first.len(), 50);
+    for _ in 0..20 {
+        h.click("tick");
+        h.ui.prepare_frame();
+        assert_eq!(nodes(&h), first, "the same nodes");
+    }
+    assert_eq!(h.host.error().get(), None);
+}

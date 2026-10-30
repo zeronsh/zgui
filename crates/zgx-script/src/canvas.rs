@@ -6,6 +6,8 @@
 use crate::node::parse_color;
 use mlua::{Lua, Table, UserData, UserDataMethods};
 use std::{cell::RefCell, rc::Rc};
+use zgx::canvas::{CanvasText, TextAnchor, TextBaseline};
+use zgx::text_layout::{FontFamily, FontFeatures, FontStyle};
 use zgx::theme::ThemeScope;
 use zgx::{
     canvas::{
@@ -237,8 +239,92 @@ fn path_arg(v: &mlua::AnyUserData) -> mlua::Result<Path> {
     v.borrow::<PathUd>()?.path()
 }
 
+/// A canvas text's font and size, from its options.
+fn text_style(options: Option<&Table>) -> mlua::Result<(f32, FontStyle)> {
+    let mut font = FontStyle::default();
+    let Some(o) = options else {
+        return Ok((TEXT_SIZE, font));
+    };
+    if let Some(weight) = o.get::<Option<u16>>("weight")? {
+        font.weight = weight;
+    }
+    font.italic = o.get::<Option<bool>>("italic")?.unwrap_or(false);
+    if o.get::<Option<bool>>("tabular")?.unwrap_or(false) {
+        font.features = FontFeatures::new([(*b"tnum", 1)]);
+    }
+    match o.get::<Option<String>>("font")?.as_deref() {
+        None => {}
+        Some("mono" | "monospace") => font.family = FontFamily::Monospace,
+        Some("sans" | "sans-serif") => font.family = FontFamily::SansSerif,
+        Some("serif") => font.family = FontFamily::Serif,
+        Some(name) => font.family = FontFamily::Named(name.into()),
+    }
+    let size = o.get::<Option<f32>>("size")?.unwrap_or(TEXT_SIZE);
+    Ok((size.max(1.), font))
+}
+/// A canvas text's size where its options give none: a chart's labels.
+const TEXT_SIZE: f32 = 12.;
+
 impl UserData for Recorder {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method(
+            "text",
+            |_, c, (text, x, y, options): (String, f32, f32, Option<Table>)| {
+                let (size, font) = text_style(options.as_ref())?;
+                let color = match options
+                    .as_ref()
+                    .map(|o| o.get::<mlua::Value>("color"))
+                    .transpose()?
+                {
+                    None | Some(mlua::Value::Nil) => token_color("text.primary")?,
+                    Some(color) => self::color(&color)?,
+                };
+                let word = |key: &str| -> mlua::Result<Option<String>> {
+                    options.as_ref().map_or(Ok(None), |o| o.get(key))
+                };
+                let anchor = match word("align")?.as_deref() {
+                    None | Some("start") => TextAnchor::Start,
+                    Some("center") => TextAnchor::Center,
+                    Some("end") => TextAnchor::End,
+                    Some(other) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "a canvas text's `align` is \"start\", \"center\" or \"end\", not `{other}`"
+                        )));
+                    }
+                };
+                let baseline = match word("baseline")?.as_deref() {
+                    None | Some("top") => TextBaseline::Top,
+                    Some("middle") => TextBaseline::Middle,
+                    Some("bottom") => TextBaseline::Bottom,
+                    Some(other) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "a canvas text's `baseline` is \"top\", \"middle\" or \"bottom\", not `{other}`"
+                        )));
+                    }
+                };
+                c.0.borrow_mut().text(CanvasText {
+                    text: text.into(),
+                    x,
+                    y,
+                    size,
+                    color,
+                    font,
+                    anchor,
+                    baseline,
+                });
+                Ok(())
+            },
+        );
+        // What placing a label around another needs: its width and height.
+        methods.add_method(
+            "measure_text",
+            |_, _, (text, options): (String, Option<Table>)| {
+                let (size, font) = text_style(options.as_ref())?;
+                let (width, height) =
+                    zgx::canvas::measure_text(&text, size, &font).unwrap_or((0., 0.));
+                Ok((width, height))
+            },
+        );
         methods.add_method(
             "rect",
             |_, c, (x, y, w, h, paint, radius): (f32, f32, f32, f32, mlua::Value, Option<f32>)| {

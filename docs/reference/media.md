@@ -62,6 +62,10 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 | `c:stroke(path, paint, width?, opts?)` | strokes a path; `opts` as `line`'s, and `draw = t` (or `{ start, end }`) strokes only that fraction of it, as anime.js draws lines |
 | `c:clip(path)` | clips what follows to the path, until `c:restore()` |
 | `c:restore()` | ends the last clip |
+| `c:text(text, x, y, opts?)` | a line of text at (`x`, `y`). `opts`: `size` (12), `color` (`"$text.primary"`), `weight`, `italic`, `tabular`, `font`, `align` (`"start"`, `"center"`, `"end"`: where `x` falls across it), `baseline` (`"top"`, `"middle"`, `"bottom"`: where `y` falls down it) |
+| `c:measure_text(text, opts?)` | its width and height, for placing what goes around it: `local w = c:measure_text(label, { size = 11 })` |
+
+Text on a canvas is shaped and drawn as any text is: sharp at any zoom, in the theme's fonts with their fallbacks, and following `view`. It sits over the canvas's shapes whatever order they were drawn in, so a shape drawn after it doesn't cover it, and `c:clip` doesn't cut it. Assistive technology doesn't read it: give the canvas a `label` that says what it shows (`label = "Requests, now 5,400, up 1.4%"`), and offer a chart's numbers as text or a table where they matter.
 
 `paint` is a [color](properties.md) or a brush from `ui.linear(x1, y1, x2, y2, { colors })`, its colors spread evenly from (`x1`, `y1`) to (`x2`, `y2`). A color may name a theme token (`"$accent"`, `"$surface.raised"`), resolved in the canvas's theme while `draw` runs: the drawing follows it as it follows state, so a theme change draws it again. `ui.linear` called inside `draw` takes tokens too.
 

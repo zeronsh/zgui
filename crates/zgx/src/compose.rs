@@ -1754,6 +1754,125 @@ fn bordered(styles: &Styles) -> bool {
 /// A scroll view's size when nothing else sizes it (`Style::intrinsic_width`).
 /// One scrolling across is as tall as what it holds, as CSS's
 /// `overflow-x: auto` box: a tab strip, a row of chips.
+/// A canvas's text: a text node for each line, over its drawing and through
+/// the same paint as any text. Made when the first line is, in a box of
+/// their own that takes the canvas's pan and zoom. Scene nodes with no
+/// semantics: the canvas's `label` speaks for what it shows.
+#[derive(Default)]
+struct CanvasLabels {
+    group: Option<NodeId>,
+    /// Each line's node, reused by position, and what it shows now: a line
+    /// drawn as it was touches nothing, so a chart redrawn every frame
+    /// costs what changed.
+    nodes: Vec<(NodeId, crate::canvas::CanvasText)>,
+    size: (f32, f32),
+    view: Option<crate::scene::CanvasView>,
+}
+impl CanvasLabels {
+    fn show(
+        &mut self,
+        scene: &mut crate::scene::Scene,
+        root: NodeId,
+        texts: &[crate::canvas::CanvasText],
+        (width, height): (f32, f32),
+    ) {
+        let group = match self.group {
+            Some(group) => group,
+            None => {
+                let group = scene.append(
+                    root,
+                    NodeKind::Container(Layout::Overlay),
+                    crate::scene::Style {
+                        absolute: true,
+                        ..Default::default()
+                    },
+                );
+                self.group = Some(group);
+                if let Some(view) = self.view {
+                    self.follow(scene, view);
+                }
+                group
+            }
+        };
+        if self.size != (width, height) {
+            self.size = (width, height);
+            scene.set_style(
+                group,
+                crate::scene::Style {
+                    width: Some(width),
+                    height: Some(height),
+                    absolute: true,
+                    ..Default::default()
+                },
+            );
+        }
+        for (gone, _) in self.nodes.drain(texts.len().min(self.nodes.len())..) {
+            scene.remove(gone);
+        }
+        for (index, text) in texts.iter().enumerate() {
+            if self
+                .nodes
+                .get(index)
+                .is_some_and(|(_, shown)| shown == text)
+            {
+                continue;
+            }
+            let kind = NodeKind::Text {
+                text: text.text.clone(),
+                color: text.color,
+                font_size: text.size,
+            };
+            let node = match self.nodes.get_mut(index) {
+                Some((node, shown)) => {
+                    scene.set_kind(*node, kind);
+                    *shown = text.clone();
+                    *node
+                }
+                None => {
+                    let node = scene.append(
+                        group,
+                        kind,
+                        crate::scene::Style {
+                            absolute: true,
+                            ..Default::default()
+                        },
+                    );
+                    self.nodes.push((node, text.clone()));
+                    node
+                }
+            };
+            scene.set_font(node, text.font.clone());
+            let size = match (text.anchor, text.baseline) {
+                (crate::canvas::TextAnchor::Start, crate::canvas::TextBaseline::Top) => (0., 0.),
+                _ => scene.measure_text_with_font(&text.text, text.size, None, &text.font),
+            };
+            let (x, y) = text.origin(size);
+            scene.set_transform(node, crate::scene::Transform { x, y });
+        }
+    }
+    /// Pans and zooms the text with its canvas's drawing.
+    fn follow(&mut self, scene: &mut crate::scene::Scene, view: crate::scene::CanvasView) {
+        self.view = Some(view);
+        if let Some(group) = self.group {
+            scene.set_transform(
+                group,
+                crate::scene::Transform {
+                    x: view.x,
+                    y: view.y,
+                },
+            );
+            scene.set_local_transform(
+                group,
+                crate::scene::LocalTransform {
+                    scale: (view.scale, view.scale),
+                    origin: (0., 0.),
+                    ..crate::scene::LocalTransform::IDENTITY
+                },
+            );
+        }
+    }
+}
+
 fn scroll_default_size(horizontal: bool) -> crate::scene::Style {
     crate::scene::Style {
         width: Some(320.),
@@ -4635,17 +4754,24 @@ fn open_element(
             },
         );
         let scene = ui.scene.clone();
+        let labels = Rc::new(RefCell::new(CanvasLabels::default()));
+        let shown = labels.clone();
         ui.bind(root, move || {
             let (width, height) = size.get();
             if width.is_nan() || height.is_nan() {
                 return;
             }
             let content = if width > 0. && height > 0. {
-                draw((width, height))
+                crate::canvas::drawing_for(&scene, || draw((width, height)))
             } else {
                 crate::canvas::Canvas::new()
             };
             let mut scene = scene.borrow_mut();
+            if !content.texts().is_empty() || !shown.borrow().nodes.is_empty() {
+                shown
+                    .borrow_mut()
+                    .show(&mut scene, root, content.texts(), (width, height));
+            }
             scene.set_kind(drawing, NodeKind::Canvas(std::sync::Arc::new(content)));
             scene.set_style(
                 drawing,
@@ -4663,7 +4789,9 @@ fn open_element(
             let scene = ui.scene.clone();
             ui.bind(root, move || {
                 let view = view();
-                scene.borrow_mut().set_canvas_view(drawing, Some(view));
+                let mut scene = scene.borrow_mut();
+                scene.set_canvas_view(drawing, Some(view));
+                labels.borrow_mut().follow(&mut scene, view);
             });
         }
         if let Some(mut grid) = grid_fill {

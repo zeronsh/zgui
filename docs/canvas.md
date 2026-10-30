@@ -7,6 +7,12 @@ changes. Empty allocations do not invoke the callback. Drawing is local to and
 clipped by the allocated content box. Use ordinary child views for text and
 controls that require their own interaction and accessibility nodes.
 
+`Canvas::text` adds a line of text (`CanvasText`), shaped and drawn as any text
+is, over the canvas's shapes whatever their order; no clip of the canvas applies
+to it. `zgx::canvas::measure_text` gives its size while a canvas draws, for
+placing what goes around it. Assistive technology doesn't read it: label the
+canvas (`.label`, Luau `label`) with what it shows.
+
 `Path::builder()` provides lines, quadratic and cubic curves, circular arcs,
 closed contours and affine transforms. `Canvas::fill`, `fill_rule` and `stroke`
 accept solid colors, linear gradients and slash patterns. Stroke options include
