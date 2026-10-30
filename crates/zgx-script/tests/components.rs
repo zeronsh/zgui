@@ -548,6 +548,54 @@ fn a_data_grid_sorts_edits_into_its_rows_and_writes_its_columns() {
     assert_eq!(h.error(), None);
 }
 
+/// A date and a time follow a function as a select does: a change goes to
+/// `on_change`, and what shows stays the function's until the app changes it.
+#[test]
+fn a_date_picker_and_a_time_field_are_controlled_by_a_function() {
+    let mut h = Harness::inline(
+        r#"local due = ui.state("due", "2026-03-10")
+        local asked = ui.state("asked", "none")
+        return ui.column {
+            ui.date_picker {
+                label = "Due",
+                value = function() return due:get() end,
+                on_change = function(date: string?) asked:set(date or "cleared") end,
+            },
+            ui.time_field {
+                label = "Start",
+                value = function() return "09:30" end,
+                on_change = function(time: string?) asked:set(time or "cleared") end,
+            },
+            ui.text { id = "asked", function() return asked:get() end },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    let trigger = with_role(&mut h, Role::Button)[0];
+    assert_eq!(
+        h.ui.semantics.borrow().get(trigger).unwrap().label,
+        "Due: 2026-03-10"
+    );
+    h.ui.input.focus(&h.ui.scene, Some(trigger));
+    h.key(Key::ArrowDown);
+    h.frames(1);
+    h.key(Key::ArrowRight);
+    h.key(Key::Enter);
+    h.frames(1);
+    assert_eq!(h.text("asked"), "2026-03-11");
+    assert_eq!(
+        h.ui.semantics.borrow().get(trigger).unwrap().label,
+        "Due: 2026-03-10",
+        "the function still says so"
+    );
+    let segments = with_role(&mut h, Role::SpinButton);
+    h.ui.input.focus(&h.ui.scene, Some(segments[1]));
+    h.key(Key::ArrowUp);
+    h.frames(1);
+    assert_eq!(h.text("asked"), "09:31");
+    assert_eq!(h.error(), None);
+}
+
 #[test]
 fn a_date_picker_and_a_time_field_write_iso_dates_and_times() {
     let mut h = Harness::inline(

@@ -4325,7 +4325,14 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         "each",
         lua.create_function(
             |lua, (list, build, table): (mlua::Value, Function, Option<Table>)| {
-                let items = expect_readable(&list, "ui.each's list")?;
+                let items = match (state_of(&list), &list) {
+                    (Some(items), _) => items,
+                    // A list that never changes: a state nothing writes.
+                    (None, mlua::Value::Table(_)) => env(lua)?
+                        .runtime
+                        .signal(Value::from_lua(list.clone(), lua)?),
+                    _ => expect_readable(&list, "ui.each's list")?,
+                };
                 // Rows dragged or moved by keyboard into a new order.
                 let build = match &table {
                     Some(t) if !t.raw_get::<mlua::Value>("reorder")?.is_nil() => {

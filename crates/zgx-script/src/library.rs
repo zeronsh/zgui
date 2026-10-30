@@ -337,7 +337,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
             lua.create_function(move |lua, table: Table| {
                 let kind = Kind::Library(Box::new(Library::Calendar {
                     label: label(&table)?,
-                    value: expect_state(&table.get("value")?, &format!("ui.{name}'s `value`"))?,
+                    value: crate::node::control_value(lua, &table)?,
                     picker,
                     min: table.get("min")?,
                     max: table.get("max")?,
@@ -354,7 +354,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, table: Table| {
             let kind = Kind::Library(Box::new(Library::TimeField {
                 label: label(&table)?,
-                value: expect_state(&table.get("value")?, "ui.time_field's `value`")?,
+                value: crate::node::control_value(lua, &table)?,
                 hour12: table.get::<Option<bool>>("hour12")?.unwrap_or(false),
                 minute_step: table
                     .get::<Option<u8>>("minute_step")?

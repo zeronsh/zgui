@@ -263,7 +263,8 @@ return ui.row {
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<string?>` | required | the date (`"2026-10-23"`) or time (`"09:30"`), both ways |
+| `value` | `State<string?>`, or `() -> string?` | required | the date (`"2026-10-23"`) or time (`"09:30"`), both ways; a function controls it, a change going to `on_change` |
+| `on_change` | `(value: string?) -> ()` | none | a controlled field's change |
 | `min`, `max` | `string` | none | `calendar`, `date_picker`: the first and last days that can be chosen |
 | `first_weekday` | `number` | `0` | the week's first day: `0` for Sunday, `1` for Monday |
 | `unavailable` | `(date: string, weekday: number) -> boolean` | none | days that can't be chosen; `weekday` runs from 0 for Sunday |

@@ -1386,6 +1386,18 @@ fn virtual_lists_take_each_rows_height() {
     assert_eq!(h.host.error().get(), None);
 }
 
+/// `ui.each` takes a plain table for a list that never changes.
+#[test]
+fn each_takes_a_plain_table() {
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.each({ "a", "b" }, function(n, i) return ui.text { id = n, `{n}{i}` } end) }"##,
+    );
+    h.ui.prepare_frame();
+    assert_eq!(h.text("a"), "a1");
+    assert_eq!(h.text("b"), "b2");
+}
+
 #[test]
 fn a_following_list_follows_its_first_rows_and_after_being_cleared() {
     // A chat transcript: empty at first, ten 20-point rows in a 60-point

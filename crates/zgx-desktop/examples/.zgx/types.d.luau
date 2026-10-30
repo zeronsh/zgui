@@ -10844,7 +10844,8 @@ export type CalendarProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	-- The date, `"2026-10-23"`, both ways; nil: none chosen.
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	-- The first and last days that can be chosen.
 	min: string?,
 	max: string?,
@@ -11188,7 +11189,8 @@ export type DatePickerProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	min: string?,
 	max: string?,
 	first_weekday: number?,
@@ -11532,7 +11534,8 @@ export type TimeFieldProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	-- The time, `"09:30"` (24-hour), both ways.
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	-- Hours 1 to 12 and an AM/PM segment.
 	hour12: boolean?,
 	-- What Up and Down step the minutes by.
@@ -17002,7 +17005,7 @@ declare ui: {
 	-- from its uses, which misfires). A row whose item changes is built
 	-- again; a `build` taking a third parameter gets the row's item as
 	-- state instead, kept current, and its row updates in place.
-	each: (list: State<{ any }>, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node,
+	each: (list: State<{ any }> | { any }, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node,
 	-- What `build` makes of the value, entering and exiting as it changes;
 	-- nil shows nothing. The value is `any`, as `each`'s item is.
 	presence: (value: string | Readable<unknown> | (() -> unknown), build: (value: any) -> Node, opts: PresenceOptions?) -> Node,

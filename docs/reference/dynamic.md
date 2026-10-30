@@ -5,7 +5,7 @@ Parts of the tree that follow state. A script describes its tree once; these fun
 ```luau
 ui.show(cond: boolean | Readable<unknown> | (() -> unknown), node: Node, otherwise: Node?) -> Node
 ui.switch(value: string | Readable<unknown> | (() -> unknown), cases: { [CaseKey]: Node }, default: Node?) -> Node
-ui.each(list: State<{ any }>, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node
+ui.each(list: State<{ any }> | { any }, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node
 ui.presence(value: string | Readable<unknown> | (() -> unknown), build: (value: any) -> Node, opts: PresenceOptions?) -> Node
 ```
 
@@ -13,7 +13,7 @@ ui.presence(value: string | Readable<unknown> | (() -> unknown), build: (value: 
 | --- | --- |
 | `show` | `node` while `cond` is truthy (a state, a function of state, or a boolean), else `otherwise` or nothing |
 | `switch` | the case whose key equals `value` (or its text: a case `[1]` matches `"1"`), else `default` or nothing |
-| `each` | `build(item, index)` for each item of a list state, `index` from 1; a row whose item changes is built again, or, if `build` takes a third parameter, gets its item as state and updates in place; rows that come, go and move can animate |
+| `each` | `build(item, index)` for each item of a list state, or of a plain table that never changes, `index` from 1; a row whose item changes is built again, or, if `build` takes a third parameter, gets its item as state and updates in place; rows that come, go and move can animate |
 | `presence` | what `build(value)` makes of the current value; when it changes, the old content leaves (playing `exit`) while the new enters (`enter`). `nil` shows nothing |
 
 `show` and `switch` build the node they show when it appears, from the node you gave: the nodes are descriptions, so state they create inside a component is fresh each time. `each` rows and `presence` content are built by your function, which owns what it creates (`ui.computed`, `ui.effect`, `ui.use_state`): they end when the row or content goes.
