@@ -103,6 +103,10 @@ impl FakeDesktop {
     pub fn clipboard(&self) -> String {
         self.clipboard.borrow().clone()
     }
+    /// Put `text` on the clipboard, as another app copies it.
+    pub fn copy(&self, text: impl Into<String>) {
+        *self.clipboard.borrow_mut() = text.into();
+    }
     /// The clipboard's image: its width, height and RGBA pixels.
     pub fn clipboard_image(&self) -> Option<(u32, u32, Vec<u8>)> {
         let image = self.image.borrow();
@@ -232,11 +236,15 @@ impl TestApp {
     /// `ui.open_files`, `ui.save_file`, `ui.read_file` and `ui.write_file`
     /// work as in a window, the dialogs answering as the test queues.
     pub fn with_desktop(host: impl FnOnce(&Runtime) -> ScriptHost) -> Self {
+        Self::try_with_desktop(host).unwrap_or_else(|error| panic!("{error}"))
+    }
+    /// [`TestApp::with_desktop`], or the script's error when it fails to load.
+    pub fn try_with_desktop(host: impl FnOnce(&Runtime) -> ScriptHost) -> Result<Self, String> {
         let desktop = Rc::new(FakeDesktop::default());
         let service = zgx::platform::PlatformService(desktop.clone());
-        let mut app = Self::wrapped(host, move |view| provide(service, view));
+        let mut app = Self::try_wrapped(host, move |view| provide(service, view))?;
         app.desktop = Some(desktop);
-        app
+        Ok(app)
     }
     /// With the window's layout inspector, as a desktop window provides it.
     pub fn inspected(

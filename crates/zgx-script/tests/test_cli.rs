@@ -114,6 +114,102 @@ return ui.column { box("a"), box("b"), ui.text { saved } }
 }
 
 #[test]
+fn a_test_answers_the_desktops_dialogs_and_resizes_the_window() {
+    let dir = app(
+        "desktop",
+        &[(
+            "desktop.test.luau",
+            r##"
+test("a file saved, picked and copied", function()
+    local app = mount("desktop.luau")
+    app:save_to("out/report.csv")
+    app:click("#export")
+    expect(app:wait("#saved")).to_be(true)
+    expect(app:read_file("out/report.csv")).to_be("a,b")
+
+    app:write_file("in.txt", "from disk")
+    app:pick({ "in.txt" })
+    app:click("#import")
+    expect(app:wait("#opened", { text = "from disk" })).to_be(true)
+
+    app:copy("pasted")
+    app:click("#paste")
+    expect(app:wait("#clip", { text = "pasted" })).to_be(true)
+    app:click("#yank")
+    expect(app:clipboard()).to_be("yanked")
+end)
+
+test("a dialog nobody answers is cancelled", function()
+    local app = mount("desktop.luau")
+    app:click("#export")
+    app:frames(2)
+    expect(app:has("#saved")).to_be(false)
+    expect(app:error()).to_be_nil()
+end)
+
+test("a resize lays out and reaches ui.window.size", function()
+    local app = mount("desktop.luau")
+    expect(app:has('"wide"')).to_be(true)
+    app:resize(500, 400)
+    expect(app:has('"narrow"')).to_be(true)
+    expect(app:text("#cols")).to_be("1")
+    app:resize(1200, 400)
+    expect(app:has('"wide"')).to_be(true)
+    expect(app:text("#cols")).to_be("4")
+end)
+
+test("a file's name stays in the test's directory", function()
+    local app = mount("desktop.luau")
+    local ok, message = pcall(function() app:read_file("../secret") end)
+    expect(ok).to_be(false)
+    expect(tostring(message)).to_contain("own directory")
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("desktop.luau"),
+        r#"
+local saved = ui.state("saved", false)
+local opened = ui.state("opened", "")
+local clip = ui.state("clip", "")
+local narrow = ui.computed(function() return ui.window.size:get().width < 760 end)
+local box = ui.ref()
+local cols = ui.computed(function() return math.floor((box.width or 0) / 300) end)
+return ui.column {
+    ui.button { id = "export", "Export", on_click = function()
+        ui.task(function()
+            local file = ui.save_file({ title = "Export" }):await()
+            if file then
+                ui.write_file(file, "a,b"):await()
+                saved:set(true)
+            end
+        end)
+    end },
+    ui.button { id = "import", "Import", on_click = function()
+        ui.task(function()
+            local files = ui.open_files({ title = "Import" }):await()
+            if files[1] then opened:set(ui.read_file(files[1]):await()) end
+        end)
+    end },
+    ui.button { id = "paste", "Paste", on_click = function()
+        clip:set(ui.clipboard.read() or "")
+    end },
+    ui.button { id = "yank", "Yank", on_click = function() ui.clipboard.write("yanked") end },
+    ui.show(saved, ui.text { id = "saved", "Saved" }),
+    ui.text { id = "opened", "{opened}" },
+    ui.text { id = "clip", "{clip}" },
+    ui.text { function() return if narrow:get() then "narrow" else "wide" end },
+    ui.column { ref = box, ui.text { id = "cols", function() return tostring(cols:get()) end } },
+}
+"#,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",

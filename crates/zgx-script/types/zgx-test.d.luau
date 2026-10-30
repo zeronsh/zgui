@@ -25,6 +25,19 @@ declare extern type TestApp with
 	function scroll(self, target: string, dy: number): ()
 	-- Run a `ui.command` by its id, as its menu item or shortcut does.
 	function command(self, id: string): ()
+	-- The window's new size, laid out.
+	function resize(self, width: number, height: number): ()
+	-- The next `ui.open_files` picks these files, the next `ui.save_file` saves
+	-- to this one. Names are in a directory of this app's own, gone with it.
+	function pick(self, names: { string }): ()
+	function save_to(self, name: string): ()
+	-- A file of that directory, written for a dialog to pick, or read after
+	-- the app saved it.
+	function write_file(self, name: string, text: string): ()
+	function read_file(self, name: string): string
+	-- The clipboard's text, and text put on it as another app copies it.
+	function clipboard(self): string
+	function copy(self, text: string): ()
 	-- The target's text: its own, or the first inside it.
 	function text(self, target: string): string
 	-- Whether anything matches the target.

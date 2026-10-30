@@ -12,14 +12,19 @@
 //! Their types are `types/zgx-test.d.luau`, which `zgx check` gives test
 //! files alone. A headless app has no fetcher (`ui.fetch` fails as offline
 //! does) and no storage (`ui.persist` keeps its state in memory).
-use crate::{ScriptHost, Value, testing::TestApp};
+use crate::{
+    ScriptHost, Value,
+    testing::{FakeDesktop, TestApp},
+};
 use mlua::{Function, Lua, Table, UserData, UserDataMethods};
 use std::{
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
+use zgx::reactive::Signal;
 
 /// The definitions of a test file's globals, for luau-lsp.
 pub const DEFINITIONS: &str = include_str!("../types/zgx-test.d.luau");
@@ -152,7 +157,7 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
             // `zgx run` gives them.
             let host = crate::app_config::read(&dir)
                 .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
-            let app = TestApp::try_new(|runtime| {
+            let app = TestApp::try_with_desktop(|runtime| {
                 let host = host.apply(ScriptHost::new(runtime, &path));
                 host.0.persist.quiet();
                 host
@@ -161,8 +166,14 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
             // The window's size, as `zgx run` opens it.
             let (width, height) = window_size(&dir);
             app.ui.scene.borrow_mut().resize(width, height);
+            let viewport = app.ui.runtime.signal((width, height));
+            app.host.window_size(viewport.clone());
             app.frames(1);
-            Ok(Mounted(Rc::new(RefCell::new(app))))
+            Ok(Mounted {
+                app: Rc::new(RefCell::new(app)),
+                viewport,
+                files: Files::default(),
+            })
         })?,
     )?;
     let code = std::fs::read_to_string(file).map_err(mlua::Error::external)?;
@@ -230,9 +241,58 @@ fn untraced(text: &str) -> String {
 }
 
 /// An app `mount` made: [`TestApp`]'s acts and reads as methods.
-struct Mounted(Rc<RefCell<TestApp>>);
+struct Mounted {
+    app: Rc<RefCell<TestApp>>,
+    /// The window's size, `ui.window.size` following it.
+    viewport: Signal<(f32, f32)>,
+    files: Files,
+}
+
+/// The files a test's dialogs answer with: a directory of the mount's own,
+/// made when first used and gone with it.
+#[derive(Default)]
+struct Files(OnceCell<PathBuf>);
+
+impl Files {
+    /// Where `name` lies: inside the directory, or an error.
+    fn path(&self, name: &str) -> mlua::Result<PathBuf> {
+        if !Path::new(name)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(mlua::Error::runtime(format!(
+                "`{name}`: a test's files are named from its own directory"
+            )));
+        }
+        static MOUNTS: AtomicUsize = AtomicUsize::new(0);
+        let dir = self.0.get_or_init(|| {
+            std::env::temp_dir().join(format!(
+                "zgx-test-{}-{}",
+                std::process::id(),
+                MOUNTS.fetch_add(1, Ordering::Relaxed)
+            ))
+        });
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(mlua::Error::external)?;
+        }
+        Ok(path)
+    }
+}
+impl Drop for Files {
+    fn drop(&mut self) {
+        if let Some(dir) = self.0.get() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
 
 impl Mounted {
+    /// The fake desktop `mount` gave it.
+    fn desktop(&self) -> Rc<FakeDesktop> {
+        let desktop = self.app.borrow().desktop.clone();
+        desktop.expect("mount gives every app a desktop")
+    }
     /// The node `target` names, as devtools find it.
     fn node(app: &mut TestApp, target: &str) -> mlua::Result<zgx::scene::NodeId> {
         app.ui.prepare_frame();
@@ -243,7 +303,7 @@ impl Mounted {
 impl UserData for Mounted {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("click", |_, m, target: String| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
             let bounds = app.ui.scene.borrow().bounds(node);
             crate::driver::click_at(&mut app.ui, bounds);
@@ -251,7 +311,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("type", |_, m, (target, text): (String, String)| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
             crate::driver::type_into(&mut app.ui, node, &text);
             app.settle();
@@ -260,7 +320,7 @@ impl UserData for Mounted {
         // A field's whole text replaced, as a person selecting it all and
         // typing does (a form's `dirty` and validation follow).
         methods.add_method("fill", |_, m, (target, text): (String, String)| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
             let (all, modifiers) =
                 crate::driver::parse_keys("cmd+a").map_err(mlua::Error::runtime)?;
@@ -273,7 +333,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("hover", |_, m, target: String| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
             let b = app.ui.scene.borrow().bounds(node);
             crate::driver::hover_at(&mut app.ui, (b.x + b.width / 2., b.y + b.height / 2.));
@@ -281,7 +341,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("drag", |_, m, (from, to): (String, String)| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let (from, to) = (Self::node(&mut app, &from)?, Self::node(&mut app, &to)?);
             let (from, to) = {
                 let scene = app.ui.scene.borrow();
@@ -292,7 +352,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("key", |_, m, keys: String| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let (key, modifiers) =
                 crate::driver::parse_keys(&keys).map_err(mlua::Error::runtime)?;
             crate::driver::press(&mut app.ui, key, modifiers);
@@ -300,14 +360,14 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("scroll", |_, m, (target, dy): (String, f32)| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
             crate::driver::scroll(&mut app.ui, node, dy);
             app.settle();
             Ok(())
         });
         methods.add_method("command", |_, m, id: String| {
-            let app = m.0.borrow();
+            let app = m.app.borrow();
             if !app.host.run_command(&id) {
                 return Err(mlua::Error::runtime(format!("no command `{id}`")));
             }
@@ -315,28 +375,57 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("text", |_, m, target: String| {
-            let mut app = m.0.borrow_mut();
+            let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
             let scene = app.ui.scene.borrow();
             Ok(crate::driver::first_text(&scene, node).unwrap_or_default())
         });
         methods.add_method("has", |_, m, target: String| {
-            let app = m.0.borrow();
+            let app = m.app.borrow();
             app.ui.prepare_frame();
             let target = crate::driver::parse(&target).map_err(mlua::Error::runtime)?;
             let found = crate::driver::find_all(&app.ui, &app.handle, &target);
             Ok(found.is_ok_and(|found| !found.is_empty()))
         });
         methods.add_method("count", |_, m, target: String| {
-            let app = m.0.borrow();
+            let app = m.app.borrow();
             app.ui.prepare_frame();
             let target = crate::driver::parse(&target).map_err(mlua::Error::runtime)?;
             let found = crate::driver::find_all(&app.ui, &app.handle, &target);
             Ok(found.map_or(0, |found| found.len()))
         });
-        methods.add_method("tree", |_, m, ()| Ok(m.0.borrow_mut().tree()));
+        // The window's new size, laid out, as dragging its edge ends.
+        methods.add_method("resize", |_, m, (width, height): (f32, f32)| {
+            let app = m.app.borrow();
+            app.ui.scene.borrow_mut().resize(width, height);
+            m.viewport.set((width, height));
+            app.frames(1);
+            Ok(())
+        });
+        // What the desktop's dialogs answer next, from the mount's own files.
+        methods.add_method("pick", |_, m, names: Vec<String>| {
+            let files = names.iter().map(|name| m.files.path(name));
+            m.desktop().pick(files.collect::<mlua::Result<Vec<_>>>()?);
+            Ok(())
+        });
+        methods.add_method("save_to", |_, m, name: String| {
+            m.desktop().save_to(m.files.path(&name)?);
+            Ok(())
+        });
+        methods.add_method("write_file", |_, m, (name, text): (String, String)| {
+            std::fs::write(m.files.path(&name)?, text).map_err(mlua::Error::external)
+        });
+        methods.add_method("read_file", |_, m, name: String| {
+            std::fs::read_to_string(m.files.path(&name)?).map_err(mlua::Error::external)
+        });
+        methods.add_method("clipboard", |_, m, ()| Ok(m.desktop().clipboard()));
+        methods.add_method("copy", |_, m, text: String| {
+            m.desktop().copy(text);
+            Ok(())
+        });
+        methods.add_method("tree", |_, m, ()| Ok(m.app.borrow_mut().tree()));
         methods.add_method("frames", |_, m, n: Option<usize>| {
-            m.0.borrow().frames(n.unwrap_or(1));
+            m.app.borrow().frames(n.unwrap_or(1));
             Ok(())
         });
         // Until the target shows (holding `text`, if given), or is gone;
@@ -356,7 +445,7 @@ impl UserData for Mounted {
                 let parsed = crate::driver::parse(&target).map_err(mlua::Error::runtime)?;
                 let deadline =
                     Instant::now() + Duration::from_secs_f64(timeout.unwrap_or(5000.) / 1000.);
-                let app = m.0.borrow();
+                let app = m.app.borrow();
                 loop {
                     app.frame();
                     let found =
@@ -381,7 +470,7 @@ impl UserData for Mounted {
             },
         );
         methods.add_method("state", |_, m, name: String| {
-            let states = m.0.borrow().host.states();
+            let states = m.app.borrow().host.states();
             let suffix = format!("::{name}");
             let found = states.iter().find(|(n, _)| *n == name).or_else(|| {
                 let mut by_suffix = states.iter().filter(|(n, _)| n.ends_with(&suffix));
@@ -396,13 +485,13 @@ impl UserData for Mounted {
             }
         });
         methods.add_method("set_state", |_, m, (name, value): (String, Value)| {
-            let app = m.0.borrow();
+            let app = m.app.borrow();
             app.host
                 .set_state(&name, value)
                 .map_err(mlua::Error::runtime)?;
             app.settle();
             Ok(())
         });
-        methods.add_method("error", |_, m, ()| Ok(m.0.borrow().error()));
+        methods.add_method("error", |_, m, ()| Ok(m.app.borrow().error()));
     }
 }
