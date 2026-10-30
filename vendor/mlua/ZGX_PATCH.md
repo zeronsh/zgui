@@ -118,7 +118,7 @@ The library's own tests run (`cargo test --features luau --lib`) with
 `static_assertions` as a dev-dependency, which the published package
 leaves out.
 
-## Luau's pages, apart from the program's heap
+## Luau's pages, apart from the program's heap (zgx-mlua 0.12.6)
 
 Luau asks the allocator for 16 KB pages of small objects and frees a page
 only when its last object goes, so a heap that was once large leaves pages

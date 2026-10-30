@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "zgx-mlua"
-version = "0.12.5"
+version = "0.12.6"
 authors = [
     "Aleksandr Orlenko <zxteam@pm.me>",
     "kyren <catherine@kyju.org>",
