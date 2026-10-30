@@ -98,9 +98,9 @@ SCENES = [
     ('script-layout', 'zgx-script', 'script_layout_bench', {}),
     # Spans in Luau: read, lowered and mounted again each pass (plain, then
     # shaped as a markdown paragraph is), and restyled through a state.
-    ('spans-plain', 'zgx-script', 'span_bench', {'SCENE': 'spans-plain', 'N': '10', 'REPS': '15'}),
+    ('spans-plain', 'zgx-script', 'span_bench', {'SCENE': 'spans-plain', 'N': '10', 'REPS': '25'}),
     ('spans-follow', 'zgx-script', 'span_bench', {'SCENE': 'spans-follow', 'N': '10', 'REPS': '80'}),
-    ('spans-md', 'zgx-script', 'span_bench', {'SCENE': 'spans-md', 'N': '10', 'REPS': '10'}),
+    ('spans-md', 'zgx-script', 'span_bench', {'SCENE': 'spans-md', 'N': '10', 'REPS': '14'}),
     ('list-state', 'zgx-script', 'list_state_bench', {}),
     ('style', 'zgx', 'style_bench', {}),
     # 3D frames' CPU work, drawn by wgpu's no-op backend (no driver, no JIT):
@@ -138,7 +138,7 @@ SCENES = [
 # app-code's drift: main against itself now counts it the same): app-chat's
 # test waits for its fake server's timer thread, a handoff between threads
 # that real time decides.
-SPREAD = {'app-chat': 0.2, '3d-textured': 0.06, '3d-mixed': 0.08}
+SPREAD = {'app-chat': 0.2, '3d-textured': 0.06, '3d-mixed': 0.08, 'spans-md': 0.08}
 # Built alone: see `build`.
 ALONE = 'zgx-3d'
 

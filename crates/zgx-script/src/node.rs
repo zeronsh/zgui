@@ -3861,91 +3861,115 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         icon: None,
     };
     if let Some(t) = table {
-        let followed = std::cell::RefCell::new(Vec::new());
-        let value = |k: &str| -> mlua::Result<Value> {
-            let given: mlua::Value = t.get(k)?;
+        // One walk over what it holds: most spans set one or two options of
+        // the twenty it could.
+        let mut followed = Vec::new();
+        let mut bold = false;
+        t.for_each_borrowed(|key, value| {
+            let Some(key) = key.as_bytes() else {
+                return Ok(());
+            };
+            let given = value.to_value()?;
             if matches!(given, mlua::Value::Function(_) | mlua::Value::UserData(_))
-                && let Some((name, ty)) = SPAN_FOLLOWS.iter().find(|(name, _)| *name == k)
+                && let Some((name, ty)) =
+                    SPAN_FOLLOWS.iter().find(|(name, _)| name.as_bytes() == key)
             {
-                followed
-                    .borrow_mut()
-                    .push((*name, *ty, source(lua, *ty, name, given)?));
-                return Ok(Value::Nil);
+                followed.push((*name, *ty, source(lua, *ty, name, given)?));
+                return Ok(());
             }
-            lua.unpack(given)
-        };
-        span.color = themed_color(&value("color")?);
-        span.background = themed_color(&value("bg")?);
-        span.size = value("text_size")?.as_f64().map(|v| v as f32);
-        span.weight = value("weight")?
-            .as_f64()
-            .map(|v| v as u16)
-            .or(value("bold")?.truthy().then_some(700));
-        span.italic = value("italic")?.truthy();
-        span.underline = value("underline")?.truthy();
-        span.strike = value("strike")?.truthy();
-        span.font = match value("font")? {
-            Value::Str(font) => Some(font),
-            _ => None,
-        };
-        // `padding = 4` (across) or `{ 4, 0.5 }` (across, down).
-        span.padding = match value("padding")? {
-            Value::Num(x) => [x as f32, 0.],
-            Value::List(l) => [
-                l.first().and_then(Value::as_f64).unwrap_or(0.) as f32,
-                l.get(1).and_then(Value::as_f64).unwrap_or(0.) as f32,
-            ],
-            _ => [0.; 2],
-        };
-        span.radius = value("radius")?.as_f64().unwrap_or(0.) as f32;
-        span.underline_offset = value("underline_offset")?.as_f64().map(|v| v as f32);
-        span.underline_style = match value("underline_style")? {
-            Value::Nil => None,
-            Value::Str(style) => Some(line_style(&style)?),
-            other => {
-                return Err(mlua::Error::runtime(format!(
-                    "`underline_style` is a name, not {other}"
-                )));
+            let number = |given: mlua::Value| {
+                lua.unpack::<Value>(given)
+                    .map(|value| value.as_f64().map(|v| v as f32))
+            };
+            match key {
+                b"color" => span.color = themed_color(&lua.unpack(given)?),
+                b"bg" => span.background = themed_color(&lua.unpack(given)?),
+                b"text_size" => span.size = number(given)?,
+                b"weight" => span.weight = number(given)?.map(|v| v as u16),
+                b"bold" => bold = lua.unpack::<Value>(given)?.truthy(),
+                b"italic" => span.italic = lua.unpack::<Value>(given)?.truthy(),
+                b"underline" => span.underline = lua.unpack::<Value>(given)?.truthy(),
+                b"strike" => span.strike = lua.unpack::<Value>(given)?.truthy(),
+                b"font" => {
+                    if let Value::Str(font) = lua.unpack(given)? {
+                        span.font = Some(font);
+                    }
+                }
+                // `padding = 4` (across) or `{ 4, 0.5 }` (across, down).
+                b"padding" => {
+                    span.padding = match lua.unpack(given)? {
+                        Value::Num(x) => [x as f32, 0.],
+                        Value::List(l) => [
+                            l.first().and_then(Value::as_f64).unwrap_or(0.) as f32,
+                            l.get(1).and_then(Value::as_f64).unwrap_or(0.) as f32,
+                        ],
+                        _ => [0.; 2],
+                    }
+                }
+                b"radius" => span.radius = number(given)?.unwrap_or(0.),
+                b"underline_offset" => span.underline_offset = number(given)?,
+                b"underline_style" => {
+                    span.underline_style = match lua.unpack(given)? {
+                        Value::Str(style) => Some(line_style(&style)?),
+                        other => {
+                            return Err(mlua::Error::runtime(format!(
+                                "`underline_style` is a name, not {other}"
+                            )));
+                        }
+                    }
+                }
+                b"underline_color" => span.underline_color = themed_color(&lua.unpack(given)?),
+                b"underline_thickness" => span.underline_thickness = number(given)?,
+                // `hover = { underline = true, color = … }`: a link's look
+                // under the pointer (CSS's `a:hover`).
+                b"hover" => {
+                    let hover: Table = lua.unpack(given)?;
+                    span.hover = Some((
+                        hover.get::<Value>("underline")?.truthy(),
+                        themed_color(&hover.get::<Value>("color")?),
+                    ));
+                }
+                b"icon" => {
+                    let icon: Table = lua.unpack(given)?;
+                    let src = match (
+                        icon.get::<Option<String>>("src")?,
+                        icon.get::<Option<String>>("code")?,
+                    ) {
+                        (Some(src), _) => src,
+                        (None, Some(code)) => format!("code:{code}"),
+                        (None, None) => {
+                            return Err(mlua::Error::runtime(
+                                "a span's icon takes `src` or `code`",
+                            ));
+                        }
+                    };
+                    let tint = icon.get::<Value>("tint")?;
+                    span.icon = Some(SpanIcon {
+                        src,
+                        size: icon.get::<Option<f32>>("size")?.unwrap_or(12.),
+                        gap: icon.get::<Option<f32>>("gap")?.unwrap_or(4.),
+                        tint: (!matches!(tint, Value::Nil)).then_some(tint),
+                    });
+                }
+                b"on_click" => span.click = Some(handler(given)?),
+                b"href" => span.href = Some(lua.unpack::<String>(given)?.into()),
+                _ => {}
             }
-        };
-        span.underline_color = themed_color(&value("underline_color")?);
-        span.underline_thickness = value("underline_thickness")?.as_f64().map(|v| v as f32);
-        span.followed = followed.into_inner();
+            Ok(())
+        })?;
+        span.weight = span.weight.or(bold.then_some(700));
+        // As `SPAN_FOLLOWS` lists them, whatever order the table walks in:
+        // `bold` is applied after `weight`.
+        if followed.len() > 1 {
+            followed.sort_by_key(|(name, ..)| {
+                SPAN_FOLLOWS.iter().position(|(listed, _)| listed == name)
+            });
+        }
+        span.followed = followed;
         // One of them says it is underlined, as `underline = true` does.
         span.underline |= span.underline_style.is_some()
             || span.underline_color.is_some()
             || span.underline_thickness.is_some();
-        // `hover = { underline = true, color = … }`: a link's look under
-        // the pointer (CSS's `a:hover`).
-        if let Some(hover) = t.get::<Option<Table>>("hover")? {
-            span.hover = Some((
-                hover.get::<Value>("underline")?.truthy(),
-                themed_color(&hover.get::<Value>("color")?),
-            ));
-        }
-        if let Some(icon) = t.get::<Option<Table>>("icon")? {
-            let src = match (
-                icon.get::<Option<String>>("src")?,
-                icon.get::<Option<String>>("code")?,
-            ) {
-                (Some(src), _) => src,
-                (None, Some(code)) => format!("code:{code}"),
-                (None, None) => {
-                    return Err(mlua::Error::runtime("a span's icon takes `src` or `code`"));
-                }
-            };
-            let tint = icon.get::<Value>("tint")?;
-            span.icon = Some(SpanIcon {
-                src,
-                size: icon.get::<Option<f32>>("size")?.unwrap_or(12.),
-                gap: icon.get::<Option<f32>>("gap")?.unwrap_or(4.),
-                tint: (!matches!(tint, Value::Nil)).then_some(tint),
-            });
-        }
-        if let Some(h) = t.get::<Option<mlua::Value>>("on_click")? {
-            span.click = Some(handler(h)?);
-        }
-        span.href = t.get::<Option<String>>("href")?.map(Into::into);
     }
     Ok(span)
 }

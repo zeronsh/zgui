@@ -6424,10 +6424,12 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         owned
             .iter()
             .map(|span| {
-                let mut style = span.style;
-                let mut font = span.font.clone();
+                // Copied only for the few that follow: a span's own is read
+                // where it lies.
+                let mut own = None;
                 // Tracked: a change builds the paragraph again.
                 for (name, ty, source) in &span.followed {
+                    let (style, font) = own.get_or_insert_with(|| (span.style, span.font.clone()));
                     let lit = resolve(source, *ty, None, &vm);
                     let themed = match &lit {
                         Some(Lit::Color(color)) => Some(zgx::theme::Themed::Value(*color)),
@@ -6450,11 +6452,15 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                         "strike" => style.strike = on,
                         _ => {
                             if let Some(Lit::Str(name)) = lit {
-                                font = Some(name);
+                                *font = Some(name);
                             }
                         }
                     }
                 }
+                let (style, font) = match &own {
+                    Some((style, font)) => (style, font),
+                    None => (&span.style, &span.font),
+                };
                 let SpanStyle {
                     color,
                     background,
@@ -6470,7 +6476,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                     underline_color,
                     underline_thickness,
                     hover,
-                } = style;
+                } = *style;
                 let decoration = || {
                     let d = zgx::rich_text::Decoration::new(underline_thickness.unwrap_or(1.))
                         .line(underline_style.unwrap_or_default());
@@ -6511,7 +6517,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                     out = out.strikethrough(Default::default());
                 }
                 if let Some(font) = font {
-                    out = out.font_family(font_family(&font));
+                    out = out.font_family(font_family(font));
                 }
                 if padding != [0.; 2] {
                     out = out.padding(padding[0], padding[1]);

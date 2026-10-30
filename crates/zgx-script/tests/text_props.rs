@@ -116,6 +116,74 @@ fn a_spans_style_and_font_follow_state() {
 }
 
 #[test]
+fn a_span_keeps_every_option_it_is_given() {
+    use zgx::scene::{Color, NodeKind};
+    let mut h = Harness::inline(
+        r##"return ui.rich {
+            id = "para",
+            ui.span { "a", weight = 300, bold = true, text_size = 19, italic = true },
+            ui.span { "b", bold = true, color = "#112233", bg = "#445566" },
+            ui.span {
+                "c",
+                strike = true,
+                padding = { 4, 2 },
+                radius = 3,
+                underline_style = "wavy",
+                underline_color = "#778899",
+                underline_thickness = 2,
+                underline_offset = 1,
+            },
+            ui.span { "d", href = "https://zgx.zeron.sh", hover = { underline = true } },
+            ui.span { "e", font = "mono", underline = true },
+        }"##,
+    );
+    h.frames(1);
+    assert_eq!(h.error(), None);
+    let node = h.find("para").unwrap();
+    let scene = h.ui.scene.borrow();
+    let mut pending = vec![node];
+    let mut found = None;
+    while let Some(next) = pending.pop() {
+        if let NodeKind::RichText { text } = scene.kind(next) {
+            found = Some(text.clone());
+        }
+        pending.extend(scene.children(next).iter().copied());
+    }
+    let text = found.expect("a rich text");
+    let run = |at: &str| {
+        let start = text.text().find(at).unwrap();
+        (text.runs().iter())
+            .find(|run| run.range.contains(&start))
+            .expect("a run")
+    };
+    assert_eq!((run("a").font.weight, run("a").font_size), (300, 19.));
+    assert!(run("a").font.italic);
+    assert_eq!(run("b").font.weight, 700, "bold without a weight");
+    assert_eq!(run("b").color, Color(0x11, 0x22, 0x33, 255));
+    assert_eq!(run("b").background, Some(Color(0x44, 0x55, 0x66, 255)));
+    assert!(run("c").strikethrough.is_some());
+    assert_eq!(run("c").padding, [4., 2.]);
+    assert_eq!(run("c").radius, 3.);
+    assert!(run("c").underline.is_some(), "underlined by its style");
+    assert!(run("e").underline.is_some());
+    assert!(format!("{:?}", run("e").font.family).contains("Monospace"));
+}
+
+/// A span's table is read as an element's is, a plain table: what its
+/// metatable's `__index` would give is not an option.
+#[test]
+fn a_span_does_not_read_options_behind_a_metatable() {
+    let mut h = Harness::inline(
+        r##"local options = setmetatable({ "held" }, { __index = { bold = true } })
+        return ui.rich { id = "para", ui.span(options), ui.span { " own", bold = true } }"##,
+    );
+    h.frames(1);
+    assert_eq!(h.error(), None);
+    let weights: Vec<u16> = runs(&mut h, "para").iter().map(|run| run.1).collect();
+    assert_eq!(weights, [400, 700], "only an option the table holds");
+}
+
+#[test]
 fn a_restyled_span_keeps_a_selection_across_it() {
     use zgx::input::{InputEvent, PointerButton};
     let mut h = Harness::inline(
