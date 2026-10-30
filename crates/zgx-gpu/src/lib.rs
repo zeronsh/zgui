@@ -2299,7 +2299,9 @@ impl LayerPresent {
                 1 => false,
                 _ => matches!(self.trial, Trial::Drawables { .. }),
             };
-        (auto || self.drawables.unwrap_or(*PRESENT_DRAWABLE) && self.full_rate)
+        (auto
+            || self.drawables.unwrap_or(*PRESENT_DRAWABLE)
+                && (self.full_rate || *PRESENT_DRAWABLE_ALWAYS))
             && !self.plain_only
             && !self.with_natives
             && self
@@ -2416,6 +2418,11 @@ static DXGI_PRESENT: std::sync::LazyLock<bool> =
 static PRESENT_DRAWABLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
     zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v != "0" && v != "auto")
 });
+/// Scratch (not for merge): `ZGX_PRESENT_DRAWABLE_ALWAYS=1` (with
+/// `ZGX_PRESENT_DRAWABLE=1`) draws every frame into drawables, not only
+/// full-rate ones: 60 Hz app-timer frames too, which commit nothing then.
+static PRESENT_DRAWABLE_ALWAYS: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_PRESENT_DRAWABLE_ALWAYS").is_some());
 /// `ZGX_PRESENT_DRAWABLE=auto`: full-rate frames take whichever path costs
 /// less on this machine (`TrialRule`), tried once per machine (`verdicts`);
 /// slower frames stay tiles.
