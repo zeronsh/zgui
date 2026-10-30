@@ -103,9 +103,6 @@ impl CanvasCache {
         height: f32,
         scale: f32,
     ) -> Result<Raster, GpuError> {
-        if style.shadows().len() > 32 {
-            return Err(GpuError("panel exceeds 32 shadows".into()));
-        }
         self.clock = self.clock.wrapping_add(1);
         if let Some(entry) = self.entries.get_mut(&node)
             && entry.decoration.as_ref() == Some(style)

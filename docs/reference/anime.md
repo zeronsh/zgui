@@ -54,6 +54,8 @@ Eases: `linear` (or `linear(0, .25, 1)` piecewise), `in(p)`, `out(p)`, `inOut(p)
 
 Compositor properties change no layout and are written straight to the scene: `x`, `y` (also `translateX`, `translateY`), `opacity`, `scale`, `scaleX`, `scaleY`, `rotate` (`rotateZ`, `rotation`), `skew`, `skewX`, `skewY`, `rotateX`, `rotateY`, `perspective`, `blur` (the content's), `brightness`, `contrast`, `saturate`, `maskX`, `maskY`, `clipTop`, `clipRight`, `clipBottom`, `clipLeft`, `shaderTime` and `shaderParam0` to `shaderParam15`, `layerTime` and `layerParam0` to `layerParam15`. Others go through the node's style: colors (`bg`, `backgroundColor`, `color`, `border_color`, `tint`), sizes (`w`/`width`, `h`/`height`, `min_w`, `max_h`…), insets (`top`, `left`…), padding and margins, radii (`rounded`, `borderRadius`, single corners), `border`/`borderWidth`, `gap`, `text_size`/`fontSize`, `weight`/`fontWeight`, `line_height`, `letter_spacing`, grid tracks and spans, `fade`, `fade_x`, `border_dash`, `origin`, `aspect`, `grow`, `shrink`, `basis`. The full list is `ElementKeys` in the types. An animated value wins over the node's own until `anime.utils.cleanInlineStyles` (or `revert`) gives it back.
 
+A bare `perspective` on a node with none holds from the first frame: it says where the node is seen from, and 0 means none, not a distance to tween up from. `perspective = { 200, 900 }` tweens.
+
 ## Animations
 
 `Animation` (from `animate`, `createTimeline` and `createTimer`):

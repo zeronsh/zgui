@@ -193,6 +193,13 @@ const VERTEX_BUDGET: usize = 32 * 1024 * 1024;
 const MAX_IMAGES: usize = 16_384;
 /// The bytes images' own textures may hold (`upload_image`).
 const IMAGE_TEXTURES: usize = 64 * 1024 * 1024;
+/// Why an image can have no texture: a frame goes on without it.
+const IMAGE_MISSES: [&str; 3] = [
+    "the images one frame draws exceed the 64 MiB budget of image textures",
+    "visible images exceed the budget of 16,384",
+    "image exceeds GPU texture dimensions",
+];
+const GLYPH_TOO_LARGE: &str = "glyph font size exceeds atlas raster limit: not drawn";
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Quad {
@@ -1258,6 +1265,11 @@ fn add_layer_stats(stats: &mut GpuStats, result: &GpuStats) {
 /// repainting into a new allocation. The scene keeps counting the node's
 /// layer revision meanwhile, so the pixels are known current.
 const LAYER_PARK_FRAMES: u64 = 60;
+/// The bytes of all isolated layers' textures, and of any one of them.
+const LAYER_BUDGET: usize = 64 * 1024 * 1024;
+const LAYER_ROOM: usize = 16 * 1024 * 1024;
+const LAYER_COARSER: &str = "isolated layers past their 64 MiB budget or the GPU's texture \
+                             size: they rasterize coarser until they fit";
 /// Raster scales a layer renders at, in √2 steps from the device's: half
 /// to four times. Beyond, a texture grows faster than detail shows.
 const RASTER_STEPS: std::ops::RangeInclusive<i32> = -2..=4;
@@ -3428,6 +3440,10 @@ pub struct GpuRenderer {
     atlas_size: u32,
     /// The size `trim_atlas` took it back from.
     atlas_grew_to: u32,
+    /// What a frame went on without, each said once (`warn`), and those the
+    /// host hasn't taken yet (`take_issues`).
+    warned: Vec<String>,
+    issues: Vec<String>,
     entries: FxHashMap<AtlasKey, Option<AtlasEntry>>,
     cursor: (u32, u32, u32),
     fonts: Rc<RefCell<FontSystem>>,
@@ -4099,6 +4115,8 @@ impl GpuRenderer {
             atlas,
             atlas_size: 1,
             atlas_grew_to: 0,
+            warned: Vec::new(),
+            issues: Vec::new(),
             entries: FxHashMap::default(),
             cursor: (0, 0, 0),
             fonts: context.text_system(),
@@ -4607,6 +4625,19 @@ impl GpuRenderer {
         }
         self.surface.is_some()
     }
+    /// What frames went on without since the last call (a layer past its
+    /// budget, an image with no texture), each said once: a host hands
+    /// these on (`zgx::issues::report`). Frames don't fail over them.
+    pub fn take_issues(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.issues)
+    }
+    #[cold]
+    fn warn(&mut self, issue: &str) {
+        if !self.warned.iter().any(|said| said == issue) {
+            self.warned.push(issue.to_string());
+            self.issues.push(issue.to_string());
+        }
+    }
     fn render_inner(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
         if let Some(reason) = self.context.lost() {
             return Err(GpuError::device_lost(&reason));
@@ -4819,7 +4850,15 @@ impl GpuRenderer {
             if item.isolated && item.effects.opacity > 0. {
                 let shown = self.shown(item, damage, viewport);
                 self.layer_shifted = false;
-                self.prepare_layer(scene, item.id, 1., true, shown, &mut layer_stats)?;
+                self.prepare_layer(
+                    scene,
+                    item.id,
+                    1.,
+                    true,
+                    shown,
+                    &mut layer_stats,
+                    LAYER_ROOM,
+                )?;
                 if std::mem::take(&mut self.layer_shifted)
                     && let Some(cache) = self.layers.get(&item.id)
                 {
@@ -4964,14 +5003,18 @@ impl GpuRenderer {
     /// the layer rasterizes at it exactly, showing texel for pixel.
     /// `shown`: how a layer of the window's own shows there, when all of it
     /// does: changed, it repaints only where the window's damage reaches it.
+    /// `room`: the bytes its texture may take (`LAYER_ROOM`, or what the
+    /// budget has left: it then rasterizes coarser, never fails).
+    #[allow(clippy::too_many_arguments)]
     fn prepare_layer(
         &mut self,
         scene: &Scene,
         id: NodeId,
-        magnification: f32,
-        exact: bool,
+        magnified: f32,
+        exact_around: bool,
         shown: Option<Shown<'_>>,
         stats: &mut GpuStats,
+        room: usize,
     ) -> Result<(), GpuError> {
         let revision = scene.layer_revision(id);
         let root = scene.bounds(id);
@@ -4982,9 +5025,9 @@ impl GpuRenderer {
             || zoom != 1.
             || scene.filter_blur(id) > 0.
             || scene.mask(id).is_some();
-        let magnification = magnification * local.magnification() * zoom;
+        let magnification = magnified * local.magnification() * zoom;
         // Zoomed (and not otherwise scaled): at its scale exactly, crisp.
-        let exact = exact && local.is_identity();
+        let exact = exact_around && local.is_identity();
         let current = self.layers.get(&id).map(|cache| cache.step);
         let mut step = raster_step(magnification, current);
         let mut factor = match exact && magnification != 1. {
@@ -5019,15 +5062,27 @@ impl GpuRenderer {
         };
         let fits = |factor: f32| {
             (content.width.max(content.height) + 2.) * self.scale * factor <= limit as f32
-                && pixels(factor) * 4. <= 16. * 1024. * 1024.
+                && pixels(factor) * 4. <= room as f32
         };
         // Too large at a zoom's scale: the finest step that fits.
         let exact = exact && fits(factor);
+        let mut coarser = false;
         if !exact {
             while step > 0 && !fits(step_scale(step)) {
                 step -= 1;
             }
             factor = step_scale(step);
+            // Too large at any step: as coarse as it takes.
+            coarser = !fits(factor);
+            if coarser {
+                let (width, height) = (content.width * self.scale, content.height * self.scale);
+                let side = (limit as f32 - 2.) / width.max(height).max(1.);
+                let area = (room as f32 / 4. / (width * height).max(1.)).sqrt() * 0.9;
+                factor = factor.min(side).min(area).max(1. / 4096.);
+            }
+        }
+        if coarser {
+            self.warn(LAYER_COARSER);
         }
         let device_scale = self.scale;
         let scale = device_scale * factor;
@@ -5104,7 +5159,15 @@ impl GpuRenderer {
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
                 self.layer_shifted = false;
-                self.prepare_layer(scene, item.id, magnification, exact, None, stats)?;
+                self.prepare_layer(
+                    scene,
+                    item.id,
+                    magnification,
+                    exact,
+                    None,
+                    stats,
+                    LAYER_ROOM,
+                )?;
                 shifted |= self.layer_shifted;
             }
         }
@@ -5159,15 +5222,18 @@ impl GpuRenderer {
             used = self.layers.values().map(|l| l.bytes).sum();
         }
         if !self.layers.contains_key(&id) && self.layers.len() >= 1024 {
-            return Err(GpuError("isolated layers exceed 1024 texture limit".into()));
+            self.warn("past 1024 isolated layers: they go on, each as coarse as the budget needs");
         }
-        if bytes > 64 * 1024 * 1024 || used - existing + bytes > 64 * 1024 * 1024 {
-            return Err(GpuError("isolated layers exceed 64 MiB budget".into()));
-        }
-        if width > limit || height > limit {
-            return Err(GpuError(
-                "isolated layer exceeds GPU texture dimensions".into(),
-            ));
+        // Past the budget or the texture limits: again, in the room left,
+        // coarser. Once: a texture of one texel still takes its 64 by 64.
+        if (used - existing + bytes > LAYER_BUDGET || width > limit || height > limit)
+            && room == LAYER_ROOM
+        {
+            self.warn(LAYER_COARSER);
+            let room = LAYER_BUDGET
+                .saturating_sub(used - existing)
+                .min(LAYER_ROOM - 1);
+            return self.prepare_layer(scene, id, magnified, exact_around, shown, stats, room);
         }
         // Animated layers change size every frame: round allocations up and
         // reuse any texture that fits without wasting more than half of it.
@@ -6815,7 +6881,7 @@ impl GpuRenderer {
                     NodeKind::Rect(color) => quads.push(rect_quad(*color, fade, item.effects)),
                     NodeKind::Quad(style) | NodeKind::Panel { quad: style, .. } => {
                         if style.shadows().len() > 32 {
-                            return Err(GpuError("panel exceeds 32 shadows".into()));
+                            self.warn("a panel has more than 32 shadows: the first 32 draw");
                         }
                         // A solid border (any widths per side, any radii) is a
                         // ring the quad shader draws; dashed ones rasterize with
@@ -6836,7 +6902,7 @@ impl GpuRenderer {
                                 ));
                             }
                         } else {
-                            for shadow in style.shadows() {
+                            for shadow in style.shadows().iter().take(32) {
                                 let core = bounds.expand(shadow.spread.max(0.));
                                 let core = Rect::new(
                                     core.x + shadow.offset.x,
@@ -6920,8 +6986,8 @@ impl GpuRenderer {
                                     && let Some(quad) = background_quad(
                                         image, *fit, style, bounds, opacity, edge_fade,
                                     )
+                                    && self.ensure_image(image, &mut stats)?
                                 {
-                                    self.ensure_image(image, &mut stats)?;
                                     quads.push(quad);
                                     canvas_image = Some(image.id());
                                 }
@@ -7121,7 +7187,9 @@ impl GpuRenderer {
                                 image.height() as f32 / atlas,
                             ]
                         } else {
-                            self.ensure_image(&image, &mut stats)?;
+                            if !self.ensure_image(&image, &mut stats)? {
+                                continue;
+                            }
                             canvas_image = Some(image.id());
                             [0., 0., 1., 1.]
                         };
@@ -7163,19 +7231,26 @@ impl GpuRenderer {
                             if bytes + self.images.values().map(|e| e.1).sum::<usize>()
                                 > 64 * 1024 * 1024
                             {
-                                return Err(GpuError(
-                                    "visible image and native surface textures exceed 64 MiB"
-                                        .into(),
-                                ));
+                                self.warn(
+                                    "native surfaces past the 64 MiB budget of image textures \
+                                     aren't drawn",
+                                );
+                                continue;
                             }
                             if self.native_surfaces.is_none() {
-                                self.native_surfaces = Some(native_surface::SurfaceCache::new(
-                                    &self.device,
-                                    &self.queue,
-                                )?);
+                                match native_surface::SurfaceCache::new(&self.device, &self.queue) {
+                                    Ok(cache) => self.native_surfaces = Some(cache),
+                                    Err(error) => {
+                                        self.warn(&error.0);
+                                        continue;
+                                    }
+                                }
                             }
                             let cache = self.native_surfaces.as_mut().unwrap();
-                            cache.import(frame.clone())?;
+                            if let Err(error) = cache.import(frame.clone()) {
+                                self.warn(&error.0);
+                                continue;
+                            }
                             stats.native_surface_imports += 1;
                             stats.native_surface_conversions += usize::from(
                                 frame.format() == zgx::native_surface::SurfaceFormat::Nv12FullRange,
@@ -7210,7 +7285,9 @@ impl GpuRenderer {
                             continue;
                         }
                         // (A view taking its layer drew itself already.)
-                        self.ensure_image(image, &mut stats)?;
+                        if !self.ensure_image(image, &mut stats)? {
+                            continue;
+                        }
                         let transform = image.paint_transform(bounds);
                         let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
                         // An effect: its own quad, drawn with its own pipeline.
@@ -7270,7 +7347,8 @@ impl GpuRenderer {
                             _ => unreachable!(),
                         };
                         if !font_size.is_finite() || font_size <= 0. {
-                            return Err(GpuError("font size must be finite and positive".into()));
+                            self.warn("text with a font size not finite and positive isn't drawn");
+                            continue;
                         }
                         // One lookup for both: a colour-only rich change (fades,
                         // highlights) keeps glyph positions, so the cached shape
@@ -9949,21 +10027,29 @@ impl GpuRenderer {
         Ok(found.id)
     }
     /// `image`'s texture for this frame: uploaded if it has none, and
-    /// marked drawn now, so it is the last to go past the budget.
+    /// marked drawn now, so it is the last to go past the budget. `false`:
+    /// no texture to be had (`IMAGE_MISSES`): this frame goes on without it.
     fn ensure_image(
         &mut self,
         image: &zgx::image::ImageData,
         stats: &mut GpuStats,
-    ) -> Result<(), GpuError> {
+    ) -> Result<bool, GpuError> {
         if self.images.contains_key(&image.id()) {
             if let Some(drawn) = self.image_drawn.get_mut(&image.id()) {
                 *drawn = self.image_frame;
             }
-            return Ok(());
+            return Ok(true);
         }
-        self.upload_image(image)?;
+        match self.upload_image(image) {
+            Ok(()) => {}
+            Err(error) if IMAGE_MISSES.contains(&error.0.as_str()) => {
+                self.warn(&format!("{}: not drawn", error.0));
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        }
         stats.image_uploads += 1;
-        Ok(())
+        Ok(true)
     }
     fn upload_image(&mut self, image: &zgx::image::ImageData) -> Result<(), GpuError> {
         if let Some(frame) = image.gpu_frame() {
@@ -9993,19 +10079,15 @@ impl GpuRenderer {
             }
         }
         if bytes + held > IMAGE_TEXTURES {
-            return Err(GpuError(
-                "the images one frame draws exceed the 64 MiB budget of image textures".into(),
-            ));
+            return Err(GpuError(IMAGE_MISSES[0].into()));
         }
         if self.images.len() >= MAX_IMAGES {
-            return Err(GpuError(format!(
-                "visible images exceed the budget of {MAX_IMAGES}"
-            )));
+            return Err(GpuError(IMAGE_MISSES[1].into()));
         }
         if image.width() > self.device.limits().max_texture_dimension_2d
             || image.height() > self.device.limits().max_texture_dimension_2d
         {
-            return Err(GpuError("image exceeds GPU texture dimensions".into()));
+            return Err(GpuError(IMAGE_MISSES[2].into()));
         }
         let texture = sampled_texture(
             &self.device,
@@ -10296,9 +10378,8 @@ impl GpuRenderer {
             // As `glyph`, through another lookup: `glyph` keeps its one caller.
             let size = f32::from_bits(glyph.key.font_size_bits);
             if !size.is_finite() || size > MAX_ATLAS as f32 {
-                return Err(GpuError(
-                    "glyph font size exceeds atlas raster limit".into(),
-                ));
+                self.warn(GLYPH_TOO_LARGE);
+                continue;
             }
             let entry = match self.entries.get_mut(&AtlasKey::from(glyph.key)) {
                 Some(entry) => *entry,
@@ -10342,9 +10423,8 @@ impl GpuRenderer {
         }
         let size = f32::from_bits(key.font_size_bits);
         if !size.is_finite() || size > MAX_ATLAS as f32 {
-            return Err(GpuError(
-                "glyph font size exceeds atlas raster limit".into(),
-            ));
+            self.warn(GLYPH_TOO_LARGE);
+            return Ok(None);
         }
         if MODE != PATCH
             && let Some(entry) = get_in::<MODE, _, _>(&mut self.entries, &AtlasKey::from(key))
@@ -10362,9 +10442,8 @@ impl GpuRenderer {
         stats: &mut GpuStats,
     ) -> Result<Option<AtlasEntry>, GpuError> {
         if self.entries.len() >= 8192 {
-            return Err(GpuError(
-                "glyph metadata exceeds 8192 entries in one frame".into(),
-            ));
+            self.warn("more than 8192 glyphs in a frame: the rest aren't drawn");
+            return Ok(None);
         }
         let Some(image) = self
             .swash
@@ -10379,7 +10458,8 @@ impl GpuRenderer {
             return Ok(None);
         }
         let cell_width = p.width + 2;
-        let (x, y) = self.atlas_cell(p.width, p.height, |rgba| {
+        let atlas_full = self.atlas_size >= MAX_ATLAS;
+        let cell = self.atlas_cell(p.width, p.height, |rgba| {
             let row_start = |row: u32| ((row + 1) * cell_width + 1) as usize * 4;
             match image.content {
                 SwashContent::Mask => {
@@ -10419,7 +10499,15 @@ impl GpuRenderer {
                     }
                 }
             }
-        })?;
+        });
+        let (x, y) = match cell {
+            // At its largest: nothing left to grow into (`render_inner`).
+            Err(error) if atlas_full => {
+                self.warn(&format!("{}: the rest aren't drawn", error.0));
+                return Ok(None);
+            }
+            cell => cell?,
+        };
         let entry = AtlasEntry {
             x,
             y,
@@ -14897,10 +14985,8 @@ mod atlas_glyph_errors_tests {
         ] {
             shaped.glyphs[0].key = key(u16::MAX, size);
             let result = gpu.visible_lines(&shaped, 0., 1., 12., &mut stats);
-            assert_eq!(
-                result.err().unwrap().0,
-                "glyph font size exceeds atlas raster limit"
-            );
+            assert!(result.unwrap(), "the frame goes on");
+            assert!(gpu.visible_glyphs.is_empty(), "without it");
             assert_eq!(
                 (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch),
                 before
@@ -14911,10 +14997,7 @@ mod atlas_glyph_errors_tests {
                 } else {
                     gpu.glyph::<FRAME>(key(u16::MAX, size), &mut stats)
                 };
-                assert_eq!(
-                    result.err().unwrap().0,
-                    "glyph font size exceeds atlas raster limit"
-                );
+                assert!(result.unwrap().is_none(), "the frame goes on without it");
                 assert_eq!(
                     (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch),
                     before
@@ -14925,10 +15008,7 @@ mod atlas_glyph_errors_tests {
         // included; the full table's error comes next.
         for size in [-1., -0., 0., 12., MAX_ATLAS as f32] {
             let result = gpu.glyph::<PATCH>(key(u16::MAX, size), &mut stats);
-            assert_eq!(
-                result.err().unwrap().0,
-                "glyph metadata exceeds 8192 entries in one frame"
-            );
+            assert!(result.unwrap().is_none(), "the frame goes on without it");
         }
         assert_eq!(
             (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch),

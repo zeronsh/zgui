@@ -69,6 +69,57 @@ pub(crate) fn run<R>(
     }
 }
 
+/// `run` for a frame: an error it returns skips it just as a panic does
+/// (`None`), but for a lost device, which the host answers with a new
+/// renderer. A frame that keeps failing the same way is reported once.
+pub(crate) fn run_frame<T>(
+    fault: &mut Option<Fault>,
+    revision: u64,
+    now: Instant,
+    what: &str,
+    mut report: impl FnMut(&str),
+    piece: impl FnOnce() -> Result<T, zgx_gpu::GpuError>,
+) -> Option<Result<T, zgx_gpu::GpuError>> {
+    let said = fault.as_ref().map(|last| last.message.clone());
+    let done = run(fault, revision, now, what, &mut report, piece);
+    match done {
+        Some(Err(error)) if !error.is_device_lost() => {
+            *fault = said.map(|message| Fault {
+                at: now,
+                revision,
+                message,
+            });
+            failed(fault, revision, now, what, report, &error);
+            None
+        }
+        done => done,
+    }
+}
+
+/// `error` ended `what`: reported unless it is the last one reported, which
+/// `fault` then holds. `true`: it is news.
+pub(crate) fn failed(
+    fault: &mut Option<Fault>,
+    revision: u64,
+    now: Instant,
+    what: &str,
+    mut report: impl FnMut(&str),
+    error: &zgx_gpu::GpuError,
+) -> bool {
+    let message = error.to_string();
+    let news = fault.as_ref().is_none_or(|last| last.message != message);
+    if news {
+        eprintln!("zgx: {what} failed ({message}); it is skipped, and the app keeps running");
+        report(&message);
+    }
+    *fault = Some(Fault {
+        at: now,
+        revision,
+        message,
+    });
+    news
+}
+
 thread_local! {
     /// What was contained where no window host is at hand (a popup's
     /// frame, drawn by its host; layout that didn't settle, heard as it
@@ -83,6 +134,21 @@ pub(crate) fn queue(message: &str) {
 /// What `queue` kept since the last take.
 pub(crate) fn take_reported() -> Vec<String> {
     REPORTED.with(|reported| std::mem::take(&mut *reported.borrow_mut()))
+}
+thread_local! {
+    /// What a popup's renderer went on without, for the window that has a
+    /// runtime to tell (`report_issues`).
+    static ISSUES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+/// Keep `issue` of a frame drawn where no `Runtime` is at hand.
+pub(crate) fn queue_issue(issue: String) {
+    ISSUES.with(|issues| issues.borrow_mut().push(issue));
+}
+/// Tell `runtime`'s listeners what `queue_issue` kept.
+pub(crate) fn report_issues(runtime: &zgx::reactive::Runtime) {
+    for issue in ISSUES.with(|issues| std::mem::take(&mut *issues.borrow_mut())) {
+        zgx::issues::report(runtime, &issue);
+    }
 }
 
 /// Debug builds: whether `ZGX_PANIC_IN` names `what` (`"a popup's frame"`,
@@ -169,6 +235,67 @@ mod tests {
         assert_eq!(frame(2, 6), Some(()), "changed: tried, and it works");
         assert_eq!(frame(2, 6), Some(()), "working: runs every frame");
         assert_eq!(runs.get(), 3);
+    }
+
+    /// A frame's error skips it as a panic does, reported once, and it is
+    /// tried again once what it draws changes, a second on.
+    #[test]
+    fn a_failed_frame_is_reported_once_and_tried_again() {
+        let (start, mut fault) = (Instant::now(), None);
+        let (reports, runs) = (Cell::new(0), Cell::new(0));
+        for frame in 0..120u64 {
+            let done = run_frame(
+                &mut fault,
+                frame,
+                start + Duration::from_millis(frame * 1000 / 60),
+                "the window's frame",
+                |_| reports.set(reports.get() + 1),
+                || {
+                    runs.set(runs.get() + 1);
+                    Err::<(), _>(zgx_gpu::GpuError("frame geometry".into()))
+                },
+            );
+            assert!(done.is_none());
+        }
+        assert_eq!(runs.get(), 2, "the first frame, then a second on");
+        assert_eq!(reports.get(), 1);
+    }
+
+    /// A popup's issue reaches the runtime's listeners, and only once.
+    #[test]
+    fn a_queued_issue_reaches_the_listeners_once() {
+        let runtime = zgx::reactive::Runtime::new();
+        let heard = std::rc::Rc::new(Cell::new(0));
+        let hears = heard.clone();
+        let _listener = zgx::issues::on_issue(&runtime, move |issue| {
+            assert_eq!(issue, "a layer went coarser");
+            hears.set(hears.get() + 1);
+        });
+        queue_issue("a layer went coarser".into());
+        report_issues(&runtime);
+        report_issues(&runtime);
+        assert_eq!(heard.get(), 1);
+    }
+
+    /// A frame's error past `run_frame` (a present, a plane) is news once.
+    #[test]
+    fn a_repeated_error_is_news_once() {
+        let (now, mut fault) = (Instant::now(), None);
+        let error = zgx_gpu::GpuError("surface acquisition: Timeout".into());
+        let mut reports = 0;
+        let mut fail = |fault: &mut Option<Fault>| {
+            failed(
+                fault,
+                1,
+                now,
+                "the window's frame",
+                |_| reports += 1,
+                &error,
+            )
+        };
+        assert!(fail(&mut fault));
+        assert!(!fail(&mut fault));
+        assert_eq!(reports, 1);
     }
 
     /// Another panic in the same piece is reported too.

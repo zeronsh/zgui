@@ -420,7 +420,7 @@ impl Popups {
                     popup.revision = Some(revision);
                     popup.renderer.set_popup(*root, *bounds);
                     let renderer = &mut popup.renderer;
-                    let status = crate::contain::run(
+                    let status = crate::contain::run_frame(
                         &mut popup.fault,
                         revision,
                         std::time::Instant::now(),
@@ -433,6 +433,9 @@ impl Popups {
                                 .and_then(|_| renderer.present_with_status())
                         },
                     );
+                    for issue in popup.renderer.take_issues() {
+                        crate::contain::queue_issue(issue);
+                    }
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?} {status:?}"));
                 }
                 client.state.targets.insert(

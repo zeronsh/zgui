@@ -813,6 +813,10 @@ impl Clip {
                 && let Some(first) = track.segs.first_mut()
             {
                 first.from = track.target.read(&track.key);
+                // As `build` does: no perspective yet is no distance to come from.
+                if track.key == Key::Perspective && first.from == V::Num(0.) {
+                    first.from = first.to.clone();
+                }
             }
             engine.claim(track, self);
         }

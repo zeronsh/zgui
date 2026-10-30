@@ -319,34 +319,49 @@ impl Projective {
         let inverse = Self::from_rows(adjugate.map(|row| row.map(|v| v / determinant)));
         inverse.is_finite().then_some(inverse)
     }
-    /// Axis-aligned coverage of all four mapped corners. A corner behind the
-    /// eye has no place: the bounds are then everything, never too little.
+    /// Axis-aligned coverage of the mapped rectangle. What lies behind the
+    /// eye shows nowhere, so the rectangle is cut where it reaches `MIN_W`
+    /// (what remains can still be vast, close to the eye); wholly behind it,
+    /// empty. A non-finite map has no place: the bounds are then everything,
+    /// never too little.
     pub fn bounds(self, bounds: Rect) -> Rect {
         if let Some(affine) = self.affine() {
             return affine.bounds(bounds);
         }
+        let everything = Rect::new(-f32::MAX / 4., -f32::MAX / 4., f32::MAX / 2., f32::MAX / 2.);
+        if !self.is_finite() {
+            return everything;
+        }
+        let (right, bottom) = (bounds.x + bounds.width, bounds.y + bounds.height);
         let corners = [
             (bounds.x, bounds.y),
-            (bounds.x + bounds.width, bounds.y),
-            (bounds.x, bounds.y + bounds.height),
-            (bounds.x + bounds.width, bounds.y + bounds.height),
+            (right, bounds.y),
+            (right, bottom),
+            (bounds.x, bottom),
         ];
-        let everything = Rect::new(-f32::MAX / 4., -f32::MAX / 4., f32::MAX / 2., f32::MAX / 2.);
-        let mut left = f32::INFINITY;
-        let mut top = f32::INFINITY;
-        let mut right = f32::NEG_INFINITY;
-        let mut bottom = f32::NEG_INFINITY;
-        for (x, y) in corners {
-            let (x, y) = self.point(x, y);
-            if !x.is_finite() || !y.is_finite() {
-                return everything;
+        let mut mapped = Rect::default();
+        let mut any = false;
+        let mut add = |x: f32, y: f32, w: f32| {
+            let (x, y) = (
+                (self.a * x + self.c * y + self.tx) / w,
+                (self.b * x + self.d * y + self.ty) / w,
+            );
+            let point = Rect::new(x, y, 0., 0.);
+            mapped = if any { mapped.union(point) } else { point };
+            any = true;
+        };
+        for (index, &(x, y)) in corners.iter().enumerate() {
+            let (next_x, next_y) = corners[(index + 1) % 4];
+            let (w, next_w) = (self.w(x, y), self.w(next_x, next_y));
+            if w >= MIN_W {
+                add(x, y, w);
             }
-            left = left.min(x);
-            top = top.min(y);
-            right = right.max(x);
-            bottom = bottom.max(y);
+            if (w < MIN_W) != (next_w < MIN_W) {
+                let t = (MIN_W - w) / (next_w - w);
+                add(x + (next_x - x) * t, y + (next_y - y) * t, MIN_W);
+            }
         }
-        Rect::new(left, top, right - left, bottom - top)
+        mapped
     }
 }
 
@@ -395,12 +410,24 @@ mod tests {
             Projective::from(Affine::scale(2., 3.)).affine(),
             Some(Affine::scale(2., 3.))
         );
-        // Behind the eye: no place, and bounds that miss nothing.
+        // Behind the eye: no place, and bounds of what shows alone.
         let behind = Projective {
             px: -1.,
             ..Projective::IDENTITY
         };
         assert!(behind.point(5., 0.).0.is_nan());
-        assert!(behind.bounds(Rect::new(0., 0., 10., 10.)).width > 1e30);
+        let cut = behind.bounds(Rect::new(0.5, 0., 9.5, 10.));
+        assert_eq!(cut.x, 1., "its near side, at w = 0.5");
+        assert!(cut.width.is_finite() && cut.width < 1e5, "{cut:?}");
+        assert_eq!(
+            behind.bounds(Rect::new(5., 0., 10., 10.)),
+            Rect::default(),
+            "wholly behind: nothing shows"
+        );
+        let broken = Projective {
+            px: f32::NAN,
+            ..Projective::IDENTITY
+        };
+        assert!(broken.bounds(Rect::new(0., 0., 10., 10.)).width > 1e30);
     }
 }

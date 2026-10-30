@@ -15,7 +15,8 @@ allocation. Shadows contribute to damage and retained-layer extents.
 Ordinary rounded rectangles keep the existing GPU shader path. Detailed
 backgrounds/borders use the bounded device-scale canvas raster cache; unchanged
 style and geometry reuse both paths and pixels. Shadows remain analytic GPU
-quads, with per-corner radii and at most 32 shadows per panel. The software
+quads, with per-corner radii and at most 32 shadows per panel (the rest are
+left off, with an issue). The software
 reference follows the same geometry. Gradients and dashed borders are validated
 by the renderer; malformed values return a GPU rendering error.
 

@@ -258,6 +258,8 @@ return ui.textarea {
 
 `x`, `y` (`number`, points), `scale`, `scale_x`, `scale_y` (`number`, `1`), `rotate`, `skew`, `skew_x`, `skew_y`, `rotate_x`, `rotate_y` (`number`, degrees), `perspective` (`number`, points, `0`: none) and `origin` (`Pair`, fractions of the node, `{ 0.5, 0.5 }`). They apply after layout: the node keeps its place in the flow, and hit testing follows the transform. Rotation, scale, skew and tilt paint the subtree into a cached layer. `rotate_x` and `rotate_y` tilt it about the axes through `origin` (CSS `rotateX`, `rotateY`), seen from `perspective` points away (CSS `perspective()`): the nearer side shows larger, the layer composited as a projected quad; without a perspective a tilt only narrows it.
 
+Known limit: where a tilted node's edge comes past the eye (`perspective` smaller than how far that edge comes forward), it doesn't draw as CSS draws it, cut off at the eye: the quad's depth is clamped at a tiny distance, so it shows as a distorted sliver, wherever the node lies. The frame doesn't fail. The clamp is in the shared quad shader, `draw.wgsl`, whose Direct3D 11 form is compiled ahead with FXC on Windows (`crates/zgx-gpu/src/dxbc/`), so it can only change along with those binaries.
+
 ## Zoom
 
 | Property | Type | Default | What it does |

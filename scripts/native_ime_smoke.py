@@ -244,6 +244,7 @@ def main():
                     values += [re.search(r'DISPLAY '+label+r' (".*?") Rect', tick) for label in ('first', 'second')]
                     if not all(values): return None
                     return (*map(json.loads, values[0].groups()), json.loads(values[1].group(1)), json.loads(values[2].group(1)))
+                nudges = []
                 def capture(stage, follows=None):
                     # A tick that begins after the input settled: one printed
                     # before a late preedit arrived shows the one before it.
@@ -255,11 +256,22 @@ def main():
                     settled = len((args.output/'application.log').read_text())
                     # The app may be writing it: read until it is whole.
                     deadline = time.monotonic()+5
+                    nudge_at = time.monotonic()+1.5
                     while True:
                         trace = (args.output/'application.log').read_text()
                         tick = trace[trace.rfind('MODEL '):]
                         whole = trace.rfind('MODEL ') >= settled and tick.count('DISPLAY ') == 2 and tick.count('CARET ') == 2
                         if (whole and shown(tick) == expected[stage-1]) or time.monotonic()>deadline: break
+                        # ibus-x11 1.5.29, asynchronous, can hold a preedit
+                        # update until its next XIM event: IBus sent 我, and
+                        # no ClientMessage reached the app for 6 s, until a
+                        # click (2 of 160 runs, traced on both sides). One key
+                        # that means nothing to libpinyin lets it go. What
+                        # the app shows after that is still checked.
+                        if nudge_at is not None and time.monotonic()>nudge_at:
+                            nudge_at = None
+                            nudges.append(stage)
+                            xdo('key','F24')
                         if whole:
                             # The next tick (the example prints one each half
                             # second).
@@ -288,7 +300,8 @@ def main():
                         sample['candidates'] = found
                     snapshots.append(sample)
                     ImageGrab.grab(xdisplay=display).save(args.output/f'ime-{stage}.png')
-                    (args.output/f'windows-{stage}.log').write_text(subprocess.check_output(['xwininfo','-root','-tree'],env=env,text=True))
+                    # Evidence: a popup closing as xwininfo walks the tree fails it, and that fails nothing here.
+                    (args.output/f'windows-{stage}.log').write_text(subprocess.run(['xwininfo','-root','-tree'],env=env,text=True,capture_output=True).stdout)
                 click(100,82)
                 use_ibus_engine(env,'libpinyin',ime)
                 if args.server_gone:
@@ -332,7 +345,7 @@ def main():
                 if not any(abs(r['x']-desired_x)<=3 and abs(r['y']-desired_y)<=3 for r in sample['candidates']):
                     raise AssertionError(f'Candidate does not follow caret below text: {sample!r}')
             if text.count('COMMIT ') != 2: raise AssertionError('Unexpected extra commit: '+text)
-            result={'result':'pass' ,'backend':'X11 XIM / IBus libpinyin','ibus_enable_sync_mode':env['IBUS_ENABLE_SYNC_MODE'],'ibus_version':subprocess.check_output(['ibus','version'],env=env,text=True).strip(),'limitations':['IBus 1.5.29 default synchronous bridge omits preedit lifecycle signals; this run explicitly uses the asynchronous bridge.'],'checks':['native preedit','Unicode commits','Escape cancellation','focus switch cancellation','separate editor models','candidate popup follows caret below text'],'snapshots':snapshots}
+            result={'result':'pass' ,'backend':'X11 XIM / IBus libpinyin','ibus_enable_sync_mode':env['IBUS_ENABLE_SYNC_MODE'],'nudged_stages':nudges,'ibus_version':subprocess.check_output(['ibus','version'],env=env,text=True).strip(),'limitations':['IBus 1.5.29 default synchronous bridge omits preedit lifecycle signals; this run explicitly uses the asynchronous bridge.'],'checks':['native preedit','Unicode commits','Escape cancellation','focus switch cancellation','separate editor models','candidate popup follows caret below text'],'snapshots':snapshots}
             (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             print('PASS: '+', '.join(result['checks']))
         finally:

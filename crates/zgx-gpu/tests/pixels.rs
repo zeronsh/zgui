@@ -530,7 +530,7 @@ fn scene_installs_native_text_geometry() {
 }
 
 #[test]
-fn image_cache_reclaims_removed_nodes_and_rejects_oversized_allocations() {
+fn image_cache_reclaims_removed_nodes_and_leaves_out_oversized_allocations() {
     let _gpu_fixture = gpu_fixture();
     let mut gpu = GpuRenderer::new(8, 8).unwrap();
     let mut scene = Scene::new(8., 8.);
@@ -560,8 +560,8 @@ fn image_cache_reclaims_removed_nodes_and_rejects_oversized_allocations() {
     assert_eq!(gpu.debug_cache_stats().image_bytes, 0);
     scene.set_effects(hidden, Effects::default());
     let d = scene.flush().damage;
-    let error = gpu.render(&scene, &d).unwrap_err();
-    assert!(error.0.contains("64 MiB"));
+    gpu.render(&scene, &d).unwrap();
+    assert!(gpu.take_issues()[0].contains("64 MiB"));
     assert_eq!(gpu.debug_cache_stats().image_bytes, 0);
 }
 
@@ -730,7 +730,7 @@ fn isolated_overflow_and_fractional_translation_reuse_content() {
 }
 
 #[test]
-fn layer_texture_budget_fails_before_allocation_and_recovers_after_removal() {
+fn layer_texture_budget_rasterizes_coarser_and_recovers_after_removal() {
     let _gpu_fixture = gpu_fixture();
     let mut gpu = GpuRenderer::new(8, 8).unwrap();
     let mut scene = Scene::new(8., 8.);
@@ -744,8 +744,10 @@ fn layer_texture_budget_fails_before_allocation_and_recovers_after_removal() {
     );
     scene.set_isolated(huge, true);
     let d = scene.flush().damage;
-    assert!(gpu.render(&scene, &d).unwrap_err().0.contains("64 MiB"));
-    assert_eq!(gpu.debug_cache_stats().layer_bytes, 0);
+    gpu.render(&scene, &d).unwrap();
+    assert!(gpu.take_issues()[0].contains("64 MiB"));
+    let bytes = gpu.debug_cache_stats().layer_bytes;
+    assert!(bytes > 0 && bytes <= 17 * 1024 * 1024, "{bytes}");
     scene.remove(huge);
     let d = scene.flush().damage;
     gpu.render(&scene, &d).unwrap();
@@ -753,7 +755,7 @@ fn layer_texture_budget_fails_before_allocation_and_recovers_after_removal() {
 }
 
 #[test]
-fn image_count_budget_fails_the_frame_and_recovers_after_removal() {
+fn image_count_budget_leaves_images_out_and_recovers_after_removal() {
     let _gpu_fixture = gpu_fixture();
     let mut gpu = GpuRenderer::new(8, 8).unwrap();
     let mut scene = Scene::new(8., 8.);
@@ -773,7 +775,8 @@ fn image_count_budget_fails_the_frame_and_recovers_after_removal() {
         })
         .collect();
     let d = scene.flush().damage;
-    assert!(gpu.render(&scene, &d).unwrap_err().0.contains("16384"));
+    gpu.render(&scene, &d).unwrap();
+    assert!(gpu.take_issues()[0].contains("16,384"));
     scene.remove(images[0]);
     let d = scene.flush().damage;
     gpu.render(&scene, &d).unwrap();
@@ -6104,4 +6107,172 @@ fn object_position_says_what_a_crop_keeps() {
     let end = shown(|v| v.object_fit(ObjectFit::None).object_position(1., 0.));
     assert!(near(end(50, 5), red), "{:?}", end(50, 5));
     assert!(!near(end(5, 5), red), "nothing at the other side");
+}
+
+/// The report's first frame: a 300 by 420 card in a zoomed box, its tilt 26.3°
+/// and perspective 53.6, so its edge is 93 points toward an eye 53.6 away.
+/// Its parent's layer holds what can show, and the frame draws.
+#[test]
+fn a_tilt_past_the_eye_inside_a_zoomed_layer_draws() {
+    let _gpu_fixture = gpu_fixture();
+    let (w, h) = (800., 900.);
+    let mut gpu = GpuRenderer::new(w as u32, h as u32).unwrap();
+    let mut scene = Scene::new(w, h);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let zoomed = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Overlay),
+        fixed(w, h),
+    );
+    scene.set_zoom(zoomed, 0.76);
+    scene.set_isolated(zoomed, true);
+    let card = scene.append(
+        zoomed,
+        NodeKind::Rect(Color(200, 40, 40, 255)),
+        fixed(300., 420.),
+    );
+    scene.set_transform(card, Transform { x: 240., y: 240. });
+    scene.set_isolated(card, true);
+    let tilt = |degrees: f32, perspective: f32| LocalTransform {
+        rotate_x: degrees.to_radians(),
+        perspective,
+        ..LocalTransform::IDENTITY
+    };
+    scene.set_local_transform(card, tilt(26.3, 53.6));
+    let bounds = scene.layer_bounds(zoomed);
+    assert!(
+        bounds.width <= w / 0.76 && bounds.height <= h / 0.76,
+        "what can show, not everything: {bounds:?}"
+    );
+    let report = scene.flush();
+    gpu.render(&scene, &report.damage).unwrap();
+    assert_eq!(gpu.take_issues(), Vec::<String>::new());
+    // At its distance, it fits where it always did.
+    scene.set_local_transform(card, tilt(0.5, 900.));
+    let bounds = scene.layer_bounds(zoomed);
+    assert!(bounds.width <= w && bounds.height <= h, "{bounds:?}");
+    let report = scene.flush();
+    gpu.render(&scene, &report.damage).unwrap();
+}
+
+/// Past the budget or the texture size, a layer rasterizes coarser, is said
+/// once, and shows.
+#[test]
+fn a_layer_past_its_budget_draws_coarser_and_says_so_once() {
+    let _gpu_fixture = gpu_fixture();
+    for (width, height) in [(12_000., 12_000.), (60_000., 40.)] {
+        let mut gpu = GpuRenderer::new(100, 100).unwrap();
+        let mut scene = Scene::new(100., 100.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let layer = scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(220, 30, 30, 255)),
+            fixed(width, height),
+        );
+        scene.set_isolated(layer, true);
+        scene.set_effects(
+            layer,
+            Effects {
+                opacity: 0.999,
+                ..Default::default()
+            },
+        );
+        let report = scene.flush();
+        gpu.render(&scene, &report.damage).unwrap();
+        let issues = gpu.take_issues();
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].contains("coarser"), "{issues:?}");
+        let pixels = gpu.readback().unwrap();
+        assert!(pixels[(10 * 100 + 10) * 4] > 200, "it shows");
+        scene.set_transform(layer, Transform { x: -1., y: 0. });
+        let report = scene.flush();
+        gpu.render(&scene, &report.damage).unwrap();
+        assert!(gpu.take_issues().is_empty(), "said once");
+    }
+}
+
+/// Past 1024 layers, or the budget of them all, frames go on.
+#[test]
+fn layers_past_their_count_and_budget_all_draw() {
+    let _gpu_fixture = gpu_fixture();
+    let mut gpu = GpuRenderer::new(600, 600).unwrap();
+    let mut scene = Scene::new(600., 600.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    for index in 0..1100 {
+        let side = if index < 8 { 2000. } else { 8. };
+        let layer = scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(30, 200, 60, 255)),
+            fixed(side, side),
+        );
+        scene.set_isolated(layer, true);
+        scene.set_effects(
+            layer,
+            Effects {
+                opacity: 0.999,
+                ..Default::default()
+            },
+        );
+    }
+    let report = scene.flush();
+    gpu.render(&scene, &report.damage).unwrap();
+    let issues = gpu.take_issues();
+    assert!(issues.iter().any(|i| i.contains("1024")), "{issues:?}");
+    assert!(issues.iter().any(|i| i.contains("64 MiB")), "{issues:?}");
+    assert!(gpu.readback().unwrap()[(300 * 600 + 300) * 4 + 1] > 150);
+}
+
+/// An image no texture can hold is left out, once said, and the rest of its
+/// frame draws.
+#[test]
+fn images_with_no_texture_leave_the_frame_going() {
+    use std::sync::Arc;
+    use zgx::image::ImageData;
+    let _gpu_fixture = gpu_fixture();
+    let cases = [(5000, 4000, "64 MiB"), (40_000, 1, "texture dimensions")];
+    for (width, height, why) in cases {
+        let mut gpu = GpuRenderer::new(100, 100).unwrap();
+        let mut scene = Scene::new(100., 100.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let pixels = vec![255; width * height * 4];
+        let image = Arc::new(ImageData::new(width as u32, height as u32, pixels).unwrap());
+        scene.append(scene.root(), NodeKind::Image(image), fixed(50., 50.));
+        scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(30, 60, 220, 255)),
+            fixed(100., 100.),
+        );
+        let report = scene.flush();
+        gpu.render(&scene, &report.damage).unwrap();
+        let issues = gpu.take_issues();
+        assert!(issues.iter().any(|i| i.contains(why)), "{issues:?}");
+        assert!(gpu.readback().unwrap()[(50 * 100 + 50) * 4 + 2] > 200);
+    }
+}
+
+/// The 33rd shadow on a panel is left off, once said, and the frame draws.
+#[test]
+fn a_panel_past_32_shadows_draws_the_first_32() {
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let _gpu_fixture = gpu_fixture();
+    let mut gpu = GpuRenderer::new(100, 100).unwrap();
+    let mut ui = Ui::new(100., 100.);
+    let shadow = BoxShadow {
+        color: Color(0, 0, 0, 40),
+        offset: Transform { x: 0., y: 2. },
+        blur_radius: 2.,
+        spread: 0.,
+    };
+    ui.mount(
+        div()
+            .size(40., 40.)
+            .bg(Color(255, 255, 255, 255))
+            .shadows(vec![shadow; 33]),
+    );
+    ui.prepare_frame();
+    let damage = ui.scene.borrow_mut().flush().damage;
+    gpu.render(&ui.scene.borrow(), &damage).unwrap();
+    let issues = gpu.take_issues();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert!(issues[0].contains("32 shadows"), "{issues:?}");
 }
