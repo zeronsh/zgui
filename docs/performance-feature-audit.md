@@ -138,8 +138,13 @@ with a main menu activates (here with 2 displays). So a flip sends one
   always full, which costs +4.4. With today's pool of two, drawables for
   every frame at 60 Hz (window 40, heavy and lab) cost the window server
   3.5 to 3.9 points more than tiles and the app 0.7 to 1.3 more, and lab
-  scroll showed about 11% of frames a refresh late. A pool of three at
-  60 Hz has not been measured since its −0.3. The video layer also
+  scroll showed about 11% of frames a refresh late. That is the full pool: a
+  pool of three (window 41, same scenes) costs the window server 0.24 to
+  0.40 points *less* than tiles, the fan-out it escapes, but the app 0.65
+  to 0.85 points more (5 to 32% more instructions a frame), with GPU and
+  memory level and an occasional run of late frames. A trade, so 60 Hz
+  stays on tiles; these frames ran off the drawables' display link, so a
+  60 Hz path on it might narrow the app's side. The video layer also
   enqueues without a commit, but it keeps a third surface, wakes a CoreMedia
   thread and costs app CPU (+9.5 to 11.6 MB and +16 to 23% CPU at full rate),
   which is too high a price for 0.45 points.
