@@ -1606,6 +1606,44 @@ fn keyed_sticky_rows_follow_their_sections() {
     assert_ne!(h.text("built"), "0", "rows built: {built}");
 }
 
+/// With `data`, a list of `heights` shows its items as they change: an edited
+/// item's row builds again, its sticky header too, and the rest stay.
+#[test]
+fn a_list_of_data_and_heights_shows_edits() {
+    let mut h = Harness::inline(
+        r##"local entries = ui.state("entries", {
+            { id = "h1", title = "Section", header = true },
+            { id = "a", title = "first" },
+            { id = "b", title = "second" },
+        })
+        local heights = ui.computed(function()
+            local out = {}
+            for _, e in entries:get() do table.insert(out, if e.header then 30 else 20) end
+            return out
+        end)
+        return ui.column {
+            ui.button { id = "edit", on_click = function()
+                entries:set_key({ 2, "title" }, "edited")
+            end, "edit" },
+            ui.button { id = "head", on_click = function()
+                entries:set_key({ 1, "title" }, "Renamed")
+            end, "head" },
+            ui.list { w = 200, h = 100, data = entries, heights = heights, sticky = { 1 },
+                key = function(e) return e.id end,
+                row = function(e) return ui.text { id = e.id .. "-row", e.title, h = if e.header then 30 else 20 } end } }"##,
+    );
+    h.ui.prepare_frame();
+    assert_eq!(h.text("a-row"), "first");
+    h.click("edit");
+    h.ui.prepare_frame();
+    assert_eq!(h.text("a-row"), "edited");
+    assert_eq!(h.text("b-row"), "second");
+    h.click("head");
+    h.ui.prepare_frame();
+    assert_eq!(h.text("h1-row"), "Renamed");
+    assert_eq!(h.host.error().get(), None);
+}
+
 /// A sticky list takes what any list takes: its scrollbar and edge callbacks
 /// go to the list under the sticky row.
 #[test]

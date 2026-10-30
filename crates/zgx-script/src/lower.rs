@@ -5581,6 +5581,38 @@ fn list_edges(mut list: View, rare: &crate::node::ListRare, vm: &Rc<Vm>) -> View
 /// A `ui.list` (kept out of `build`, which recurses: its locals would
 /// weigh on every level of a deep interface's stack).
 #[inline(never)]
+/// The rows of a list with `heights`: every height replaced when the list
+/// changes (linear, in Rust).
+fn list_heights(
+    heights: &crate::node::Heights,
+    height: f32,
+    follow: bool,
+    vm: &Rc<Vm>,
+    cx: &mut Context,
+) -> zgx::compose::VariableHeights {
+    let mut rows = zgx::compose::VariableHeights::new(&cx.runtime(), 0, height);
+    if follow {
+        rows = rows.anchor_end();
+    }
+    let (list, heights_vm, r) = (heights.clone(), vm.clone(), rows.clone());
+    cx.retain(cx.runtime().effect(move || {
+        let value = match &list {
+            crate::node::Heights::Lit(v) => v.clone(),
+            crate::node::Heights::State(s) => s.get(),
+            crate::node::Heights::Computed(f) => heights_vm
+                .call::<Value>(f, ())
+                .map_err(|e| heights_vm.report(e))
+                .unwrap_or_default(),
+        };
+        let values = value.list().iter().map(|v| match v {
+            Value::Num(n) if n.is_finite() && *n > 0. => *n as f32,
+            _ => 1.,
+        });
+        let _ = r.replace(values);
+    }));
+    rows
+}
+
 /// A list's scrollbar and what happens at its edges.
 fn list_chrome(
     mut list: View,
@@ -5742,27 +5774,7 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
     }
     if let Some(heights) = heights {
         let cx = need(&mut cx);
-        let mut rows = zgx::compose::VariableHeights::new(&cx.runtime(), 0, *height);
-        if *follow {
-            rows = rows.anchor_end();
-        }
-        // Every height replaced when the list changes: linear, in Rust.
-        let (list, heights_vm, r) = (heights.clone(), vm.clone(), rows.clone());
-        cx.retain(cx.runtime().effect(move || {
-            let value = match &list {
-                crate::node::Heights::Lit(v) => v.clone(),
-                crate::node::Heights::State(s) => s.get(),
-                crate::node::Heights::Computed(f) => heights_vm
-                    .call::<Value>(f, ())
-                    .map_err(|e| heights_vm.report(e))
-                    .unwrap_or_default(),
-            };
-            let values = value.list().iter().map(|v| match v {
-                Value::Num(n) if n.is_finite() && *n > 0. => *n as f32,
-                _ => 1.,
-            });
-            let _ = r.replace(values);
-        }));
+        let rows = list_heights(heights, *height, *follow, vm, cx);
         let (sticky_key, sticky_row, sticky_plain) =
             (list_key.clone(), row.clone(), plain_row.clone());
         let list = match key {
@@ -5927,6 +5939,7 @@ fn lower_item_list(
 ) -> View {
     let Kind::List {
         height,
+        heights,
         overscan,
         build: builder,
         key,
@@ -5935,6 +5948,7 @@ fn lower_item_list(
         follow,
         offset,
         keyboard,
+        scrollbar,
         ..
     } = kind
     else {
@@ -5997,7 +6011,7 @@ fn lower_item_list(
     };
     let list_key = {
         let (items, key, vm) = (items.clone(), key.clone(), vm.clone());
-        let kept = std::cell::RefCell::new(KeptKeys::default());
+        let kept = Rc::new(std::cell::RefCell::new(KeptKeys::default()));
         move |index: usize| -> ListKey {
             let Some(key) = &key else {
                 return ListKey::Index(index);
@@ -6072,6 +6086,22 @@ fn lower_item_list(
             }
         };
         return list.keyboard_navigation(keyboard).row_text(copy);
+    }
+    if let Some(heights) = heights {
+        let cx = need(&mut cx);
+        let rows = list_heights(heights, *height, *follow, vm, cx);
+        let (sticky_key, sticky_row) = (list_key.clone(), row.clone());
+        let list = variable_virtual_list(offset.clone(), rows.clone(), *overscan, list_key, row)
+            .keyboard_navigation(keyboard)
+            .row_text(copy);
+        let Some(sticky) = rare.as_ref().and_then(|rare| rare.sticky.as_ref()) else {
+            return list;
+        };
+        let inset = rare.as_ref().map_or(0., |rare| rare.sticky_top);
+        let list = list_chrome(list, *scrollbar, rare.as_deref(), vm);
+        return sticky_list(
+            list, sticky, inset, offset, rows, sticky_key, sticky_row, vm, cx,
+        );
     }
     virtual_list(offset, *height, *overscan, count, list_key, row)
         .keyboard_navigation(keyboard)

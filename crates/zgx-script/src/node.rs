@@ -4421,9 +4421,9 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 mlua::Value::Nil => None,
                 data => Some(expect_readable(&data, "ui.list's `data`")?),
             };
-            if items.is_some() && (heights.is_some() || table.contains_key("count")?) {
+            if items.is_some() && table.contains_key("count")? {
                 return Err(mlua::Error::runtime(
-                    "ui.list `data` gives the rows: not with `count` or `heights`",
+                    "ui.list `data` gives the rows: not with `count`",
                 ));
             }
             let count = match (&heights, &items, table.get::<mlua::Value>("count")?) {
