@@ -25,7 +25,6 @@ local function reorder(from: number, to: number)
 end
 
 return ui.row {
-	w_full = true,
 	h_full = true,
 	ui.column {
 		id = "favourites",

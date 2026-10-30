@@ -41,6 +41,8 @@ Every example on this page runs, and type checks in strict mode, as part of zgx-
 | react-markdown | `ui.markdown_view { text }` |
 | React Testing Library | `zgx_script::testing::TestApp`: find, click, type, read texts, headless |
 
+A script's root fills its parent across, as a block does, and is as tall as what it holds; `h_full = true` fills the height too.
+
 ## Components and props
 
 A component is a function of its props, called once as each instance mounts. Its `ui.use_state` belongs to that instance; what it builds lives as long as it does.

@@ -41,7 +41,6 @@ local function clear_done()
 end
 
 return ui.column {
-	w_full = true,
 	h_full = true,
 	p = "$space.4",
 	gap = "$space.3",

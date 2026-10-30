@@ -35,7 +35,6 @@ local form = ui.form {
 }
 
 return ui.column {
-	w_full = true,
 	h_full = true,
 	ui.row {
 		px = "$space.4",

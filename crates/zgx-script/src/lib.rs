@@ -2302,7 +2302,12 @@ impl ScriptHost {
                 dismiss_types.clone(),
                 dismiss_lint.clone(),
             );
-            let root = overlay().w_full().h_full().child(app.w_full().h_full());
+            // The script's root fills across, as a block fills its parent;
+            // down, it takes what it holds, and `h_full` asks for the rest.
+            let root = overlay()
+                .w_full()
+                .h_full()
+                .child(app.items_stretch().w_full().h_full());
             // `ui.toast`'s, while one shows: nothing otherwise.
             #[cfg(feature = "components")]
             let root = root.child_when(

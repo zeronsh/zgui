@@ -1522,6 +1522,82 @@ fn every_scroll_kind_stretches_in_every_dynamic_region() {
     }
 }
 
+/// A script's root fills its parent across, as a block does, and takes
+/// its height from what it holds.
+#[test]
+fn a_scripts_root_fills_its_parent_across() {
+    let root = |code: &str| {
+        let mut h = Harness::inline(code);
+        h.ui.prepare_frame();
+        assert_eq!(h.host.error().get(), None, "{code}");
+        let node = h.find("root").unwrap();
+        let window = h.ui.scene.borrow().bounds(h.ui.scene.borrow().root());
+        (h.ui.scene.borrow().bounds(node), window)
+    };
+    let (bare, window) = root(r#"return ui.column { id = "root", ui.text { "x" } }"#);
+    assert_eq!(bare.width, window.width);
+    assert!(bare.height < 40., "its height is what it holds: {bare:?}");
+    let (row, window) = root(r#"return ui.row { id = "root", ui.text { "x" } }"#);
+    assert_eq!(row.width, window.width);
+    let (sized, _) = root(r#"return ui.column { id = "root", w = 300, ui.text { "x" } }"#);
+    assert_eq!(sized.width, 300., "a width of its own holds");
+    let (half, window) = root(r#"return ui.column { id = "root", w = "50%", ui.text { "x" } }"#);
+    assert_eq!(half.width, window.width / 2.);
+    let (full, window) =
+        root(r#"return ui.column { id = "root", w_full = true, h_full = true, ui.text { "x" } }"#);
+    assert_eq!((full.width, full.height), (window.width, window.height));
+    let (tall, window) =
+        root(r#"return ui.column { id = "root", h_full = true, ui.text { "x" } }"#);
+    assert_eq!(tall.height, window.height);
+    // Content taller than the window overflows as it did: nothing shrinks.
+    let (over, window) = root(
+        r#"return ui.column { id = "root", ui.column { h = 5000, shrink = 1, ui.text { "x" } } }"#,
+    );
+    assert_eq!(over.height, 5000., "{window:?}");
+}
+
+/// Embedded in a Rust host's view, a script fills the box it is given, and
+/// in a row sized by its content it takes its own width.
+#[test]
+fn an_embedded_script_fills_its_parent_not_the_window() {
+    use zgx::compose::{div, row};
+    use zgx::style::Styled;
+    let code = r#"return ui.column { ui.text { "marker" } }"#;
+    let width = |wrap: &dyn Fn(zgx::compose::View) -> zgx::compose::View| {
+        let mut ui = zgx::widgets::Ui::new(800., 600.);
+        let host = zgx_script::ScriptHost::inline(&ui.runtime, "embedded", code);
+        host.reload().unwrap();
+        let _mounted = ui.mount(wrap(host.view()));
+        ui.prepare_frame();
+        let scene = ui.scene.borrow();
+        let mut stack = vec![scene.root()];
+        while let Some(node) = stack.pop() {
+            if let zgx::scene::NodeKind::Text { text, .. } = scene.kind(node)
+                && &**text == "marker"
+            {
+                return scene.bounds(scene.parent(node).unwrap()).width;
+            }
+            stack.extend(scene.children(node).iter().copied());
+        }
+        panic!("no marker");
+    };
+    assert_eq!(width(&|view| view), 800.);
+    assert_eq!(width(&|view| div().w(300.).h(200.).child(view)), 300.);
+    // Beside a sibling in a row: what's left, or what it needs.
+    assert_eq!(
+        width(&|view| row()
+            .w(500.)
+            .child(div().w(100.))
+            .child(div().grow().child(view))),
+        400.
+    );
+    let shrunk = width(&|view| row().child(view).child(div().w(100.)));
+    assert!(
+        shrunk > 0. && shrunk < 200.,
+        "as wide as what it holds: {shrunk}"
+    );
+}
+
 /// `show`, `switch` and `presence` are no box of their own: what a node says
 /// of its size and place holds there as it does anywhere.
 #[test]
@@ -3923,7 +3999,7 @@ fn an_element_zooms_from_a_script_and_follows_its_state() {
 fn a_zoomable_element_takes_the_control_wheel_and_its_state_follows() {
     let mut h = Harness::inline(
         r##"local zoom = ui.state("zoom", 1)
-        return ui.column {
+        return ui.column { items = "start",
             ui.column { id = "doc", zoomable = zoom, ui.div { w = 100, h = 50 } },
             ui.text { id = "level", function() return string.format("%.2f", zoom:get()) end } }"##,
     );

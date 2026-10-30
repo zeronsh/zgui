@@ -63,7 +63,6 @@ end
 local theme = ui.state("theme", "system")
 
 return ui.column {
-	w_full = true,
 	h_full = true,
 	Toolbar { router = router },
 	router.view {

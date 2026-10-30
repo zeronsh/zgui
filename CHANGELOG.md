@@ -6,6 +6,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Changed: what to check in an existing app
 
+- **A script's root fills its parent across** (zgx-script), as a block does: `return ui.column { … }` was as wide as what it held. Its `bg` now reaches the edge, and `items` and `justify` work across the whole width. Height is unchanged: it takes what it holds, and `h_full` asks for the rest. A root with a `w` keeps it, and embedded in a Rust view it fills the box it is given. Scripts updating under such a root cost about 6% less: their rows are no longer measured twice.
 - **A `ui.list`'s rows fill its width** (zgx): a row's root shrank to what it held, where a block fills the row. Its `bg` and borders now reach the list's edge, and what `grow` or `justify` spread goes across the whole row. A row with a width of its own (`w`) keeps it.
 - **A scroll view or list under `ui.show`, `ui.switch` or `ui.presence` fills its parent** (zgx): it stayed at its default 320 points (240 tall for a `ui.scroll`), where on its own it stretches, and what lay past that was clipped and took no click or drop. Check a view that looked right at 320: give it a `w`, or a `max_w`, to keep that width.
 

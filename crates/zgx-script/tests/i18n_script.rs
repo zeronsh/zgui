@@ -337,6 +337,7 @@ local options = ui.computed(function()
 end)
 local pick = ui.state("pick", "s")
 return ui.column {
+    items = "start",
     ui.select { label = "Find", value = pick, options = options, id = "pick" },
     ui.text { "{pick}", id = "picked" },
 }
