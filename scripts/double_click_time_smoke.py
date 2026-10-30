@@ -97,9 +97,9 @@ def main():
                 xdo("windowactivate", "--sync", window)
                 time.sleep(.4)
                 # The same spot as primary_selection_smoke's double click.
-                xdo("mousemove", "--window", window, 110, 42, "click", 1)
-                time.sleep(gap)
-                xdo("click", 1)
+                # One xdotool for both presses: two take as long to start as a
+                # loaded runner likes, past the time this needs them within.
+                xdo("mousemove", "--window", window, 110, 42, "click", 1, "sleep", gap, "click", 1)
 
                 def primary():
                     read = subprocess.run(["xclip", "-o", "-selection", "primary"], env=env,
