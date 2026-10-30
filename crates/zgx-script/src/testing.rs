@@ -59,9 +59,18 @@ pub struct FakeDesktop {
     notifications: RefCell<Vec<zgx::platform::Notification>>,
     badge: RefCell<Option<String>>,
     deny: std::cell::Cell<bool>,
-    /// Notifications clicked, not yet heard, and who waits for the next.
-    clicks: Rc<RefCell<(std::collections::VecDeque<String>, Option<std::task::Waker>)>>,
+    clicks: Clicks,
 }
+/// Notifications clicked, not yet heard, and who waits for the next.
+type Clicks = std::sync::Arc<
+    std::sync::Mutex<(std::collections::VecDeque<String>, Option<std::task::Waker>)>,
+>;
+// A fake desktop is Send and unwind-safe, as published releases' was: losing
+// either breaks a test that moves or catches across one.
+const _: () = {
+    const fn holds<T: Send + std::panic::UnwindSafe>() {}
+    holds::<FakeDesktop>();
+};
 impl FakeDesktop {
     /// The notifications shown so far, in order.
     pub fn notifications(&self) -> Vec<zgx::platform::Notification> {
@@ -78,7 +87,7 @@ impl FakeDesktop {
     /// Click the notification tagged `tag`, as the person would.
     pub fn click_notification(&self, tag: &str) {
         let waker = {
-            let mut clicks = self.clicks.borrow_mut();
+            let mut clicks = self.clicks.lock().unwrap();
             clicks.0.push_back(tag.to_string());
             clicks.1.take()
         };
@@ -174,7 +183,7 @@ impl zgx::platform::Platform for FakeDesktop {
     fn next_notification_click(&self) -> zgx::platform::Pending<Option<String>> {
         let clicks = self.clicks.clone();
         Box::pin(std::future::poll_fn(move |cx| {
-            let mut clicks = clicks.borrow_mut();
+            let mut clicks = clicks.lock().unwrap();
             match clicks.0.pop_front() {
                 Some(tag) => std::task::Poll::Ready(Some(tag)),
                 None => {
