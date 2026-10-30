@@ -98,7 +98,7 @@ impl Buffer {
         let space = match std::env::var("ZGX_WS_SPACE").as_deref() {
             Ok("none") => None,
             // SAFETY: CoreGraphics' constant CFString, read only.
-            Ok("p3") => CGColorSpace::with_name(Some(unsafe {
+            Ok("p3" | "p3conv") => CGColorSpace::with_name(Some(unsafe {
                 objc2_core_graphics::kCGColorSpaceDisplayP3
             })),
             // SAFETY: CoreGraphics' constant CFString, read only.

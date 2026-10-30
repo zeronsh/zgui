@@ -2418,6 +2418,11 @@ static DXGI_PRESENT: std::sync::LazyLock<bool> =
 static PRESENT_DRAWABLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
     zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v != "0" && v != "auto")
 });
+/// Scratch (not for merge): `ZGX_WS_SPACE=p3conv` tags surfaces Display P3
+/// and converts each frame's damaged pixels to it (`MetalFrame::convert_p3`).
+#[cfg(target_os = "macos")]
+static P3_CONVERT: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var("ZGX_WS_SPACE").as_deref() == Ok("p3conv"));
 /// Scratch (not for merge): `ZGX_PRESENT_DRAWABLE_ALWAYS=1` (with
 /// `ZGX_PRESENT_DRAWABLE=1`) draws every frame into drawables, not only
 /// full-rate ones: 60 Hz app-timer frames too, which commit nothing then.
@@ -8493,6 +8498,11 @@ impl GpuRenderer {
                 })
                 .and_then(|present| present.layer.as_mut())
                 .and_then(|layer| layer.take_drawable());
+            // Scratch (not for merge): `ZGX_WS_SPACE=p3conv`.
+            if *P3_CONVERT {
+                let scissors: Vec<Scissor> = regions.iter().map(|(_, scissor)| *scissor).collect();
+                pass.convert_p3(frame, &scissors);
+            }
             pass.commit_presenting(
                 drawable
                     .as_deref()

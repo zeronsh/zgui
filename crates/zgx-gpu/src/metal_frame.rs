@@ -49,6 +49,8 @@ pub(crate) struct MetalFrame {
     copy_offset: Pipeline,
     /// Compiled with the first filter (None: not here).
     blur: std::cell::OnceCell<Option<Blur>>,
+    /// Scratch: `convert_p3`'s pipeline, with its first frame.
+    p3: std::cell::OnceCell<Option<Pipeline>>,
     /// Layer effects' pipelines (effects.wgsl), with the first effect.
     effects: std::cell::OnceCell<Option<Effects>>,
     /// Shader fills' pipelines by shader id (`None`: it did not compile).
@@ -147,6 +149,7 @@ impl MetalFrame {
             device: raw,
             queue,
             blur: std::cell::OnceCell::new(),
+            p3: std::cell::OnceCell::new(),
             effects: std::cell::OnceCell::new(),
             fills: Default::default(),
             image_effects: std::cell::OnceCell::new(),
@@ -267,6 +270,33 @@ impl MetalFrame {
         self.effect_pipelines().is_some()
     }
 
+    /// Scratch: `convert_p3`'s pipeline, made the first time.
+    fn p3_pipeline(&self) -> Option<&Pipeline> {
+        self.p3
+            .get_or_init(|| {
+                let library = self
+                    .device
+                    .newLibraryWithSource_options_error(
+                        &NSString::from_str(P3_MSL),
+                        Some(&MTLCompileOptions::new()),
+                    )
+                    .ok()?;
+                let descriptor = MTLRenderPipelineDescriptor::new();
+                descriptor.setVertexFunction(Some(
+                    &*library.newFunctionWithName(&NSString::from_str("p3_vs"))?,
+                ));
+                descriptor.setFragmentFunction(Some(
+                    &*library.newFunctionWithName(&NSString::from_str("p3_fs"))?,
+                ));
+                // SAFETY: Index 0 of the pipeline's colour attachments.
+                let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+                color.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+                self.device
+                    .newRenderPipelineStateWithDescriptor_error(&descriptor)
+                    .ok()
+            })
+            .as_ref()
+    }
     fn effect_pipelines(&self) -> Option<&Effects> {
         self.effects
             .get_or_init(|| {
@@ -779,6 +809,30 @@ impl Frame {
                 )
         };
     }
+    /// Scratch (not for merge): `ZGX_WS_SPACE=p3conv`. What this pass drew
+    /// in sRGB, converted in place to Display P3 (the surface's tag) over
+    /// each damaged `scissor`: read through framebuffer fetch, linearised,
+    /// mapped, encoded again. Measures the pass's cost against the window
+    /// server's colour matching; opaque pixels only (no unpremultiply).
+    pub(crate) fn convert_p3(&mut self, frame: &MetalFrame, scissors: &[(u32, u32, u32, u32)]) {
+        let Some(pipeline) = frame.p3_pipeline() else {
+            return;
+        };
+        self.encoder.setRenderPipelineState(pipeline);
+        self.current = None;
+        for rect in scissors {
+            self.scissor(*rect);
+            // SAFETY: A four-vertex strip the vertex function makes from its
+            // vertex id alone (no buffers).
+            unsafe {
+                self.encoder.drawPrimitives_vertexStart_vertexCount(
+                    MTLPrimitiveType::TriangleStrip,
+                    0,
+                    4,
+                )
+            };
+        }
+    }
     /// End the pass and commit (the frame then runs after everything already
     /// submitted to wgpu's queue), presenting `drawable` once its work
     /// completes: Metal hands it to the window server for the refresh after.
@@ -875,6 +929,27 @@ impl Library {
         })
     }
 }
+
+/// Scratch (not for merge): sRGB to Display P3 in place (`convert_p3`).
+const P3_MSL: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+struct V { float4 position [[position]]; };
+vertex V p3_vs(uint i [[vertex_id]]) {
+    float2 c = float2(float(i & 1u), float(i >> 1u));
+    V v; v.position = float4(c * 2.0 - 1.0, 0.0, 1.0); return v;
+}
+static float lin(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+static float enc(float c) { return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+fragment half4 p3_fs(V in [[stage_in]], half4 dst [[color(0)]]) {
+    float3 s = float3(lin(dst.r), lin(dst.g), lin(dst.b));
+    float3x3 m = float3x3(float3(0.8224621, 0.0331941, 0.0170827),
+                          float3(0.1775380, 0.9668058, 0.0723974),
+                          float3(0.0, 0.0, 0.9105199));
+    float3 p = m * s;
+    return half4(half(enc(p.r)), half(enc(p.g)), half(enc(p.b)), dst.a);
+}
+"#;
 
 /// The first line of a module translated ahead: its entry points' names in
 /// MSL (`entry=name`, separated by spaces).
