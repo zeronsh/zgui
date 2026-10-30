@@ -5018,6 +5018,14 @@ fn code_editor(
             }
         });
     }
+    if let Some(told) = &code.on_top_line {
+        let (told, vm) = (told.clone(), vm.clone());
+        view = view.on_top_line(move |line| {
+            if let Err(error) = vm.call::<()>(&told, line) {
+                vm.report(error);
+            }
+        });
+    }
     view
 }
 /// An exact short hex key, copied while its Lua string is on the stack.

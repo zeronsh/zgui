@@ -473,6 +473,7 @@ pub(crate) struct CodeOptions {
     current_line: Option<Box<dyn FnMut() -> Option<crate::scene::Color>>>,
     indent: Option<String>,
     on_caret: Option<Box<dyn FnMut(crate::widgets::Caret)>>,
+    on_top_line: Option<Box<dyn FnMut(usize)>>,
 }
 /// `View`'s fields few views set (`View::rare`).
 #[derive(Default)]
@@ -1531,6 +1532,12 @@ impl View {
     /// status bar's line and column); see `EditorHandle::on_caret`.
     pub fn on_caret(mut self, told: impl FnMut(crate::widgets::Caret) + 'static) -> Self {
         self.code_mut().on_caret = Some(Box::new(told));
+        self
+    }
+    /// Call `told` with a text area's first line in view, from 1, whenever
+    /// it changes; see `EditorHandle::on_top_line`.
+    pub fn on_top_line(mut self, told: impl FnMut(usize) + 'static) -> Self {
+        self.code_mut().on_top_line = Some(Box::new(told));
         self
     }
     /// Make the view a window drag region, like CSS's
@@ -4894,6 +4901,7 @@ fn open_element(
                 current_line,
                 indent,
                 on_caret,
+                on_top_line,
             } = *code;
             if highlighter.is_some() {
                 editor.set_span_highlighter(highlighter);
@@ -4911,6 +4919,9 @@ fn open_element(
             }
             if let Some(told) = on_caret {
                 editor.on_caret(told);
+            }
+            if let Some(told) = on_top_line {
+                editor.on_top_line(told);
             }
             editor.set_indent(indent.as_deref());
             if let Some(mut ranges) = decorations {

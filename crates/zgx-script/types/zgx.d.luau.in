@@ -1022,6 +1022,8 @@ declare extern type Element with
 	-- The same in bytes from 0, as `string.find` counts them (its match `s,
 	-- e` is `s - 1, e`): a code editor's search. A selection set this way
 	-- scrolls into view, focused or not.
+	-- A textarea's line, from 1, at that place in its view; its caret stays.
+	function scroll_to_line(self, line: number, options: { align: ("start" | "center" | "end" | "nearest")? }?): boolean
 	function set_selection_bytes(self, a: number, b: number?): boolean
 	function selection_bytes(self): (number?, number?)
 	-- The selection replaced by `text`, as typing it would (one step of
@@ -2411,6 +2413,9 @@ export type InputProps = Merge<Props, {
 	-- column in characters) and the selection's anchor and focus in bytes
 	-- from 0 (as `selection_bytes`).
 	on_caret: ((line: number, column: number, anchor: number, focus: number) -> ())?,
+	-- The first line in view, from 1, whenever it changes: an outline following
+	-- the text.
+	on_top_line: ((line: number) -> ())?,
 }>
 -- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
 -- stretch of the bar sweeping across.

@@ -75,8 +75,9 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `current_line` | `Reactive<Color>` | none | `textarea`: the colour behind the caret's row |
 | `tab` | `string` | none | `textarea`: what Tab inserts (`"    "`) instead of moving focus; with lines selected it indents each, Shift+Tab outdents, one step of undo |
 | `on_caret` | `(line, column, anchor, focus) -> ()` | none | `textarea`: where the caret is whenever it moves (a status bar): line and column from 1, the selection in bytes from 0 |
+| `on_top_line` | `(line) -> ()` | none | `textarea`: the first line in view, from 1, whenever it changes (an outline following the text). Asked only with it set, so a textarea without it pays nothing |
 
-Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
+Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo; `el:scroll_to_line(n, { align })` puts line `n`, from 1, at the `"start"`, `"center"` or `"end"` of the view, or as near as shows it (`"nearest"`, the default), its caret left where it is ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
 
 ### Styled spans
 
