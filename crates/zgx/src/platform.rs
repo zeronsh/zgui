@@ -146,6 +146,12 @@ pub trait Platform {
     fn open_files(&self, picker: FilePicker) -> Pending<Result<Vec<PathBuf>, String>>;
     /// Where the user chooses to save: none if they cancel.
     fn save_file(&self, picker: FilePicker) -> Pending<Result<Option<PathBuf>, String>>;
+    /// Ask for a folder: the one the user picks, `None` if they cancel. A
+    /// platform without a folder dialog refuses.
+    fn open_folder(&self, picker: FilePicker) -> Pending<Result<Option<PathBuf>, String>> {
+        let _ = picker;
+        Box::pin(async { Err("no folder dialog here".into()) })
+    }
     /// Show `notification`, settled once the system has it, or with why
     /// not. The first asks the person's permission where the system does
     /// (macOS). None shows none.

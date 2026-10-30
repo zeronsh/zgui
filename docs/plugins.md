@@ -124,7 +124,7 @@ An app run with `zgx run` has no Rust of its own. Its `zgx.json` sets both sides
   - `hooks` maps a target, or an `@app/…` module, to `"override"` when a plugin may replace or filter it. Adding before and after is open, so `"open"` changes nothing. `"*": "override"` offers every target.
 - **`plugins`** names each plugin's folder (its `init.luau`) or file, and its `allow` list:
   - `shared:<key>`, `action:<name>` and `override:<target>` for what `expose` offers;
-  - `fetch`, `clipboard`, `files`, `terminals`, `web` and `windows` for the sandbox.
+  - `fetch`, `clipboard`, `files`, `folders`, `terminals`, `web` and `windows` for the sandbox. `folders` is `ui.open_folder`, and the host can refuse it to every script (`ScriptHost::refuse_folders`).
 - **A grant beyond what's exposed is an error as the app loads**, naming the plugin and the grant: ``plugin `focus` is allowed `action:complete`, which the app doesn't expose (add "complete" to expose.actions)``. So is an unknown grant or a missing path.
 - **The app's script defines its actions** with `ui.actions`. Plugins call them as they call a Rust host's: `ui.invoke("complete", id)`, or `ui.action("complete", id)` as a handler. The app calls them the same way. A plugin can't define actions.
 

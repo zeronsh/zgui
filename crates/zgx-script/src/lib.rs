@@ -47,6 +47,7 @@ mod file_events;
 #[cfg(target_os = "linux")]
 #[path = "file_events_linux.rs"]
 mod file_events;
+mod folder;
 mod form;
 mod handlers;
 mod hook_targets;
@@ -793,6 +794,9 @@ pub enum Capability {
     /// `ui.open_files`, `ui.save_file` and reading and writing what the
     /// user picks in them.
     Files,
+    /// `ui.open_folder`: a folder the user picks, with everything inside
+    /// it to list, read and write.
+    Folders,
     /// `ui.term`: terminal sessions, to read and to type into.
     Terminals,
     /// `ui.web` and `ui.webview`: web pages.
@@ -975,6 +979,7 @@ struct Inner {
     platform: io::SharedPlatform,
     /// The files the user picked in this host's dialogs.
     picked: io::Picked,
+    folders_refused: Rc<std::cell::Cell<bool>>,
     /// `ui.args` and `ui.on_open` (`ScriptHost::args`, `open`).
     opens: Rc<opens::Opens>,
     /// Whether errors show over the interface (`error_banner`).
@@ -1137,6 +1142,7 @@ impl ScriptHost {
             rewatch: RefCell::default(),
             platform: Rc::default(),
             picked: Rc::default(),
+            folders_refused: Rc::default(),
             opens: Rc::default(),
             show_errors: cfg!(debug_assertions),
             error_hooks: error_hooks.clone(),
@@ -1459,6 +1465,12 @@ impl ScriptHost {
         *self.0.connector.borrow_mut() = Some(Rc::new(move |request, socket| -> socket::Connect {
             Box::pin(connect(request, socket))
         }));
+    }
+    /// Refuse `ui.open_folder` to every script, the app's own too: an app
+    /// that must not touch folders, whatever its scripts ask.
+    pub fn refuse_folders(self) -> Self {
+        self.0.folders_refused.set(true);
+        self
     }
     /// Let plugin `plugin` (its file name, `stats.luau`, or `plugin`'s
     /// name) do `capability`. Plugins get none unless granted; the
@@ -2832,17 +2844,22 @@ impl ScriptHost {
         });
         let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());
         let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
+        let (folders, refused) = (may(Capability::Folders), self.0.folders_refused.clone());
         lazy.ui(
             &[
                 "badge",
                 "clipboard",
                 "notify",
                 "open_files",
+                "open_folder",
                 "read_file",
                 "save_file",
                 "write_file",
             ],
-            move |lua, ui| io::install(lua, ui, platform, picked, clipboard, files_allowed),
+            move |lua, ui| {
+                folder::install(lua, ui, platform.clone(), folders, refused)?;
+                io::install(lua, ui, platform, picked, clipboard, files_allowed)
+            },
         );
         let (dir, packages) = (script.dir(), self.packages(plugin));
         lazy.ui(&["prefers", "theme", "tokens"], move |lua, ui| {

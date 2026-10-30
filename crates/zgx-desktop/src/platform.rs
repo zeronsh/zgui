@@ -133,6 +133,15 @@ impl Platform for Desktop {
                 .unwrap_or(false)
         })
     }
+    fn open_folder(&self, picker: FilePicker) -> Pending<Result<Option<PathBuf>, String>> {
+        let dialogs = self.dialogs.clone();
+        Box::pin(async move {
+            dialogs
+                .open_folder(options(&picker))
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
     fn open_files(&self, picker: FilePicker) -> Pending<Result<Vec<PathBuf>, String>> {
         let dialogs = self.dialogs.clone();
         Box::pin(async move {

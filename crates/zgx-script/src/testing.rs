@@ -56,6 +56,7 @@ pub struct FakeDesktop {
     files: RefCell<Vec<std::path::PathBuf>>,
     opens: RefCell<std::collections::VecDeque<Vec<std::path::PathBuf>>>,
     saves: RefCell<std::collections::VecDeque<std::path::PathBuf>>,
+    folders: RefCell<std::collections::VecDeque<std::path::PathBuf>>,
     asked: RefCell<Vec<zgx::platform::FilePicker>>,
     notifications: RefCell<Vec<zgx::platform::Notification>>,
     badge: RefCell<Option<String>>,
@@ -104,6 +105,10 @@ impl FakeDesktop {
     /// The next save dialog saves to `path`.
     pub fn save_to(&self, path: impl Into<std::path::PathBuf>) {
         self.saves.borrow_mut().push_back(path.into());
+    }
+    /// The next folder dialog picks `path`.
+    pub fn pick_folder(&self, path: impl Into<std::path::PathBuf>) {
+        self.folders.borrow_mut().push_back(path.into());
     }
     /// What the dialogs shown so far were asked to show, in order.
     pub fn asked(&self) -> Vec<zgx::platform::FilePicker> {
@@ -172,6 +177,14 @@ impl zgx::platform::Platform for FakeDesktop {
     ) -> zgx::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
         self.asked.borrow_mut().push(picker);
         let path = self.saves.borrow_mut().pop_front();
+        Box::pin(async move { Ok(path) })
+    }
+    fn open_folder(
+        &self,
+        picker: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        self.asked.borrow_mut().push(picker);
+        let path = self.folders.borrow_mut().pop_front();
         Box::pin(async move { Ok(path) })
     }
     fn notify(

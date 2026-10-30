@@ -24,14 +24,14 @@ pub(crate) type SharedPlatform = Rc<RefCell<Option<PlatformService>>>;
 /// may read or write.
 pub(crate) type Picked = Rc<RefCell<HashSet<PathBuf>>>;
 
-fn platform(shared: &SharedPlatform, what: &str) -> mlua::Result<PlatformService> {
+pub(crate) fn platform(shared: &SharedPlatform, what: &str) -> mlua::Result<PlatformService> {
     shared.borrow().clone().ok_or_else(|| {
         mlua::Error::runtime(format!(
             "{what}: no platform here (the clipboard and file dialogs need a desktop window)"
         ))
     })
 }
-fn denied(what: &str, capability: &str) -> mlua::Error {
+pub(crate) fn denied(what: &str, capability: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
         "{what}: a plugin does this only if the host grants it \
          (`ScriptHost::grant(plugin, Capability::{capability})`)"
@@ -128,7 +128,7 @@ pub(crate) fn media_type(path: &Path) -> &'static str {
 }
 /// A dialog's options: `title`, `directory`, `name` (to save as),
 /// `filters` (`{ { "Images", { "png", "jpg" } } }`) and `multiple`.
-fn picker(opts: Option<Table>, title: &str) -> mlua::Result<FilePicker> {
+pub(crate) fn picker(opts: Option<Table>, title: &str) -> mlua::Result<FilePicker> {
     let mut picker = FilePicker {
         title: title.into(),
         ..Default::default()

@@ -653,6 +653,25 @@ export type Readable<T> = { read get: (self: never) -> T }
 -- Engine objects.
 
 -- What `ui` element functions return; children and arguments of others.
+-- A file or folder in a `Folder`: `path` from its root, as `read` takes it;
+-- `modified` in milliseconds since 1970.
+export type FolderEntry = {
+	read name: string,
+	read path: string,
+	read kind: "file" | "folder",
+	read size: number,
+	read modified: number,
+}
+-- A folder the user picked (`ui.open_folder`). Paths are relative to it, with
+-- `/` between their parts; `..`, absolute paths and links leading out of it
+-- are refused (`kind` "denied"), and a handle can be kept in state.
+declare extern type Folder with
+	name: string
+	function list(self, path: string?, options: { recursive: boolean?, limit: number? }?): Promise<{ FolderEntry }>
+	function read(self, path: string): Promise<string>
+	-- The file replaced whole, its folders made.
+	function write(self, path: string, text: string): Promise<nil>
+end
 declare extern type Node with
 end
 -- `ui.t(key, args)`: a localized message. Accepted wherever text is
@@ -17655,6 +17674,9 @@ declare ui: {
 	open_files: (opts: FilePickerOptions?) -> Promise<{ File }>,
 	-- Where the user chooses to save: a promise of a `File`, or nil.
 	save_file: (opts: FilePickerOptions?) -> Promise<File?>,
+	-- A folder the user picks: a promise of its handle, or nil if they cancel.
+	-- Only this makes a `Folder`, and it reaches nothing outside what was picked.
+	open_folder: (opts: FilePickerOptions?) -> Promise<Folder?>,
 	-- A system notification (Notification Center, a toast, the desktop's
 	-- server), the app's: a promise settled once the system has it, or
 	-- with why not (`kind` "unsupported": no bundle, no server; "denied":

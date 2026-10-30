@@ -237,6 +237,119 @@ end)
 }
 
 #[test]
+fn a_folder_a_person_picks_is_the_only_one_a_script_reaches() {
+    let dir = app(
+        "folder",
+        &[(
+            "folder.test.luau",
+            r##"
+local function open(app): boolean
+    app:write_file("vault/notes/a.md", "# A")
+    app:write_file("vault/b.md", "# B")
+    app:pick_folder("vault")
+    app:click("#open")
+    return app:wait("#name", { text = "vault" })
+end
+
+test("it lists, reads and writes inside what was picked", function()
+    local app = mount("folder.luau")
+    expect(open(app)).to_be(true)
+    app:click("#list")
+    expect(app:wait("#listed", { text = "b.md notes notes/a.md" })).to_be(true)
+    app:click("#read")
+    expect(app:wait("#read-out", { text = "# A" })).to_be(true)
+    app:click("#write")
+    expect(app:wait("#written", { text = "yes" })).to_be(true)
+    expect(app:read_file("vault/new/c.md")).to_be("written")
+end)
+
+test("a cancelled dialog gives nothing, and the app goes on", function()
+    local app = mount("folder.luau")
+    app:click("#open")
+    app:frames(3)
+    expect(app:text("#name")).to_be("none")
+    expect(app:error()).to_be_nil()
+end)
+
+test("paths out of it are refused, as an error to handle", function()
+    local app = mount("folder.luau")
+    expect(open(app)).to_be(true)
+    app:click("#escape")
+    expect(app:wait("#refused", { text = "denied" })).to_be(true)
+end)
+
+test("a handle survives in state and can't be made from a table", function()
+    local app = mount("folder.luau")
+    expect(open(app)).to_be(true)
+    app:click("#forge")
+    expect(app:wait("#forged", { text = "no" })).to_be(true)
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("folder.luau"),
+        r##"
+local folder = ui.state("folder", nil :: Folder?)
+local name = ui.state("name", "none")
+local listed = ui.state("listed", "")
+local read_out = ui.state("read_out", "")
+local written = ui.state("written", "")
+local refused = ui.state("refused", "")
+local forged = ui.state("forged", "")
+return ui.column {
+    ui.button { id = "open", "Open", on_click = function()
+        ui.task(function()
+            local picked = ui.open_folder():await()
+            folder:set(picked)
+            if picked then name:set(picked.name) end
+        end)
+    end },
+    ui.button { id = "list", "List", on_click = function()
+        ui.task(function()
+            local paths = {}
+            for _, entry in folder:peek():list("", { recursive = true }):await() do
+                table.insert(paths, entry.path)
+            end
+            listed:set(table.concat(paths, " "))
+        end)
+    end },
+    ui.button { id = "read", "Read", on_click = function()
+        ui.task(function() read_out:set(folder:peek():read("notes/a.md"):await()) end)
+    end },
+    ui.button { id = "write", "Write", on_click = function()
+        ui.task(function()
+            folder:peek():write("new/c.md", "written"):await()
+            written:set("yes")
+        end)
+    end },
+    ui.button { id = "escape", "Escape", on_click = function()
+        ui.task(function()
+            local ok, failure = ui.try(function() return folder:peek():read("../outside"):await() end)
+            refused:set(if ok then "read it" else failure.kind)
+        end)
+    end },
+    ui.button { id = "forge", "Forge", on_click = function()
+        local ok = pcall(function()
+            return (folder:peek() :: any).list({ name = "x" }, "")
+        end)
+        forged:set(if ok then "yes" else "no")
+    end },
+    ui.text { id = "name", "{name}" },
+    ui.text { id = "listed", "{listed}" },
+    ui.text { id = "read-out", "{read_out}" },
+    ui.text { id = "written", "{written}" },
+    ui.text { id = "refused", "{refused}" },
+    ui.text { id = "forged", "{forged}" },
+}
+"##,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",
