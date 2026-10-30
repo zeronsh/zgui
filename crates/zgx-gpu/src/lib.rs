@@ -3417,6 +3417,8 @@ pub struct GpuRenderer {
     blit_bind: Option<wgpu::BindGroup>,
     atlas: wgpu::Texture,
     atlas_size: u32,
+    /// The size `trim_atlas` took it back from.
+    atlas_grew_to: u32,
     entries: FxHashMap<AtlasKey, Option<AtlasEntry>>,
     cursor: (u32, u32, u32),
     fonts: Rc<RefCell<FontSystem>>,
@@ -4077,6 +4079,7 @@ impl GpuRenderer {
             present_stats: GpuStats::default(),
             atlas,
             atlas_size: 1,
+            atlas_grew_to: 0,
             entries: FxHashMap::default(),
             cursor: (0, 0, 0),
             fonts: context.text_system(),
@@ -4222,6 +4225,25 @@ impl GpuRenderer {
         if let Some(bytes) = self.debug_device_allocated_bytes() {
             report.add("gpu", "device allocated", None, Some(bytes as usize));
         }
+    }
+    /// Whether the glyph atlas has grown past its first size
+    /// (`trim_atlas` gives that back).
+    pub fn atlas_grown(&self) -> bool {
+        self.atlas_size > INITIAL_ATLAS
+    }
+    /// Back to the glyph atlas's first size, for a window idle a long while:
+    /// up to 16 MB of the GPU's memory, grown for a page's peak. The next
+    /// frame rasterizes every glyph it draws again (28 ms for 4,000 glyphs
+    /// over a whole window, against 3), so not at every pause (`trim`).
+    pub fn trim_atlas(&mut self) {
+        if !self.atlas_grown() {
+            return;
+        }
+        self.flush_pending();
+        self.atlas_grew_to = self.atlas_size;
+        self.kept = None;
+        self.reset_atlas(INITIAL_ATLAS);
+        self.atlas_recycled_at = self.frame;
     }
     /// What its caches hold now.
     pub fn debug_cache_stats(&self) -> DebugCacheStats {
@@ -4576,7 +4598,10 @@ impl GpuRenderer {
                     if error.0 == "glyph atlas capacity exceeded in one frame"
                         && self.atlas_size < MAX_ATLAS =>
                 {
-                    self.reset_atlas((self.atlas_size * 2).min(MAX_ATLAS))
+                    // Back to the size it had reached, not a doubling at a
+                    // time, each of which rasterizes the frame's glyphs.
+                    let size = (self.atlas_size * 2).max(self.atlas_grew_to);
+                    self.reset_atlas(size.min(MAX_ATLAS))
                 }
                 result => return result,
             }

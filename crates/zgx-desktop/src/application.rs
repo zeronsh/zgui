@@ -1008,6 +1008,9 @@ impl Default for Application {
 /// A window that has presented nothing for this long releases animation-only
 /// renderer memory.
 const TRIM_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
+/// A window idle this long past that gives back a glyph atlas it grew: what
+/// it costs is a slow first frame, for someone who has been away a while.
+const ATLAS_TRIM_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 /// A window's frame is saved this long after it last moved or resized
 /// (`frame_autosave`, Linux): once for a drag, not for each of its steps.
 #[cfg(target_os = "linux")]
@@ -1495,6 +1498,8 @@ struct Host {
     /// When to release animation-only renderer memory if nothing presents
     /// before then (see `GpuRenderer::trim`).
     trim_at: Option<std::time::Instant>,
+    /// `trim_at` is for the glyph atlas (`ATLAS_TRIM_DELAY`).
+    trim_atlas: bool,
     /// When to save the window's frame (`frame_autosave`, Linux): once its
     /// moves and resizes settle.
     frame_save_at: Option<std::time::Instant>,
@@ -1846,6 +1851,7 @@ impl Host {
             #[cfg(target_os = "macos")]
             refresh_frame: false,
             trim_at: None,
+            trim_atlas: false,
             frame_save_at: None,
             startup_trim: StartupTrim::Pending,
             frame_timer: crate::frame_source::FrameTimer::new(std::time::Instant::now()),
@@ -2485,6 +2491,7 @@ impl Host {
                     self.present_ready = false;
                     let now = std::time::Instant::now();
                     self.trim_at = Some(now + TRIM_DELAY);
+                    self.trim_atlas = false;
                     // Startup's garbage (shader compilation, first layout)
                     // is freed once, even if the window never goes idle.
                     if self.startup_trim == StartupTrim::Pending {
@@ -4845,14 +4852,25 @@ impl Host {
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
             self.trim_at = None;
-            // Garbage scripts made (`zgx::idle`), first: what it frees,
-            // the trims below give back.
-            zgx::idle::trim(&self.context.ui.runtime);
-            if let Some(renderer) = &mut self.renderer {
-                renderer.trim();
+            if std::mem::take(&mut self.trim_atlas) {
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.trim_atlas();
+                }
+            } else {
+                // Garbage scripts made (`zgx::idle`), first: what it frees,
+                // the trims below give back.
+                zgx::idle::trim(&self.context.ui.runtime);
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.trim();
+                    // Only a window with an atlas to give back wakes again.
+                    if renderer.atlas_grown() {
+                        self.trim_at = Some(std::time::Instant::now() + ATLAS_TRIM_DELAY);
+                        self.trim_atlas = true;
+                    }
+                }
+                self.native.trim();
+                release_freed_heap();
             }
-            self.native.trim();
-            release_freed_heap();
         }
         loop {
             let task = self.pending.borrow_mut().pop_front();

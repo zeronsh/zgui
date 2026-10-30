@@ -5817,3 +5817,43 @@ fn find_marks_are_rounded_whichever_shader_draws_the_text() {
         .count();
     assert_eq!(changed, 0, "find marks differ from the full shader's");
 }
+
+/// A page of large text grows the glyph atlas past its first size. A pause
+/// keeps it (the next frame would rasterize everything again); a long idle
+/// gives it back, and the next frame draws the same picture, the atlas back
+/// at the size it had in one step.
+#[test]
+fn a_grown_atlas_goes_back_at_idle_and_draws_the_same() {
+    let _gpu = gpu_fixture();
+    let mut scene = Scene::new(1200., 900.);
+    let lines: Vec<String> = (0..5)
+        .map(|line| (0..14).map(|i| (b'A' + line * 5 + i % 5) as char).collect())
+        .collect();
+    for (i, text) in lines.iter().enumerate() {
+        scene.append(
+            scene.root(),
+            NodeKind::Text {
+                text: text.as_str().into(),
+                font_size: 120. + i as f32 * 7.,
+                color: Color(255, 255, 255, 255),
+            },
+            fixed(1200., 170.),
+        );
+    }
+    let mut gpu = GpuRenderer::new(1200, 900).unwrap();
+    let damage = scene.flush().damage;
+    gpu.render(&scene, &damage).unwrap();
+    let first_size = 512 * 512 * 4;
+    assert!(gpu.debug_cache_stats().atlas_bytes > first_size);
+    let before = gpu.readback().unwrap();
+    let grown = gpu.debug_cache_stats().atlas_bytes;
+    gpu.trim();
+    assert_eq!(gpu.debug_cache_stats().atlas_bytes, grown);
+    assert!(gpu.atlas_grown());
+    gpu.trim_atlas();
+    assert_eq!(gpu.debug_cache_stats().atlas_bytes, first_size);
+    let whole = [Rect::new(0., 0., 1200., 900.)];
+    gpu.render(&scene, &whole).unwrap();
+    assert_eq!(gpu.debug_cache_stats().atlas_bytes, grown);
+    assert!(gpu.readback().unwrap() == before, "the same picture");
+}
