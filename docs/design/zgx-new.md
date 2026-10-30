@@ -2,7 +2,7 @@
 
 Status: design, for 0.1.7.
 
-`zgx new <name> [--template basic|router|list|form] [--i18n]`
+`zgx new <name> [--template basic|router|list|form|plugins] [--i18n]`
 writes a Luau app that runs at once (`zgx run <name>`). Its four checks
 (`zgx check`, `zgx lint`, `zgx audit`, `zgx test`) are clean, and so is
 the CI workflow it ships with. It is what `npm create vite` is to a React
@@ -104,10 +104,9 @@ end)
     `ui.debounced` search, and `ui.each` reorder.
   - **form** (from settings): `ui.form` with validation, dirty tracking,
     submit, revert and a toast, saved to `ui.persist`.
-  - **plugins** (from plugins), once zgx-run loads plugins from
-    `zgx.json` (the app's `expose` and each plugin's `allow`, a PR of its
-    own): a hook target, `plugins/` with one
-    plugin, and `ui.contribute`.
+  - **plugins** (from plugins): `zgx.json`'s `expose` and the plugin's
+    `allow`, a hook target, `plugins/focus` adding beside it, filtering the
+    list and calling the app's `ui.actions` action.
 - **`--i18n`** writes `locales/` and swaps every literal string for
   `ui.t`. Every template has a source variant written that way, since a
   rewrite at scaffold time would be fragile.

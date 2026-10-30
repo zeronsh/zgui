@@ -27,7 +27,7 @@
 use std::{path::PathBuf, process::ExitCode};
 use zgx_script::check::{CheckError, Options, Report, check};
 
-const USAGE: &str = "usage: zgx new <name> [--template basic|router|list|form] [--i18n]
+const USAGE: &str = "usage: zgx new <name> [--template basic|router|list|form|plugins] [--i18n]
        zgx run [--inspect] <app.luau-or-dir> [args...]
        zgx check [--nonstrict] <file-or-dir>...
        zgx lint [--format text|json] <file-or-dir>...

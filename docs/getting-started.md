@@ -234,7 +234,7 @@ LUAU_CXXFLAGS=-DNDEBUG cargo install zgx-script --bin zgx
 The quickest start is an app made for you:
 
 ```sh
-zgx new my-app                     # or --template router, list or form; --i18n for ui.t messages
+zgx new my-app                     # or --template router, list, form or plugins; --i18n for ui.t
 cd my-app
 zgx run .                          # a window, reloading as you save
 zgx test                           # its tests, headless

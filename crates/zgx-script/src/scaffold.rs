@@ -24,6 +24,10 @@ pub const TEMPLATES: &[(&str, &str)] = &[
         "form",
         "a profile form: validation, dirty tracking, save, revert and a toast",
     ),
+    (
+        "plugins",
+        "tasks made to be extended: a plugin adds, filters and calls the app's action",
+    ),
 ];
 
 /// A file: where it goes in the app, and its text.
@@ -134,6 +138,34 @@ fn files(template: &str) -> Option<(Files, Files)> {
                 ),
             ],
         ),
+        "plugins" => (
+            &[
+                ("zgx.json", include_str!("../templates/plugins/zgx.json")),
+                ("app.luau", include_str!("../templates/plugins/app.luau")),
+                (
+                    "components/task_row.luau",
+                    include_str!("../templates/plugins/components/task_row.luau"),
+                ),
+                (
+                    "plugins/focus/init.luau",
+                    include_str!("../templates/plugins/plugins/focus/init.luau"),
+                ),
+                (
+                    "tests/app.test.luau",
+                    include_str!("../templates/plugins/tests/app.test.luau"),
+                ),
+            ],
+            &[
+                (
+                    "app.luau",
+                    include_str!("../templates/plugins/i18n/app.luau"),
+                ),
+                (
+                    "locales/en.json",
+                    include_str!("../templates/plugins/i18n/en.json"),
+                ),
+            ],
+        ),
         _ => return None,
     })
 }
@@ -220,13 +252,14 @@ pub fn create(dir: &Path, template: &str, i18n: bool) -> Result<Vec<PathBuf>, Ne
             .replace("{{template}}", template)
             .replace("{{version}}", env!("CARGO_PKG_VERSION"))
     };
-    let mut chosen: Vec<(&str, &str)> = COMMON.iter().chain(own.iter()).copied().collect();
-    if i18n {
-        for &(path, text) in translated {
-            match chosen.iter_mut().find(|(at, _)| *at == path) {
-                Some(file) => file.1 = text,
-                None => chosen.push((path, text)),
-            }
+    // A template's own file takes a common one's place (the plugins
+    // template's zgx.json), as a translated one takes its own's.
+    let mut chosen: Vec<(&str, &str)> = COMMON.to_vec();
+    let layers: &[Files] = if i18n { &[own, translated] } else { &[own] };
+    for &(path, text) in layers.iter().copied().flatten() {
+        match chosen.iter_mut().find(|(at, _)| *at == path) {
+            Some(file) => file.1 = text,
+            None => chosen.push((path, text)),
         }
     }
     let mut written = Vec::new();
