@@ -434,7 +434,7 @@ end)
 - **Failures** name the test file's line: an `expect` that fails, a target that matches nothing, an unknown key.
 - **Targets are devtools' own** (`zgx inspect`): `#id`, `"label or text"`, `role:button`, `role:checkbox "Done"`, `#list row 3`, `"Copy"[2]`, `#dialog >> "OK"`.
 - **An app's methods:**
-  - acting: `click`, `type` (click a field and type), `fill` (replace its whole text), `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)` and `command(id)` (a `ui.command`);
+  - acting: `click`, `type` (click a field and type), `fill` (replace its whole text), `drag(from, to)`, `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)` and `command(id)` (a `ui.command`);
   - reading: `text`, `has`, `count` and `tree`;
   - waiting: `frames(n)`, and `wait(target, { text?, gone?, timeout_ms? })`, which delivers frames until the target shows (holding `text`) or is gone and answers whether it did;
   - state: `state(name)` and `set_state(name, value)`;

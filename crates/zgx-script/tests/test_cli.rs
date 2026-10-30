@@ -44,6 +44,38 @@ fn run(dir: &PathBuf, args: &[&str]) -> (Option<i32>, String) {
 }
 
 #[test]
+fn a_test_drags_one_node_onto_another() {
+    let dir = app(
+        "drag",
+        &[(
+            "drag.test.luau",
+            r##"
+test("a card lands", function()
+    local app = mount()
+    app:drag("#card", "#bin")
+    expect(app:state("landed")).to_be("card")
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("app.luau"),
+        r##"local landed = ui.state("landed", "none")
+return ui.column {
+    w = 300, h = 200,
+    ui.column { id = "card", w = 100, h = 40, on_drag = function() return "card" end },
+    ui.column { id = "bin", w = 100, h = 40,
+        on_drop = function(payload: string) landed:set(payload) end },
+}
+"##,
+    )
+    .unwrap();
+    let (code, text) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{text}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",

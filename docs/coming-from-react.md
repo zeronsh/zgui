@@ -20,6 +20,7 @@ Every example on this page runs, and type checks in strict mode, as part of zgx-
 | `useMemo(() => f(a, b), [a, b])` | `ui.computed(function() return f(a:get(), b:get()) end)`: dependencies are what it reads |
 | `useEffect(() => { … return cleanup }, [deps])` | `ui.effect(function() … ui.on_cleanup(cleanup) end)`: re-runs when what it read changes |
 | `useEffect(() => …, [])` | `ui.on_mount(f)` |
+| reading state without subscribing (a store's `getState()`, Solid's `untrack`) | `count:peek()` |
 | `useRef(null)` on an element | `local el = ui.ref()`, `ref = el`, `el:peek():focus()` |
 | `useRef(value)` for a mutable value | a plain Luau local in the component's build |
 | `createContext` / `useContext` | `provide = { user = user }` on a node, `ui.use_context("user")` in a component below |

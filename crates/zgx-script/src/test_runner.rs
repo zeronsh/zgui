@@ -268,6 +268,17 @@ impl UserData for Mounted {
             app.settle();
             Ok(())
         });
+        methods.add_method("drag", |_, m, (from, to): (String, String)| {
+            let mut app = m.0.borrow_mut();
+            let (from, to) = (Self::node(&mut app, &from)?, Self::node(&mut app, &to)?);
+            let (from, to) = {
+                let scene = app.ui.scene.borrow();
+                (scene.bounds(from), scene.bounds(to))
+            };
+            crate::driver::drag(&mut app.ui, from, to);
+            app.settle();
+            Ok(())
+        });
         methods.add_method("key", |_, m, keys: String| {
             let mut app = m.0.borrow_mut();
             let (key, modifiers) =

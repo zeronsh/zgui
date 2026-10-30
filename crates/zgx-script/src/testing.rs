@@ -34,7 +34,7 @@ use std::{
 use zgx::{
     compose::{TaskRunner, View, ViewHandle, provide},
     frame::{Frame, FrameClock},
-    input::{InputEvent, Key, Modifiers, PointerButton},
+    input::{InputEvent, Key, Modifiers},
     reactive::Runtime,
     scene::{NodeId, NodeKind, Rect},
     task::LocalExecutor,
@@ -484,20 +484,7 @@ impl TestApp {
     /// `to`'s middle (its upper half: a reorderable row drops above it).
     pub fn drag(&mut self, from: &str, to: &str) {
         let (a, b) = (self.bounds(from), self.bounds(to));
-        let (x, y) = (a.x + a.width.min(12.), a.y + a.height.min(12.) / 2.);
-        let (tx, ty) = (b.x + b.width / 2., b.y + b.height / 3.);
-        let button = PointerButton::Primary;
-        self.ui.dispatch(InputEvent::PointerDown { x, y, button });
-        self.ui.dispatch(InputEvent::PointerMove {
-            x: x + 16.,
-            y: y + 8.,
-        });
-        self.ui.dispatch(InputEvent::PointerMove { x: tx, y: ty });
-        self.ui.dispatch(InputEvent::PointerUp {
-            x: tx,
-            y: ty,
-            button,
-        });
+        crate::driver::drag(&mut self.ui, a, b);
         self.settle();
     }
     /// Press and release `key`, with `modifiers`, wherever focus is.
