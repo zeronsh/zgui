@@ -24,7 +24,7 @@
 //! and after is open, `"open"`). Each plugin's side, `allow`, is what it is
 //! granted, never more than `expose` offers: `shared:<key>`,
 //! `action:<name>`, `override:<target or @app/module>`, and the sandbox's
-//! `fetch`, `clipboard`, `files`, `terminals`, `web` and `windows`. A grant
+//! `fetch`, `clipboard`, `files`, `folders`, `terminals`, `web` and `windows`. A grant
 //! beyond what is exposed is an error as the app loads, naming the plugin
 //! and the grant.
 use crate::{Capability, Plugin, ScriptHost};
@@ -218,6 +218,7 @@ pub fn from_object(dir: &Path, object: &Map<String, Value>) -> Result<AppHost, S
                         "fetch" => Capability::Fetch,
                         "clipboard" => Capability::Clipboard,
                         "files" => Capability::Files,
+                        "folders" => Capability::Folders,
                         "terminals" => Capability::Terminals,
                         "web" => Capability::Web,
                         "windows" => Capability::Windows,

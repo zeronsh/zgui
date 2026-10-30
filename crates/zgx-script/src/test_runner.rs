@@ -426,6 +426,10 @@ impl UserData for Mounted {
             m.desktop().pick(files.collect::<mlua::Result<Vec<_>>>()?);
             Ok(())
         });
+        methods.add_method("pick_folder", |_, m, name: String| {
+            m.desktop().pick_folder(m.files.path(&name)?);
+            Ok(())
+        });
         methods.add_method("save_to", |_, m, name: String| {
             m.desktop().save_to(m.files.path(&name)?);
             Ok(())

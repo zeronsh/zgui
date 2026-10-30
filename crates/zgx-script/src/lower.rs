@@ -1624,7 +1624,7 @@ fn quick(item: &Value) -> Quick {
         Value::Text(t) => Quick::Str(t.to_cow().into()),
         Value::List(l) => Quick::At(Rc::as_ptr(l).cast::<()>() as usize),
         Value::Map(m) => Quick::At(Rc::as_ptr(m).cast::<()>() as usize),
-        Value::Element(e) => Quick::At(Rc::as_ptr(&e.0).cast::<()>() as usize),
+        Value::Element(e) => Quick::At(e.address()),
         Value::Image(image) => Quick::At(std::sync::Arc::as_ptr(image).cast::<()>() as usize),
     }
 }

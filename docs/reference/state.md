@@ -40,6 +40,7 @@ ui.open_files(opts: FilePickerOptions?) -> Promise<{ File }>
 ui.save_file(opts: FilePickerOptions?) -> Promise<File?>
 ui.read_file(file: File | string) -> Promise<string>
 ui.write_file(file: File | string, text: string) -> Promise<nil>
+ui.open_folder(opts: FilePickerOptions?) -> Promise<Folder?>
 ui.args: { string }
 ui.on_open(handler: (e: { files: { File }, urls: { string } }) -> ())
 ```
@@ -330,6 +331,47 @@ return ui.column {
 	},
 }
 ```
+
+### Folders
+
+`ui.open_folder()` shows the system's folder dialog and settles with a `Folder`, or nil if the person cancels. Only that dialog makes one, as a browser's `showDirectoryPicker` does: a script can't build a handle from a path or a table, and a handle can be kept in state.
+
+```lua
+local folder = ui.state("folder", nil :: Folder?)
+local function open()
+	ui.task(function()
+		local picked = ui.open_folder({ title = "Open a vault" }):await()
+		if not picked then
+			return
+		end
+		folder:set(picked)
+		for _, entry in picked:list("", { recursive = true }):await() do
+			if entry.kind == "file" and string.find(entry.name, "%.md$") then
+				print(entry.path, entry.size, picked:read(entry.path):await())
+			end
+		end
+		picked:write("notes/new.md", "# New"):await()
+	end)
+end
+return ui.button { "Open a vault", on_click = open }
+```
+
+| Member | |
+| --- | --- |
+| `name` | the folder's own name |
+| `list(path?, { recursive?, limit? })` | a promise of `{ name, path, kind, size, modified }`: `path` from the root, `kind` `"file"` or `"folder"`, `modified` in milliseconds since 1970, by name, depth first. `limit` stops it (100,000 by default) |
+| `read(path)` | a promise of a text file's contents |
+| `write(path, text)` | a promise settled once the file is replaced whole: its folders made, a temporary file beside it renamed over it, its permissions kept. A failure leaves the old file as it was |
+
+Everything runs off the main thread, and a failure is a `UiError`: `kind` `"denied"` for a path the handle refuses, `"io"` for what the system says.
+
+**What a handle can't reach:** paths are relative with `/` between their parts, so `..`, `.`, an absolute path, a drive and a backslash are refused. A symbolic link counts as where it leads: a link leading out of the folder is refused, left out of `list`, and not written through, and a link inside it is read but not entered by `recursive` (links can loop). It holds no delete or rename. A hard link can't be told from a file, so one made outside the app does reach out, and a link swapped by another process between the check and the open is out of its hands: the guarantee is against scripts, which can make neither.
+
+**Who gets one:** a plugin only with the `folders` grant (`zgx.json`, or `ScriptHost::grant(plugin, Capability::Folders)`). A Rust host can refuse it to every script, the app's own too, with `ScriptHost::refuse_folders()`, and a platform without a folder dialog settles with an error.
+
+**A handle lasts the run.** It isn't saved by `ui.persist` and doesn't survive a relaunch, so an app asks again. On macOS, a sandboxed app needs the `com.apple.security.files.user-selected.read-write` entitlement for the dialog's folder to be readable at all, and to reopen one after a relaunch it would need a security-scoped bookmark (`com.apple.security.files.bookmarks.app-scope`, and `startAccessingSecurityScopedResource` around each use). zgx doesn't build bookmarks yet.
+
+In a test, `app:pick_folder(name)` answers the next dialog with a folder of the test's own files ([testing](../scripting.md#testing-an-app)).
 
 ### The clipboard and files
 

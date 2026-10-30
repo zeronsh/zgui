@@ -30,6 +30,8 @@ declare extern type TestApp with
 	-- The next `ui.open_files` picks these files, the next `ui.save_file` saves
 	-- to this one. Names are in a directory of this app's own, gone with it.
 	function pick(self, names: { string }): ()
+	-- The next `ui.open_folder` picks this folder.
+	function pick_folder(self, name: string): ()
 	function save_to(self, name: string): ()
 	-- A file of that directory, written for a dialog to pick, or read after
 	-- the app saved it.

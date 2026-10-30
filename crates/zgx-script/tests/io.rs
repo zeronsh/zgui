@@ -183,6 +183,38 @@ fn a_plugin_needs_its_hosts_grant() {
     );
     let error = h.host.error().get().unwrap_or_default();
     assert!(error.contains("Capability::Clipboard"), "{error}");
+    let h = app(
+        &dir,
+        r#"return ui.text { "app", id = "label" }"#,
+        Some(r#"ui.open_folder()"#),
+    );
+    let error = h.host.error().get().unwrap_or_default();
+    assert!(error.contains("Capability::Folders"), "{error}");
+}
+
+#[test]
+fn a_host_can_refuse_folders_to_every_script() {
+    let mut h = Harness::with_desktop(|runtime| {
+        ScriptHost::inline(
+            runtime,
+            "app",
+            r#"local said = ui.state("said", "")
+            return ui.column {
+                ui.button { id = "open", w = 40, h = 20, "o", on_click = function()
+                    ui.task(function()
+                        local ok, failure = ui.try(function() return ui.open_folder():await() end)
+                        said:set(if ok then "opened" else failure.kind)
+                    end)
+                end },
+                ui.text { id = "label", "{said}" },
+            }"#,
+        )
+        .refuse_folders()
+    });
+    h.desktop.clone().unwrap().pick_folder(std::env::temp_dir());
+    h.click("open");
+    wait_for(&mut h, "denied");
+    assert!(h.desktop.clone().unwrap().asked().is_empty(), "no dialog");
 }
 
 #[test]
