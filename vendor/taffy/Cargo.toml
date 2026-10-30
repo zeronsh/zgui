@@ -63,6 +63,7 @@ rustdoc-args = [
 alloc = ["serde?/alloc"]
 block_layout = []
 calc = []
+calc_tracks = ["calc"]
 content_size = []
 debug = ["std"]
 default = [
@@ -72,6 +73,7 @@ default = [
     "grid",
     "block_layout",
     "calc",
+    "calc_tracks",
     "content_size",
     "detailed_layout_info",
 ]

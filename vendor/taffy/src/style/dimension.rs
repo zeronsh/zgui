@@ -176,7 +176,8 @@ impl LengthPercentageAuto {
             CompactLength::PERCENT_TAG => Some(context * self.0.value()),
             CompactLength::AUTO_TAG => None,
             #[cfg(feature = "calc")]
-            _ if self.0.is_calc() => Some(self.0.resolved_calc(context, calc_resolver)),
+            _ => self.0.resolved_calc(Some(context), calc_resolver),
+            #[cfg(not(feature = "calc"))]
             _ => unreachable!("LengthPercentageAuto values cannot be constructed with other tags"),
         }
     }

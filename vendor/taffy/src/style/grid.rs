@@ -735,7 +735,7 @@ impl MaxTrackSizingFunction {
     ///
     /// The low 3 bits are used as a tag value and will be returned as 0.
     #[inline]
-    #[cfg(feature = "calc")]
+    #[cfg(feature = "calc_tracks")]
     pub fn calc(ptr: *const ()) -> Self {
         Self(CompactLength::calc(ptr))
     }
@@ -809,7 +809,7 @@ impl MaxTrackSizingFunction {
         match self.0.tag() {
             CompactLength::LENGTH_TAG => true,
             CompactLength::PERCENT_TAG => parent_size.is_some(),
-            #[cfg(feature = "calc")]
+            #[cfg(feature = "calc_tracks")]
             _ if self.0.is_calc() => parent_size.is_some(),
             _ => false,
         }
@@ -827,8 +827,8 @@ impl MaxTrackSizingFunction {
         match self.0.tag() {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => parent_size.map(|size| self.0.value() * size),
-            #[cfg(feature = "calc")]
-            _ if self.0.is_calc() => parent_size.map(|size| self.0.resolved_calc(size, calc_resolver)),
+            #[cfg(feature = "calc_tracks")]
+            _ if self.0.is_calc() => self.0.resolved_calc(parent_size, calc_resolver),
             _ => None,
         }
     }
@@ -982,7 +982,7 @@ impl MinTrackSizingFunction {
     ///
     /// The low 3 bits are used as a tag value and will be returned as 0.
     #[inline]
-    #[cfg(feature = "calc")]
+    #[cfg(feature = "calc_tracks")]
     pub fn calc(ptr: *const ()) -> Self {
         Self(CompactLength::calc(ptr))
     }
@@ -1048,8 +1048,8 @@ impl MinTrackSizingFunction {
         match self.0.tag() {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => parent_size.map(|size| self.0.value() * size),
-            #[cfg(feature = "calc")]
-            _ if self.0.is_calc() => parent_size.map(|size| self.0.resolved_calc(size, calc_resolver)),
+            #[cfg(feature = "calc_tracks")]
+            _ if self.0.is_calc() => self.0.resolved_calc(parent_size, calc_resolver),
             _ => None,
         }
     }
@@ -1068,11 +1068,11 @@ impl MinTrackSizingFunction {
     /// Whether the track sizing functions depends on the size of the parent node
     #[inline(always)]
     pub fn uses_percentage(self) -> bool {
-        #[cfg(feature = "calc")]
+        #[cfg(feature = "calc_tracks")]
         {
             matches!(self.0.tag(), CompactLength::PERCENT_TAG) || self.0.is_calc()
         }
-        #[cfg(not(feature = "calc"))]
+        #[cfg(not(feature = "calc_tracks"))]
         {
             matches!(self.0.tag(), CompactLength::PERCENT_TAG)
         }

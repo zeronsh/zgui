@@ -33,7 +33,9 @@ caches as they were.
    points at (`style::CalcValue`), where taffy gave 0 unless a tree of its
    own overrode it. Each resolve in `src/style` and `src/util/resolve.rs`
    goes through `CompactLength::resolved_calc`, out of line and `#[cold]`,
-   so that plain lengths don't pay for the call.
+   so that plain lengths don't pay for the call. Calc in grid tracks, which
+   zgx never writes, is the `calc_tracks` feature: track sizing reads tags
+   often enough to pay for the test.
 
 Drop the fork when a taffy release keeps the gaps and keys children's
 results by their parent's layout mode (the zgx tests are
