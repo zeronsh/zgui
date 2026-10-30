@@ -104,6 +104,70 @@ fn placement(start: Option<i16>, count: Option<u16>, full: bool) -> t::Line<t::G
         end: count.map_or(t::GridPlacement::Auto, |v| span(v.max(1))),
     }
 }
+/// `tracks` as taffy's list.
+#[cold]
+fn tracks(tracks: &crate::grid_tracks::GridTracks) -> Vec<t::GridTemplateComponent<String>> {
+    use crate::grid_tracks::{Track, TrackBreadth as B, TrackRepeat, TrackSize};
+    fn min(size: B) -> t::MinTrackSizingFunction {
+        match size {
+            B::Points(v) => t::MinTrackSizingFunction::length(v),
+            B::Percent(v) => t::MinTrackSizingFunction::percent(v),
+            B::Fr(_) | B::Auto => t::MinTrackSizingFunction::auto(),
+            B::MinContent => t::MinTrackSizingFunction::min_content(),
+            B::MaxContent => t::MinTrackSizingFunction::max_content(),
+        }
+    }
+    fn max(size: B) -> t::MaxTrackSizingFunction {
+        match size {
+            B::Points(v) => t::MaxTrackSizingFunction::length(v),
+            B::Percent(v) => t::MaxTrackSizingFunction::percent(v),
+            B::Fr(v) => t::MaxTrackSizingFunction::fr(v),
+            B::Auto => t::MaxTrackSizingFunction::auto(),
+            B::MinContent => t::MaxTrackSizingFunction::min_content(),
+            B::MaxContent => t::MaxTrackSizingFunction::max_content(),
+        }
+    }
+    fn size(size: TrackSize) -> t::TrackSizingFunction {
+        let (lower, upper) = match size {
+            TrackSize::Is(size) => (min(size), max(size)),
+            TrackSize::MinMax(lower, upper) => (min(lower), max(upper)),
+            TrackSize::FitContent(limit) => (
+                t::MinTrackSizingFunction::auto(),
+                match limit {
+                    B::Percent(v) => t::MaxTrackSizingFunction::fit_content_percent(v),
+                    B::Points(v) => t::MaxTrackSizingFunction::fit_content_px(v),
+                    _ => t::MaxTrackSizingFunction::auto(),
+                },
+            ),
+        };
+        taffy::style_helpers::minmax(lower, upper)
+    }
+    tracks
+        .0
+        .iter()
+        .map(|track| match track {
+            Track::Size(track) => t::GridTemplateComponent::Single(size(*track)),
+            Track::Repeat(times, sizes) => {
+                let count = match times {
+                    TrackRepeat::Times(times) => t::RepetitionCount::Count(*times),
+                    TrackRepeat::AutoFill => t::RepetitionCount::AutoFill,
+                    TrackRepeat::AutoFit => t::RepetitionCount::AutoFit,
+                };
+                taffy::style_helpers::repeat(count, sizes.iter().copied().map(size).collect())
+            }
+        })
+        .collect()
+}
+/// `output` with `template`'s track lists, over its equal ones.
+#[cold]
+fn grid_template(output: &mut t::Style, template: &crate::grid_tracks::GridTemplate) {
+    if let Some(columns) = &template.columns {
+        output.grid_template_columns = tracks(columns);
+    }
+    if let Some(rows) = &template.rows {
+        output.grid_template_rows = tracks(rows);
+    }
+}
 fn style(style: &Style, layout: Layout, leaf: bool) -> t::Style {
     let options = style.layout_options.as_deref().copied().unwrap_or_default();
     style_with(style, options, layout, leaf)
@@ -657,6 +721,9 @@ impl Scene {
         mapping_options.min_height = None;
         mapping_options.max_height = None;
         let mut mapped = style_with(&root_style, mapping_options, layout, false);
+        if let Some(template) = self.grid_template(id) {
+            grid_template(&mut mapped, template);
+        }
         mapped.position = t::Position::Relative;
         mapped.margin = taffy::style_helpers::zero();
         mapped.inset = t::Rect::auto();

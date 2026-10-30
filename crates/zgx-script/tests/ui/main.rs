@@ -17,6 +17,8 @@ mod editor_props;
 mod failures;
 #[path = "../file_drop.rs"]
 mod file_drop;
+#[path = "../grid_tracks.rs"]
+mod grid_tracks;
 #[path = "../i18n_script.rs"]
 mod i18n_script;
 #[path = "../idle_gc.rs"]

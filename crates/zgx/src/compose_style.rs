@@ -1773,6 +1773,12 @@ fn apply_resolved(
     }
     let mut scene = ui.scene.borrow_mut();
     scene.set_style(node, style.clone());
+    // On what lays the children out: a scroll view's content.
+    let cold = resolved.rare().cold.as_deref();
+    if cold.is_some() || scene.has_grid_templates() {
+        let template = cold.and_then(|cold| cold.grid_template.as_ref());
+        scene.set_grid_template(content_layout.unwrap_or(node), template);
+    }
     if let Some(direction) = resolved.rare().direction {
         scene.set_direction(node, Some(direction));
     }
@@ -1908,14 +1914,14 @@ fn apply_resolved(
         scene.set_font(node, current.font.clone());
     }
     scene.set_kind(node, kind);
-    if let Some(uniforms) = resolved.rare().shader_uniforms {
-        scene.set_shader_uniforms(node, uniforms);
+    if let Some(uniforms) = cold.and_then(|cold| cold.shader_uniforms.as_ref()) {
+        scene.set_shader_uniforms(node, *uniforms);
     }
     if let Some(shader) = &resolved.rare().layer_shader {
         scene.set_layer_shader(node, shader.clone());
     }
-    if let Some(uniforms) = resolved.rare().layer_uniforms {
-        scene.set_layer_uniforms(node, uniforms);
+    if let Some(uniforms) = cold.and_then(|cold| cold.layer_uniforms.as_ref()) {
+        scene.set_layer_uniforms(node, *uniforms);
     }
     if let Some(mode) = resolved.rare().blend {
         scene.set_blend(node, mode);

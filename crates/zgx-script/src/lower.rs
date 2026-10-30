@@ -4985,6 +4985,19 @@ impl mlua::FromLua for ComputedColor {
         }
     }
 }
+/// A value `lit` wouldn't take: a track list that can't be read says why,
+/// where a literal one would have stopped the script (`node::source`).
+#[cold]
+#[inline(never)]
+fn refused(value: &Value, ty: Ty, vm: &Vm) -> Option<Lit> {
+    if ty == Ty::Tracks
+        && let Value::Str(text) = value
+        && let Err(why) = text.parse::<zgx::grid_tracks::GridTracks>()
+    {
+        vm.report(mlua::Error::runtime(format!("a grid's tracks: {why}")));
+    }
+    None
+}
 fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
     match source {
         Owned::Lit(l) => Some(l.clone()),
@@ -4993,7 +5006,7 @@ fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Opt
             .props
             .iter()
             .find_map(|(p, l)| (p == prop).then(|| l.clone())),
-        Owned::State(s) => s.with(|v| lit(v, ty)),
+        Owned::State(s) => s.with(|v| lit(v, ty).or_else(|| refused(v, ty, vm))),
         // A colour or a number (most computed styles): read from what the
         // function returned as it is, without making a `Value` of it first.
         Owned::Computed(f, cache) if matches!(ty, Ty::Color | Ty::Num) => {
@@ -5027,7 +5040,7 @@ fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Opt
             .call::<Value>(f, ())
             .map_err(|e| vm.report(e))
             .ok()
-            .and_then(|v| lit(&v, ty)),
+            .and_then(|v| lit(&v, ty).or_else(|| refused(&v, ty, vm))),
         Owned::Anim(from, to) => {
             let t = scalar?.get();
             match (from, to) {
@@ -6445,6 +6458,16 @@ fn align(v: &str) -> Align {
     }
 }
 
+/// A grid's track list, checked as it came in (`node::lit`).
+#[cold]
+#[inline(never)]
+fn track_list<S: Styled>(s: S, prop: Prop, list: &str) -> S {
+    match list.parse() {
+        Ok(tracks) if prop == Prop::Cols => s.grid_template_columns(tracks),
+        Ok(tracks) => s.grid_template_rows(tracks),
+        Err(_) => s,
+    }
+}
 fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
     use Prop::*;
     if let Lit::Token(token) = lit {
@@ -6578,6 +6601,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Grid, Lit::Bool(true)) => s.grid(),
         (Cols, Lit::Num(v)) => s.grid_cols(v.max(1.) as u16),
         (Rows, Lit::Num(v)) => s.grid_rows(v.max(1.) as u16),
+        (Cols | Rows, Lit::Str(list)) => track_list(s, prop, list),
         (ColStart, Lit::Num(v)) => s.col_start(*v as i16),
         (RowStart, Lit::Num(v)) => s.row_start(*v as i16),
         (ColSpan, Lit::Num(v)) => s.col_span(v.max(1.) as u16),

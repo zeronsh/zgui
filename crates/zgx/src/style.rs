@@ -718,6 +718,18 @@ impl TransformPatch {
 /// Properties few views set, kept apart and shared so that every `Styles`
 /// (a view's, its node's style effect's and that effect's memo) stays small:
 /// a `Styles` is copied and compared on every re-run.
+/// The largest of what `RareStyles` holds, and what few of the styles that
+/// have one set: apart, so a node with a `min_width` doesn't carry a
+/// shader's uniforms (144 of its bytes) on each copy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ColdStyles {
+    /// `Styled::shader_uniforms`.
+    pub(crate) shader_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// `Styled::layer_uniforms`.
+    pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// `Styled::grid_template_columns` and `grid_template_rows`.
+    pub(crate) grid_template: Option<std::sync::Arc<crate::grid_tracks::GridTemplate>>,
+}
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
     pub(crate) min_width: Option<f32>,
@@ -738,8 +750,8 @@ pub(crate) struct RareStyles {
     /// `Styled::outline`, `outline_offset` (width and colour; offset).
     pub(crate) outline: Option<Option<(f32, Color)>>,
     pub(crate) outline_offset: Option<f32>,
-    /// `Styled::shader_uniforms`.
-    pub(crate) shader_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// What fewer styles still set (`ColdStyles`).
+    pub(crate) cold: Option<Box<ColdStyles>>,
     pub(crate) shadows: Option<Option<std::sync::Arc<[BoxShadow]>>>,
     /// `Styled::inset_shadows`.
     pub(crate) inset_shadows: Option<Option<std::sync::Arc<[BoxShadow]>>>,
@@ -758,7 +770,6 @@ pub(crate) struct RareStyles {
     pub(crate) mask: Option<Option<MaskImage>>,
     /// `Styled::layer_shader`, `layer_uniforms`.
     pub(crate) layer_shader: Option<Option<std::sync::Arc<crate::decoration::FillShader>>>,
-    pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
     /// `Styled::blend`.
     pub(crate) blend: Option<crate::scene::BlendMode>,
     /// `Styled::relative`: a containing block for absolute descendants.
@@ -793,7 +804,7 @@ impl RareStyles {
         border_over: None,
         outline: None,
         outline_offset: None,
-        shader_uniforms: None,
+        cold: None,
         shadows: None,
         inset_shadows: None,
         clip_feather: None,
@@ -807,7 +818,6 @@ impl RareStyles {
         font_fallbacks: None,
         mask: None,
         layer_shader: None,
-        layer_uniforms: None,
         blend: None,
         relative: None,
         zoom: None,
@@ -856,8 +866,28 @@ impl RareStyles {
         if other.outline_offset.is_some() {
             self.outline_offset = other.outline_offset;
         }
-        if other.shader_uniforms.is_some() {
-            self.shader_uniforms = other.shader_uniforms;
+        if let Some(theirs) = &other.cold {
+            let mine = self.cold.get_or_insert_default();
+            if theirs.shader_uniforms.is_some() {
+                mine.shader_uniforms = theirs.shader_uniforms;
+            }
+            if theirs.layer_uniforms.is_some() {
+                mine.layer_uniforms = theirs.layer_uniforms;
+            }
+            if let Some(template) = &theirs.grid_template {
+                match &mut mine.grid_template {
+                    Some(mine) => {
+                        let mine = std::sync::Arc::make_mut(mine);
+                        if template.columns.is_some() {
+                            mine.columns = template.columns.clone();
+                        }
+                        if template.rows.is_some() {
+                            mine.rows = template.rows.clone();
+                        }
+                    }
+                    None => mine.grid_template = Some(template.clone()),
+                }
+            }
         }
         if other.border_style.is_some() {
             self.border_style = other.border_style;
@@ -900,9 +930,6 @@ impl RareStyles {
         }
         if other.layer_shader.is_some() {
             self.layer_shader = other.layer_shader.clone();
-        }
-        if other.layer_uniforms.is_some() {
-            self.layer_uniforms = other.layer_uniforms;
         }
         if other.blend.is_some() {
             self.blend = other.blend;
@@ -1388,6 +1415,21 @@ pub trait Styled: Sized {
         self.styles_mut().layout_options_mut().aspect_ratio = Some(value);
         self
     }
+    /// A grid's columns of any size (CSS `grid-template-columns`), over
+    /// `grid_cols`: `"220 1fr auto".parse()`.
+    fn grid_template_columns(mut self, tracks: crate::grid_tracks::GridTracks) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).columns = Some(std::sync::Arc::new(tracks));
+        self
+    }
+    /// A grid's rows of any size (CSS `grid-template-rows`), over `grid_rows`.
+    fn grid_template_rows(mut self, tracks: crate::grid_tracks::GridTracks) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).rows = Some(std::sync::Arc::new(tracks));
+        self
+    }
     /// A grid's number of equal columns (at least 1).
     fn grid_cols(mut self, value: u16) -> Self {
         self.styles_mut().layout_options_mut().columns = Some(value.max(1));
@@ -1871,7 +1913,11 @@ pub trait Styled: Sized {
     /// Animating them per frame repaints the view alone (or set them with
     /// `Scene::set_shader_uniforms` directly, skipping style resolution).
     fn shader_uniforms(mut self, uniforms: crate::decoration::ShaderUniforms) -> Self {
-        self.styles_mut().rare_mut().shader_uniforms = Some(uniforms);
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .shader_uniforms = Some(uniforms);
         self
     }
     /// Round each corner by its own radius; replaces `rounded`.
@@ -2197,7 +2243,11 @@ pub trait Styled: Sized {
     /// The uniforms its `layer_shader` draws with: time and user parameters
     /// (or set them with `Scene::set_layer_uniforms` directly).
     fn layer_uniforms(mut self, uniforms: crate::decoration::ShaderUniforms) -> Self {
-        self.styles_mut().rare_mut().layer_uniforms = Some(uniforms);
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .layer_uniforms = Some(uniforms);
         self
     }
     /// Clip the view and its descendants to its box inset by these pixels

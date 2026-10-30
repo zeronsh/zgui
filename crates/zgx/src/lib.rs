@@ -87,6 +87,7 @@ pub mod canvas;
 
 pub mod animation;
 
+pub mod grid_tracks;
 pub mod layout;
 
 pub mod image_cache;

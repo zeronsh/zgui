@@ -1366,6 +1366,8 @@ pub(crate) enum Ty {
     Pair,
     /// Points, `"50%"` or `"auto"`.
     Len,
+    /// A grid's equal tracks (a number) or a track list (`"220 1fr auto"`).
+    Tracks,
     Shadow,
     Gradient,
     Corners,
@@ -1381,7 +1383,7 @@ macro_rules! props {
             }
             /// Numbers, lengths and colors interpolate; the rest switch.
             pub(crate) fn animatable(self) -> bool {
-                matches!(self.ty(), Ty::Num | Ty::Color | Ty::Pair | Ty::Len)
+                matches!(self.ty(), Ty::Num | Ty::Color | Ty::Pair | Ty::Len | Ty::Tracks)
             }
             pub fn ty(self) -> Ty {
                 match self { $(Prop::$variant => Ty::$ty),* }
@@ -1414,7 +1416,7 @@ props! {
     "direction" => Direction: Str, "grow" => Grow: Num, "shrink" => Shrink: Num, "basis" => Basis: Len,
     "flex_wrap" => FlexWrap: Bool, "wrap_reverse" => WrapReverse: Bool,
     "items" => Items: Str, "justify" => Justify: Str, "self" => AlignSelf: Str, "content" => AlignContent: Str,
-    "grid" => Grid: Bool, "cols" => Cols: Num, "rows" => Rows: Num,
+    "grid" => Grid: Bool, "cols" => Cols: Tracks, "rows" => Rows: Tracks,
     "col_start" => ColStart: Num, "row_start" => RowStart: Num, "col_span" => ColSpan: Num, "row_span" => RowSpan: Num,
     "col_span_full" => ColSpanFull: Bool, "row_span_full" => RowSpanFull: Bool,
     "overflow" => Overflow: Str, "overflow_x" => OverflowX: Str, "overflow_y" => OverflowY: Str,
@@ -2044,6 +2046,11 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
         }
         (Ty::Pair, Value::Num(n)) => Lit::Pair(*n as f32, *n as f32),
         (Ty::Len, v) => Lit::Len(length(v)?),
+        (Ty::Tracks, Value::Str(s)) => {
+            s.parse::<zgx::grid_tracks::GridTracks>().ok()?;
+            Lit::Str(s.clone())
+        }
+        (Ty::Tracks, v) => Lit::Num(v.as_f64()? as f32),
         (Ty::Shadow, Value::List(items)) => {
             Lit::Shadows(items.iter().map(shadow).collect::<Option<Vec<_>>>()?.into())
         }
@@ -2144,6 +2151,11 @@ fn source_linted(
                 None => {
                     let value = lua.unpack::<Value>(other)?;
                     lit(&value, ty).ok_or_else(|| {
+                        if let (Ty::Tracks, Value::Str(s)) = (ty, &value)
+                            && let Err(why) = s.parse::<zgx::grid_tracks::GridTracks>()
+                        {
+                            return mlua::Error::runtime(format!("`{name}`: {why}"));
+                        }
                         mlua::Error::runtime(format!("`{name}` expects a {ty:?}, got {value:?}"))
                     })?
                 }

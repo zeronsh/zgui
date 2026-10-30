@@ -2724,6 +2724,9 @@ pub struct Scene {
     /// (`laid_out_style`: it runs right to left, or sets a line's start or
     /// end): `Scene::style` returns it.
     given_styles: NodeMap<Style>,
+    /// Track lists of grids that have them (`set_grid_template`), by node:
+    /// freed with it, none kept for a list no node has any more.
+    grid_templates: NodeMap<Arc<crate::grid_tracks::GridTemplate>>,
     /// Directions nodes set themselves (`set_direction`); others inherit.
     directions: NodeMap<Direction>,
     /// Layer shaders and their uniforms, by node (`set_layer_shader`):
@@ -2890,6 +2893,7 @@ impl Scene {
             cursor_styles: 0,
             contents_styles: Default::default(),
             given_styles: Default::default(),
+            grid_templates: Default::default(),
             directions: Default::default(),
             layer_shaders: Default::default(),
             inert: Vec::new(),
@@ -5680,6 +5684,9 @@ impl Scene {
         if !self.given_styles.is_empty() {
             self.given_styles.remove(&id);
         }
+        if !self.grid_templates.is_empty() {
+            self.grid_templates.remove(&id);
+        }
         if !self.directions.is_empty() {
             self.directions.remove(&id);
         }
@@ -5744,6 +5751,48 @@ impl Scene {
     /// Change `id`'s layout style, invalidating its layout.
     pub fn set_style(&mut self, id: NodeId, style: Style) {
         self.restyle(id, style, true);
+    }
+    /// Whether any node has track lists: a style without one need not ask
+    /// `set_grid_template` to clear it unless so.
+    #[inline]
+    pub(crate) fn has_grid_templates(&self) -> bool {
+        !self.grid_templates.is_empty()
+    }
+    /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn set_grid_template(
+        &mut self,
+        id: NodeId,
+        template: Option<&Arc<crate::grid_tracks::GridTemplate>>,
+    ) {
+        if self.grid_templates.get(&id) == template {
+            return;
+        }
+        match template {
+            Some(template) => {
+                self.grid_templates.insert(id, template.clone());
+            }
+            None => {
+                self.grid_templates.remove(&id);
+            }
+        }
+        let node = self.node_mut(id);
+        node.style_writes = node.style_writes.wrapping_add(1);
+        self.invalidate_layout(id);
+    }
+    /// How many nodes hold track lists, for tests: they go with their nodes.
+    #[doc(hidden)]
+    pub fn grid_template_count(&self) -> usize {
+        self.grid_templates.len()
+    }
+    /// `id`'s grid track lists, if it has any.
+    #[inline]
+    pub(crate) fn grid_template(&self, id: NodeId) -> Option<&crate::grid_tracks::GridTemplate> {
+        if self.grid_templates.is_empty() {
+            return None;
+        }
+        self.grid_templates.get(&id).map(|template| &**template)
     }
     /// `set_style` for a style that may differ from `id`'s only in its box
     /// (width, height, their percentages and margins: a bar growing every

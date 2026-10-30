@@ -1512,8 +1512,11 @@ export type Styles = {
 	self: Align?,
 	content: AlignContent?,
 	grid: boolean?,
-	cols: number?,
-	rows: number?,
+	-- A grid's tracks: a number of equal ones, or a list as CSS's
+	-- `grid-template-columns` writes it: "220 1fr auto",
+	-- "repeat(auto-fill, minmax(240, 1fr))". A bare number is points.
+	cols: (number | string)?,
+	rows: (number | string)?,
 	col_start: number?,
 	row_start: number?,
 	col_span: number?,
@@ -1686,8 +1689,8 @@ export type StyleProps = {
 	self: Reactive<Align>?,
 	content: Reactive<AlignContent>?,
 	grid: Reactive<boolean>?,
-	cols: Reactive<number>?,
-	rows: Reactive<number>?,
+	cols: Reactive<number | string>?,
+	rows: Reactive<number | string>?,
 	col_start: Reactive<number>?,
 	row_start: Reactive<number>?,
 	col_span: Reactive<number>?,
@@ -2393,8 +2396,8 @@ export type Props_justify = Reactive<Justify>?
 export type Props_self = Reactive<Align>?
 export type Props_content = Reactive<AlignContent>?
 export type Props_grid = Reactive<boolean>?
-export type Props_cols = Reactive<number>?
-export type Props_rows = Reactive<number>?
+export type Props_cols = Reactive<number | string>?
+export type Props_rows = Reactive<number | string>?
 export type Props_col_start = Reactive<number>?
 export type Props_row_start = Reactive<number>?
 export type Props_col_span = Reactive<number>?

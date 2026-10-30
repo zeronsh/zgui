@@ -343,7 +343,8 @@ pub(crate) fn apply(styles: &mut Styles, field: Field, value: &TokenValue) {
         Field::ShaderParam(slot) => {
             if let Some(c) = value.color() {
                 let rare = s.rare_mut();
-                let uniforms = rare.shader_uniforms.get_or_insert_with(Default::default);
+                let uniforms = (rare.cold.get_or_insert_default().shader_uniforms)
+                    .get_or_insert_with(Default::default);
                 uniforms.params[(slot & 3) as usize] = [
                     c.0 as f32 / 255.,
                     c.1 as f32 / 255.,

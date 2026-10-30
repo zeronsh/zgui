@@ -53,14 +53,55 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `justify` | `"start" \| "center" \| "end" \| "between" \| "around" \| "evenly" \| "stretch"` | `"start"` | children along it |
 | `self` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | the parent's `items` | this child across the parent's axis |
 | `content` | `"start" \| "center" \| "end" \| "stretch" \| "between" \| "around" \| "evenly"` | `"start"` | wrapped lines |
-| `grid` | `boolean` | `false` | lay children out in a grid of equal tracks |
-| `cols`, `rows` | `number` | | the grid's equal tracks |
+| `grid` | `boolean` | `false` | lay children out in a grid |
+| `cols`, `rows` | `number \| string` | | a number of equal tracks, or a track list as CSS's `grid-template-columns` writes it (see [Grid tracks](#grid-tracks)) |
 | `col_start`, `row_start` | `number` | the next free cell | one-based grid lines; negative count from the end |
 | `col_span`, `row_span` | `number` | `1` | |
 | `col_span_full`, `row_span_full` | `boolean` | `false` | span every track |
 | `overflow`, `overflow_x`, `overflow_y` | `"visible" \| "hidden" \| "clip"` | `"visible"` (scroll views: `"hidden"`) | `"hidden"` and `"clip"` clip paint and hit testing |
 | `hidden` | `boolean` | `false` | out of layout and input, keeping its state |
 | `invisible` | `boolean` | `false` | not drawn, keeping its space |
+
+### Grid tracks
+
+`cols` and `rows` take a number of equal tracks, or a list of sizes. Each size is a number or `"12px"` (points), `"25%"` (of the grid), `"1fr"` (a share of the room left), `"auto"`, `"min-content"`, `"max-content"`, `"minmax(120, 1fr)"` or `"fit-content(300)"`. `"repeat(3, 1fr 2fr)"` repeats a list.
+
+```lua
+return ui.div {
+	grid = true,
+	w_full = true,
+	h = 400,
+	cols = "220 1fr auto",
+	rows = "48 1fr",
+	gap = 8,
+	ui.div { col_span_full = true, "Toolbar" },
+	ui.div { "Sidebar" },
+	ui.div { "Content" },
+	ui.div { w = 160, "Inspector" },
+}
+```
+
+`repeat(auto-fill, …)` fits as many tracks as the grid has room for, so cards reflow as the window resizes, with no `on_resize` and no script running:
+
+```lua
+local items = ui.state("items", { "One", "Two", "Three", "Four", "Five" })
+return ui.div {
+	grid = true,
+	w_full = true,
+	cols = "repeat(auto-fill, minmax(240, 1fr))",
+	gap = 12,
+	ui.each(items, function(item: string)
+		return ui.div { h = 120, bg = "$surface.raised", rounded = "$radius.md", ui.text { item, literal = true } }
+	end),
+}
+```
+
+`auto-fill` keeps the tracks left over, so a short last row keeps its cards the same size. `auto-fit` collapses empty tracks, so a few cards spread across the whole width.
+
+- The rules are CSS's: `repeat(auto-fill, …)` needs a fixed size to count what fits (`minmax(240, 1fr)`, not `1fr` or `auto`), a grid takes one of `auto-fill` and `auto-fit`, beside one every other track has a fixed size, and a minimum can't be `fr`.
+- A list that can't be read is an error, not a silent fallback. Written as a literal it stops the script with the reason. From a state or a function it shows in the error banner and the grid keeps its last list.
+- A state or function may produce a new list every frame (a dragged sidebar's `` `{w:get()} 1fr` ``): a list is held by the node showing it and goes with it.
+- Not supported: named lines, `grid-template-areas`, `dense` auto-flow and subgrid.
 
 ## Paint
 
