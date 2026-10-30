@@ -43,7 +43,7 @@ open, search and archive, the dashboard's feed tick, sort and filter,
 Sketch's drag, pan and zoom among 500 shapes, and the code editor's
 keystroke, scroll and find-all keystroke on 100,000 lines; CI's instruction
 gate counts each app as a scene, small and undrawn, run by `list_state_bench`
-(`APP` set) so that it links no binary of its own. Off, its phase boundaries cost nothing measurable: an A/B
+(`APP` set) so that it links no binary of its own. It counts 3D frames too, by zgx-3d's `world_bench`: a generated world drawn through wgpu's no-op backend, so the count holds zgx-3d and wgpu's validation, not a driver's. `3d-textured` is meshes with a map and nothing else, what a feature costs those not using it; `3d-mixed` has skinned, morphing, double-sided cut-out and placed ones among them. Neither has an environment, whose prefiltering takes two thirds of a cell and moves its count. zgx-3d is built apart from the other benches: one build would turn the no-op backend on in all of them. Off, its phase boundaries cost nothing measurable: an A/B
 of all scenes, five runs each, showed every scene within its spread. Time
 Profiler helpers and their use are in `scripts/perf/README.md`. The
 windowed comparison below stays the evidence for time, GPU and memory.
