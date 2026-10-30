@@ -25,6 +25,47 @@
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+/// mimalloc maps its memory with VM tag 100 unless told otherwise, and
+/// macOS's tools (vmmap, footprint, Activity Monitor) name tag 100
+/// "IOAccelerator": the program's heap read as GPU memory. Before main, so
+/// before mimalloc maps anything, its default becomes tag 240, the first
+/// tag for an application's own memory ("Memory Tag 240"); the
+/// `MIMALLOC_OS_TAG` variable still overrides it.
+#[cfg(all(feature = "mimalloc", target_os = "macos"))]
+#[used]
+#[unsafe(link_section = "__DATA,__mod_init_func")]
+static MIMALLOC_OS_TAG: extern "C" fn() = {
+    unsafe extern "C" {
+        // mimalloc's own (mimalloc.h), in the library the `mimalloc` crate links.
+        fn mi_option_set_default(option: std::ffi::c_int, value: std::ffi::c_long);
+    }
+    /// `mi_option_os_tag` in mimalloc.h's `mi_option_e` (v2 and v3).
+    const OS_TAG: std::ffi::c_int = 18;
+    extern "C" fn tag() {
+        // SAFETY: mimalloc's option setter, with an option it defines and a
+        // tag in its range (100-255); it only stores the default.
+        unsafe { mi_option_set_default(OS_TAG, 240) };
+    }
+    tag
+};
+#[cfg(all(test, feature = "mimalloc", target_os = "macos"))]
+mod mimalloc_tag_tests {
+    /// vmmap names the program's heap by the tag, not "IOAccelerator"
+    /// (`cargo test -p zgx-desktop --features mimalloc --lib mimalloc_tag`).
+    #[test]
+    fn the_heap_is_tagged_as_the_programs_own() {
+        let held: Vec<Box<[u8]>> = (0..64)
+            .map(|_| vec![1u8; 128 * 1024].into_boxed_slice())
+            .collect();
+        let summary = std::process::Command::new("/usr/bin/vmmap")
+            .args(["--summary", &std::process::id().to_string()])
+            .output()
+            .expect("vmmap runs");
+        let summary = String::from_utf8_lossy(&summary.stdout);
+        drop(held);
+        assert!(summary.contains("Memory Tag 240"), "{summary}");
+    }
+}
 pub mod app_menu;
 mod clipboard;
 mod composition;

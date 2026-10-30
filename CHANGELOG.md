@@ -23,6 +23,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- macOS: with zgx-desktop's `mimalloc` feature, the program's heap shows in vmmap, footprint and Activity Monitor as "Memory Tag 240", not "IOAccelerator". mimalloc's default tag, 100, is the one macOS names IOAccelerator, so an app's heap read as GPU memory: in one app 107 MB of "IOAccelerator" was its heap. `MIMALLOC_OS_TAG` still overrides it.
 - **An input bound to a state calls `on_commit`** (zgx-script): `ui.input { value = draft, on_commit = add }` heard nothing on Enter, as only a controlled input (`value = function`) told it. It now hears the text on Enter, and on leaving the input changed since it was focused, as a controlled input does.
 
 ## 0.1.6 (2026-10-29)
