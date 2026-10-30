@@ -6913,7 +6913,7 @@ export type ProgressProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<number> | State<number?>,
+	value: State<number> | State<number?> | number | (() -> number?),
 	label: Label?,
 }
 export type SliderProps = {

@@ -3886,3 +3886,18 @@ fn a_textarea_styles_its_highlight_spans_and_takes_its_own_caret() {
     assert_eq!(scene.kind(editor.caret), &NodeKind::Rect(danger));
     assert_eq!(scene.bounds(editor.caret).width, h.ui.caret_width());
 }
+
+/// A progress bar takes a number or a function, as a list row's does.
+#[test]
+fn a_progress_bar_takes_a_number_or_a_function() {
+    let mut h = Harness::inline(
+        r##"local v = ui.state("v", 0.5)
+        return ui.column {
+            ui.progress { id = "number", value = 0.25 },
+            ui.progress { id = "one", value = 1 },
+            ui.progress { id = "function", value = function() return v:get() end } }"##,
+    );
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    assert!(h.find("number").is_some() && h.find("function").is_some());
+}

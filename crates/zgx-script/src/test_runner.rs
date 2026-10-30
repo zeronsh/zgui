@@ -152,8 +152,12 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
             // `zgx run` gives them.
             let host = crate::app_config::read(&dir)
                 .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
-            let app = TestApp::try_new(|runtime| host.apply(ScriptHost::new(runtime, &path)))
-                .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
+            let app = TestApp::try_new(|runtime| {
+                let host = host.apply(ScriptHost::new(runtime, &path));
+                host.0.persist.quiet();
+                host
+            })
+            .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
             // The window's size, as `zgx run` opens it.
             let (width, height) = window_size(&dir);
             app.ui.scene.borrow_mut().resize(width, height);
@@ -265,6 +269,14 @@ impl UserData for Mounted {
             crate::driver::press(&mut app.ui, all, modifiers);
             crate::driver::press(&mut app.ui, zgx::input::Key::Backspace, Default::default());
             app.ui.dispatch(zgx::input::InputEvent::Text(text));
+            app.settle();
+            Ok(())
+        });
+        methods.add_method("hover", |_, m, target: String| {
+            let mut app = m.0.borrow_mut();
+            let node = Self::node(&mut app, &target)?;
+            let b = app.ui.scene.borrow().bounds(node);
+            crate::driver::hover_at(&mut app.ui, (b.x + b.width / 2., b.y + b.height / 2.));
             app.settle();
             Ok(())
         });

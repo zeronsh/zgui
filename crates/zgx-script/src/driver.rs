@@ -891,21 +891,10 @@ pub fn node(
 /// `from`'s top left, past the drag threshold, then released over `to`'s
 /// middle (its upper half: a reorderable row drops above it).
 pub fn drag(ui: &mut Ui, from: Rect, to: Rect) {
-    let (x, y) = (
+    let start = (
         from.x + from.width.min(12.),
         from.y + from.height.min(12.) / 2.,
     );
-    let (tx, ty) = (to.x + to.width / 2., to.y + to.height / 3.);
-    let button = PointerButton::Primary;
-    ui.dispatch(InputEvent::PointerDown { x, y, button });
-    ui.dispatch(InputEvent::PointerMove {
-        x: x + 16.,
-        y: y + 8.,
-    });
-    ui.dispatch(InputEvent::PointerMove { x: tx, y: ty });
-    ui.dispatch(InputEvent::PointerUp {
-        x: tx,
-        y: ty,
-        button,
-    });
+    let end = (to.x + to.width / 2., to.y + to.height / 3.);
+    drag_between(ui, start, end);
 }

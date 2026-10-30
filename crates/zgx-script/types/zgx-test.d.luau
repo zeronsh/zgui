@@ -12,6 +12,9 @@ declare extern type TestApp with
 	-- Click the target (a field) and replace its whole text with `text`, as
 	-- a person selecting it all and typing does.
 	function fill(self, target: string, text: string): ()
+	-- Move the pointer to the target's middle, as a mouse does: what it leaves
+	-- hears it go.
+	function hover(self, target: string): ()
 	-- Drag `from` onto `to` with the primary button, past the drag threshold,
 	-- released over the upper half of `to` (a reorderable row drops above it).
 	function drag(self, from: string, to: string): ()

@@ -2347,7 +2347,7 @@ export type InputProps = Merge<Props, {
 }>
 -- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
 -- stretch of the bar sweeping across.
-export type ProgressProps = Merge<Props, { value: State<number> | State<number?>, label: Label? }>
+export type ProgressProps = Merge<Props, { value: State<number> | State<number?> | number | (() -> number?), label: Label? }>
 export type SliderProps = Merge<Props, {
 	-- Required unless `field` gives it. A state, both ways; or, controlled
 	-- as React's are, a function it shows, a change going to `on_change`.

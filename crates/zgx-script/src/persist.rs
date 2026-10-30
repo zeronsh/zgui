@@ -81,6 +81,11 @@ pub(crate) struct Persist {
     me: Weak<Persist>,
 }
 impl Persist {
+    /// Says nothing of having no storage: a host that means to have none,
+    /// as a `zgx test` app does.
+    pub(crate) fn quiet(&self) {
+        self.warned.set(true);
+    }
     pub fn new(runtime: &Runtime, warnings: crate::SharedWarnings) -> Rc<Self> {
         Rc::new_cyclic(|me| Self {
             runtime: runtime.clone(),

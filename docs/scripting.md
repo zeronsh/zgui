@@ -435,7 +435,7 @@ end)
 - **Failures** name the test file's line: an `expect` that fails, a target that matches nothing, an unknown key.
 - **Targets are devtools' own** (`zgx inspect`): `#id`, `"label or text"`, `role:button`, `role:checkbox "Done"`, `#list row 3`, `"Copy"[2]`, `#dialog >> "OK"`.
 - **An app's methods:**
-  - acting: `click`, `type` (click a field and type), `fill` (replace its whole text), `drag(from, to)`, `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)` and `command(id)` (a `ui.command`);
+  - acting: `click`, `type` (click a field and type), `fill` (replace its whole text), `hover`, `drag(from, to)`, `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)` and `command(id)` (a `ui.command`);
   - reading: `text`, `has`, `count` and `tree`;
   - waiting: `frames(n)`, and `wait(target, { text?, gone?, timeout_ms? })`, which delivers frames until the target shows (holding `text`) or is gone and answers whether it did;
   - state: `state(name)` and `set_state(name, value)`;
@@ -464,7 +464,7 @@ fn signing_in_greets_the_user() {
 }
 ```
 
-It has `click`, `type_text`, `fill` (a field's whole text replaced), `drag` (one node onto another, past the drag threshold), `scroll` (the viewport under a node), `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `shown` (found and not transparent: a closed modal's kept content is not shown), `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgx-script's own tests use it.
+It has `click`, `type_text`, `fill` (a field's whole text replaced), `hover` (the pointer moved over a node), `drag` (one node onto another, past the drag threshold), `scroll` (the viewport under a node), `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `shown` (found and not transparent: a closed modal's kept content is not shown), `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgx-script's own tests use it.
 
 ## Shipping an app
 

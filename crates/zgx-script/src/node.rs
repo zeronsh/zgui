@@ -4253,7 +4253,21 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     }
     ui.set(
         "progress",
-        widget(|label, value, _| Ok(Kind::Progress { label, value }))?,
+        lua.create_function(|lua, table: Table| {
+            crate::form::apply_field(lua, &table, false)?;
+            let value = match table.get::<mlua::Value>("value")? {
+                // A bar that won't change, as a list row's: a state nothing
+                // writes.
+                mlua::Value::Integer(n) => env(lua)?.runtime.signal(Value::Num(n as f64)),
+                mlua::Value::Number(n) => env(lua)?.runtime.signal(Value::Num(n)),
+                _ => control_value(lua, &table)?,
+            };
+            let kind = Kind::Progress {
+                label: label(&table)?,
+                value,
+            };
+            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
+        })?,
     )?;
     ui.set(
         "slider",

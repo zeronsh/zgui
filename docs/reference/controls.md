@@ -277,11 +277,11 @@ In Rust (`zgx-components`): `calendar(label, value, CalendarOptions { … })`, `
 
 ## progress
 
-A determinate bar from a 0-to-1 state; it takes no input.
+A determinate bar from a value from 0 to 1; it takes no input.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<number?>` | required | 0 to 1, clamped; `nil` is indeterminate (work of unknown size): a stretch of the bar sweeps across, and assistive technology hears no value |
+| `value` | `State<number?>`, a number, or `() -> number?` | required | 0 to 1, clamped; `nil` is indeterminate (work of unknown size): a stretch of the bar sweeps across, and assistive technology hears no value |
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `w`, `h` | `Length` | `240`, `8` | |
 | `bg` | `Color` | `"$input.bg"` | the track |

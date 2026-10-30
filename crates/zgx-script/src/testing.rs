@@ -472,6 +472,13 @@ impl TestApp {
         self.ui.dispatch(InputEvent::Text(text.into()));
         self.settle();
     }
+    /// Move the pointer to node `id`'s middle, as a mouse does: what it
+    /// leaves hears it go, and a tooltip waits its delay.
+    pub fn hover(&mut self, id: &str) {
+        let b = self.bounds(id);
+        crate::driver::hover_at(&mut self.ui, (b.x + b.width / 2., b.y + b.height / 2.));
+        self.settle();
+    }
     /// Scroll the viewport under node `id`'s middle by `dy` points (down is
     /// positive), as a wheel or a trackpad does.
     pub fn scroll(&mut self, id: &str, dy: f32) {

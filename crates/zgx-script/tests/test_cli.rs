@@ -76,6 +76,44 @@ return ui.column {
 }
 
 #[test]
+fn a_test_hovers_and_says_nothing_of_having_no_storage() {
+    let dir = app(
+        "hover",
+        &[(
+            "hover.test.luau",
+            r##"
+test("the pointer comes and goes", function()
+    local app = mount()
+    app:hover("#a")
+    expect(app:state("over")).to_be("a")
+    app:hover("#b")
+    expect(app:state("over")).to_be("b")
+    app:set_state("saved", "changed")
+    app:frames(2)
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("app.luau"),
+        r##"local over = ui.state("over", "none")
+local saved = ui.persist("saved", "first")
+local function box(id: string)
+    return ui.column { id = id, w = 100, h = 40, on_hover = function(inside: boolean)
+        if inside then over:set(id) end
+    end }
+end
+return ui.column { box("a"), box("b"), ui.text { saved } }
+"##,
+    )
+    .unwrap();
+    let (code, text) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{text}");
+    assert!(!text.contains("no storage"), "{text}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",
