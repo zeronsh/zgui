@@ -103,6 +103,20 @@ def main():
             def key(*keys):
                 run("xdotool", "key", "--clearmodifiers", *keys)
 
+            def press_until_closed(title, *keys):
+                # A chooser still starting up takes no keys, and shows no sign
+                # of it: press until it closes. How many it took is recorded,
+                # and one that closes with no answer still fails `answer`.
+                for presses in range(1, 11):
+                    key(*keys)
+                    try:
+                        until(f"{title} closing", lambda: not window(title), 2)
+                        result[f"presses to close {title}"] = presses
+                        return
+                    except AssertionError:
+                        pass
+                raise AssertionError(f"{title} never took {keys}: {result}")
+
             # Open: a modal chooser over the app's window, its path reaching
             # the app. The first request starts the portal and GTK: slower.
             child, log = app("open", "open")
@@ -136,7 +150,7 @@ def main():
             chooser = until("the chooser again", lambda: window("Open fixture"))
             run("xdotool", "windowactivate", "--sync", chooser)
             time.sleep(.5)
-            key("Escape")
+            press_until_closed("Open fixture", "Escape")
             result["escape"] = answer(log, "open")
             result["Escape is no choice"] = result["escape"] == "Ok(None)"
             stop(child)
@@ -146,7 +160,7 @@ def main():
             chooser = until("the save chooser", lambda: window("Save fixture"))
             run("xdotool", "windowactivate", "--sync", chooser)
             time.sleep(.8)
-            key("Return")
+            press_until_closed("Save fixture", "Return")
             result["save"] = answer(log, "save")
             result["saved in the folder, by the name, given"] = result["save"] == f'Ok(Some("{folder / "saved.txt"}"))'
             stop(child)
