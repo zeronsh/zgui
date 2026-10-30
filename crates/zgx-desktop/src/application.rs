@@ -138,6 +138,10 @@ enum Event {
     /// A font was replaced (`WindowFactory::replace_font`): every window's
     /// text shapes and draws again.
     FontsReplaced,
+    /// Pixels an image keeping its file waited for were decoded again
+    /// (`zgx::image::set_decoded_wake`): windows that went without them
+    /// draw again whole.
+    ImagesDecoded,
     #[cfg(target_os = "linux")]
     NativeFiles(u64, crate::wayland_data::FileEvent),
     /// The desktop's appearance settings changed (`linux_appearance`).
@@ -903,6 +907,12 @@ impl Application {
         zgx::profile::mark("event loop");
         zgx::memory::set_hosted();
         let proxy = event_loop.create_proxy();
+        {
+            let wake = proxy.clone();
+            zgx::image::set_decoded_wake(move || {
+                let _ = wake.send_event(Event::ImagesDecoded);
+            });
+        }
         let native_events = if let Some(id) = &self.application_id {
             let wake = proxy.clone();
             let events = crate::native_events::NativeApplicationEvents::new(
@@ -6147,6 +6157,20 @@ impl WindowManager {
                             host.context
                                 .window_info
                                 .refresh(window, host.options.titlebar);
+                        }
+                    }
+                }
+            }
+            Event::ImagesDecoded => {
+                for host in self.hosts.values_mut() {
+                    if host
+                        .renderer
+                        .as_mut()
+                        .is_some_and(|renderer| renderer.take_images_awaited())
+                    {
+                        host.force = true;
+                        if let Some(window) = &host.window {
+                            window.request_redraw();
                         }
                     }
                 }

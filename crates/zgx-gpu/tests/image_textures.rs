@@ -91,3 +91,74 @@ fn more_photos_than_the_budget_in_one_frame_fail() {
     let error = gpu.render(&scene, &damage).unwrap_err();
     assert!(error.to_string().contains("64 MiB"), "{error}");
 }
+
+/// A test file: its pixels are its one byte, everywhere.
+fn redecode(bytes: &[u8]) -> Result<Arc<[u8]>, String> {
+    Ok(Arc::from(vec![bytes[0]; 640 * 480 * 4]))
+}
+fn kept_photo(i: u32) -> Arc<ImageData> {
+    let value = (i % 200) as u8 + 20;
+    Arc::new(
+        ImageData::kept(
+            640,
+            480,
+            Arc::from(vec![value; 640 * 480 * 4]),
+            Arc::from(vec![value]),
+            redecode,
+        )
+        .unwrap(),
+    )
+}
+
+/// Images keeping their files, past the decoded-pixels budget: those a
+/// renderer has give their pixels back, and a page scrolled back over them
+/// draws them again once decoded again off the main thread. Also, another
+/// renderer (its own device) uploads them from their files.
+#[test]
+fn kept_photos_give_their_pixels_back_and_draw_again() {
+    zgx::image::set_decoded_budget(8 * 640 * 480 * 4);
+    let mut scene = Scene::new(800., 600.);
+    let column = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Column),
+        Style::default(),
+    );
+    let photos: Vec<_> = (0..40).map(kept_photo).collect();
+    for photo in &photos {
+        scene.append(column, NodeKind::Image(photo.clone()), photo_style());
+    }
+    let mut gpu = GpuRenderer::new(800, 600).unwrap();
+    let damage = scene.flush().damage;
+    gpu.render(&scene, &damage).unwrap();
+    for step in 1..40 {
+        let damage = scroll(&mut scene, column, step as f32 * 480.);
+        gpu.render(&scene, &damage).unwrap();
+    }
+    // Uploaded and past the budget: most gave their pixels back.
+    let held = zgx::image::decoded_bytes();
+    assert!(held <= 10 * 640 * 480 * 4, "{held} bytes held");
+    assert!(photos[0].try_pixels().is_none() || photos[1].try_pixels().is_none());
+    // The first photo's texture is long gone too (the 64 MiB of textures
+    // hold 54): scrolled back, it waits a frame for its pixels, then draws.
+    let mut awaited = false;
+    for step in (0..39).rev() {
+        let damage = scroll(&mut scene, column, step as f32 * 480.);
+        gpu.render(&scene, &damage).unwrap();
+        awaited |= gpu.take_images_awaited();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let whole = [Rect::new(0., 0., 800., 600.)];
+    gpu.render(&scene, &whole).unwrap();
+    assert!(
+        photos[0].try_pixels().is_some(),
+        "decoded again for the top"
+    );
+    let _ = awaited;
+    // Another renderer, another device: it needs the pixels again.
+    let mut other = GpuRenderer::new(800, 600).unwrap();
+    other.render(&scene, &whole).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let stats = other.render(&scene, &whole).unwrap();
+    assert!(stats.image_uploads >= 1 || !other.take_images_awaited());
+    zgx::image::set_decoded_budget(usize::MAX);
+}

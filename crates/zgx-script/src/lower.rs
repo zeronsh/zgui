@@ -3823,7 +3823,9 @@ fn remote_status(vm: &Rc<Vm>, low: &Lowering, src: &str, svg: bool) -> u8 {
                             .map(|svg| Decoded::Svg(Arc::new(svg)))
                             .map_err(|e| e.to_string())
                     } else {
-                        zgx_gpu::assets::decode_image(&bytes)
+                        // Keeping its file: its pixels may go once drawn,
+                        // past the decoded-pixels budget.
+                        zgx_gpu::assets::decode_image_kept(Arc::from(bytes))
                             .map(Decoded::Image)
                             .map_err(|e| e.to_string())
                     });
@@ -3885,7 +3887,8 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
                 .map(|bytes| (path, bytes))
         })
         .and_then(|(path, bytes)| {
-            zgx_gpu::assets::decode_image(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+            zgx_gpu::assets::decode_image_kept(Arc::from(bytes))
+                .map_err(|e| format!("{}: {e}", path.display()))
         });
     match decoded {
         Ok(image) => {
