@@ -24,7 +24,7 @@ In every test zgx uses the least CPU and the least GPU power, and none of its fr
 - **Animate:** read about 17 or about 20 per launch for several frameworks. Rune read 16.9, 16.9 and 20.2, GPUI Fast 17.7 to 20.6, and zgx 17.8 to 19.1. Rune's two low launches set the 1.6 points.
 - **Heavy:** zgx read 10.8 to 12.0 in both and 10.4 to 11.0 in stream (0.1.5: 10.4 to 10.9 and 10.0 to 10.5). In the same window, an hour earlier, a tiles build 27 commits before 0.1.6 read 10.47 in both and 10.51 in stream over six launches each. No renderer change between the two looks likely to affect WindowServer.
 
-Three launches can't separate these levels. A paired comparison of 0.1.5 and 0.1.6 (six launches each, against each round's desktop) is booked for the next quiet window, to rule a regression in or out.
+Three launches can't separate these levels. A paired comparison in quiet window 40 found no regression. It used the suites' own heavy binaries, six launches each in rotated order, each launch less its round's desktop alone: heavy both moved −0.06 ± 0.04 points from 0.1.5 to 0.1.6, and heavy stream +0.06 ± 0.05. The suite now takes six launches of every active cell, each round with its desktop, and the site shows WindowServer less the desktop from the next run on.
 
 **Why zgx trails on WindowServer CPU at 60 Hz.** The remaining gap of about 0.4 points in the 60 Hz scenes is structural:
 - zgx shows each frame by flipping a tile layer: one Core Animation commit per frame.

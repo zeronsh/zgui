@@ -100,7 +100,14 @@ PACING_SECONDS, PACING_REPEATS = 8, 8
 # app and the desktop alike (0.2 to 1.1% on an M5 Max), so two launches
 # could not rank it. On an M1 Max, 8 rounds, no launch read 0.2 points over
 # its round's desktop (2026-10-28); the site shows idle less the desktop.
-SUITE = {'REQUESTED': 15, 'WARMUP': 5, 'SAMPLED': 10, 'IDLE_REPEATS': 6, 'PACING_REPEATS': 3}
+# Six of every active cell too, each round with its desktop alone: WindowServer
+# falls into per-launch levels while animating as well (about 17 or 20% for
+# several frameworks, 2026-10-30), so three launches could not rank it either;
+# six against their rounds' desktops read 0.1.5 and 0.1.6 within 0.06 pt of
+# each other (window 40). The site shows WindowServer less the desktop.
+SUITE = {'REQUESTED': 15, 'WARMUP': 5, 'SAMPLED': 10, 'REPEATS': 6, 'IDLE_REPEATS': 6, 'PACING_REPEATS': 3}
+# Trials of each active cell outside the suite.
+REPEATS = 3
 # A cell whose CPU or GPU power spreads more than this share of its median
 # over its trials gets EXTRA more (the suite).
 SPREAD, EXTRA = 0.10, 1
@@ -696,7 +703,7 @@ def main():
     if args.modes:
         modes = [m for m in modes if m in args.modes.split(',')]
     assert not args.into or args.modes, '--into replaces the cells of --modes'
-    repeats = args.repeats or (2 if args.quick else 3)
+    repeats = args.repeats or (2 if args.quick else REPEATS)
     if args.pgo:
         # The supplement: each framework's apps built with a profile of their own runs.
         for framework, path in SCENES[args.scene]['binaries'].items():
