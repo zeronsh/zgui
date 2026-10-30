@@ -20,6 +20,10 @@ local socket = ui.socket(function() return `ws://chat.test/{room:get()}` end, {
     json = true,
     max_buffered = 64,
     on_message = function(m, binary)
+        -- A message decoded from JSON is the script's own, to change.
+        if not binary then
+            m.seen = true
+        end
         local text = if binary then `bytes {#m}` else m.text
         log:set(`{log:peek()}{text};`)
     end,

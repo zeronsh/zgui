@@ -319,7 +319,10 @@ impl Conn {
                 .create_string(&bytes)
                 .map(|s| (mlua::Value::String(s), true)),
             Message::Text(text) if self.json => match Value::from_json(&text) {
-                Some(value) => mlua::IntoLua::into_lua(value, lua).map(|v| (v, false)),
+                // The script's own, made for this message alone: a plain
+                // table it may change, as parsed JSON is on the web (state's
+                // tables stay read-only, shared as they are).
+                Some(value) => crate::value::to_lua(&value, lua, false).map(|v| (v, false)),
                 None => {
                     vm.report(mlua::Error::runtime(format!(
                         "ui.socket: a message is not JSON: {}",
