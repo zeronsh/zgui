@@ -205,11 +205,85 @@ const THEMED_DANGER: u8 = 8;
 /// What a code editor adds to an editor's hint: its long text's lines,
 /// marks behind its selection, its current line, Tab's indent, and who is
 /// told where its caret is.
+/// What an underline's node shows: its width in quarter points, its colour
+/// and how it is drawn.
+type UnderlineDrawn = (u32, Color, crate::rich_text::LineStyle);
+/// A range of a text area's text underlined (`View::underlines`): a spelling
+/// mistake's or a diagnostic's wave.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditorUnderline {
+    /// Its UTF-8 byte range.
+    pub range: std::ops::Range<usize>,
+    /// Its colour.
+    pub color: Color,
+    /// How it is drawn.
+    pub line: crate::rich_text::LineStyle,
+}
+/// A row's underline, `width` points long, as what a canvas draws: shapes
+/// and lines, drawn without a raster.
+fn underline_canvas(
+    width: f32,
+    color: Color,
+    line: crate::rich_text::LineStyle,
+) -> crate::canvas::Canvas {
+    use crate::{
+        canvas::{Canvas, Path, Stroke},
+        rich_text::LineStyle,
+    };
+    let mut canvas = Canvas::new();
+    let rect = |canvas: &mut Canvas, x: f32, y: f32, width: f32, height: f32| {
+        canvas.fill(Path::rectangle(Rect::new(x, y, width, height)), color);
+    };
+    match line {
+        LineStyle::Double => {
+            rect(&mut canvas, 0., 0., width, 1.);
+            rect(&mut canvas, 0., 2., width, 1.);
+        }
+        LineStyle::Dotted => {
+            for k in 0..(width / 2.).ceil() as u32 {
+                if let Ok(dot) = Path::ellipse(Rect::new(k as f32 * 2., 0.5, 1.2, 1.2)) {
+                    canvas.fill(dot, color);
+                }
+            }
+        }
+        LineStyle::Dashed => {
+            for k in 0..(width / 5.).ceil() as u32 {
+                let x = k as f32 * 5.;
+                rect(&mut canvas, x, 1., 3f32.min(width - x), 1.);
+            }
+        }
+        LineStyle::Wavy => {
+            let mut wave = Path::builder();
+            wave.move_to(0., 1.5);
+            for k in 1..=(width / 1.5).ceil() as u32 {
+                let x = (k as f32 * 1.5).min(width);
+                wave.line_to(x, 1.5 + (x * std::f32::consts::TAU / 6.).sin());
+            }
+            if let Ok(wave) = wave.build() {
+                canvas.stroke(
+                    wave,
+                    color,
+                    Stroke {
+                        width: 1.,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        _ => rect(&mut canvas, 0., 1., width, 1.),
+    }
+    canvas
+}
 #[derive(Default)]
 struct CodeHint {
     /// Ranges of the text marked with a colour behind them (a search's
     /// matches), by where they start.
     decorations: RefCell<Vec<(std::ops::Range<usize>, Color)>>,
+    /// Ranges of the text underlined, by where they start.
+    underlines: RefCell<Vec<EditorUnderline>>,
+    /// What draws them: a node a row of each, what each shows, and so
+    /// only what changed is made again.
+    underline_nodes: RefCell<Vec<(NodeId, UnderlineDrawn)>>,
     /// The colour behind the caret's row (a code editor's current line).
     current_line: Cell<Option<Color>>,
     /// What Tab inserts (a code editor's indent), instead of moving focus.
@@ -603,6 +677,17 @@ impl EditorHandle {
             return;
         }
         *code.decorations.borrow_mut() = ranges;
+        self.refresh();
+    }
+    /// Underline `ranges` of the text (a diagnostic's wave): only those in
+    /// view are drawn.
+    pub fn set_underlines(&self, mut ranges: Vec<EditorUnderline>) {
+        ranges.sort_by_key(|underline| underline.range.start);
+        let code = self.hint.code_made();
+        if *code.underlines.borrow() == ranges {
+            return;
+        }
+        *code.underlines.borrow_mut() = ranges;
         self.refresh();
     }
     /// Call `told` with where the caret is whenever it moves or the
@@ -4478,6 +4563,64 @@ impl Ui {
                     }
                 }
                 drop(marked);
+                // Under the text in view, each row of a range a node.
+                let underlines = code.underlines.borrow();
+                let mut rows: Vec<(Rect, Color, crate::rich_text::LineStyle)> = Vec::new();
+                let shown_from = match &long_lines {
+                    Some(lines) => lines.line_range(lines.line_at(scroll.1)).start,
+                    None => 0,
+                };
+                let first = underlines.partition_point(|u| u.range.end < shown_from);
+                for underline in &underlines[first..] {
+                    let found = layout.selection_within(
+                        underline.range.clone(),
+                        scroll.1,
+                        scroll.1 + inner_height,
+                    );
+                    if found.is_empty()
+                        && long_lines.as_ref().is_some_and(|lines| {
+                            lines.top(lines.line_of(underline.range.start))
+                                > scroll.1 + inner_height
+                        })
+                    {
+                        break;
+                    }
+                    rows.extend(found.into_iter().map(|r| {
+                        let at = Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height);
+                        (at, underline.color, underline.line)
+                    }));
+                }
+                let mut drawn = code.underline_nodes.borrow_mut();
+                while drawn.len() > rows.len() {
+                    s.remove(drawn.pop().unwrap().0);
+                }
+                for (k, (rect, color, line)) in rows.into_iter().enumerate() {
+                    let wanted = ((rect.width * 4.) as u32, color, line);
+                    if k == drawn.len() {
+                        let id = s.append(viewport, NodeKind::Container(Layout::Overlay), {
+                            Style::default()
+                        });
+                        drawn.push((id, (u32::MAX, color, line)));
+                    }
+                    let (id, shown) = &mut drawn[k];
+                    if *shown != wanted {
+                        *shown = wanted;
+                        s.set_kind(
+                            *id,
+                            NodeKind::Canvas(std::sync::Arc::new(underline_canvas(
+                                rect.width, color, line,
+                            ))),
+                        );
+                    }
+                    s.set_style(*id, fixed(rect.width.max(1.), 3.));
+                    s.set_transform(
+                        *id,
+                        Transform {
+                            x: rect.x,
+                            y: rect.y + rect.height - 3.,
+                        },
+                    );
+                }
             }
             let mut nodes = selection_nodes.borrow_mut();
             while nodes.len() > rects.len() {

@@ -4848,6 +4848,7 @@ fn code_editor(
     }
     // Ranges a script gives (`decorations`), and a search's matches
     // (`find`), found where the text is held.
+    let underline_colors = color_of.clone();
     let given = code.decorations.clone().map(|decorations| {
         let vm = vm.clone();
         let default = theme.clone();
@@ -4929,6 +4930,50 @@ fn code_editor(
         (Some(given), None) => view = view.decorations(given),
         (None, Some(found)) => view = view.decorations(found),
         (None, None) => {}
+    }
+    if let Some(underlines) = code.underlines.clone() {
+        let (vm, theme, color_of) = (vm.clone(), theme.clone(), underline_colors);
+        view = view.underlines(move || {
+            let list = match &underlines {
+                crate::node::Readable::State(state) => {
+                    state.with(|value| crate::value::to_lua(value, &vm.lua, false).ok())
+                }
+                crate::node::Readable::Function(f) => vm.call::<mlua::Value>(f, ()).ok(),
+            };
+            let Some(mlua::Value::Table(list)) = list else {
+                return Vec::new();
+            };
+            let mut out = Vec::with_capacity(list.raw_len());
+            for span in list.sequence_values::<mlua::Table>().flatten() {
+                // By name, or `{ from, to, color }` as `decorations` are.
+                let number = |name: &str, at: usize| {
+                    (span.raw_get::<Option<f64>>(name).ok().flatten())
+                        .or_else(|| span.raw_get::<Option<f64>>(at).ok().flatten())
+                };
+                let (Some(from), Some(to)) = (number("from", 1), number("to", 2)) else {
+                    continue;
+                };
+                if from < 1. || to < from {
+                    continue;
+                }
+                let color = span
+                    .raw_get::<Option<String>>("color")
+                    .ok()
+                    .flatten()
+                    .or_else(|| span.raw_get::<Option<String>>(3).ok().flatten())
+                    .and_then(|text| color_of(&text))
+                    .unwrap_or_else(|| theme.color(zgx::theme::tok::DANGER));
+                let line = (span.raw_get::<Option<String>>("style").ok().flatten())
+                    .and_then(|style| crate::node::line_style(&style).ok())
+                    .unwrap_or(zgx::rich_text::LineStyle::Wavy);
+                out.push(zgx::widgets::EditorUnderline {
+                    range: from as usize - 1..to as usize,
+                    color,
+                    line,
+                });
+            }
+            out
+        });
     }
     if let Some(color) = &code.current_line {
         let (color, vm, theme) = (resolve_owned(color), vm.clone(), theme.clone());

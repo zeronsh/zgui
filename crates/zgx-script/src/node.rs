@@ -1208,6 +1208,9 @@ pub(crate) struct CodeProps {
     /// `decorations`: a state or function of `{ { from, to, color }, … }`,
     /// bytes of the whole text marked behind it (a search's matches).
     pub decorations: Option<Readable>,
+    /// `underlines`: a state or function of `{ { from, to, color,
+    /// style = } }`.
+    pub underlines: Option<Readable>,
     /// `current_line`: the colour behind the caret's row.
     pub current_line: Option<Source>,
     /// `tab`: what Tab inserts (`"    "`), indenting selected lines.
@@ -2548,7 +2551,7 @@ fn checkable_menu_role(name: &str) -> bool {
     matches!(name, "menuitemcheckbox" | "menuitemradio")
 }
 /// An `underline_style`, as CSS's `text-decoration-style` names it.
-fn line_style(name: &str) -> mlua::Result<zgx::rich_text::LineStyle> {
+pub(crate) fn line_style(name: &str) -> mlua::Result<zgx::rich_text::LineStyle> {
     use zgx::rich_text::LineStyle;
     Ok(match name {
         "solid" => LineStyle::Solid,
@@ -2688,6 +2691,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "line_numbers",
     "highlight",
     "decorations",
+    "underlines",
     "find",
     "current_line",
     "tab",
@@ -4261,6 +4265,15 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                                 )
                             })?)),
                         };
+                        let underlines = match table.get::<mlua::Value>("underlines")? {
+                            mlua::Value::Nil => None,
+                            mlua::Value::Function(f) => Some(Readable::Function(f)),
+                            v => Some(Readable::State(state_of(&v).ok_or_else(|| {
+                                mlua::Error::runtime(
+                                    "`underlines` must be a ui.state or a function of ranges",
+                                )
+                            })?)),
+                        };
                         let current_line = optional("current_line", Ty::Color)?;
                         let tab = table.get::<Option<String>>("tab")?;
                         let on_caret = table.get::<Option<Function>>("on_caret")?;
@@ -4289,6 +4302,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         };
                         (highlight.is_some()
                             || decorations.is_some()
+                            || underlines.is_some()
                             || current_line.is_some()
                             || tab.is_some()
                             || on_caret.is_some()
@@ -4297,6 +4311,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             Rc::new(CodeProps {
                                 highlight,
                                 decorations,
+                                underlines,
                                 current_line,
                                 tab,
                                 on_caret,

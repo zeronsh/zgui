@@ -659,6 +659,42 @@ fn a_span_says_how_its_underline_is_drawn() {
 }
 
 #[test]
+fn a_text_area_underlines_its_ranges_in_view_and_follows_them() {
+    use zgx::scene::NodeKind;
+    let mut h = Harness::inline(
+        r##"local marks = ui.state("marks", { { 7, 11, "#ff0010" } })
+        return ui.column {
+            ui.button { id = "clear", on_click = function() marks:set({}) end, "Clear" },
+            ui.button { id = "two", "Two", on_click = function()
+                marks:set({ { from = 1, to = 5, color = "#ff0010", style = "dotted" }, { 7, 11 } })
+            end },
+            ui.textarea { id = "code", value = ui.state("text", "hello world"),
+                w = 300, h = 100, underlines = marks },
+        }"##,
+    );
+    h.frames(2);
+    let canvases = |h: &mut Harness| {
+        let node = h.find("code").unwrap();
+        let scene = h.ui.scene.borrow();
+        let mut stack = vec![node];
+        let mut found = 0;
+        while let Some(n) = stack.pop() {
+            found += usize::from(matches!(scene.kind(n), NodeKind::Canvas(_)));
+            stack.extend(scene.children(n).iter().copied());
+        }
+        found
+    };
+    assert_eq!(canvases(&mut h), 1, "a range, a row");
+    h.click("two");
+    h.frames(2);
+    assert_eq!(canvases(&mut h), 2);
+    h.click("clear");
+    h.frames(2);
+    assert_eq!(canvases(&mut h), 0, "and they go");
+    assert_eq!(h.host.error().get(), None);
+}
+
+#[test]
 #[should_panic(expected = "unknown `underline_style` `squiggly`")]
 fn an_unknown_underline_style_says_which_there_are() {
     Harness::inline(r#"return ui.rich { ui.span { "a", underline_style = "squiggly" } }"#);

@@ -6594,6 +6594,9 @@ export type InputProps = {
 	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
 	-- from 1; only those in view are drawn.
 	decorations: (State<any> | (() -> { { any } }))?,
+	-- Ranges underlined: `{ { from = 1, to = 5, style = "wavy" } }`, a
+	-- spelling mistake's or a diagnostic's.
+	underlines: (State<any> | (() -> { { any } }))?,
 	-- Several lines only: a search's matches marked behind the text, found
 	-- by the editor where the text is held; `current` (from 1) stronger.
 	find: {

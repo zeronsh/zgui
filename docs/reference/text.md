@@ -69,7 +69,7 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `padding` | `number` or `{ across, down }` | `0` | room around the run: across, before and after it (it takes space in the line); with `bg`, the background hugs the text plus this instead of filling the line, an inline code chip |
 | `radius` | `number` | `0` | the background's corner radius |
 | `underline_offset` | `number` | a tenth of the text size | how far below the baseline the underline sits (CSS's `text-underline-offset`) |
-| `underline_style` | `"solid"`, `"double"`, `"dotted"`, `"dashed"`, `"wavy"` | `"solid"` | how the underline is drawn (CSS's `text-decoration-style`): `"wavy"` marks a spelling mistake or a diagnostic |
+| `underline_style` | `"solid"`, `"double"`, `"dotted"`, `"dashed"`, `"wavy"` | `"solid"` | how the underline is drawn (CSS's `text-decoration-style`): `"wavy"` marks a spelling mistake or a diagnostic. The software raster draws them all solid |
 | `underline_color` | `Color` | the text's | its colour, or a token (`"$danger"`) |
 | `underline_thickness` | `number` | `1` | its thickness, in points. Any of these three underlines the span |
 | `on_click` | `ClickHandler \| Handler \| Action` | none | a click on the run (a link, underlined), told the keys held (`{ shift, ctrl, alt, meta }`); a middle click passes as a ⌘-click (Control elsewhere), as a browser opens a background tab |

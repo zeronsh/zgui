@@ -461,12 +461,15 @@ pub struct View {
 }
 /// Ranges of a text marked with a colour (`View::decorations`).
 type Decorations = Vec<(std::ops::Range<usize>, crate::scene::Color)>;
+/// Ranges of a text underlined (`View::underlines`).
+type Underlines = Vec<crate::widgets::EditorUnderline>;
 /// What a code editor adds to a text area: its lines' colours, ranges
 /// marked behind its text, its current line and what Tab inserts.
 #[derive(Default)]
 pub(crate) struct CodeOptions {
     highlighter: Option<crate::widgets::SpanHighlighter>,
     decorations: Option<Box<dyn FnMut() -> Decorations>>,
+    underlines: Option<Box<dyn FnMut() -> Underlines>>,
     current_line: Option<Box<dyn FnMut() -> Option<crate::scene::Color>>>,
     indent: Option<String>,
     on_caret: Option<Box<dyn FnMut(crate::widgets::Caret)>>,
@@ -1496,6 +1499,16 @@ impl View {
         ranges: impl FnMut() -> Vec<(std::ops::Range<usize>, crate::scene::Color)> + 'static,
     ) -> Self {
         self.code_mut().decorations = Some(Box::new(ranges));
+        self
+    }
+    /// Ranges of a text area's text underlined (a spelling mistake's, a
+    /// diagnostic's wave), kept current as what `ranges` reads changes. Only
+    /// those in view are drawn.
+    pub fn underlines(
+        mut self,
+        ranges: impl FnMut() -> Vec<crate::widgets::EditorUnderline> + 'static,
+    ) -> Self {
+        self.code_mut().underlines = Some(Box::new(ranges));
         self
     }
     /// A colour behind a text area's caret row (a code editor's current
@@ -4877,6 +4890,7 @@ fn open_element(
             let CodeOptions {
                 highlighter,
                 decorations,
+                underlines,
                 current_line,
                 indent,
                 on_caret,
@@ -4902,6 +4916,10 @@ fn open_element(
             if let Some(mut ranges) = decorations {
                 let editor = editor.clone();
                 ui.bind(root, move || editor.set_decorations(ranges()));
+            }
+            if let Some(mut ranges) = underlines {
+                let editor = editor.clone();
+                ui.bind(root, move || editor.set_underlines(ranges()));
             }
             if let Some(mut color) = current_line {
                 let editor = editor.clone();
