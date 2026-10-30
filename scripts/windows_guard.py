@@ -23,6 +23,13 @@ MENU_CLASS = "#32768"
 WEBVIEW_HOST = "msedgewebview2.exe"
 
 
+def is_own(window, own):
+    """Whether `window` is the probe's own: `own` is (pid, class) of windows
+    the probe opens itself, or None. Both must match, so another process's
+    window of that class, or another class of the probe's, still stops it."""
+    return own is not None and window[1] == own[0] and window[2] == own[1]
+
+
 def is_ours(window, app, processes):
     """Whether `window`, (hwnd, pid, class, title, (width, height)) as
     `visible_windows` gives it, is the probe's app's. `app` is (pid, title)

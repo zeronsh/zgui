@@ -562,7 +562,7 @@ def below_caret(hwnd, lines, field="first"):
     return points
 
 
-def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where=None, app=None):
+def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where=None, app=None, own=None):
     """Fail closed from now on: before every input sent (and when the
     returned check is called, after the last), the probe stops with a
     screenshot in directory `shots`, sending nothing, when
@@ -583,7 +583,8 @@ def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where
     a `ZgxPopup` or Win32 menu (`#32768`, the system menu) of its
     process, and its WebView2 surface (a
     msedgewebview2.exe child of it bearing its title); any other window
-    still stops the run.
+    still stops the run. With `own`, (pid, class), the probe's windows of
+    that class are passed too (`windows_guard.is_own`).
     An offer or a consent prompt is never answered or closed."""
     baseline = {window[0] for window in visible_windows()}
     trusted = set()
@@ -605,7 +606,8 @@ def guard_windows(shots, allowed=CANDIDATE_CLASSES, settings=IME_SETTINGS, where
             changed = sorted(f"{k[0]}\\{k[1]}" for k in now.keys() | before.keys() if now.get(k) != before.get(k))
             restore_ime_settings(before, now)
             stop(f"an input method's settings changed ({', '.join(changed)}); put back as they were")
-        new = [w for w in visible_windows() if w[0] not in baseline and w[0] not in trusted]
+        new = [w for w in visible_windows() if w[0] not in baseline and w[0] not in trusted
+               and not windows_guard.is_own(w, own)]
         if app is not None and any(w[2] not in allowed for w in new):
             # Read as they appear: a PID is only the app's while it runs.
             running = processes()
@@ -679,7 +681,10 @@ def activate(hwnd):
     for _ in range(20):
         # A key event from this process lifts the foreground lock for it.
         # F24, which nothing binds: a tap of Alt put dialogs in their
-        # mnemonic mode, which took the next key typed.
+        # mnemonic mode, which took the next key typed. Not to the foreground
+        # `_target` (this changes it), but still past the window guard.
+        if _window_guard is not None:
+            _window_guard()
         _send(_vk(VK["f24"]), _vk(VK["f24"], up=True), guard=False)
         user32.SetForegroundWindow(hwnd)
         if is_foreground(hwnd):

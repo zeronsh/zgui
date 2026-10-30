@@ -111,6 +111,31 @@ heard `ThemeChanged`, so its content kept its mode too.
    `scripts/windows_settings_smoke.py --both`: switched both ways while
    the window runs, its title bar and its content follow within a second.
 
+## Windows: `WindowEvent::Occluded`
+
+Windows has no event for a window being covered, and winit sent none, so a
+covered window went on drawing: 2.4–9.2 points of one core and all of its GPU
+use, against a minimized one (WING-PC, medians of 4 rotated rounds).
+
+10. `src/platform_impl/windows/occlusion.rs` finds a window occluded when it
+    is cloaked (another virtual desktop) or when windows above it known to be
+    opaque leave none of it. The rectangles' sums and when to
+    check are in `src/occlusion_area.rs`, built everywhere for its tests.
+    Whatever might show what's behind it covers nothing: layered,
+    click-through, tool and `WS_EX_NOREDIRECTIONBITMAP` windows, an acrylic
+    backdrop (Mica shows the wallpaper, no window), a shaped region, the window's own owned ones, and the corners a
+    framed window rounds. Two checks in a row must agree before it stops.
+    It says hidden only of a window whole on one monitor, under covers whole
+    on that monitor, among monitors of one scale at positive coordinates;
+    anything else keeps drawing. That's by construction, unit tested on
+    made-up layouts: no multi-monitor machine has run it.
+    A window checks from `pre_present_notify`, twice a second, so an idle one
+    does nothing; an occluded one has a `SetWinEventHook` hook and looks each
+    second for what no event reports. `scripts/windows_occlusion_smoke.py`.
+
+    A window translucent by the undocumented accent API isn't recognised, and
+    a window being captured while covered stops like any other.
+
 ## X11: no waiting on an input method that has gone
 
 libX11 learns that an input method's server went (ibus-x11 killed or

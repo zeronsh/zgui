@@ -402,6 +402,7 @@ jobs:
       # The swap chain's alpha (opaque windows aren't blended by DWM, #513)
       # and the event loop's wake by an event handle (#478): Windows only.
       - run: cargo test -p zgx-desktop --test opaque_swap_chain --test proxy_wake --test early_context --locked
+      - run: cargo test -p winit --lib --locked occlusion_area
       # The watchdog's budgets and memory limits, whose timing is each OS's.
       - run: cargo test -p zgx-script --test state --locked -- script::runaway script::a_script_short_of_its_budget script::garbage_from_builtins script::copies_of_state script::a_script_keeping_nodes
       # The vendored accesskit_windows' tests of zgx's patches (UIA's
