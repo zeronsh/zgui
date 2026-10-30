@@ -4048,11 +4048,10 @@ fn with_events(
     view.on_event(move |event| {
         let lua = &vm.lua;
         let local = |x: f32, y: f32| {
-            let origin = handle
+            handle
                 .get()
-                .and_then(|h| h.scene().map(|s| s.borrow().bounds(h.node())))
-                .map_or((0., 0.), |b| (b.x, b.y));
-            (x - origin.0, y - origin.1)
+                .and_then(|h| h.scene().map(|s| s.borrow().local_point(h.node(), x, y)))
+                .unwrap_or((x, y))
         };
         let held = event.pointer_modifiers();
         let point = |x: f32, y: f32| -> mlua::Result<mlua::Table> {
@@ -4259,16 +4258,17 @@ fn with_file_drop(
             return;
         }
         let files = Value::List(paths.iter().map(|p| crate::io::file_value(p)).collect());
-        let at = handle
+        let local = handle
             .get()
             .and_then(|handle| handle.scene())
-            .map(|scene| scene.borrow().transformed_bounds(cx.current_target))
-            .map_or((0., 0.), |bounds| (bounds.x, bounds.y));
+            .map_or((*x, *y), |scene| {
+                scene.borrow().local_point(cx.current_target, *x, *y)
+            });
         let point = vm.lua.create_table().and_then(|t| {
             t.set("x", *x)?;
             t.set("y", *y)?;
-            t.set("local_x", *x - at.0)?;
-            t.set("local_y", *y - at.1)?;
+            t.set("local_x", local.0)?;
+            t.set("local_y", local.1)?;
             Ok(t)
         });
         if let Ok(point) = point {
@@ -4321,16 +4321,16 @@ fn with_aux_click(
                 return;
             }
             let lua = &vm.lua;
-            let origin = handle
+            let local = handle
                 .get()
-                .and_then(|h| h.scene().map(|s| s.borrow().bounds(h.node())))
-                .map_or((0., 0.), |b| (b.x, b.y));
+                .and_then(|h| h.scene().map(|s| s.borrow().local_point(h.node(), *x, *y)))
+                .unwrap_or((*x, *y));
             let held = event.pointer_modifiers();
             let table = lua.create_table().and_then(|t| {
                 t.set("x", *x)?;
                 t.set("y", *y)?;
-                t.set("local_x", *x - origin.0)?;
-                t.set("local_y", *y - origin.1)?;
+                t.set("local_x", local.0)?;
+                t.set("local_y", local.1)?;
                 t.set("shift", held.shift)?;
                 t.set("ctrl", held.control)?;
                 t.set("alt", held.alt)?;
@@ -4495,14 +4495,17 @@ fn with_drag(
             })
         };
         let point = || -> Option<mlua::Table> {
-            let bounds = handle
-                .get()
-                .and_then(|h| h.scene().map(|s| s.borrow().bounds(h.node())))?;
+            let (bounds, local) = handle.get().and_then(|h| {
+                let scene = h.scene()?;
+                let scene = scene.borrow();
+                let local = scene.local_point(h.node(), event.x, event.y);
+                Some((scene.bounds(h.node()), local))
+            })?;
             let t = vm.lua.create_table().ok()?;
             t.set("x", event.x).ok()?;
             t.set("y", event.y).ok()?;
-            t.set("local_x", event.x - bounds.x).ok()?;
-            t.set("local_y", event.y - bounds.y).ok()?;
+            t.set("local_x", local.0).ok()?;
+            t.set("local_y", local.1).ok()?;
             t.set("w", bounds.width).ok()?;
             t.set("h", bounds.height).ok()?;
             Some(t)

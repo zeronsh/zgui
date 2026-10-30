@@ -6276,3 +6276,84 @@ fn a_panel_past_32_shadows_draws_the_first_32() {
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert!(issues[0].contains("32 shadows"), "{issues:?}");
 }
+
+/// Where a tilted card shows and where it is hit are the same place: every
+/// point of the window, drawn against hit, at zoom 1 and 0.76, a sibling
+/// column beside it, under a scroll or not.
+#[test]
+fn a_tilted_card_is_hit_where_it_shows() {
+    let _gpu_fixture = gpu_fixture();
+    let (w, h) = (800usize, 600usize);
+    let tilt = LocalTransform {
+        rotate_x: 12f32.to_radians(),
+        rotate_y: (-12f32).to_radians(),
+        perspective: 900.,
+        ..LocalTransform::IDENTITY
+    };
+    for (zoom, scrolled) in [(1., 0.), (0.76, 0.), (1., 40.), (0.76, 40.)] {
+        let mut gpu = GpuRenderer::new(w as u32, h as u32).unwrap();
+        let mut scene = Scene::new(w as f32, h as f32);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let page = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Overlay),
+            fixed(w as f32, h as f32),
+        );
+        scene.set_transform(page, Transform { x: 30., y: 20. });
+        scene.set_zoom(page, zoom);
+        if zoom != 1. {
+            scene.set_isolated(page, true);
+        }
+        let list = scene.append(
+            page,
+            NodeKind::Container(Layout::Overlay),
+            fixed(w as f32, h as f32),
+        );
+        scene.set_transform(
+            list,
+            Transform {
+                x: 0.,
+                y: -scrolled,
+            },
+        );
+        let card = scene.append(
+            list,
+            NodeKind::Rect(Color(220, 30, 30, 255)),
+            fixed(200., 240.),
+        );
+        scene.set_transform(card, Transform { x: 80., y: 100. });
+        scene.set_isolated(card, true);
+        scene.set_local_transform(card, tilt);
+        let next = scene.append(
+            list,
+            NodeKind::Rect(Color(30, 30, 220, 255)),
+            fixed(200., 240.),
+        );
+        scene.set_transform(next, Transform { x: 400., y: 100. });
+        let report = scene.flush();
+        gpu.render(&scene, &report.damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        let mut wrong = Vec::new();
+        for (x, y) in (0..h)
+            .step_by(6)
+            .flat_map(|y| (0..w).step_by(6).map(move |x| (x, y)))
+        {
+            let at = (y * w + x) * 4;
+            let (red, blue) = (pixels[at], pixels[at + 2]);
+            let hit = scene.hit_test_all(x as f32 + 0.5, y as f32 + 0.5);
+            // The edges' antialiasing says nothing.
+            if (40..200).contains(&red.max(blue)) {
+                continue;
+            }
+            if (red > 200) != hit.contains(&card) || (blue > 200) != hit.contains(&next) {
+                wrong.push((x, y, red, blue));
+            }
+        }
+        assert!(
+            wrong.len() <= 8,
+            "zoom {zoom}, scrolled {scrolled}: {} points differ: {:?}",
+            wrong.len(),
+            &wrong[..wrong.len().min(8)]
+        );
+    }
+}

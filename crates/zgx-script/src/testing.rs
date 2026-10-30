@@ -401,6 +401,12 @@ impl TestApp {
         let node = self.node(id);
         self.ui.scene.borrow().bounds(node)
     }
+    /// Where node `id` shows in the window: `bounds`, through whatever
+    /// transforms and zooms it lies under, as a pointer reaches it.
+    fn on_screen(&mut self, id: &str) -> Rect {
+        let node = self.node(id);
+        self.ui.scene.borrow().transformed_bounds(node)
+    }
     /// The text of node `id`, or of the first text inside it.
     pub fn text(&mut self, id: &str) -> String {
         let node = self.node(id);
@@ -475,7 +481,7 @@ impl TestApp {
 
     /// Press and release the primary button at node `id`'s middle.
     pub fn click(&mut self, id: &str) {
-        let b = self.bounds(id);
+        let b = self.on_screen(id);
         self.click_at(b);
     }
     fn click_at(&mut self, b: Rect) {
@@ -500,7 +506,7 @@ impl TestApp {
     /// Move the pointer to node `id`'s middle, as a mouse does: what it
     /// leaves hears it go, and a tooltip waits its delay.
     pub fn hover(&mut self, id: &str) {
-        let b = self.bounds(id);
+        let b = self.on_screen(id);
         crate::driver::hover_at(&mut self.ui, (b.x + b.width / 2., b.y + b.height / 2.));
         self.settle();
     }
@@ -515,7 +521,7 @@ impl TestApp {
     /// near `from`'s top left, past the drag threshold, then released over
     /// `to`'s middle (its upper half: a reorderable row drops above it).
     pub fn drag(&mut self, from: &str, to: &str) {
-        let (a, b) = (self.bounds(from), self.bounds(to));
+        let (a, b) = (self.on_screen(from), self.on_screen(to));
         crate::driver::drag(&mut self.ui, a, b);
         self.settle();
     }
