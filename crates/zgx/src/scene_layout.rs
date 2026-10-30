@@ -400,29 +400,36 @@ impl Scene {
     ) {
         self.rebase(cache, ids, keys, bases);
         let root = cache.root;
-        cache
-            .tree
-            .compute_layout_with_measure(root, space, |known, space, _, context, _| {
-                let Some(child) = context.copied() else {
-                    return t::Size::ZERO;
-                };
-                let size = self.measure(
-                    child,
-                    Constraints {
-                        width: known.width.or_else(|| bound(space.width)),
-                        height: known.height.or_else(|| bound(space.height)),
-                        percent_width: bases.0,
-                        percent_height: bases.1,
-                        force_width: known.width,
-                        force_height: known.height,
-                    },
-                );
-                t::Size {
-                    width: size.0,
-                    height: size.1,
-                }
-            })
-            .expect("retained tree is structurally valid");
+        let calc = self.any_size_calcs();
+        let measure = |known: t::Size<Option<f32>>,
+                       space: t::Size<t::AvailableSpace>,
+                       _: t::NodeId,
+                       context: Option<&mut NodeId>,
+                       _: &t::Style| {
+            let Some(child) = context.copied() else {
+                return t::Size::ZERO;
+            };
+            let size = self.measure(
+                child,
+                Constraints {
+                    width: known.width.or_else(|| bound(space.width)),
+                    height: known.height.or_else(|| bound(space.height)),
+                    percent_width: bases.0,
+                    percent_height: bases.1,
+                    force_width: known.width,
+                    force_height: known.height,
+                },
+            );
+            t::Size {
+                width: size.0,
+                height: size.1,
+            }
+        };
+        match calc {
+            true => cache.tree.compute_layout_with_calc(root, space, measure),
+            false => cache.tree.compute_layout_with_measure(root, space, measure),
+        }
+        .expect("retained tree is structurally valid");
     }
     /// Where the root's in-flow children end along its main axis (`down`:
     /// a column's), with their margins and its padding: its size when
@@ -594,7 +601,6 @@ impl Scene {
                     .as_deref()
                     .is_some_and(|options| {
                         let mut options = *options;
-                        let marked = options.visible == Some(true);
                         options.visible = None;
                         options.clip_x = None;
                         options.clip_y = None;
@@ -603,7 +609,7 @@ impl Scene {
                         if options.align_self != Some(Align::Baseline) {
                             options.align_self = None;
                         }
-                        !options.is_empty() || (marked && self.has_size_calcs(*child))
+                        !options.is_empty()
                     })
             })
     }

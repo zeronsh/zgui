@@ -272,7 +272,7 @@ impl<NodeContext> PrintTree for TaffyTree<NodeContext> {
 /// View over the Taffy tree that holds the tree itself along with a reference to the context
 /// and implements LayoutTree. This allows the context to be stored outside of the TaffyTree struct
 /// which makes the lifetimes of the context much more flexible.
-pub(crate) struct TaffyView<'t, NodeContext, MeasureFunction>
+pub(crate) struct TaffyView<'t, NodeContext, MeasureFunction, const CALC: bool = false>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -284,7 +284,7 @@ where
 }
 
 // TraversePartialTree impl for TaffyView
-impl<NodeContext, MeasureFunction> TraversePartialTree for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> TraversePartialTree for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -311,14 +311,14 @@ where
 }
 
 // TraverseTree impl for TaffyView
-impl<NodeContext, MeasureFunction> TraverseTree for TaffyView<'_, NodeContext, MeasureFunction> where
+impl<NodeContext, MeasureFunction, const CALC: bool> TraverseTree for TaffyView<'_, NodeContext, MeasureFunction, CALC> where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>
 {
 }
 
 // LayoutPartialTree impl for TaffyView
-impl<NodeContext, MeasureFunction> LayoutPartialTree for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> LayoutPartialTree for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -343,8 +343,12 @@ where
     #[inline(always)]
     #[allow(unsafe_code)]
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
-        // SAFETY: a tree's styles name calc values through `CalcValue`, whose
-        // contract is that they point at one, live for as long as they're used.
+        if !CALC {
+            return 0.0;
+        }
+        // SAFETY: `compute_layout_with_calc`'s callers name calc values through
+        // `CalcValue`, whose contract is that they point at one, live for as
+        // long as they're used.
         unsafe { ((*val.cast::<crate::style::CalcValue>()).resolve)(val, basis) }
     }
 
@@ -400,7 +404,7 @@ where
     }
 }
 
-impl<NodeContext, MeasureFunction> CacheTree for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> CacheTree for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -432,7 +436,7 @@ where
 }
 
 #[cfg(feature = "block_layout")]
-impl<NodeContext, MeasureFunction> LayoutBlockContainer for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> LayoutBlockContainer for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -458,7 +462,7 @@ where
 }
 
 #[cfg(feature = "flexbox")]
-impl<NodeContext, MeasureFunction> LayoutFlexboxContainer for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> LayoutFlexboxContainer for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -484,7 +488,7 @@ where
 }
 
 #[cfg(feature = "grid")]
-impl<NodeContext, MeasureFunction> LayoutGridContainer for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> LayoutGridContainer for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -516,7 +520,7 @@ where
 }
 
 // RoundTree impl for TaffyView
-impl<NodeContext, MeasureFunction> RoundTree for TaffyView<'_, NodeContext, MeasureFunction>
+impl<NodeContext, MeasureFunction, const CALC: bool> RoundTree for TaffyView<'_, NodeContext, MeasureFunction, CALC>
 where
     MeasureFunction:
         FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
@@ -923,7 +927,30 @@ impl<NodeContext> TaffyTree<NodeContext> {
             FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
     {
         let use_rounding = self.config.use_rounding;
-        let mut taffy_view = TaffyView { taffy: self, measure_function };
+        let mut taffy_view = TaffyView::<'_, NodeContext, MeasureFunction, false> { taffy: self, measure_function };
+        compute_root_layout(&mut taffy_view, node_id, available_space);
+        if use_rounding {
+            round_layout(&mut taffy_view, node_id);
+        }
+        Ok(())
+    }
+
+    /// `compute_layout_with_measure` for styles that hold calc values, each
+    /// pointing at a live `CalcValue`. Apart, so that the layouts without any
+    /// have no call to make: one that returns would make the functions a
+    /// length is read in save registers, calc or not.
+    pub fn compute_layout_with_calc<MeasureFunction>(
+        &mut self,
+        node_id: NodeId,
+        available_space: Size<AvailableSpace>,
+        measure_function: MeasureFunction,
+    ) -> Result<(), TaffyError>
+    where
+        MeasureFunction:
+            FnMut(Size<Option<f32>>, Size<AvailableSpace>, NodeId, Option<&mut NodeContext>, &Style) -> Size<f32>,
+    {
+        let use_rounding = self.config.use_rounding;
+        let mut taffy_view = TaffyView::<'_, NodeContext, MeasureFunction, true> { taffy: self, measure_function };
         compute_root_layout(&mut taffy_view, node_id, available_space);
         if use_rounding {
             round_layout(&mut taffy_view, node_id);
@@ -945,7 +972,7 @@ impl<NodeContext> TaffyTree<NodeContext> {
     /// Returns an instance of LayoutTree representing the TaffyTree
     #[cfg(test)]
     pub(crate) fn as_layout_tree(&mut self) -> impl LayoutPartialTree + CacheTree + '_ {
-        TaffyView { taffy: self, measure_function: |_, _, _, _, _| Size::ZERO }
+        TaffyView::<'_, NodeContext, _, false> { taffy: self, measure_function: |_, _, _, _, _| Size::ZERO }
     }
 }
 

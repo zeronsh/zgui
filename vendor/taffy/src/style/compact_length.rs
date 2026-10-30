@@ -336,22 +336,6 @@ impl CompactLength {
         self.0.ptr()
     }
 
-    /// A calc value worked out against `basis`, if there is one: what's left
-    /// of a length once its other tags are matched. Apart: a call that returns
-    /// makes whatever holds it save registers, so inline in those matches it
-    /// would cost every length, calc or not.
-    #[cold]
-    #[inline(never)]
-    #[cfg(feature = "calc")]
-    pub(crate) fn resolved_calc(
-        self,
-        basis: Option<f32>,
-        calc_resolver: impl Fn(*const (), f32) -> f32,
-    ) -> Option<f32> {
-        assert!(self.is_calc(), "a length of no known kind");
-        basis.map(|basis| calc_resolver(self.calc_value(), basis))
-    }
-
     /// Returns true if the value is 0 px
     #[inline(always)]
     #[cfg(feature = "calc")]
@@ -464,7 +448,7 @@ impl CompactLength {
         match self.tag() {
             CompactLength::PERCENT_TAG => Some(self.value() * parent_size),
             #[cfg(feature = "calc_tracks")]
-            _ if self.is_calc() => self.resolved_calc(Some(parent_size), calc_resolver),
+            _ if self.is_calc() => Some(calc_resolver(self.0.ptr(), parent_size)),
             _ => None,
         }
     }

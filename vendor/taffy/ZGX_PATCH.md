@@ -29,13 +29,16 @@ caches as they were.
 2. In `src/tree/taffy_tree.rs`, `TaffyTree::set_style` clears the caches
    of a node's children when its `display` changes (rare: a few nodes'
    caches, which the change dirties anyway).
-3. In `src/tree/taffy_tree.rs`, `resolve_calc_value` calls what the value
-   points at (`style::CalcValue`), where taffy gave 0 unless a tree of its
-   own overrode it. Each resolve in `src/style` and `src/util/resolve.rs`
-   goes through `CompactLength::resolved_calc`, out of line and `#[cold]`,
-   so that plain lengths don't pay for the call. Calc in grid tracks, which
-   zgx never writes, is the `calc_tracks` feature: track sizing reads tags
-   often enough to pay for the test.
+3. In `src/tree/taffy_tree.rs`, `TaffyView` takes a `CALC` const, and
+   `TaffyTree::compute_layout_with_calc` lays out with it on: its
+   `resolve_calc_value` calls what the value points at
+   (`style::CalcValue`), where taffy gives 0 unless a tree of its own
+   overrides it. Layouts without calc values stay on the copy that has no
+   call to make: one that returns, even out of line, makes the functions
+   lengths are read in save registers (+0.2% on a grid of shapes). A
+   length that's no other kind is a calc value, without a test
+   (`src/util/resolve.rs`, `src/style/dimension.rs`). Calc in grid tracks,
+   which zgx never writes, is the `calc_tracks` feature.
 
 Drop the fork when a taffy release keeps the gaps and keys children's
 results by their parent's layout mode (the zgx tests are

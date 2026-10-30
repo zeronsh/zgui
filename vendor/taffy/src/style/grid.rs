@@ -828,7 +828,7 @@ impl MaxTrackSizingFunction {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => parent_size.map(|size| self.0.value() * size),
             #[cfg(feature = "calc_tracks")]
-            _ if self.0.is_calc() => self.0.resolved_calc(parent_size, calc_resolver),
+            _ if self.0.is_calc() => parent_size.map(|size| calc_resolver(self.0.calc_value(), size)),
             _ => None,
         }
     }
@@ -1049,7 +1049,7 @@ impl MinTrackSizingFunction {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => parent_size.map(|size| self.0.value() * size),
             #[cfg(feature = "calc_tracks")]
-            _ if self.0.is_calc() => self.0.resolved_calc(parent_size, calc_resolver),
+            _ if self.0.is_calc() => parent_size.map(|size| calc_resolver(self.0.calc_value(), size)),
             _ => None,
         }
     }

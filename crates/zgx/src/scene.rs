@@ -6128,11 +6128,12 @@ impl Scene {
         let cold = self.cold.as_ref()?;
         cold.size_calcs.get(&id).map(|sizes| &**sizes)
     }
-    /// Whether `id` has sizes `set_size_calcs` gave it.
-    pub(super) fn has_size_calcs(&self, id: NodeId) -> bool {
+    /// Whether any node has sizes `set_size_calcs` gave it: without any,
+    /// layout runs the copy of taffy with no calc values to call.
+    pub(super) fn any_size_calcs(&self) -> bool {
         self.cold
             .as_ref()
-            .is_some_and(|cold| cold.size_calcs.contains_key(&id))
+            .is_some_and(|cold| !cold.size_calcs.is_empty())
     }
     /// Move each sticky node to where its scroll view's position puts it,
     /// now that layout has placed everything. After the content's own

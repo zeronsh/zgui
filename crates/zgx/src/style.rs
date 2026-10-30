@@ -740,7 +740,7 @@ pub(crate) struct ColdStyles {
 fn size_calcs(styles: &mut Styles) -> &mut crate::size_calc::SizeCalcs {
     // A parent lays out what has options with taffy, the only layout that
     // reads these: a value that changes nothing, to say so.
-    styles.layout_options_mut().visible.get_or_insert(true);
+    styles.layout_options_mut().reverse.get_or_insert(false);
     let cold = styles.rare_mut().cold.get_or_insert_default();
     std::sync::Arc::make_mut(cold.size_calcs.get_or_insert_default())
 }
