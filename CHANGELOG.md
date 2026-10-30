@@ -16,6 +16,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Added
 
+- **A `ui.list` row taller than `height` is a layout warning** (zgx): it ran over the next row silently.
 - **Spans follow state, and take any font** (zgx-script): a span's `color`, `bg`, `text_size`, `weight`, `bold`, `italic`, `underline`, `strike` and `font` take a state or a function, as its text does, so a run restyles without rebuilding its paragraph's node or losing a selection in it, and `font` takes what `ui.text`'s does ([text](docs/reference/text.md)).
 - **Sticky elements in scroll views** (zgx, zgx-script): `.sticky_top(n)` and `sticky_top = n` hold an element `n` below the top of the `ui.scroll` around it as it scrolls past, inside its parent, as CSS's `position: sticky` with `top`: section headers, with no script running as it scrolls. Vertical scroll views only.
 - **Where a map sits on a 3D mesh**: `World::set_map_placement(id, Map::BaseColour, Some(MapPlacement::new().scaled(4., 4.).wrap(Wrap::Mirror, Wrap::Repeat)))` moves, scales and turns each of a mesh's maps on its own, says how it repeats, and with `.uv_set(1)` reads the coordinates `Geometry::with_second_uvs` gave it. glTF models bring theirs (`KHR_texture_transform`, samplers' `wrapS` and `wrapT`, `texCoord` and `TEXCOORD_1`). A mesh's maps share one sampler, its first map's wrap. A mesh using none binds nothing new; a wrap alone only takes another sampler.

@@ -409,6 +409,24 @@ fn a_tabs_panel_fills_the_tabs() {
 }
 
 #[test]
+fn a_list_row_taller_than_its_height_is_a_layout_warning() {
+    let warned = |height: u32| {
+        let h = Harness::inline(&format!(
+            r#"return ui.list {{ id = "list", w = 200, h = 200, count = 20, height = {height},
+                row = function(i) return ui.button {{ h = 40, "Row" }} end }}"#
+        ));
+        assert_eq!(h.error(), None);
+        h.ui.prepare_frame();
+        zgx::inspect::layout_warnings(&h.ui)
+            .iter()
+            .filter(|w| w.message.contains("runs over the next row"))
+            .count()
+    };
+    assert!(warned(28) > 0);
+    assert_eq!(warned(40), 0);
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")
