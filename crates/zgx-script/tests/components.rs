@@ -408,6 +408,89 @@ fn a_tabs_panel_fills_the_tabs() {
     assert_eq!((editor.width, editor.height), (panel.width, panel.height));
 }
 
+const KEPT_TABS: &str = r##"
+local items = ui.state("items", {
+    { id = "a", label = "A", closable = true },
+    { id = "b", label = "B", closable = true },
+})
+local chosen = ui.state("chosen", "a")
+local builds = ui.state("builds", 0)
+local notes = { a = ui.state("note_a", "alpha"), b = ui.state("note_b", "bravo") }
+ui.command { id = "a", title = "a", run = function() chosen:set("a") end }
+ui.command { id = "b", title = "b", run = function() chosen:set("b") end }
+ui.command { id = "close", title = "c", run = function()
+    chosen:set("b")
+    items:set({ { id = "b", label = "B", closable = true } })
+end }
+return ui.column { h = 280,
+    ui.tabs { label = "t", grow = 1, KEEP items = items, value = chosen,
+        panel = function(id: string): Node
+            builds:add(1)
+            return ui.column { id = `panel-{id}`, grow = 1,
+                ui.textarea { id = `note-{id}`, label = id, grow = 1, w_full = true, value = notes[id] },
+            }
+        end,
+    },
+    ui.text { id = "builds", "{builds}" },
+    ui.text { id = "note", "{note_a}" },
+}"##;
+
+#[test]
+fn kept_tabs_keep_their_panels_at_rest_until_they_close() {
+    let mut h = Harness::inline(&KEPT_TABS.replace("KEEP", "keep = true,"));
+    assert_eq!(h.error(), None);
+    h.frame();
+    h.type_text("note-a", "!");
+    assert_eq!(h.text("note"), "alpha!");
+    let caret = h.ui.focused_editor().expect("focused").selection();
+
+    assert!(h.host.run_command("b"));
+    h.frame();
+    assert_eq!(h.text("builds"), "2");
+    assert!(
+        h.ui.focused_editor().is_none(),
+        "focus leaves a hidden panel, so keys can't reach it"
+    );
+    let panel = h.find("panel-a").expect("kept, mounted");
+    assert!(
+        !h.ui.scene.borrow().layout_visible(panel),
+        "and takes no layout"
+    );
+
+    assert!(h.host.run_command("a"));
+    h.frame();
+    assert_eq!(h.text("builds"), "2", "chosen again, it isn't rebuilt");
+    let note = h.find("note-a").expect("its editor");
+    assert_eq!(
+        h.ui.editor(note).unwrap().selection(),
+        caret,
+        "its caret too"
+    );
+    h.click("note-a");
+    h.keys("cmd+z");
+    h.frame();
+    assert_eq!(h.text("note"), "alpha", "its undo survived");
+
+    assert!(h.host.run_command("close"));
+    h.frame();
+    assert!(
+        h.find("panel-a").is_none(),
+        "closing its tab drops the panel"
+    );
+}
+
+#[test]
+fn tabs_rebuild_their_panels_unless_they_keep_them() {
+    let mut h = Harness::inline(&KEPT_TABS.replace("KEEP", ""));
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(h.host.run_command("b"));
+    h.frame();
+    assert!(h.host.run_command("a"));
+    h.frame();
+    assert_eq!(h.text("builds"), "3");
+}
+
 #[test]
 fn a_list_row_taller_than_its_height_is_a_layout_warning() {
     let warned = |height: u32| {

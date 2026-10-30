@@ -9962,6 +9962,9 @@ export type TabsProps = {
 	-- The chosen tab's panel, built as it is chosen.
 	panel: (id: string) -> Node,
 	reorderable: boolean?,
+	-- A panel stays mounted once chosen, hidden, until its tab closes: an
+	-- editor keeps its undo, caret and scroll.
+	keep: boolean?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
 	label: Label?,

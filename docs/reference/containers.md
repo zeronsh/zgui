@@ -100,6 +100,7 @@ return ui.column {
 | `value` | `State<string>` | required | the chosen tab's id |
 | `panel` | `(id: string) -> Node` | required | the chosen tab's panel, built as it is chosen |
 | `reorderable` | `boolean` | `false` | |
+| `keep` | `boolean` | `false` | a panel stays mounted once its tab is chosen, as Radix's `forceMount`, and goes when the tab closes: an editor keeps its undo, caret and scroll. Hidden, it takes no layout, paint or frames; its reactive bindings still follow state, and a script's own timers keep running |
 | `on_close` | `(id: string) -> boolean?` | none | asked before a tab closes; `false` keeps it open (an editor asking to save first) |
 | `label` | `string` | `""` | the strip's accessible name |
 

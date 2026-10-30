@@ -27,6 +27,7 @@ pub(crate) enum Library {
         items: Signal<Value>,
         value: Signal<Value>,
         reorderable: bool,
+        keep: bool,
         on_close: Option<Function>,
         panel: Function,
     },
@@ -244,6 +245,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
                 items,
                 value,
                 reorderable: table.get::<Option<bool>>("reorderable")?.unwrap_or(false),
+                keep: table.get::<Option<bool>>("keep")?.unwrap_or(false),
                 on_close: table.get("on_close")?,
                 panel,
             }));
@@ -1202,6 +1204,7 @@ pub(crate) fn view(
             items,
             value,
             reorderable,
+            keep,
             on_close,
             panel,
         } => {
@@ -1256,6 +1259,7 @@ pub(crate) fn view(
             let options = TabsOptions {
                 reorderable: *reorderable,
                 on_close,
+                keep: *keep,
             };
             let (panel, vm, low) = (panel.clone(), vm.clone(), low.clone());
             tabs(
