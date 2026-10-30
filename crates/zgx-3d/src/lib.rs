@@ -54,6 +54,6 @@ pub use orbit::Orbit;
 pub use pick::Hit;
 pub use texture::{Map, Texture};
 pub use world::{
-    Camera, Light, LightId, MAX_JOINTS, Material, Object, ObjectId, POINT_LIGHTS, Skin, World,
-    srgb_to_linear,
+    Camera, Light, LightId, MAX_JOINTS, Material, Object, ObjectId, POINT_LIGHTS, Skin,
+    ToneMapping, World, srgb_to_linear,
 };

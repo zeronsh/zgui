@@ -745,3 +745,53 @@ fn the_studio_lights_a_model_with_no_lights_of_its_own() {
         [r, g, b]
     );
 }
+
+/// The red channel shown for a black square glowing `glow` (grey, linear),
+/// tone mapped by `tone`, exposed `stops`.
+fn shown(glow: f32, tone: ToneMapping, stops: f32) -> Option<u8> {
+    let mut black = Material::rgb(0x000000);
+    black.emissive = [glow; 3];
+    let (world, _) = one(facing_square(), black);
+    world.set_tone_mapping(tone);
+    world.set_exposure(stops);
+    let mut window = Window::new(&world)?;
+    window.draw();
+    Some(window.pixel(50, 50)[0])
+}
+
+#[test]
+fn tone_mappings_bring_bright_light_into_range_each_its_own_way() {
+    let Some(_) = shown(0.18, ToneMapping::Linear, 0.) else {
+        return;
+    };
+    let curve = |tone| [0.05, 0.18, 1., 4.].map(|glow| shown(glow, tone, 0.).unwrap());
+    let (linear, neutral, aces) = (
+        curve(ToneMapping::Linear),
+        curve(ToneMapping::Neutral),
+        curve(ToneMapping::Aces),
+    );
+    for c in [linear, neutral, aces] {
+        assert!(c.windows(2).all(|w| w[0] < w[1] || w[1] == 255), "{c:?}");
+    }
+    // Linear clips at 1; the others roll off below white.
+    assert_eq!((linear[2], linear[3]), (255, 255), "{linear:?}");
+    assert!(neutral[2] < 255 && aces[2] < 255, "{neutral:?} {aces:?}");
+    // sRGB output: linear 0.18 is 118 of 255.
+    assert!(linear[1].abs_diff(118) <= 2, "{linear:?}");
+    // ACES lifts mid grey above neutral's (its 1/0.6 exposure).
+    assert!(aces[1] > neutral[1], "{aces:?} {neutral:?}");
+}
+
+#[test]
+fn exposure_doubles_the_light_a_stop() {
+    let (Some(up), Some(double)) = (
+        shown(0.1, ToneMapping::Linear, 1.),
+        shown(0.2, ToneMapping::Linear, 0.),
+    ) else {
+        return;
+    };
+    assert!(up.abs_diff(double) <= 1, "{up} against {double}");
+    let down = shown(0.2, ToneMapping::Linear, -1.).unwrap();
+    let half = shown(0.1, ToneMapping::Linear, 0.).unwrap();
+    assert!(down.abs_diff(half) <= 1, "{down} against {half}");
+}

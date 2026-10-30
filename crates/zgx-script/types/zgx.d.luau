@@ -5414,6 +5414,11 @@ export type Scene3DProps = {
 	-- sharp in polished metal, blurred in rough. Unsaid, a scene showing a
 	-- ui.model has the studio, others none.
 	environment: ("studio" | "none" | string | Environment3D)?,
+	-- How lit colours map to the display: "neutral" (the default; colours
+	-- read true), "aces" (filmic contrast) or "linear" (clamped).
+	tone_mapping: ("neutral" | "aces" | "linear")?,
+	-- Stops of exposure: each doubles the light (default 0).
+	exposure: Reactive<number>?,
 	[number]: Object3D,
 }
 export type CanvasProps = {

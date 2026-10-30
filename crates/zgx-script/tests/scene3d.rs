@@ -436,3 +436,16 @@ fn a_clip_it_has_not_says_which_it_has() {
         raised(r#"ui.scene3d { ui.model { src = "a.glb", animation = 0 } }"#).contains("animation")
     );
 }
+
+#[test]
+fn tone_mapping_and_exposure_are_checked() {
+    let mut h = Harness::inline(
+        r#"local stops = ui.state("stops", 0)
+        return ui.scene3d { id = "scene", w = 100, h = 100, tone_mapping = "aces", exposure = stops,
+            ui.mesh { geometry = "box" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(frame_id(&mut h, "scene").is_some());
+    assert!(raised(r#"ui.scene3d { tone_mapping = "reinhard" }"#).contains("tone_mapping"));
+}

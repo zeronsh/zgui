@@ -55,6 +55,8 @@ struct FrameUniforms {
     environment: [f32; 4],
     /// Its diffuse light (`Prefiltered::irradiance`), a coefficient a row.
     irradiance: [[f32; 4]; 9],
+    /// The tone mapping: 0 neutral, 1 ACES, 2 none.
+    look: [f32; 4],
 }
 
 /// What the shadow map holds: the sun's view, each opaque mesh's geometry
@@ -663,7 +665,18 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
         shadow_texel: [0.; 4],
         environment: [0.; 4],
         irradiance: [[0.; 4]; 9],
+        look: [
+            match world.tone_mapping {
+                crate::ToneMapping::Neutral => 0.,
+                crate::ToneMapping::Aces => 1.,
+                crate::ToneMapping::Linear => 2.,
+            },
+            0.,
+            0.,
+            0.,
+        ],
     };
+    uniforms.params[2] = world.exposure.exp2();
     if let Some(environment) = &world.environment {
         let (sin, cos) = environment.rotation.sin_cos();
         uniforms.environment = [
@@ -1368,6 +1381,7 @@ struct Frame {
     shadow_texel: vec4<f32>,
     environment: vec4<f32>,
     irradiance: array<vec4<f32>, 9>,
+    look: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
@@ -1503,6 +1517,26 @@ fn neutral(color: vec3<f32>) -> vec3<f32> {
 //E     let ab = vec2(-1.04, 1.04) * a004 + r.zw;
 //E     return f0 * ab.x + ab.y;
 //E }
+// ACES's filmic curve, Stephen Hill's fit: into its working space, its
+// reference transform and display transform as one rational curve, back.
+// Exposed by 1 / 0.6 first, as three.js does, so mid grey stays about mid.
+fn aces(color: vec3<f32>) -> vec3<f32> {
+    let into = mat3x3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
+    let back = mat3x3(vec3(1.60475, -0.10208, -0.00327), vec3(-0.53108, 1.10813, -0.07276), vec3(-0.07367, -0.00605, 1.07602));
+    let v = into * (color / 0.6);
+    let a = v * (v + 0.0245786) - 0.000090537;
+    let b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return clamp(back * (a / b), vec3(0.0), vec3(1.0));
+}
+fn tone_map(color: vec3<f32>) -> vec3<f32> {
+    if frame.look.x > 1.5 {
+        return color;
+    }
+    if frame.look.x > 0.5 {
+        return aces(color);
+    }
+    return neutral(color);
+}
 fn encode(c: vec3<f32>) -> vec3<f32> {
     let low = c * 12.92;
     let high = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
@@ -1586,7 +1620,7 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 //E     surround = (surround + along * reflectance(f0, roughness, n_v)) * frame.environment.x;
         lit += surround * occlusion;
         lit += in.emissive * glow;
-        lit = neutral(lit * frame.params.z);
+        lit = tone_map(lit * frame.params.z);
     }
     if frame.params.y > 0.5 {
         lit = encode(clamp(lit, vec3(0.0), vec3(1.0)));

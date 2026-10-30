@@ -119,6 +119,10 @@ pub(crate) struct Scene3dSpec {
     shadows: bool,
     /// The light around it (`World::set_environment`); `None` unsaid.
     environment: Option<EnvironmentSpec>,
+    /// How its light maps to the display (`World::set_tone_mapping`).
+    tone_mapping: zgx_3d::ToneMapping,
+    /// Stops of exposure (`World::set_exposure`).
+    exposure: Option<Num>,
     objects: Vec<Rc<ObjectSpec>>,
 }
 /// Where a scene's environment comes from.
@@ -516,6 +520,17 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
             }
         },
         environment: environment(&table)?,
+        tone_mapping: match table.get::<Option<String>>("tone_mapping")?.as_deref() {
+            None | Some("neutral") => zgx_3d::ToneMapping::Neutral,
+            Some("aces") => zgx_3d::ToneMapping::Aces,
+            Some("linear") => zgx_3d::ToneMapping::Linear,
+            Some(other) => {
+                return Err(wrong(format_args!(
+                    "ui.scene3d `tone_mapping` is \"neutral\", \"aces\" or \"linear\", not \"{other}\""
+                )));
+            }
+        },
+        exposure: opt_num(&table, "exposure")?,
         objects: objects(&table, "ui.scene3d")?,
     };
     // Its box's own properties: the table's named keys alone but
@@ -526,7 +541,13 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         if let mlua::Value::String(name) = &key
             && !matches!(
                 &*name.as_bytes(),
-                b"camera" | b"orbit" | b"background" | b"shadows" | b"environment"
+                b"camera"
+                    | b"orbit"
+                    | b"background"
+                    | b"shadows"
+                    | b"environment"
+                    | b"tone_mapping"
+                    | b"exposure"
             )
         {
             props.set(key, value)?;
@@ -800,6 +821,7 @@ pub(crate) fn lower(
     let world = World::new();
     let theme = cx.theme();
     world.set_shadows(spec.shadows);
+    world.set_tone_mapping(spec.tone_mapping);
     let mut adding = Adding {
         world: &world,
         vm,
@@ -812,6 +834,11 @@ pub(crate) fn lower(
     }
     let handled = adding.handled;
     light_around(&world, spec, vm, assets, cx);
+    if let Some(exposure) = &spec.exposure {
+        let exposure = Live::of(exposure, cx);
+        let (world, vm) = (world.clone(), vm.clone());
+        follow(cx, Box::new(move || world.set_exposure(exposure.get(&vm))));
+    }
     // The background, and the camera (orbiting, if asked: dragged, scrolled
     // and turning on its own).
     if let Some(background) = &spec.background {

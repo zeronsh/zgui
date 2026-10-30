@@ -260,6 +260,10 @@ pub(crate) struct Inner {
     pub(crate) shadows: bool,
     /// The light around it (`World::set_environment`).
     pub(crate) environment: Option<crate::Environment>,
+    /// How lit colours map to the display (`World::set_tone_mapping`).
+    pub(crate) tone_mapping: ToneMapping,
+    /// Stops of exposure (`World::set_exposure`): light times 2 to it.
+    pub(crate) exposure: f32,
     /// Objects' textures (`World::set_map`), by index and map, with the
     /// generation they were set for.
     textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
@@ -269,6 +273,24 @@ pub(crate) struct Inner {
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
+/// How a world's lit colours are brought into the display's range
+/// (`World::set_tone_mapping`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToneMapping {
+    /// Khronos's PBR Neutral: colours as the material says up to bright
+    /// highlights, which roll off to white. Best for products and anything
+    /// whose colour must read true.
+    #[default]
+    Neutral,
+    /// The filmic curve of ACES (Stephen Hill's fit to its reference
+    /// transform): more contrast, saturated colours desaturating toward
+    /// white as they brighten, as film does.
+    Aces,
+    /// None: colours clamped to the display's range, as lit.
+    Linear,
+}
+
 /// What a frame draws: each visible mesh with its world matrix.
 pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
@@ -466,6 +488,8 @@ impl World {
             background: None,
             shadows: false,
             environment: None,
+            tone_mapping: ToneMapping::Neutral,
+            exposure: 0.,
             textures: Default::default(),
             skins: Default::default(),
             revision: 0,
@@ -669,6 +693,24 @@ impl World {
             inner.environment = environment;
             changed
         });
+    }
+    /// How lit colours, which may be brighter than the display shows, are
+    /// brought into its range (unlit meshes and the background are shown as
+    /// they are). `Neutral` by default.
+    pub fn set_tone_mapping(&self, tone_mapping: ToneMapping) {
+        self.change(|inner| {
+            std::mem::replace(&mut inner.tone_mapping, tone_mapping) != tone_mapping
+        });
+    }
+    /// How bright the scene is exposed, in stops: each one doubles the light
+    /// before tone mapping (−1 halves it). 0 by default.
+    pub fn set_exposure(&self, stops: f32) {
+        let stops = if stops.is_finite() {
+            stops.clamp(-16., 16.)
+        } else {
+            0.
+        };
+        self.change(|inner| std::mem::replace(&mut inner.exposure, stops) != stops);
     }
     /// Object `id`'s matrix in the world, its ancestors' applied; `None` if
     /// it is gone, hidden or under a hidden one.
