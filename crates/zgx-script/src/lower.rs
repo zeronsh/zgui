@@ -1116,13 +1116,61 @@ pub(crate) fn bridge<T: PartialEq + Clone + 'static>(
 /// A mounted editor's model, for a value the app gives it (`load_next`).
 type LoadedEditor = Rc<std::cell::OnceCell<Rc<std::cell::RefCell<zgx::text_edit::TextEditor>>>>;
 
+/// How long after a field's own edit a different value is its answer (an app
+/// trimming what is typed, a frame late), not a new document: a person can't
+/// choose another document that soon after a key.
+const ANSWER: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// An input's text bound to a state (`value = state`), as `bridge`; a value
+/// the app sets, other than an answer to an edit, leaves nothing to undo.
+fn bound_text(cx: &mut Context, value: &Signal<Value>, editor: &LoadedEditor) -> Signal<TextValue> {
+    fn text_of(value: &Value) -> TextValue {
+        match value {
+            Value::Text(t) => TextValue::Long(t.clone()),
+            Value::Str(s) => TextValue::from(&**s),
+            v => TextValue::Flat(v.to_string()),
+        }
+    }
+    let typed = cx.state(value.with_untracked(text_of));
+    let runtime = cx.runtime();
+    let edited: Rc<std::cell::Cell<Option<std::time::Instant>>> = Rc::default();
+    let (v, t, e, loaded) = (value.clone(), typed.clone(), edited.clone(), editor.clone());
+    cx.retain(runtime.effect(move || {
+        let next = v.with(text_of);
+        if t.with_untracked(|now| *now != next) {
+            if e.get().is_none_or(|at| at.elapsed() > ANSWER)
+                && let Some(editor) = loaded.get()
+            {
+                editor.borrow_mut().load_next();
+            }
+            t.set(next);
+        }
+    }));
+    let (v, t) = (value.clone(), typed.clone());
+    // As `bridge`: mounting never rewrites the script's value.
+    let mut first = true;
+    cx.retain(runtime.effect(move || {
+        let next = t.get();
+        if !std::mem::take(&mut first) && v.with_untracked(text_of) != next {
+            edited.set(Some(std::time::Instant::now()));
+            v.set(match next {
+                TextValue::Flat(s) => Value::Str(s.into()),
+                TextValue::Long(t) => Value::Text(t),
+            });
+        }
+    }));
+    typed
+}
+
 /// A controlled input's text (`value = function`): what the function shows
 /// while the input isn't focused; focused, what is being typed, each edit
 /// told to `on_change` (the function's answer to an edit, a number
 /// formatted, waits until it is left). A change from elsewhere while it is
 /// focused (a send clearing the draft) shows at once. Enter, or leaving it
-/// changed, tells `on_commit`, and it shows the function's text again. With
-/// the listener that does that.
+/// changed, tells `on_commit`, and it shows the function's text again. The
+/// function's next change after telling it is its answer, however late and
+/// whatever it says, and keeps the history; any other is a new document and
+/// leaves nothing to undo. With the listener that does that.
 fn controlled_input(
     cx: &mut Context,
     shown: &Source,
@@ -1159,7 +1207,11 @@ fn controlled_input(
         {
             editor.borrow_mut().load_next();
         }
-        if !e.get() || (!o.replace(false) && changed) {
+        let answer = o.replace(false);
+        if !e.get() || (!answer && changed) {
+            if !answer && let Some(editor) = loaded.get() {
+                editor.borrow_mut().load_next();
+            }
             t.set(now);
         }
     }));
@@ -1171,19 +1223,20 @@ fn controlled_input(
             vm.clone(),
             low.actions.clone(),
         );
-        let quiet = runtime.clone();
+        let (quiet, told) = (runtime.clone(), echo.clone());
         cx.retain(runtime.effect(move || {
             let now = t.get();
             if e.get() && now != *l.borrow() {
-                echo.set(true);
+                told.set(true);
                 quiet.untracked(|| run(&change, &vm, &actions, now));
             }
         }));
     }
-    let (t, l, e, vm, actions) = (
+    let (t, l, e, o, vm, actions) = (
         text.clone(),
         latest,
         editing,
+        echo,
         vm.clone(),
         low.actions.clone(),
     );
@@ -1196,6 +1249,7 @@ fn controlled_input(
             if typed != *l.borrow()
                 && let Some(commit) = &commit
             {
+                o.set(true);
                 run(commit, &vm, &actions, typed);
             }
             let _ = cx;
@@ -2153,20 +2207,7 @@ fn kind_view(
                         if let Some(commit) = commit {
                             committing = Some(state_commit(value.clone(), commit.clone(), vm, low));
                         }
-                        bridge(
-                            need(&mut cx),
-                            value,
-                            |v| match v {
-                                Value::Text(t) => TextValue::Long(t.clone()),
-                                Value::Str(s) => TextValue::from(&**s),
-                                v => TextValue::Flat(v.to_string()),
-                            },
-                            |t| match t {
-                                TextValue::Flat(s) => Value::Str(s.into()),
-                                TextValue::Long(t) => Value::Text(t),
-                            },
-                        )
-                        .into()
+                        bound_text(need(&mut cx), value, &loaded).into()
                     },
                     None,
                 ),
@@ -2239,12 +2280,13 @@ fn kind_view(
             if let Some(width) = caret_width {
                 view = view.caret_width(width);
             }
+            view = view.on_mount(move |node| {
+                if let Some(editor) = node.editor() {
+                    let _ = loaded.set(editor.editor);
+                }
+            });
             if let Some(control) = controlled {
-                view = view.on_event(control).on_mount(move |node| {
-                    if let Some(editor) = node.editor() {
-                        let _ = loaded.set(editor.editor);
-                    }
-                });
+                view = view.on_event(control);
             }
             if let Some(commit) = committing {
                 view = view.on_event(commit);

@@ -300,7 +300,7 @@ A WebSocket is `ui.socket(url, opts)`, through the host's `ScriptHost::socket_co
 
 ## Forms
 
-A control bound to a state is a controlled input both ways: typing writes the state, and writing the state (clearing a draft on send) shows in it. For validation and submitting, `ui.form` holds the fields as React Hook Form does.
+A control bound to a state is a controlled input both ways: typing writes the state, and writing the state (clearing a draft on send) shows in it. A value you set is a new document, not an edit: it clears the field's undo, as `el.value = x` does in a browser, and an answer to what was just typed (a trim, a format) keeps it. For validation and submitting, `ui.form` holds the fields as React Hook Form does.
 
 ```lua
 local form = ui.form {
