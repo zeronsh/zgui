@@ -105,6 +105,7 @@ SMOKES = [
     ("find-in-page", "python3 scripts/find_in_page_smoke.py {bin}/selectable_text --output {out}", False),
     ("zoom", "python3 scripts/zoom_smoke.py {bin}/zoom_probe --output {out}", False),
     ("luau-views", "python3 scripts/luau_views_smoke.py {bin}/luau_probe --output {out}", False),
+    ("covered-window", "python3 scripts/covered_window_smoke.py {bin}/../zgx-run --output {out}", False),
     ("inspect-memory", "python3 scripts/inspect_memory_smoke.py {bin}/../zgx-run --output {out}", False),
     ("editor-autoscroll", "python3 scripts/editor_autoscroll_smoke.py {bin}/editor_autoscroll --output {out}", False),
     ("transparency", "python3 scripts/transparency_smoke.py {bin}/transparency --output {out}", False),

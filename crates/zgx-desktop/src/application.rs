@@ -1007,6 +1007,13 @@ impl Default for Application {
         Self::new()
     }
 }
+/// `ZGX_RENDER_WHEN_COVERED=1`: a covered window goes on drawing, for test
+/// sessions: input and hot reloads don't stall, and automated UI and memory
+/// tests needn't have the screen to themselves. Never by default: a window
+/// nobody can see does no work.
+static RENDER_WHEN_COVERED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    zgx::env::var_os("ZGX_RENDER_WHEN_COVERED").is_some_and(|v| !v.is_empty() && v != "0")
+});
 /// A window that has presented nothing for this long releases animation-only
 /// renderer memory.
 const TRIM_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -3797,6 +3804,7 @@ impl Host {
         }
         match event {
             WindowEvent::CloseRequested => {}
+            WindowEvent::Occluded(_) if *RENDER_WHEN_COVERED => {}
             WindowEvent::Occluded(true) => {
                 // Minimized, or on a Space no longer shown: its menus and
                 // popovers close, as AppKit's do (they would show again
