@@ -1,5 +1,8 @@
 //! `zgx`: developer tools for zgx-script.
 //!
+//! `zgx run [--inspect] <app> [args…]` runs the app by zgx-run (beside this
+//! binary, or on PATH), as `zgx audit` audits it.
+//!
 //! `zgx check [--nonstrict] <file-or-dir>...` type checks Luau scripts
 //! with luau-lsp and the bundled `ui`/`anime` definitions, printing
 //! `file:line:col` findings; it exits 1 when there are errors.
@@ -21,13 +24,18 @@
 use std::{path::PathBuf, process::ExitCode};
 use zgx_script::check::{CheckError, Options, Report, check};
 
-const USAGE: &str = "usage: zgx check [--nonstrict] <file-or-dir>...
+const USAGE: &str = "usage: zgx run [--inspect] <app.luau-or-dir> [args...]
+       zgx check [--nonstrict] <file-or-dir>...
        zgx lint [--format text|json] <file-or-dir>...
        zgx lint --rules
        zgx types <dir>...
        zgx test [<app-dir>] [<name filter>]
        zgx inspect [--app PID] [--json] <command> [args]   (zgx inspect help)
        zgx audit [--human] <app.luau-or-dir>
+
+run: opens the app in a window and reloads it as its files change
+(zgx-run, beside zgx or on PATH; `zgx-run --help` says what zgx.json sets).
+--inspect serves devtools (`zgx inspect help`).
 
 check: type checks zgx Luau scripts with luau-lsp, the bundled ui/anime
 types, the standard platform and the new type solver. Strict mode applies
@@ -92,11 +100,7 @@ fn audit(args: Vec<String>) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     }
-    let beside = std::env::current_exe()
-        .ok()
-        .map(|exe| exe.with_file_name(format!("zgx-run{}", std::env::consts::EXE_SUFFIX)))
-        .filter(|run| run.is_file());
-    let run = beside.unwrap_or_else(|| PathBuf::from("zgx-run"));
+    let run = zgx_run();
     match std::process::Command::new(&run)
         .arg("--audit")
         .args(&args)
@@ -150,6 +154,43 @@ fn test(args: Vec<String>) -> ExitCode {
     }
 }
 
+/// The zgx-run beside this binary, else the one on PATH: what `zgx run`
+/// and `zgx audit` hand an app to (it links the desktop, which this tool
+/// doesn't).
+fn zgx_run() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| exe.with_file_name(format!("zgx-run{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|run| run.is_file())
+        .unwrap_or_else(|| PathBuf::from("zgx-run"))
+}
+
+/// `zgx run [--inspect] <app.luau-or-dir> [args…]`: the app in a window,
+/// reloading as it changes, by zgx-run. On Unix zgx-run takes this
+/// process's place, so signals and the exit status are its own.
+fn run(args: Vec<String>) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let run = zgx_run();
+    let mut command = std::process::Command::new(&run);
+    command.args(&args);
+    #[cfg(unix)]
+    let error = std::os::unix::process::CommandExt::exec(&mut command);
+    #[cfg(not(unix))]
+    let error = match command.status() {
+        Ok(status) => return ExitCode::from(status.code().unwrap_or(2).clamp(0, 255) as u8),
+        Err(error) => error,
+    };
+    eprintln!(
+        "zgx run: couldn't run {} ({error}); install zgx-run beside zgx or on PATH \
+         (cargo install zgx-run)",
+        run.display()
+    );
+    ExitCode::from(2)
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
@@ -159,6 +200,7 @@ fn main() -> ExitCode {
         Some("types") => return types(args.collect()),
         Some("inspect") => return inspect(args.collect()),
         Some("audit") => return audit(args.collect()),
+        Some("run") => return run(args.collect()),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;

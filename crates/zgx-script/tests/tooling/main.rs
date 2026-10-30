@@ -15,6 +15,8 @@ mod inspect_cli;
 mod lint_cli;
 #[path = "../reference_docs.rs"]
 mod reference_docs;
+#[path = "../run_cli.rs"]
+mod run_cli;
 #[path = "../test_cli.rs"]
 mod test_cli;
 #[path = "../testing_kit.rs"]
