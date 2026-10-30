@@ -28,7 +28,9 @@
 #    `cargo update -p zgx` gets this zgx, and they call it in places a
 #    doc(hidden) or return-type change breaks without semver-checks seeing
 #    it (zgx-desktop 0.1.3 calls `zoom::wheel`).
-# Before them: zgx's Thai word dictionary (crates/zgx/data/thaidict.bin) is
+# Before them: each fork whose version crates.io has is what crates.io has
+# (scripts/check_forks.py; 2 and 3 are given vendor/, and would hide a change
+# made without a version), and zgx's Thai word dictionary (crates/zgx/data/thaidict.bin) is
 # what scripts/extract_thai_dictionary.py extracts from the locked ICU4X
 # data, and zgx's package carries its Unicode licence.
 set -eu
@@ -59,7 +61,6 @@ for fork in $forks; do
     cargo package --manifest-path "vendor/$fork/Cargo.toml" $features $dirty \
         --target-dir "$target" ${deps:+--config "$deps"}
 done
-echo "== zgx's vendored Thai dictionary"
 # The first Python that runs: Windows' runners name it python, and a
 # Windows without Python has a python3 that only opens the Store (it is
 # found, and exits 49: "Python was not found").
@@ -71,9 +72,12 @@ for candidate in python3 python; do
     fi
 done
 if [ -z "$python" ]; then
-    echo "no Python runs (python3 or python): the Thai dictionary check needs one" >&2
+    echo "no Python runs (python3 or python): the checks below need one" >&2
     exit 1
 fi
+echo "== the forks against crates.io"
+"$python" scripts/check_forks.py
+echo "== zgx's vendored Thai dictionary"
 "$python" scripts/extract_thai_dictionary.py --check
 cargo package -p zgx --list $dirty | grep -qx data/LICENSE-UNICODE
 echo "== the workspace's published crates"

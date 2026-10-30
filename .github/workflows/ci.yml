@@ -50,6 +50,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # A fork changed without a version fails here, on its own pull request,
+      # not at the release. A second or two: no build.
+      - run: python3 scripts/check_forks.py --offline-ok
       # Ubuntu mirrors are sometimes very slow; reuse last month's .debs.
       - id: apt-key
         run: echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
