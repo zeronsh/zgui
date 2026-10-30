@@ -1544,6 +1544,7 @@ export type Styles = {
 	-- a higher; 0, as written. Among its siblings only, unlike CSS's
 	-- `z-index`; focus and the accessibility tree keep document order.
 	z: number?,
+	sticky_top: number?,
 	hidden: boolean?,
 	invisible: boolean?,
 	-- Paint.
@@ -1722,6 +1723,9 @@ export type StyleProps = {
 	overflow_x: Reactive<Overflow>?,
 	overflow_y: Reactive<Overflow>?,
 	z: Reactive<number>?,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Reactive<number>?,
 	hidden: Reactive<boolean>?,
 	invisible: Reactive<boolean>?,
 	-- Paint.
@@ -2105,6 +2109,9 @@ export type Props = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -2437,6 +2444,7 @@ export type Props_overflow = Reactive<Overflow>?
 export type Props_overflow_x = Reactive<Overflow>?
 export type Props_overflow_y = Reactive<Overflow>?
 export type Props_z = Reactive<number>?
+export type Props_sticky_top = Reactive<number>?
 export type Props_hidden = Reactive<boolean>?
 export type Props_invisible = Reactive<boolean>?
 export type Props_bg = Reactive<Color>?
@@ -2658,6 +2666,9 @@ export type ContainerProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -3002,6 +3013,9 @@ export type ScrollProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -3357,6 +3371,9 @@ export type TextProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -3700,6 +3717,9 @@ export type MarkdownViewProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -4096,6 +4116,9 @@ export type RichProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -4433,6 +4456,9 @@ export type ImageProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -4780,6 +4806,9 @@ export type SvgProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -5222,6 +5251,9 @@ export type Scene3DProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -5582,6 +5614,9 @@ export type CanvasProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -5951,6 +5986,9 @@ export type CheckboxProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -6298,6 +6336,9 @@ export type InputProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -6731,6 +6772,9 @@ export type ProgressProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -7069,6 +7113,9 @@ export type SliderProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -7422,6 +7469,9 @@ export type SegmentedProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -7771,6 +7821,9 @@ export type StepperProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -8121,6 +8174,9 @@ export type DisclosureProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -8468,6 +8524,9 @@ export type AccordionProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -8805,6 +8864,9 @@ export type SectionProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -9149,6 +9211,9 @@ export type SeparatorProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -9492,6 +9557,9 @@ export type TabsProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -9843,6 +9911,9 @@ export type TreeProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -10204,6 +10275,9 @@ export type DataGridProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -10561,6 +10635,9 @@ export type CalendarProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -10911,6 +10988,9 @@ export type DatePickerProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -11259,6 +11339,9 @@ export type TimeFieldProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -11606,6 +11689,9 @@ export type ComboboxProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -11961,6 +12047,9 @@ export type CommandPaletteProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -12304,6 +12393,9 @@ export type SelectProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -12654,6 +12746,9 @@ export type SplitProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -13429,6 +13524,9 @@ export type LayerProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -13772,6 +13870,9 @@ export type ModalProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -14133,6 +14234,9 @@ export type PopoverProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -14504,6 +14608,9 @@ export type MenuItemProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -14846,6 +14953,9 @@ export type SubmenuProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -15195,6 +15305,9 @@ export type WebViewProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -15552,6 +15665,9 @@ export type TerminalProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -15890,6 +16006,9 @@ export type SlotProps = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -16272,6 +16391,9 @@ export type EachOptions = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
@@ -16625,6 +16747,9 @@ export type PresenceOptions = {
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
 	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.

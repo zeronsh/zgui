@@ -1500,6 +1500,7 @@ export type Styles = {
 	-- a higher; 0, as written. Among its siblings only, unlike CSS's
 	-- `z-index`; focus and the accessibility tree keep document order.
 	z: number?,
+	sticky_top: number?,
 	hidden: boolean?,
 	invisible: boolean?,
 	-- Paint.
@@ -1678,6 +1679,9 @@ export type StyleProps = {
 	overflow_x: Reactive<Overflow>?,
 	overflow_y: Reactive<Overflow>?,
 	z: Reactive<number>?,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Reactive<number>?,
 	hidden: Reactive<boolean>?,
 	invisible: Reactive<boolean>?,
 	-- Paint.

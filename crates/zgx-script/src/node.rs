@@ -1430,6 +1430,7 @@ props! {
     "col_span_full" => ColSpanFull: Bool, "row_span_full" => RowSpanFull: Bool,
     "overflow" => Overflow: Str, "overflow_x" => OverflowX: Str, "overflow_y" => OverflowY: Str,
     "hidden" => Hidden: Bool, "invisible" => Invisible: Bool, "z" => Z: Num,
+    "sticky_top" => StickyTop: Num,
     // Paint.
     "bg" => Bg: Color, "gradient" => Gradient: Gradient, "color" => TextColor: Color,
     "bg_image" => BgImage: Str, "bg_fit" => BgFit: Str,
@@ -2667,7 +2668,6 @@ const WIDGET_FIELDS: &[&str] = &[
     "measured",
     "row_text",
     "sticky",
-    "sticky_top",
     "placement",
     "fallback",
     "trigger",
@@ -4544,11 +4544,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 }),
                 None => None,
             };
-            let sticky_top = table
-                .get::<Option<f32>>("sticky_top")?
-                .filter(|t| t.is_finite())
-                .unwrap_or(0.)
-                .max(0.);
+            let inset = table.get::<Option<f32>>("sticky_top")?;
+            let sticky_top = inset.filter(|t| t.is_finite()).unwrap_or(0.).max(0.);
             let rare = (sticky.is_some() || row_text.is_some() || end.is_some()).then(|| {
                 Box::new(ListRare {
                     sticky,
@@ -4558,32 +4555,34 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     ..ListRare::default()
                 })
             });
-            node_ud(
+            let mut node = fill(
                 lua,
-                fill(
-                    lua,
-                    Node::new(
-                        owner(lua)?,
-                        Kind::List {
-                            count,
-                            items,
-                            height,
-                            heights,
-                            rare,
-                            overscan,
-                            build,
-                            key: table.get::<Option<Function>>("key")?,
-                            measured,
-                            follow: table.get::<Option<bool>>("follow")?.unwrap_or(false),
-                            offset,
-                            scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
-                            keyboard: table.get::<Option<bool>>("keyboard")?.unwrap_or(false),
+                Node::new(
+                    owner(lua)?,
+                    Kind::List {
+                        count,
+                        items,
+                        height,
+                        heights,
+                        rare,
+                        overscan,
+                        build,
+                        key: table.get::<Option<Function>>("key")?,
+                        measured,
+                        follow: table.get::<Option<bool>>("follow")?.unwrap_or(false),
+                        offset,
+                        scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
+                        keyboard: table.get::<Option<bool>>("keyboard")?.unwrap_or(false),
 
-                        },
-                    ),
-                    Some(&table),
-                )?,
-            )
+                    },
+                ),
+                Some(&table),
+            )?;
+            // On a list, the inset of its sticky rows: not a place of its own.
+            if inset.is_some() {
+                node.props.retain(|(prop, _)| *prop != Prop::StickyTop);
+            }
+            node_ud(lua, node)
         })?,
     )?;
     ui.set(

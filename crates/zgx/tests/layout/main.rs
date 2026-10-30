@@ -38,6 +38,8 @@ mod resize_regions;
 mod rtl_layout;
 #[path = "../rtl_scroll.rs"]
 mod rtl_scroll;
+#[path = "../sticky.rs"]
+mod sticky;
 #[path = "../wrapped_text_in_capped_box.rs"]
 mod wrapped_text_in_capped_box;
 #[path = "../z_order.rs"]

@@ -4932,6 +4932,58 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
     }
 }
 
+/// A sticky header holds still over rows a copy moves: what the copy took
+/// of it repaints, and each frame matches a fresh renderer.
+#[test]
+fn scroll_copies_under_a_sticky_header_match_a_fresh_render() {
+    let _gpu_fixture = gpu_fixture();
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let mut gpu = GpuRenderer::new(160, 120).unwrap();
+    let mut ui = Ui::new(160., 120.);
+    let offset = ui.signal(0_f32);
+    let section = |shade: u32| {
+        column()
+            .w(160.)
+            .h(200.)
+            .bg(rgb(shade))
+            .child(div().w(160.).h(20.).bg(rgb(0xff8800)).sticky_top(6.))
+            .child(div().w(100.).h(170.).bg(rgb(0x223344)))
+    };
+    ui.mount(
+        scroll(offset.clone())
+            .w(160.)
+            .h(120.)
+            .bg(rgb(0x000000))
+            .child(section(0x101820))
+            .child(section(0x182010)),
+    );
+    let mut copies = 0;
+    // On through the first header's hold and the hand-over to the second.
+    for at in [
+        0., 3., 6., 14., 28., 100., 160., 174., 188., 200., 214., 180., 90., 0.,
+    ] {
+        offset.set(at);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        copies += gpu
+            .render(&ui.scene.borrow(), &damage)
+            .unwrap()
+            .scroll_copies;
+        let mut fresh = GpuRenderer::new(160, 120).unwrap();
+        fresh
+            .render(&ui.scene.borrow(), &[Rect::new(0., 0., 160., 120.)])
+            .unwrap();
+        assert_eq!(
+            gpu.readback().unwrap(),
+            fresh.readback().unwrap(),
+            "scroll {at}"
+        );
+    }
+    if !cfg!(target_os = "macos") {
+        assert!(copies >= 3, "{copies}");
+    }
+}
+
 /// A trackpad's fractional offsets, with the scene on the device-pixel grid
 /// (`Scene::set_pixel_scale`, as a window sets it): the content moves by whole
 /// pixels, so each move copies, and the frames match a fresh render.

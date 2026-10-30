@@ -62,6 +62,28 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `hidden` | `boolean` | `false` | out of layout and input, keeping its state |
 | `invisible` | `boolean` | `false` | not drawn, keeping its space |
 | `z` | `number` | `0` | paint and hit it over siblings with a lower `z`, under those with a higher; equal stays in document order (see [Stacking](#stacking)) |
+| `sticky_top` | `number` | none | inside a scroll view, hold this far below its top as it scrolls past, inside the parent ([sticky](#sticky)) |
+
+### Sticky
+
+`sticky_top` holds an element below the top of the scroll view around it once scrolling would take it past, for as long as its parent's box lasts, as CSS's `position: sticky` with `top`. A section's header stays in view until the next section pushes it out, with no script running as it scrolls.
+
+```lua
+local function section(name)
+	return ui.column {
+		ui.text { name, h = 28, bg = "$surface.raised", sticky_top = 0 },
+		ui.div { h = 400 },
+	}
+end
+return ui.scroll { w = 240, h = 300, section("Inbox"), section("Sent") }
+```
+
+- It keeps its place in layout: what follows it doesn't move up, as with CSS.
+- It paints and takes hits over its siblings, as `z = 1` would; a `z` of its own replaces that.
+- Its parent's box ends the hold, and a `ui.each` is a box around its rows: give each row a section of its own, with the header inside.
+- It sticks to the nearest scroll view, and only to the top of a vertical one. There's no `sticky_bottom` or `sticky_left` yet.
+- A sticky element inside another sticky element overshoots: stick one of them.
+- `ui.list` has its own `sticky` rows, built over a list that doesn't keep them all ([scrolling](scrolling.md)). On `ui.list` itself, `sticky_top` is their inset.
 
 ### Stacking
 

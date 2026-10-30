@@ -26,6 +26,8 @@ ui.list(props: ListProps) -> Node
 
 The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is as long as its children make it.
 
+A child with `sticky_top` holds at the top as the view scrolls past it, inside its parent: section headers ([sticky](properties.md#sticky)).
+
 ## list
 
 | Option | Type | Default | |

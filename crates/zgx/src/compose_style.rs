@@ -1941,6 +1941,7 @@ fn apply_rare(
         let template = cold.and_then(|cold| cold.grid_template.as_ref());
         scene.set_grid_template(target, template);
         scene.set_z(node, cold.and_then(|cold| cold.z).unwrap_or(0));
+        scene.set_sticky(node, cold.and_then(|cold| cold.sticky_top));
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

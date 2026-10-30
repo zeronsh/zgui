@@ -51,6 +51,8 @@ mod script_crashes;
 mod selection;
 #[path = "../stack.rs"]
 mod stack;
+#[path = "../sticky.rs"]
+mod sticky;
 #[path = "../sweep.rs"]
 mod sweep;
 #[path = "../theme.rs"]

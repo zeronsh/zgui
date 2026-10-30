@@ -56,6 +56,8 @@ let cards = row().w_full().flex_wrap()
 
 Sizes are border-box (CSS `box-sizing: border-box`, as GPUI): a container's border sits inside its width and height, its padding and children inside the border, and fit-content sizes include it; `border_over`, outlines and strokes only paint. Overlays stack children in one grid-like area, each aligned on its own (`items` across, `justify` down) and stretched by default. `absolute` children position against the nearest `relative` ancestor (not past an `absolute` one), else their parent; insets count from that block's padding box. See [the styling guide](styling.md#box-model) for the full rules.
 
+`.sticky_top(n)` holds a view `n` below the top of the scroll view around it as it scrolls past, inside its parent: CSS's `position: sticky` with `top`, and painted over its siblings. It sticks to the top of a vertical scroll view only.
+
 `.z(n)` paints and hits a view over siblings with a lower `z`, among its siblings only: CSS's `z-index` without stacking contexts. Layout, focus and accessibility keep document order.
 
 Percent padding uses the containing block's width on every edge. Auto margins absorb remaining space. `aspect_ratio` supplies the missing dimension. Pixel refinements override earlier percentage spacing, gaps and size constraints on the corresponding properties. `.hidden()` removes a subtree from layout and interaction while retaining its component identity; `.invisible()` preserves allocation. `.flex()` restores display and `.visible()` restores visibility. Hidden focused controls blur, and visibility observers stop hidden media deadlines.

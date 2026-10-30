@@ -731,6 +731,8 @@ pub(crate) struct ColdStyles {
     pub(crate) grid_template: Option<std::sync::Arc<crate::grid_tracks::GridTemplate>>,
     /// `Styled::z`.
     pub(crate) z: Option<i32>,
+    /// `Styled::sticky_top`.
+    pub(crate) sticky_top: Option<f32>,
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
@@ -1431,6 +1433,14 @@ pub trait Styled: Sized {
     /// order, as in CSS.
     fn z(mut self, z: i32) -> Self {
         self.styles_mut().rare_mut().cold.get_or_insert_default().z = Some(z);
+        self
+    }
+    /// Inside a scroll view, hold `top` below its top once scrolling would
+    /// take this past, as far as its parent's box goes (CSS's `position:
+    /// sticky`); it paints over its siblings unless it has a `z`.
+    fn sticky_top(mut self, top: f32) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        cold.sticky_top = Some(top);
         self
     }
     /// A grid's columns of any size (CSS `grid-template-columns`), over

@@ -1817,6 +1817,17 @@ struct ColdMaps {
     stacked: NodeMap<Vec<NodeId>>,
     /// Nodes raised among their siblings (`set_z`), none at 0.
     raised: NodeMap<i32>,
+    /// Nodes that stick in their scroll view (`set_sticky`).
+    sticky: NodeMap<Sticky>,
+}
+/// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
+#[derive(Clone, Copy)]
+struct Sticky {
+    top: f32,
+    /// Its translation but for sticking: what a style or an animation gave it.
+    own: f32,
+    /// The translation this last gave it: any other is a new `own`.
+    placed: f32,
 }
 /// `Node::special`: a contents node.
 const CONTENTS: u8 = 1;
@@ -6010,6 +6021,7 @@ impl Scene {
             cold.grid_templates.contains_key(&id)
                 || cold.raised.contains_key(&id)
                 || cold.stacked.contains_key(&id)
+                || cold.sticky.contains_key(&id)
         });
         self.set_special(id, COLD, cold);
     }
@@ -6042,10 +6054,100 @@ impl Scene {
         self.damage_subtree(id);
         self.invalidate(id, PAINT);
     }
+    /// Keep `id` at `top` below the top of the scroll view around it once
+    /// scrolling would take it past, inside its parent (CSS's `position:
+    /// sticky`), or as laid out with `None`. It paints over its siblings
+    /// unless it has a `z` of its own.
+    pub fn set_sticky(&mut self, id: NodeId, top: Option<f32>) {
+        let top = top.filter(|top| top.is_finite());
+        let held = self.cold.as_ref().and_then(|cold| cold.sticky.get(&id));
+        if held.map(|sticky| sticky.top) == top {
+            return;
+        }
+        let y = self.node(id).transform.y;
+        let maps = self.cold.get_or_insert_default();
+        match top {
+            Some(top) => {
+                let entry = maps.sticky.entry(id).or_insert(Sticky {
+                    top,
+                    own: y,
+                    placed: y,
+                });
+                entry.top = top;
+            }
+            None => {
+                if let Some(sticky) = maps.sticky.remove(&id) {
+                    let mut transform = self.node(id).transform;
+                    if transform.y == sticky.placed {
+                        transform.y = sticky.own;
+                        self.set_transform(id, transform);
+                    }
+                }
+            }
+        }
+        self.sync_cold(id);
+        if let Some(parent) = self.node(id).parent {
+            self.restack(parent);
+        }
+        self.invalidate(id, COMPOSITE);
+    }
+    /// Move each sticky node to where its scroll view's position puts it,
+    /// now that layout has placed everything. After the content's own
+    /// move: the node's old place is damaged where a copy of the content
+    /// takes it.
+    #[cold]
+    #[inline(never)]
+    fn place_sticky(&mut self) {
+        let Some(maps) = &mut self.cold else { return };
+        let mut sticky = std::mem::take(&mut maps.sticky);
+        for (id, entry) in &mut sticky {
+            let mut transform = self.node(*id).transform;
+            if transform.y != entry.placed {
+                entry.own = transform.y;
+            }
+            entry.placed = entry.own + self.sticky_offset(*id, entry.top);
+            if transform.y != entry.placed {
+                transform.y = entry.placed;
+                self.set_transform(*id, transform);
+            }
+        }
+        if let Some(maps) = &mut self.cold {
+            maps.sticky = sticky;
+        }
+    }
+    /// How far below its place `id` holds to stay `top` below its scroll
+    /// view's top, its box staying inside its parent's content box.
+    fn sticky_offset(&self, id: NodeId, top: f32) -> f32 {
+        let Some(content) = self.ancestors(id).find(|node| self.node(*node).scroll_copy) else {
+            return 0.;
+        };
+        // A `contents` parent has no box: the block is the one it lays out in.
+        let Some(block) = self.ancestors(id).find(|node| !self.node(*node).contents()) else {
+            return 0.;
+        };
+        let (own, inside) = (self.node(id).bounds, self.node(block).bounds);
+        let (style, block_style) = (self.style(id), self.style(block));
+        let padding = block_style
+            .padding_edges
+            .map_or(block_style.padding, |edges| edges.bottom);
+        let room = inside.y + inside.height - padding - own.y - own.height - style.margin.bottom;
+        let scrolled = -self.node(content).transform.y;
+        let natural = own.y - self.node(content).bounds.y;
+        (scrolled + top - natural).min(room).max(0.)
+    }
     /// `id`'s `z` (0 unless raised).
     pub fn z(&self, id: NodeId) -> i32 {
         let z = self.cold.as_ref().and_then(|cold| cold.raised.get(&id));
         z.copied().unwrap_or(0)
+    }
+    /// Where `id` stacks among its siblings: its `z`, or over them if it
+    /// sticks (CSS paints what is positioned over what is not).
+    fn stack_level(&self, id: NodeId) -> i32 {
+        let Some(cold) = &self.cold else { return 0 };
+        match cold.raised.get(&id) {
+            Some(z) => *z,
+            None => i32::from(cold.sticky.contains_key(&id)),
+        }
     }
     /// `parent`'s paint order, once its children or their `z` change.
     #[cold]
@@ -6054,12 +6156,15 @@ impl Scene {
         self.finish_pending_children();
         let order = {
             let children = self.children_raw(self.tree_node(parent));
-            children.iter().any(|child| self.z(*child) != 0).then(|| {
-                let mut order = children.clone();
-                // Stable: equal `z` stays in document order.
-                order.sort_by_key(|child| self.z(*child));
-                order
-            })
+            children
+                .iter()
+                .any(|child| self.stack_level(*child) != 0)
+                .then(|| {
+                    let mut order = children.clone();
+                    // Stable: equal `z` stays in document order.
+                    order.sort_by_key(|child| self.stack_level(*child));
+                    order
+                })
         };
         let maps = self.cold.get_or_insert_default();
         match order {
@@ -6080,6 +6185,7 @@ impl Scene {
             maps.grid_templates.remove(&id);
             maps.raised.remove(&id);
             maps.stacked.remove(&id);
+            maps.sticky.remove(&id);
         }
     }
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
@@ -9244,6 +9350,13 @@ impl Scene {
         }
         self.prepare_layout();
         debug_assert_eq!(self.pending_children.get(), u32::MAX);
+        if self
+            .cold
+            .as_ref()
+            .is_some_and(|cold| !cold.sticky.is_empty())
+        {
+            self.place_sticky();
+        }
         let _span = crate::profile::span(crate::profile::Phase::Damage);
         report.layout_nodes = std::mem::take(&mut self.pending_layout_nodes);
         let dirty = std::mem::take(&mut self.dirty);
