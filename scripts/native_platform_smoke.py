@@ -54,7 +54,7 @@ def main():
                     if node.get('name')=='zgx native platform':rect=node['rect'];break
                 xdo('windowactivate','--sync',host);xdo('mousemove','--window',host,rect['x']+90,rect['y']+16)
             else:
-                host=subprocess.check_output(['xdotool','search','--name','^zgx native platform$'],env=env,text=True).strip().splitlines()[0]
+                host=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^zgx native platform$'],env=env,text=True).strip().splitlines()[0]
                 xdo('windowactivate','--sync',host);xdo('mousemove','--window',host,90,16)
             xdo('mousedown',1);time.sleep(.15);xdo('mousemove_relative','--sync',80,55);time.sleep(.15);xdo('mouseup',1)
             if a.wayland:

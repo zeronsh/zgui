@@ -22,18 +22,28 @@ def main():
         def xdo(*args): return subprocess.run(['xdotool',*map(str,args)],env=env,check=True,capture_output=True,text=True).stdout.strip()
         deadline=time.monotonic()+20;window=None
         while time.monotonic()<deadline:
-            result=subprocess.run(['xdotool','search','--name','^zgx typed drag$'],env=env,capture_output=True,text=True)
+            result=subprocess.run(['xdotool','search','--onlyvisible','--name','^zgx typed drag$'],env=env,capture_output=True,text=True)
             if result.returncode==0: window=result.stdout.splitlines()[0];break
             assert app.poll() is None, 'Gallery exited during startup'
             time.sleep(.1)
         assert window, 'Gallery window missing'
+        def logged(*lines):
+            # The log, once it says `lines`: input is handled in order, but a loaded runner takes a while.
+            deadline=time.monotonic()+15
+            while True:
+                text=(args.output/'app.log').read_text()
+                if all(line in text for line in lines) or time.monotonic()>deadline: return text
+                time.sleep(.1)
         xdo('windowactivate','--sync',window);time.sleep(.6)
         xdo('mousemove','--window',window,60,110);xdo('mousedown',1);xdo('mousemove','--window',window,90,110);time.sleep(.3)
         subprocess.run(['import','-window',window,str(args.output/'preview.png')],env=env,check=True,capture_output=True)
-        xdo('mousemove','--window',window,150,230);xdo('mouseup',1);time.sleep(.3)
-        text=(args.output/'app.log').read_text();assert 'DRAG_DROP Red' in text and 'DRAG_END Red true' in text,text
-        xdo('mousemove','--window',window,180,110);xdo('mousedown',1);xdo('mousemove','--window',window,195,110);xdo('key','Escape');xdo('mouseup',1);time.sleep(.3)
-        text=(args.output/'app.log').read_text();assert 'DRAG_END Green false' in text,text
+        xdo('mousemove','--window',window,150,230);xdo('mouseup',1)
+        text=logged('DRAG_DROP Red','DRAG_END Red true');assert 'DRAG_DROP Red' in text and 'DRAG_END Red true' in text,text
+        xdo('mousemove','--window',window,180,110);xdo('mousedown',1);xdo('mousemove','--window',window,195,110)
+        # Escape cancels a drag: sent before the app has begun one, it cancels nothing and none ends.
+        text=logged('DRAG_START Green');assert 'DRAG_START Green' in text,text
+        xdo('key','Escape');xdo('mouseup',1)
+        text=logged('DRAG_END Green false');assert 'DRAG_END Green false' in text,text
         assert text.count('DRAG_DROP')==1,text
         subprocess.run(['import','-window',window,str(args.output/'finished.png')],env=env,check=True,capture_output=True)
         assert app.poll() is None,'Gallery exited during drag'

@@ -30,7 +30,7 @@ def main():
         def xdo(*args): return subprocess.run(['xdotool',*map(str,args)],env=env,check=True,capture_output=True,text=True).stdout.strip()
         deadline=time.monotonic()+20;window=None
         while time.monotonic()<deadline:
-            result=subprocess.run(['xdotool','search','--name','^zgx typed drag$'],env=env,capture_output=True,text=True)
+            result=subprocess.run(['xdotool','search','--onlyvisible','--name','^zgx typed drag$'],env=env,capture_output=True,text=True)
             if result.returncode==0: window=result.stdout.splitlines()[0];break
             assert app.poll() is None, 'Gallery exited during startup'
             time.sleep(.1)
@@ -41,7 +41,7 @@ def main():
         source=subprocess.Popen(['python3',str(Path(__file__).with_name('native_file_source.py')),*map(str,files)],env=env,stdout=source_log,stderr=source_log)
         deadline=time.monotonic()+10;source_window=None
         while time.monotonic()<deadline:
-            result=subprocess.run(['xdotool','search','--name','^zgx file source$'],env=env,capture_output=True,text=True)
+            result=subprocess.run(['xdotool','search','--onlyvisible','--name','^zgx file source$'],env=env,capture_output=True,text=True)
             if result.returncode==0:source_window=result.stdout.splitlines()[0];break
             time.sleep(.1)
         assert source_window,'GTK source missing'
@@ -55,8 +55,11 @@ def main():
         xdo('mousemove','--window',source_window,80,60);xdo('mousedown',1)
         for x,y in [(110,60),(160,90),(260,160),(400,220)]:
             xdo('mousemove','--window',source_window,x,y);time.sleep(.15)
-        xdo('mousemove','--window',window,*target);time.sleep(.6);xdo('mouseup',1);time.sleep(1.)
-        text=(args.output/'app.log').read_text();assert text.count('FILE_DROP')==1,text
+        xdo('mousemove','--window',window,*target);time.sleep(.6);xdo('mouseup',1)
+        # What the drop did, once the app has said so: a loaded runner takes a while.
+        deadline=time.monotonic()+15
+        while 'FILE_DROP' not in (text:=(args.output/'app.log').read_text()) and time.monotonic()<deadline: time.sleep(.1)
+        assert text.count('FILE_DROP')==1,text
         assert 'first.txt' in text and 'second file.txt' in text,text
         subprocess.run(['import','-window',window,str(args.output/'dropped.png')],env=env,check=True,capture_output=True)
         cancellations=text.count('FILE_CANCEL')
