@@ -189,6 +189,8 @@ const VERTEX_BUDGET: usize = 32 * 1024 * 1024;
 /// Image textures a renderer holds at once, each with its own bind group (a
 /// view in Direct3D 12's fixed-size heap; see `GpuContext::create`).
 const MAX_IMAGES: usize = 16_384;
+/// The bytes images' own textures may hold (`upload_image`).
+const IMAGE_TEXTURES: usize = 64 * 1024 * 1024;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Quad {
@@ -3473,6 +3475,12 @@ pub struct GpuRenderer {
     /// Image textures: each bound for the quads, its size in bytes, and,
     /// where the CPU wrote its texels, the texture (see `render_direct`).
     images: FxHashMap<u64, (wgpu::BindGroup, usize, Option<wgpu::Texture>)>,
+    /// Images' own textures (`upload_image`), by the frame each was last
+    /// drawn in (`image_frame`): past the textures' budget, the least
+    /// recently drawn go, not drawn this frame, and come back when drawn.
+    image_drawn: FxHashMap<u64, u64>,
+    /// Frames drawn, for `image_drawn`.
+    image_frame: u64,
     /// GPU views' textures, by view (`viewport`): none until one shows.
     views: Option<Box<viewport::Views>>,
     /// Wakes the host when a GPU view's plane has a drawable for a frame it
@@ -4076,6 +4084,8 @@ impl GpuRenderer {
             visible_glyphs: Vec::new(),
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
+            image_drawn: FxHashMap::default(),
+            image_frame: 0,
             views: None,
             #[cfg(target_os = "macos")]
             plane_wake: None,
@@ -4422,6 +4432,7 @@ impl GpuRenderer {
             }
         }
         let presented = std::mem::take(&mut self.present_stats);
+        self.image_frame += 1;
         let mut stats = {
             let _span = zgx::profile::span(zgx::profile::Phase::Paint);
             self.render_inner(scene, damage)?
@@ -4785,6 +4796,8 @@ impl GpuRenderer {
                 cache.retain(&live_images);
             }
             self.images.retain(|id, _| live_images.contains(id));
+            let images = &self.images;
+            self.image_drawn.retain(|id, _| images.contains_key(id));
         }
         self.retain_views();
     }
@@ -6757,10 +6770,7 @@ impl GpuRenderer {
                                         image, *fit, style, bounds, opacity, edge_fade,
                                     )
                                 {
-                                    if !self.images.contains_key(&image.id()) {
-                                        self.upload_image(image)?;
-                                        stats.image_uploads += 1;
-                                    }
+                                    self.ensure_image(image, &mut stats)?;
                                     quads.push(quad);
                                     canvas_image = Some(image.id());
                                 }
@@ -6940,10 +6950,7 @@ impl GpuRenderer {
                                 image.height() as f32 / atlas,
                             ]
                         } else {
-                            if !self.images.contains_key(&image.id()) {
-                                self.upload_image(&image)?;
-                                stats.image_uploads += 1;
-                            }
+                            self.ensure_image(&image, &mut stats)?;
                             canvas_image = Some(image.id());
                             [0., 0., 1., 1.]
                         };
@@ -7032,10 +7039,7 @@ impl GpuRenderer {
                             continue;
                         }
                         // (A view taking its layer drew itself already.)
-                        if !self.images.contains_key(&image.id()) {
-                            self.upload_image(image)?;
-                            stats.image_uploads += 1;
-                        }
+                        self.ensure_image(image, &mut stats)?;
                         let transform = image.paint_transform(bounds);
                         let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
                         // An effect: its own quad, drawn with its own pipeline.
@@ -9771,14 +9775,53 @@ impl GpuRenderer {
         self.canvases.uploaded(node);
         Ok(found.id)
     }
+    /// `image`'s texture for this frame: uploaded if it has none, and
+    /// marked drawn now, so it is the last to go past the budget.
+    fn ensure_image(
+        &mut self,
+        image: &zgx::image::ImageData,
+        stats: &mut GpuStats,
+    ) -> Result<(), GpuError> {
+        if self.images.contains_key(&image.id()) {
+            if let Some(drawn) = self.image_drawn.get_mut(&image.id()) {
+                *drawn = self.image_frame;
+            }
+            return Ok(());
+        }
+        self.upload_image(image)?;
+        stats.image_uploads += 1;
+        Ok(())
+    }
     fn upload_image(&mut self, image: &zgx::image::ImageData) -> Result<(), GpuError> {
         if let Some(frame) = image.gpu_frame() {
             return self.render_view(image, frame);
         }
         let bytes = image.pixels().len();
-        if bytes + self.images.values().map(|entry| entry.1).sum::<usize>() > 64 * 1024 * 1024 {
+        let mut held = self.images.values().map(|entry| entry.1).sum::<usize>();
+        if bytes + held > IMAGE_TEXTURES {
+            // Images not drawn this frame give their textures back, least
+            // recently drawn first (a long page scrolled through): drawn
+            // again, they upload again.
+            let mut idle: Vec<(u64, u64)> = self
+                .image_drawn
+                .iter()
+                .filter(|(_, drawn)| **drawn < self.image_frame)
+                .map(|(id, drawn)| (*drawn, *id))
+                .collect();
+            idle.sort_unstable();
+            for (_, id) in idle {
+                if bytes + held <= IMAGE_TEXTURES {
+                    break;
+                }
+                self.image_drawn.remove(&id);
+                if let Some(entry) = self.images.remove(&id) {
+                    held -= entry.1;
+                }
+            }
+        }
+        if bytes + held > IMAGE_TEXTURES {
             return Err(GpuError(
-                "visible image textures exceed the 64 MiB budget".into(),
+                "the images one frame draws exceed the 64 MiB budget of image textures".into(),
             ));
         }
         if self.images.len() >= MAX_IMAGES {
@@ -9829,6 +9872,7 @@ impl GpuRenderer {
             ],
         });
         self.images.insert(image.id(), (bind, bytes, Some(texture)));
+        self.image_drawn.insert(image.id(), self.image_frame);
         Ok(())
     }
     /// Write premultiplied RGBA texels to `(x, y, width, height)` of a
