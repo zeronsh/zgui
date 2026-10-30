@@ -60,6 +60,10 @@ pub struct TabsOptions {
     pub reorderable: bool,
     /// Asked before a tab closes; without it, it closes.
     pub on_close: Option<CloseTab>,
+    /// Each tab's panel stays mounted once chosen, until its tab closes:
+    /// hidden, it keeps its state (an editor's undo, caret and scroll) and
+    /// takes no layout, paint or frames.
+    pub keep: bool,
 }
 
 /// The ids in `items`, in order.
@@ -70,7 +74,8 @@ fn ids(items: &[Tab]) -> Vec<String> {
 /// A strip of `items` and the panel `panel` builds for the one `selected`
 /// (its id). `items` is two-way: closing a tab removes it, reordering
 /// moves it; closing the selected tab chooses its neighbour. The panel is
-/// built as its tab is chosen; `label` names the strip.
+/// built as its tab is chosen and dropped as another is (`keep` holds it);
+/// `label` names the strip.
 pub fn tabs(
     label: impl Into<String>,
     items: Signal<Vec<Tab>>,
@@ -440,6 +445,42 @@ pub fn tabs(
         });
 
         let (panel_selected, mut panel) = (selected.clone(), panel);
+        // The panel's root lays out as a child of the tab panel, so `grow`
+        // and `h_full` fill it.
+        let panels = if options.keep {
+            // The tabs chosen so far, while they are open.
+            let mut chosen: Vec<String> = Vec::new();
+            let shown = selected.clone();
+            keyed(
+                move || {
+                    let open = items.with(|items| ids(items));
+                    chosen.retain(|id| open.contains(id));
+                    let now = panel_selected.get();
+                    if open.contains(&now) && !chosen.contains(&now) {
+                        chosen.push(now);
+                    }
+                    chosen.clone()
+                },
+                move |id: String, cx| {
+                    let (shown, own) = (shown.clone(), id.clone());
+                    column()
+                        .grow()
+                        .reactive_style(move || {
+                            if shown.with(|s| *s == own) {
+                                Styles::new().flex()
+                            } else {
+                                Styles::new().hidden()
+                            }
+                        })
+                        .child(panel(id, cx))
+                },
+            )
+            .flex_col()
+            .items_stretch()
+            .grow()
+        } else {
+            switch(move || panel_selected.get(), move |id, cx| panel(id, cx)).contents()
+        };
         column()
             .child(row().items_center().child(strip).child(more))
             .child(
@@ -449,11 +490,7 @@ pub fn tabs(
                     .bg(tok::BORDER_SUBTLE)
                     .accessible_hidden(),
             )
-            // The panel's root lays out as a child of the tab panel, so
-            // `grow` and `h_full` fill it.
-            .child(div().role(Role::TabPanel).grow().child(
-                switch(move || panel_selected.get(), move |id, cx| panel(id, cx)).contents(),
-            ))
+            .child(div().role(Role::TabPanel).grow().child(panels))
     })
 }
 

@@ -1191,6 +1191,42 @@ fn a_loop_no_one_can_see_waits_until_it_shows() {
 }
 
 #[test]
+fn a_kept_tabs_hidden_loop_waits_until_it_shows() {
+    let mut h = Harness::inline(
+        r##"local items = ui.state("items", { { id = "a", label = "A" }, { id = "b", label = "B" } })
+        local chosen = ui.state("chosen", "a")
+        ui.command { id = "a", title = "a", run = function() chosen:set("a") end }
+        ui.command { id = "b", title = "b", run = function() chosen:set("b") end }
+        return ui.column { h = 200,
+            ui.tabs { label = "t", grow = 1, keep = true, items = items, value = chosen,
+                panel = function(id: string): Node
+                    if id == "b" then return ui.text { "still" } end
+                    return ui.div { id = "spin", w = 10, h = 10, bg = "#ff0000",
+                        on_mount = function(el)
+                            anime.animate(el, { x = { 0, 100 }, duration = 1000, loop = true, frameRate = 30 })
+                        end }
+                end,
+            },
+        }"##,
+    );
+    h.frame();
+    h.run_ms(100.);
+    assert!(h.host.run_command("b"));
+    h.frame();
+    let x = h.x("spin");
+    h.run_ms(300.);
+    assert_eq!(h.x("spin"), x, "hidden, it stands still");
+    assert_eq!(
+        h.clock.demanded_rate(120.),
+        Some(4.),
+        "and the engine only looks now and then"
+    );
+    assert!(h.host.run_command("a"));
+    h.run_ms(300.);
+    assert!(h.x("spin") != x, "chosen again, it moves: {}", h.x("spin"));
+}
+
+#[test]
 fn an_animation_started_beside_unseen_loops_starts_on_the_next_frame() {
     // Every playing clip an unseen loop, the engine looks a few times a
     // second; a clip started then started up to 250 ms late, and its first

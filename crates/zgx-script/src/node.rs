@@ -2821,6 +2821,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "summary",
     "title",
     "reorderable",
+    "keep",
     "on_close",
     "panel",
     "text",
