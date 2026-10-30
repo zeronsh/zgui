@@ -1713,6 +1713,50 @@ pub(crate) fn build_scoped(
     f: &mlua::Function,
     args: impl mlua::IntoLuaMulti,
 ) -> View {
+    build_scoped_seeing(vm, cx, low, f, args, |_| {})
+}
+
+/// A component given an `id` lays out as its root under that id: one set on
+/// the root inside goes unseen, usually for a prop meant as data.
+#[cold]
+fn warn_replaced_id(vm: &Vm, given: &str, site: Option<&str>, root: &mlua::Value) {
+    let mlua::Value::UserData(root) = root else {
+        return;
+    };
+    let Ok(root) = root.borrow::<NodeUd>() else {
+        return;
+    };
+    let Some(own) = root.0.id.as_deref().filter(|own| *own != given) else {
+        return;
+    };
+    let Some(env) = vm.lua.app_data_ref::<crate::node::Env>() else {
+        return;
+    };
+    let at = site.map_or(String::new(), |site| format!("{site}: "));
+    let inside = root
+        .0
+        .source
+        .as_deref()
+        .map_or(String::new(), |site| format!(" ({site})"));
+    crate::warning(
+        Some(&env.warnings),
+        format!(
+            "{at}this component's `id = \"{given}\"` replaces `id = \"{own}\"` set on its \
+             root{inside}, which `#{own}` no longer finds. An `id` prop names the element: give \
+             data another name (`issue = {given}`)."
+        ),
+    );
+}
+
+/// `build_scoped`, with `see` given what `f` built.
+fn build_scoped_seeing(
+    vm: &Rc<Vm>,
+    cx: &mut Context,
+    low: &Rc<Lowering>,
+    f: &mlua::Function,
+    args: impl mlua::IntoLuaMulti,
+    see: impl FnOnce(&mlua::Value),
+) -> View {
     let scope = Rc::new(Scope {
         provided: cx.try_service::<crate::node::Provided>(),
         ..Scope::default()
@@ -1722,6 +1766,9 @@ pub(crate) fn build_scoped(
         .app_data_ref::<crate::node::Env>()
         .map(|env| env.scope.replace(Some(scope.clone())));
     let result = vm.call::<mlua::Value>(f, args);
+    if let Ok(root) = &result {
+        see(root);
+    }
     if let (Some(previous), Some(env)) = (previous, vm.lua.app_data_ref::<crate::node::Env>()) {
         *env.scope.borrow_mut() = previous;
     }
@@ -2624,6 +2671,7 @@ fn kind_view(
         } => {
             let (builder, props, vm, low) =
                 (builder.clone(), props.clone(), vm.clone(), low.clone());
+            let (given, site) = (node.id.clone(), node.source.clone());
             component(move |cx| {
                 // Contributed to a slot with a context: its own props, with
                 // the context as `slot`.
@@ -2637,7 +2685,11 @@ fn kind_view(
                     },
                     None => props.clone(),
                 };
-                build_scoped(&vm, cx, &low, &builder, props)
+                build_scoped_seeing(&vm, cx, &low, &builder, props, |root| {
+                    if let Some(given) = &given {
+                        warn_replaced_id(&vm, given, site.as_deref(), root);
+                    }
+                })
             })
         }
         Kind::Presence {

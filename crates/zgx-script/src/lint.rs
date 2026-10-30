@@ -91,6 +91,10 @@ pub const RULES: &[(&str, &str)] = &[
         "a ui.window option that doesn't exist, which types can't catch",
     ),
     (
+        "component-id",
+        "an id given to a component replaces the one set on its root",
+    ),
+    (
         "untracked-get",
         "state:get() while an element is built is read once",
     ),
@@ -579,6 +583,7 @@ fn lint_tokens(file: &Path, tokens: &[Token], comments: &[(u32, String)]) -> Vec
     };
     linter.run();
     linter.list_key();
+    linter.component_id();
     linter.list_measured();
     linter.reserved_system_key();
     linter.canvas_view();
@@ -905,6 +910,77 @@ impl Linter<'_> {
         self.tokens.len()
     }
 
+    /// A component given an `id` where its own root, in this file, sets one:
+    /// the root's goes unseen (`ui.component`). Other files' components
+    /// reach the warning as they mount.
+    fn component_id(&mut self) {
+        let mut rooted: Vec<(String, String)> = Vec::new();
+        for at in 2..self.tokens.len() {
+            if !(self.is(at, "ui")
+                && self.is(at + 1, ".")
+                && self.is(at + 2, "component")
+                && self.is(at + 3, "(")
+                && self.is(at - 1, "="))
+            {
+                continue;
+            }
+            let Some(name) = self.name(at - 2).map(str::to_string) else {
+                continue;
+            };
+            let end = self.closing(at + 3);
+            let Some(table) = (at + 4..end).find(|&j| {
+                self.is(j, "return")
+                    && self.is(j + 1, "ui")
+                    && self.is(j + 2, ".")
+                    && self.is(j + 4, "{")
+            }) else {
+                continue;
+            };
+            if let Some(id) = self.direct_field(table + 4, "id") {
+                rooted.push((name, self.tokens[id].text.clone()));
+            }
+        }
+        for at in 1..self.tokens.len() {
+            if !self.is(at, "{") {
+                continue;
+            }
+            let Some(name) = self.name(at - 1) else {
+                continue;
+            };
+            let Some((name, own)) = rooted.iter().find(|(n, _)| n == name).cloned() else {
+                continue;
+            };
+            if let Some(id) = self.direct_field(at, "id") {
+                self.report(
+                    id,
+                    "component-id",
+                    format!(
+                        "`{name} {{ id = … }}` replaces the `id = {own}` set on its root. An `id` \
+                         prop names the element: give data another name."
+                    ),
+                );
+            }
+        }
+    }
+    /// The token after `key =` directly in the table opening at `open`.
+    fn direct_field(&self, open: usize, key: &str) -> Option<usize> {
+        let close = self.closing(open);
+        let mut depth = 0;
+        for at in open + 1..close {
+            let token = &self.tokens[at];
+            if token.kind == Kind::Punct {
+                match token.text.as_str() {
+                    "{" | "(" | "[" => depth += 1,
+                    "}" | ")" | "]" => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth == 0 && self.is(at, key) && self.is(at + 1, "=") {
+                return Some(at + 2);
+            }
+        }
+        None
+    }
     /// A `ui.list` without `key` in a file that reads a list state by index
     /// (`rows:get()[i]`, `rows:at(i)`) and removes from it or inserts into
     /// it: rows by position are each written again when one goes or comes.
@@ -1779,6 +1855,24 @@ ui.window { id = "a", titel = "A", open = open, ui.text { "x", color = "#fff" } 
 ui.window { id = "b", title = "B", width = 300, height = 200, open = open, tabbing = "preferred" }
 "##;
         assert_eq!(rules(source), one(2, "window-option"));
+    }
+
+    #[test]
+    fn an_id_replacing_one_on_a_components_root_is_reported() {
+        let source = r##"
+local Panel = ui.component(function(props)
+    return ui.column { id = "detail", ui.text { "x", id = "inner" } }
+end)
+local Plain = ui.component(function(props)
+    return ui.column { ui.text { "x", id = "inner" } }
+end)
+return ui.column {
+    Panel { id = 5 },
+    Panel { issue = 5 },
+    Plain { id = 5 },
+}
+"##;
+        assert_eq!(rules(source), one(9, "component-id"));
     }
 
     fn rules(source: &str) -> Vec<(u32, String)> {

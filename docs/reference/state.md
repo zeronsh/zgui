@@ -442,6 +442,8 @@ type CardProps = { title: string, [number]: Child, children: { Child }? }
 local Card = ui.component(function(props: CardProps) … end)
 ```
 
+An `id` (and a `class`) given to a component names its root: `Card { id = "summary" }` is `#summary` to `ui.contribute` and to tests. One set on the root inside goes unseen, so a component holding a record takes it under another name (`Panel { issue = 5 }`, not `id`); `zgx lint`'s `component-id` and a warning as it mounts say when this happens.
+
 What `each` rows, `presence` content and `list` rows build owns what it makes in the same way, as long as that part is mounted. Made at the top level, computeds and effects live as long as the script.
 
 `provide = { name = value }` on any node gives its subtree values that the components and rows built in it read with `ui.use_context(name, default)`, as React's context does: the signed-in user, a list's selection, a density, without passing them down every level. A state provided is the state, so what reads it follows it; a nearer `provide` of the same name wins, and the rest of an outer one is kept. `ui.use_context` belongs in a component's, row's or presence's build (where it is mounted); elsewhere it is an error.

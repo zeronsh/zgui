@@ -66,6 +66,8 @@ return ui.column {
 }
 ```
 
+One prop isn't only yours: `id` names the component's root element, for targets and tests, so a record's id goes under another name (`Panel { issue = id }`).
+
 There is no re-render, so a component's body is not where values change: it describes, once, what follows the state. Reads go in templates, functions and computeds.
 
 ## State shared across the app

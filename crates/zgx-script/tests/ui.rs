@@ -2249,6 +2249,25 @@ fn shader_params_follow_registered_theme_tokens_while_time_loops() {
     );
 }
 
+/// An `id` given to a component replaces one on its root: nothing changes,
+/// and a warning names both.
+#[test]
+fn a_component_given_an_id_warns_when_it_replaces_its_roots() {
+    let h = Harness::inline(
+        r##"local Panel = ui.component(function(props)
+            return ui.column { id = "detail", ui.text { "x" } }
+        end)
+        return ui.column { Panel { id = 5 }, Panel { id = "detail" }, Panel {} }"##,
+    );
+    h.ui.prepare_frame();
+    let warnings = h.host.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("`id = \"5\"`") && warnings[0].contains("`id = \"detail\"`"),
+        "{warnings:?}"
+    );
+}
+
 #[test]
 fn border_sides_set_each_width() {
     let mut h = common::Harness::inline(
