@@ -153,7 +153,7 @@ The script requires Xvfb, Openbox, xdotool, Weston, weston-screenshooter and Pyt
 
 ## Unverified platform behavior
 
-Real macOS windows, Metal presentation, the native clipboard (Unicode exchange with TextEdit), dead-key composition and the accessibility tree and actions are observed on an Apple M5 Max in the [Mac continuation packet](platform-validation/macos-continuation/README.md), and the macOS suite records hardware-GPU throughput and energy (`docs/results/suite-macos-*`: GPU Mcycles per second, GPU system watts). Still unvalidated: macOS candidate (Pinyin) input and a complete VoiceOver usability audit. Transparent-window composition is checked on X11, Wayland and macOS ([below](#native-macos-transparent-window-composition)). Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11, and Wayland text-input-v3 composition passes a paced Sway/Fcitx5 smoke ([below](#real-wayland-input-method-composition)), whose burst-input loss remains open. macOS candidate input is unvalidated.
+Real macOS windows, Metal presentation, the native clipboard (Unicode exchange with TextEdit), dead-key composition and the accessibility tree and actions are observed on an Apple M5 Max in the [Mac continuation packet](platform-validation/macos-continuation/README.md), and the macOS suite records hardware-GPU throughput and energy (`docs/results/suite-macos-*`: GPU Mcycles per second, GPU system watts). Still unvalidated: macOS candidate (Pinyin) input and a complete VoiceOver usability audit. Transparent-window composition is checked on X11, Wayland and macOS ([below](#native-macos-transparent-window-composition)). Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11, and Wayland text-input-v3 composition passes a paced Sway/Fcitx5 smoke and a burst one ([below](#real-wayland-input-method-composition)). macOS candidate input is unvalidated.
 
 Use a real display and equivalent hardware renderer configurations for performance conclusions. In llvmpipe measurements, process CPU includes CPU execution of GPU shaders and driver allocations can dominate RSS. Keep these results distinct from hardware-backed measurements and from core microbenchmarks.
 
@@ -807,6 +807,21 @@ is also preserved. Functional smoke tests now await client-visible preedit
 between characters. Passing them does not resolve these burst failures or prove
 rapid-input reliability. Transaction backlogs and delayed stale serials remain
 open compatibility work.
+
+The burst loss was zgx's. `wayland_ime_smoke.py --burst` (`wayland-ime-burst`)
+types "nihao" three times at 30 ms a key with nothing awaited between, each
+round's full preedit to show and its word to commit. Before the fix it failed
+5 runs in 10 (3 exactly as recorded above, the editor stopping at `n`; 2 on
+the harness's start). The trace showed why: Fcitx's first preedit
+(`preedit_string("n", 0, 1)`) moved the caret, zgx committed a new cursor
+rectangle right after its `done`, and the compositor's next input-method
+`done` made every update Fcitx already had in flight stale (input-method-v2
+drops a commit whose serial is behind), so they never reached the client. While
+a composition shows, a Wayland window's input-method area now stays where it
+began (the caret then), as candidates stay under a native field's marked text,
+and moves again when the composition ends: text-input-v3 asks a client to hold
+its pending state until a `done` with a matching serial. With it, 10 runs in 10
+pass, 4 cursor rectangles a run where there were 17.
 
 ## Windows input methods with installed languages (manual review)
 

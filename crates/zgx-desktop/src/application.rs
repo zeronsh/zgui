@@ -2582,7 +2582,24 @@ impl Host {
         // The clause an input method converts, else the caret, where they
         // show (zoomed too): where its candidates go, as under a native
         // field's marked text.
-        let caret = editor.map(|editor| editor.input_method_area());
+        let caret = editor.as_ref().map(|editor| editor.input_method_area());
+        // Wayland's text input: a new area committed while an input method's
+        // updates are in flight moves the state serial on, so the compositor
+        // takes those updates as stale and drops them (a burst of typing
+        // stopped at its first preedit). While a composition shows, the area
+        // stays where it began, the caret then, as candidates stay under a
+        // native field's marked text; the composition ending moves it again.
+        #[cfg(target_os = "linux")]
+        let caret = if !self.x11
+            && self.ime_geometry.is_some()
+            && editor
+                .as_ref()
+                .is_some_and(|editor| editor.editor.borrow().preedit().is_some())
+        {
+            self.ime_geometry
+        } else {
+            caret
+        };
         if caret != self.ime_geometry {
             // The Text Services Framework asks where (`GetTextExt`) when told.
             #[cfg(windows)]
