@@ -24,6 +24,8 @@ pub mod iosurface;
 #[cfg(target_os = "macos")]
 mod layer_present;
 #[cfg(target_os = "macos")]
+mod loops;
+#[cfg(target_os = "macos")]
 mod plane_drawables;
 /// A caret Core Animation draws over the frames (`GpuRenderer::set_caret`).
 #[cfg(target_os = "macos")]
@@ -3539,6 +3541,12 @@ pub struct GpuRenderer {
     /// dxgi_present.rs).
     #[cfg(own_surfaces)]
     layer_present: Option<LayerPresent>,
+    /// Looping animations' sheets (loops.rs), and the shader time of the
+    /// frame being drawn into one.
+    #[cfg(target_os = "macos")]
+    loop_sheets: Vec<loops::LoopSheet>,
+    #[cfg(target_os = "macos")]
+    loop_time: Option<f32>,
     /// Pipelines for frames encoded with Metal directly (`render_direct`);
     /// `None` inside if they could not be built.
     #[cfg(target_os = "macos")]
@@ -4041,6 +4049,10 @@ impl GpuRenderer {
             single_pass: None,
             single_pass_format,
             #[cfg(target_os = "macos")]
+            #[cfg(target_os = "macos")]
+            loop_sheets: Vec::new(),
+            #[cfg(target_os = "macos")]
+            loop_time: None,
             layer_present: layer_presenting.then(LayerPresent::default),
             #[cfg(windows)]
             layer_present: own_chain.map(|chain| {
@@ -4637,6 +4649,10 @@ impl GpuRenderer {
             _ => {}
         }
         // Kept up to date, drawn as usual this frame (little damage).
+        #[cfg(target_os = "macos")]
+        if !scene.baked_loops().is_empty() {
+            self.kept = None;
+        }
         let maintained = self.kept.is_some();
         let was_patched = std::mem::replace(&mut self.patched, maintained);
         // Lost (a change it couldn't patch, before it had patched): kept
@@ -4654,6 +4670,7 @@ impl GpuRenderer {
         // patching goes on after a change it can't patch, or one after
         // frames it would have patched.
         let keep = !maintained
+            && scene.baked_loops().is_empty()
             && self.plane.is_none()
             && !self.in_layer
             && !self.atlas_filling()
@@ -4700,6 +4717,8 @@ impl GpuRenderer {
             self.bands_seen = true;
         }
         // Around native views, only this plane's paint (planes.rs).
+        #[cfg(target_os = "macos")]
+        let items = self.place_loops(scene, items);
         let items = self.plane_items(items);
         let mut layer_stats = GpuStats::default();
         self.layer_frame += 1;
@@ -6819,7 +6838,13 @@ impl GpuRenderer {
                                     .and_then(|d| d.background.as_ref())
                                     && self.prepare_fill(shader)
                                 {
-                                    let uniforms = Region::uniforms(scene.shader_uniforms(item.id));
+                                    #[allow(unused_mut)]
+                                    let mut uniforms = scene.shader_uniforms(item.id);
+                                    #[cfg(target_os = "macos")]
+                                    if let Some(time) = self.loop_time {
+                                        uniforms.time = time;
+                                    }
+                                    let uniforms = Region::uniforms(uniforms);
                                     let record = region_index(&mut clips, Some(uniforms));
                                     quads.push(Quad {
                                         rect: fade,

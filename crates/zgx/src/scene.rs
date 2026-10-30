@@ -2477,6 +2477,17 @@ impl PaintExtras {
         (self != Self::default()).then(|| std::rc::Rc::new(self))
     }
 }
+/// A looping animation of a node's opacity and shader time, one value of
+/// each per frame, played by the compositor rather than frame by frame.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BakedLoop {
+    /// Opacity and shader time at each frame of one period.
+    pub frames: Vec<(f32, f32)>,
+    pub fps: f32,
+    /// When its first frame showed.
+    pub started: std::time::Instant,
+}
 /// What a paint item took from its ancestors in the paint walk (see
 /// [`Scene::layer_items_recorded`]): their translation, opacity, clip and
 /// extras, and whether it is a border pass.
@@ -2623,6 +2634,8 @@ pub struct Scene {
     /// and those of them promoted for it (their layer revision counts
     /// changes inside them, `Node::promoted`).
     popups: Vec<NodeId>,
+    /// Nodes whose declared loop plays baked (`set_baked_loop`).
+    baked_loops: Vec<(NodeId, std::rc::Rc<BakedLoop>)>,
     /// Each popup root's trigger, where it has one (`set_popup_anchor`).
     popup_anchors: Vec<(NodeId, NodeId)>,
     popups_promoted: Vec<NodeId>,
@@ -2841,6 +2854,7 @@ impl Scene {
             cells_off: false,
             viewport: Rect::new(0.0, 0.0, width, height),
             popups: Vec::new(),
+            baked_loops: Vec::new(),
             popup_anchors: Vec::new(),
             popups_promoted: Vec::new(),
             blur_nodes: Vec::new(),
@@ -5544,6 +5558,22 @@ impl Scene {
     /// the root.
     pub fn remove(&mut self, id: NodeId) {
         self.remove_as::<false>(id, 0);
+    }
+    /// `id`'s looping animation, sampled for the renderer to bake and play
+    /// without drawing a frame per tick; `None` ends it. Internal to the
+    /// script host and the renderer.
+    #[doc(hidden)]
+    pub fn set_baked_loop(&mut self, id: NodeId, baked: Option<std::rc::Rc<BakedLoop>>) {
+        self.baked_loops.retain(|(node, _)| *node != id);
+        if let Some(baked) = baked {
+            self.baked_loops.push((id, baked));
+        }
+        self.damage_subtree(id);
+    }
+    /// See `set_baked_loop`; nodes removed since have gone.
+    #[doc(hidden)]
+    pub fn baked_loops(&self) -> &[(NodeId, std::rc::Rc<BakedLoop>)] {
+        &self.baked_loops
     }
     pub(crate) fn remove_indexed(&mut self, id: NodeId, index: usize) {
         self.remove_as::<true>(id, index);

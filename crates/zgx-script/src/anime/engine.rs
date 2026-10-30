@@ -274,6 +274,9 @@ pub(crate) struct Clip {
     /// Some track waits to take its property (`Track::deferred`): checked
     /// once a frame, so the other clips' frames do no more for it.
     deferring: Cell<bool>,
+    /// Played by the compositor (`try_bake`): the engine leaves it alone.
+    baked: Cell<bool>,
+    bake_tried: Cell<bool>,
 }
 
 /// A script line that makes animations, and how many times in a row its
@@ -285,6 +288,23 @@ pub(crate) struct Site {
 }
 /// Replacements in a row before a site's restarts are reported.
 const RESTARTS: u32 = 20;
+
+fn key_name(key: &Key) -> String {
+    match key {
+        Key::Opacity => "opacity".into(),
+        Key::Shader(n) => format!("shader{n}"),
+        Key::X => "x".into(),
+        Key::Y => "y".into(),
+        Key::Scale => "scale".into(),
+        Key::Field(name) => name.to_string(),
+        _ => "other".into(),
+    }
+}
+/// The most frames a loop bakes.
+const MOST_BAKED: usize = 300;
+/// `ZGX_BAKE_LOOPS=1`: loops play baked (see `Clip::try_bake`).
+static BAKE_LOOPS: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_BAKE_LOOPS").is_some());
 
 impl Clip {
     pub fn new(
@@ -314,6 +334,8 @@ impl Clip {
             keep: RefCell::default(),
             site: RefCell::default(),
             deferring: Cell::new(false),
+            baked: Cell::new(false),
+            bake_tried: Cell::new(false),
         })
     }
     pub fn engine(&self) -> Option<Rc<Engine>> {
@@ -387,8 +409,84 @@ impl Clip {
         }
     }
 
+    /// An endless loop of a lone element's opacity and shader time, at a
+    /// fixed frame rate and with no script watching it: its frames sampled
+    /// for the renderer to bake, so nothing ticks while it plays.
+    fn try_bake(self: &Rc<Self>) {
+        let timing = self.timing.borrow().clone();
+        let Some(fps) = timing.frame_rate.filter(|f| *f > 0.) else {
+            return;
+        };
+        let plain = timing.loops.is_infinite()
+            && timing.iteration.is_finite()
+            && timing.iteration > 0.
+            && timing.delay == 0.
+            && timing.speed == 1.
+            && !timing.reversed
+            && timing.playback_ease.is_none();
+        let callbacks = self.callbacks.borrow();
+        let unwatched = callbacks.before_update.is_none()
+            && callbacks.update.is_none()
+            && callbacks.render.is_none()
+            && callbacks.loop_.is_none()
+            && self.marks.borrow().is_empty();
+        if !plain || !unwatched {
+            return;
+        }
+        let tracks = self.tracks.borrow();
+        let Some(Target::Element(element)) = tracks.first().map(|t| t.target.clone()) else {
+            return;
+        };
+        if !tracks.iter().all(|t| {
+            matches!(t.target, Target::Element(_))
+                && t.target.addr() == Rc::as_ptr(&element) as usize
+                && matches!(t.key, Key::Opacity | Key::Shader(0))
+        }) {
+            return;
+        }
+        let cycle = timing.iteration + timing.loop_delay;
+        let period = cycle * if timing.alternate { 2. } else { 1. };
+        let count = (period / 1000. * fps).round() as usize;
+        if !(2..=MOST_BAKED).contains(&count) {
+            return;
+        }
+        let vm = self.owner.upgrade();
+        let frames = (0..count)
+            .map(|frame| {
+                let local = frame as f64 * 1000. / fps;
+                let index = (local / cycle).floor();
+                let mut t = (local - index * cycle).min(timing.iteration);
+                if timing.alternate && index % 2. == 1. {
+                    t = timing.iteration - t;
+                }
+                let (mut opacity, mut time) = (element.opacity(), 0.);
+                for track in tracks.iter() {
+                    let Some(value) = track.at(t, vm.as_deref()).and_then(|v| v.num()) else {
+                        continue;
+                    };
+                    match track.key {
+                        Key::Opacity => opacity = value as f32,
+                        _ => time = value as f32,
+                    }
+                }
+                (opacity, time)
+            })
+            .collect();
+        element.set_bake(Some(Rc::new(zgx::scene::BakedLoop {
+            frames,
+            fps: fps as f32,
+            started: std::time::Instant::now(),
+        })));
+        self.baked.set(true);
+        if let Some(engine) = self.engine() {
+            engine.queue_element(&element);
+        }
+    }
     /// Advances by `dt` ms of engine time and renders.
     fn advance(self: &Rc<Self>, dt: f64, engine: &Engine) {
+        if self.baked.get() {
+            return;
+        }
         let first = {
             let mut s = self.state.borrow_mut();
             if !s.advanced && s.provisional {
@@ -401,6 +499,31 @@ impl Clip {
         // engine waited before it (a long frame, a slowed engine).
         let dt = if first { dt.min(FIRST_STEP) } else { dt };
         self.ensure_built();
+        if *BAKE_LOOPS && !self.bake_tried.replace(true) {
+            self.try_bake();
+            if zgx::env::var_os("ZGX_BAKE_LOG").is_some() {
+                let t = self.timing.borrow();
+                let site = self.site.borrow().as_ref().map(|s| s.at.clone());
+                let keys: Vec<String> = self
+                    .tracks
+                    .borrow()
+                    .iter()
+                    .map(|t| match (&t.target, &t.key) {
+                        (Target::Element(_), key) => format!("el:{}", key_name(key)),
+                        (Target::State(_), _) => "state".into(),
+                        (Target::Table(_), _) => "table".into(),
+                    })
+                    .collect();
+                let c = self.callbacks.borrow();
+                eprintln!(
+                    "BAKE baked={} loops={} iter={} delay={} ldelay={} fps={:?} alt={} ease={} marks={} cb={} keys={:?} at {:?}",
+                    self.baked.get(), t.loops, t.iteration, t.delay, t.loop_delay, t.frame_rate, t.alternate,
+                    t.playback_ease.is_some(), self.marks.borrow().len(),
+                    c.update.is_some() || c.render.is_some() || c.before_update.is_some() || c.loop_.is_some(),
+                    keys, site
+                );
+            }
+        }
         let (speed, frame_rate, total) = {
             let t = self.timing.borrow();
             (t.speed, t.frame_rate, t.total())
@@ -795,6 +918,16 @@ impl Clip {
             s.paused = true;
             s.playing = false;
         }
+        if self.baked.replace(false)
+            && let Some(Target::Element(element)) =
+                self.tracks.borrow().first().map(|t| t.target.clone())
+        {
+            element.set_bake(None);
+            if let Some(engine) = self.engine() {
+                engine.queue_element(&element);
+                engine.flush();
+            }
+        }
         if let Some(engine) = self.engine() {
             for track in self.tracks.borrow().iter() {
                 engine.release(&track.target, &track.key, self.id);
@@ -1018,7 +1151,12 @@ impl Engine {
             return Some(UNSEEN_RATE);
         }
         let mut rate: Option<f64> = None;
-        for clip in self.clips.borrow().iter().filter(|c| c.is_playing()) {
+        for clip in self
+            .clips
+            .borrow()
+            .iter()
+            .filter(|c| c.is_playing() && !c.baked.get())
+        {
             let cap = clip.timing.borrow().frame_rate.filter(|f| *f > 0.)?;
             // Slowing a clip down only makes its values change less often,
             // so its cap stays an upper bound.
@@ -1029,7 +1167,11 @@ impl Engine {
     pub fn is_active(&self) -> bool {
         !self.paused.get()
             && (!self.tickers.borrow().is_empty()
-                || self.clips.borrow().iter().any(|c| c.is_playing()))
+                || self
+                    .clips
+                    .borrow()
+                    .iter()
+                    .any(|c| c.is_playing() && !c.baked.get()))
     }
     /// Keeps `clip` while its script lives.
     pub(crate) fn hold(&self, clip: Rc<Clip>) {
@@ -1412,6 +1554,12 @@ impl Engine {
             return;
         }
         self.put(&track.target, &track.key, &value, track.unit.as_deref());
+    }
+    /// Queues `element` for the next flush.
+    fn queue_element(&self, element: &Rc<Element>) {
+        if element.queue() {
+            self.dirty.borrow_mut().push(element.clone());
+        }
     }
     fn put(&self, target: &Target, key: &Key, value: &V, unit: Option<&str>) {
         if target.write(key, value, unit)

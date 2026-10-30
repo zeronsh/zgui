@@ -67,6 +67,8 @@ pub(crate) struct Element {
     pub revision: Signal<u64>,
     styles_changed: Cell<bool>,
     compositor_changed: Cell<bool>,
+    /// A baked loop to hand the scene at the next flush (`Some(None)` ends it).
+    bake: RefCell<Option<Option<Rc<zgx::scene::BakedLoop>>>>,
     /// Queued for this frame's flush.
     queued: Cell<bool>,
     /// Its node went: its selector entries are stale (`Registered`).
@@ -113,6 +115,7 @@ impl Element {
             revision: runtime.signal(0),
             styles_changed: Cell::new(false),
             compositor_changed: Cell::new(false),
+            bake: RefCell::new(None),
             queued: Cell::new(false),
             unregistered: Cell::new(false),
             owners: RefCell::default(),
@@ -355,6 +358,11 @@ impl Element {
         drop(animated);
         self.compositor_changed.set(true);
     }
+    /// Hands the scene `bake` (see `Scene::set_baked_loop`) at the next flush.
+    pub(crate) fn set_bake(&self, bake: Option<Rc<zgx::scene::BakedLoop>>) {
+        *self.bake.borrow_mut() = Some(bake);
+        self.compositor_changed.set(true);
+    }
     pub fn set_base_clip(&self, clip: Option<[f32; 4]>) {
         self.base_clip.set(clip);
     }
@@ -584,6 +592,9 @@ impl Element {
             && let Some(id) = self.node()
             && scene.contains(id)
         {
+            if let Some(bake) = self.bake.borrow_mut().take() {
+                scene.set_baked_loop(id, bake);
+            }
             let animated = self.animated.borrow();
             let translate = self.shown(&animated, None).map(|(x, y)| Transform { x, y });
             let effects =
