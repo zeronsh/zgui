@@ -235,3 +235,96 @@ fn launch_arguments_and_files_the_system_opens_reach_the_script() {
     assert_eq!(h.text("got"), "https://example.org/a");
     let _ = std::fs::remove_file(&file);
 }
+
+/// Files copied in a file manager reach `on_paste`, and read as what the
+/// person picked in a dialog does; a plugin without the grants hears none.
+#[test]
+fn files_on_the_clipboard_reach_on_paste_and_can_be_read() {
+    let file = std::env::temp_dir().join(format!("zgx-pasted-{}.txt", std::process::id()));
+    std::fs::write(&file, "pasted file").unwrap();
+    let dir = std::env::temp_dir().join(format!("zgx-paste-plugin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("plugin.luau");
+    std::fs::write(
+        &entry,
+        r#"local heard = ui.state("heard", "not yet")
+        ui.contribute("bar", ui.column {
+            ui.textarea { id = "plugin", value = ui.state("text", ""), w = 100, h = 30,
+                on_paste = function(e)
+                    heard:set(`{#e.files} files`)
+                    return true
+                end },
+            ui.text { id = "plugin-heard", "{heard}" },
+        })"#,
+    )
+    .unwrap();
+    let mut h = Harness::with_desktop(move |runtime| {
+        let host = ScriptHost::inline(
+            runtime,
+            "app",
+            r#"local got = ui.state("got", "")
+            return ui.column {
+                ui.textarea { id = "box", value = ui.state("text", ""), w = 200, h = 60,
+                    on_paste = function(e)
+                        for _, file in e.files do
+                            ui.task(function()
+                                got:set(`{file.name}: {ui.read_file(file):await()}`)
+                            end)
+                        end
+                        return #e.files > 0
+                    end },
+                ui.slot("bar"),
+                ui.text { id = "got", "{got}" },
+            }"#,
+        );
+        host.set_plugins(vec![zgx_script::Plugin {
+            name: "paste".into(),
+            entry: entry.clone(),
+            grants: vec![zgx_script::Capability::Clipboard],
+        }]);
+        host
+    });
+    h.frames(1);
+    let paste = |h: &mut Harness, id: &str, text: Option<&str>| {
+        let node = h.find(id).unwrap();
+        let editor = h.ui.editor(node).unwrap();
+        h.ui.paste_into(&editor, text);
+        h.settle();
+        h.frames(2);
+    };
+    // No files: as ever, the text goes in.
+    paste(&mut h, "box", Some("plain"));
+    let name = h.find("box").unwrap();
+    let typed =
+        h.ui.editor(name)
+            .unwrap()
+            .editor
+            .borrow()
+            .text()
+            .to_string();
+    assert_eq!(typed, "plain");
+    // Files, with their name as the text as Finder puts it: taken, and read.
+    h.desktop.as_ref().unwrap().copy_files(vec![file.clone()]);
+    let copied = file.file_name().unwrap().to_string_lossy().into_owned();
+    paste(&mut h, "box", Some(&copied));
+    assert!(
+        h.wait_until(|h| !h.text("got").is_empty()),
+        "{:?}",
+        h.error()
+    );
+    assert_eq!(h.text("got"), format!("{copied}: pasted file"));
+    let typed =
+        h.ui.editor(name)
+            .unwrap()
+            .editor
+            .borrow()
+            .text()
+            .to_string();
+    assert_eq!(typed, "plain", "taken: its name doesn't go in");
+    // A plugin granted the clipboard but not files hears none.
+    paste(&mut h, "plugin", None);
+    assert_eq!(h.text("plugin-heard"), "0 files");
+    assert_eq!(h.error(), None);
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_dir_all(&dir);
+}

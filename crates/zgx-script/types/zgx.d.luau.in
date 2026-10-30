@@ -2330,10 +2330,13 @@ export type InputProps = Merge<Props, {
 	-- password field. A state or function follows it (a setting).
 	-- Hears a person's paste before it goes in, from a key, a menu or a
 	-- middle click (HTML's `paste` event): `text` is the clipboard's, nil
-	-- where it holds no text (an image: `ui.clipboard.read_image`). Returning
-	-- true takes the paste, so nothing goes in: a composer making a picture
-	-- or a long text an attachment. `el:replace_selection` doesn't call it.
-	on_paste: ((e: { text: string? }) -> boolean?)?,
+	-- where it holds no text (an image: `ui.clipboard.read_image`), and
+	-- `files` those copied in a file manager, readable as `ui.open_files`'s
+	-- are (a copied file may also put its name in `text`). Returning true
+	-- takes the paste, so nothing goes in: a composer making a picture, a
+	-- file or a long text an attachment. `el:replace_selection` doesn't
+	-- call it.
+	on_paste: ((e: { text: string?, files: { File } }) -> boolean?)?,
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- "contain": a wheel or trackpad gesture over it stays with it at its
 	-- edges (CSS's overscroll-behavior), the scroll views around it never

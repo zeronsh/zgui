@@ -100,6 +100,13 @@ impl Platform for Desktop {
     fn ignore_spelling(&self, word: &str) {
         spelling::ignore(word);
     }
+    fn clipboard_files(&self) -> Vec<std::path::PathBuf> {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()
+            .and_then(|clipboard| clipboard.get_files().ok())
+            .unwrap_or_default()
+    }
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
         self.clipboard
             .borrow_mut()

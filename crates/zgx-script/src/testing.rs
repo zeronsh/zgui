@@ -53,6 +53,7 @@ use zgx::{
 pub struct FakeDesktop {
     clipboard: RefCell<String>,
     image: RefCell<Option<std::sync::Arc<zgx::image::ImageData>>>,
+    files: RefCell<Vec<std::path::PathBuf>>,
     opens: RefCell<std::collections::VecDeque<Vec<std::path::PathBuf>>>,
     saves: RefCell<std::collections::VecDeque<std::path::PathBuf>>,
     asked: RefCell<Vec<zgx::platform::FilePicker>>,
@@ -115,8 +116,15 @@ impl FakeDesktop {
         let image = zgx::image::ImageData::new(width, height, pixels).expect("a valid image");
         *self.image.borrow_mut() = Some(std::sync::Arc::new(image));
     }
+    /// Put `files` on the clipboard, as a file manager copies them.
+    pub fn copy_files(&self, files: Vec<std::path::PathBuf>) {
+        *self.files.borrow_mut() = files;
+    }
 }
 impl zgx::platform::Platform for FakeDesktop {
+    fn clipboard_files(&self) -> Vec<std::path::PathBuf> {
+        self.files.borrow().clone()
+    }
     fn clipboard_text(&self) -> Option<String> {
         Some(self.clipboard.borrow().clone())
     }

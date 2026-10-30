@@ -130,7 +130,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .borrow()
                                         .as_ref()
                                         .and_then(|p| p.0.clipboard_text());
-                                    println!("HEARD text={text:?} read={read:?}");
+                                    let files = platform
+                                        .borrow()
+                                        .as_ref()
+                                        .map(|p| p.0.clipboard_files())
+                                        .unwrap_or_default();
+                                    println!("HEARD text={text:?} read={read:?} files={files:?}");
                                     text.is_none_or(|text| text.starts_with("take"))
                                 }
                             })),

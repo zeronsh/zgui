@@ -7201,12 +7201,13 @@ fn cached_hex_matches_every_parsed_value_in_a_sequence() {
 
 /// An input's `active_descendant`: the id it names, followed.
 #[inline(never)]
-/// `on_paste`: handed `{ text }`, a truthy return takes the paste.
+/// `on_paste`: handed `{ text, files }`, a truthy return takes the paste.
 fn on_paste(view: View, hook: mlua::Function, vm: &Rc<Vm>) -> View {
     let vm = vm.clone();
     view.on_paste(move |text| {
         let event = vm.lua.create_table().and_then(|event| {
             event.set("text", text)?;
+            event.set("files", crate::io::pasted_files(&vm.lua)?)?;
             Ok(event)
         });
         match event.and_then(|event| vm.call::<mlua::Value>(&hook, event)) {

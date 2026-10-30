@@ -9,8 +9,9 @@ the clipboard_image example's Paste and Copy, clicked.
 - Copy offers its 64 by 48 gradient as `image/png`, which the other
   client reads back pixel for pixel, its transparent column included;
 - on X11, Control+V in its field reaches `View::on_paste`: with no text on
-  the clipboard (the image), and with text, the hook reading the clipboard
-  itself as it hears the paste."""
+  the clipboard (the image), with text, and with a file another client
+  offers as `text/uri-list`, the hook reading the clipboard itself as it
+  hears the paste."""
 import argparse
 import io
 import json
@@ -115,11 +116,15 @@ def main():
             click(*FIELD)
             paste_key(None)
             checks[f"{name}: a paste with no text is heard"] = until(
-                f"{name}: a paste with no text", heard)[-1] == "HEARD text=None read=None"
+                f"{name}: a paste with no text", heard)[-1] == "HEARD text=None read=None files=[]"
             paste_key("take this")
             until(f"{name}: a paste of text", lambda: len(heard()) > 1)
             checks[f"{name}: a paste of text is heard, and the hook can read the clipboard"] = (
-                heard()[-1] == 'HEARD text=Some("take this") read=Some("take this")')
+                heard()[-1] == 'HEARD text=Some("take this") read=Some("take this") files=[]')
+            paste_key("file:///tmp/a%20file.txt\n", "text/uri-list")
+            until(f"{name}: a paste of a file", lambda: len(heard()) > 2)
+            checks[f"{name}: a file another client copied is heard"] = heard()[-1].endswith(
+                'files=["/tmp/a file.txt"]')
             checks[f"{name} heard"] = heard()
             checks[f"{name}: the app outlived both"] = app.poll() is None
         stop(app)
@@ -166,9 +171,10 @@ def main():
                                    env=x11, check=True)
                 time.sleep(.3)
 
-            def x11_paste(text):
+            def x11_paste(text, kind="UTF8_STRING"):
                 if text is not None:
-                    offer = subprocess.Popen(["xclip", "-selection", "clipboard", "-i"], env=x11, stdin=subprocess.PIPE,
+                    offer = subprocess.Popen(["xclip", "-selection", "clipboard", "-t", kind, "-i"], env=x11,
+                                             stdin=subprocess.PIPE,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     offer.communicate(text.encode())
                     time.sleep(.3)

@@ -104,6 +104,10 @@ enum Command {
     LoadImage {
         reply: mpsc::Sender<Result<Loaded, String>>,
     },
+    /// The clipboard's `text/uri-list`: the files a file manager copied.
+    LoadFiles {
+        reply: mpsc::Sender<Result<Loaded, String>>,
+    },
     /// Raise `window` with an activation token; held here until done, so
     /// its surface lives as long.
     Activate {
@@ -228,6 +232,21 @@ impl WaylandClipboard {
             .map_err(|_| "Wayland data worker stopped".to_string())?;
         Ok(read_loaded(answer)?.0)
     }
+    pub fn load_files(&self) -> Result<Vec<std::path::PathBuf>, String> {
+        let (reply, answer) = mpsc::channel();
+        self.0
+            .send(Command::LoadFiles { reply })
+            .map_err(|_| "Wayland data worker stopped".to_string())?;
+        Ok(uri_list(&String::from_utf8_lossy(&read_loaded(answer)?.0)))
+    }
+}
+/// The files in a `text/uri-list`: a `file:` URI a line, `#` lines comments.
+fn uri_list(text: &str) -> Vec<std::path::PathBuf> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(crate::portal_dialog::file_uri)
+        .collect()
 }
 /// What the selection's owner writes to the stream the worker `answer`s
 /// with, up to `LOAD_LIMIT` within `LOAD_TIMEOUT`; and whether it is text
@@ -344,6 +363,9 @@ impl NativeData {
                             }
                             Command::LoadImage { reply } => {
                                 let _ = reply.send(state.load_image());
+                            }
+                            Command::LoadFiles { reply } => {
+                                let _ = reply.send(state.load_files());
                             }
                             Command::Activate { token, window } => state.activate(&token, &window),
                             Command::Drag {
@@ -845,6 +867,16 @@ impl State {
             return Err("the clipboard holds no PNG image".into());
         }
         offer.proxy.receive("image/png".into(), write.as_fd());
+        drop(write);
+        Ok(Loaded(read, false))
+    }
+    fn load_files(&mut self) -> Result<Loaded, String> {
+        let (read, write) = UnixStream::pair().map_err(|e| e.to_string())?;
+        let offer = self.selection.as_ref().ok_or("the clipboard is empty")?;
+        if !offer.uris {
+            return Err("the clipboard holds no files".into());
+        }
+        offer.proxy.receive("text/uri-list".into(), write.as_fd());
         drop(write);
         Ok(Loaded(read, false))
     }
@@ -1733,6 +1765,17 @@ fn decode_uris(bytes: &[u8]) -> Result<Vec<PathBuf>, zgx::input::FileDropError> 
 mod tests {
     use super::*;
     use zgx::input::FileDropError;
+    #[test]
+    fn a_uri_list_gives_its_files() {
+        assert_eq!(
+            uri_list("# a comment\r\nfile:///tmp/a%20b.txt\r\nfile:///tmp/c\r\nhttps://x.y/\r\n"),
+            [
+                std::path::PathBuf::from("/tmp/a b.txt"),
+                std::path::PathBuf::from("/tmp/c")
+            ]
+        );
+    }
+
     #[test]
     fn uri_list_is_bounded_and_all_or_nothing() {
         assert_eq!(

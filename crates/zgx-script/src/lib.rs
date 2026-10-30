@@ -2774,6 +2774,8 @@ impl ScriptHost {
             retained: RefCell::default(),
             mounted: RefCell::default(),
             actions: self.0.actions.clone(),
+            platform: self.0.platform.clone(),
+            picked: self.0.picked.clone(),
             functions: self.0.functions.clone(),
             persist: self.0.persist.clone(),
             warnings: self.0.warnings.clone(),

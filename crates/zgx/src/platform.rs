@@ -117,6 +117,11 @@ pub trait Platform {
         let _ = (text, baseline, size);
         false
     }
+    /// The files on the clipboard (copied in Finder, Explorer or a file
+    /// manager), in order; none where it holds none. None reads none.
+    fn clipboard_files(&self) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
     /// Put `text` on the clipboard with `html`, its rich form, where the
     /// platform takes both; plain text alone otherwise.
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {

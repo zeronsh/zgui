@@ -1480,6 +1480,9 @@ pub(crate) struct Env {
     pub mounted: RefCell<Vec<Function>>,
     /// The host's actions (`ui.action` binds them, `ui.invoke` calls them).
     pub actions: crate::Actions,
+    /// The clipboard's files as a paste hears them (`io::pasted_files`).
+    pub platform: crate::io::SharedPlatform,
+    pub picked: crate::io::Picked,
     /// The host's functions (`ui.call_sync`).
     pub functions: crate::Functions,
     /// The host's saved state (`ui.persist`).

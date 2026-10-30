@@ -8,7 +8,7 @@ use crate::{
     calls::{PromiseUd, pending, settle_failing, settle_with},
     value::Value,
 };
-use mlua::{Lua, Table};
+use mlua::{IntoLua, Lua, Table};
 use std::{
     cell::RefCell,
     collections::HashSet,
@@ -196,6 +196,19 @@ fn off_thread(
         }
     })?;
     Ok(PromiseUd(promise))
+}
+
+/// `on_paste`'s `files`: those on the clipboard, which a script may then
+/// read as it does what the person picks. None for a plugin without both
+/// grants, or where no platform reads them.
+pub(crate) fn pasted_files(lua: &Lua) -> mlua::Result<mlua::Value> {
+    let env = crate::node::env(lua)?;
+    let allowed = env.grants.allows(&crate::Capability::Files)
+        && env.grants.allows(&crate::Capability::Clipboard);
+    let platform = env.platform.borrow().clone().filter(|_| allowed);
+    let paths = platform.map_or_else(Vec::new, |platform| platform.0.clipboard_files());
+    env.picked.borrow_mut().extend(paths.iter().cloned());
+    Value::List(paths.iter().map(|path| file_value(path)).collect()).into_lua(lua)
 }
 
 /// Installs `ui.clipboard` (text and images), `ui.open_files`, `ui.save_file`, `ui.read_file`

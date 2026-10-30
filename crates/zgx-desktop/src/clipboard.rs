@@ -85,6 +85,15 @@ impl Clipboard {
         }
     }
 
+    /// The files on the clipboard: a file manager's copy.
+    pub(crate) fn get_files(&mut self) -> Result<Vec<std::path::PathBuf>> {
+        match &mut self.backend {
+            Backend::Native(clipboard) => Ok(clipboard.get().file_list()?),
+            #[cfg(target_os = "linux")]
+            Backend::Wayland(clipboard) => Ok(clipboard.load_files()?),
+        }
+    }
+
     /// Wayland publication is asynchronous: success means the selection was
     /// offered, not that another process has accepted or persisted its data.
     pub(crate) fn set_text(&mut self, text: String) -> Result<()> {
