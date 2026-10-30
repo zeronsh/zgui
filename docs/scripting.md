@@ -402,7 +402,15 @@ A plugin's files are source, always: Luau checks no bytecode it loads, so a plug
 
 Reaching for something it was not given is an error that names what it needs; a plugin that fails to load is left out, and the app and the other plugins load. `Capability::Named(..)` is the app's own vocabulary for what `expose_*` asks. The terminal example's plugins (`examples/terminal/plugins.rs`) are a whole system on top: a folder per plugin with a manifest saying what it needs, a sheet asking the user to allow it, and its panels opened from ⌘K.
 
-### Testing an app
+### Localized text
+
+`ui.i18n { dir = "locales" }` loads locale files of ICU MessageFormat messages, `ui.t(key, args)` shows one wherever text goes (following its locale, its file and its arguments' states, formatted in Rust), and `ui.locale` asks for a locale or follows the system's. See [Text: localized messages](reference/text.md#localized-messages).
+
+### Warnings
+
+Some mistakes are not errors but are probably wrong; each is reported once per call site, with its file and line, to stderr and to `ScriptHost::warnings()`. Durations are milliseconds everywhere (`ui.tween`, `ui.loop`, `layout_duration`, `anime`): a fractional duration under 10 (`duration = 0.16`, likely meant as seconds) and a non-looping one over a minute both warn. `ui.every` under 16 ms warns too: it calls the script more often than a display refreshes. A `ui.each` over more than 1,000 items warns: it builds every row, where `ui.list` builds only those in view. An `anime.animate` line that replaces its own unfinished animation again and again warns as well (what drives it changes faster than it plays).
+
+## Testing an app
 
 An app's own tests are Luau files named `*.test.luau` (in `tests/`, by custom). `zgx test` runs them, each file in a VM of its own, and exits 1 when any fails. `zgx test . sav` runs only the tests whose names hold `sav`.
 
@@ -434,7 +442,7 @@ end)
 - **What a headless app lacks:** a fetcher (`ui.fetch` fails as it does offline) and storage (`ui.persist` keeps state in memory).
 - **Types.** `zgx check` gives test files these globals' types (`types/zgx-test.d.luau`); the app's own scripts don't see them.
 
-`zgx_script::testing::TestApp` is the same kit for Rust: it mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window. `TestApp::fill(id, text)` replaces a field's text as a person selecting it all and typing would, so a form's `dirty` and validation follow.
+`zgx_script::testing::TestApp` is the same kit for Rust: it mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::try_new` answers the script's error rather than panicking, and `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window. `TestApp::fill(id, text)` replaces a field's text as a person selecting it all and typing would, so a form's `dirty` and validation follow.
 
 ```rust
 use zgx_script::{ScriptHost, testing::TestApp};
@@ -457,7 +465,7 @@ fn signing_in_greets_the_user() {
 
 It has `click`, `type_text`, `fill` (a field's whole text replaced), `drag` (one node onto another, past the drag threshold), `scroll` (the viewport under a node), `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `shown` (found and not transparent: a closed modal's kept content is not shown), `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgx-script's own tests use it.
 
-### Shipping an app
+## Shipping an app
 
 In development a host reads its scripts from the disk and reloads them as they change (`ScriptHost::new` and `watch`). What ships carries them compiled into the binary instead: a build script bundles the directory, and the host runs from the bundle.
 
@@ -474,14 +482,6 @@ let host = ScriptHost::bundled(&cx.ui.runtime, &UI, "app.luau");
 `bundle` compiles every `.luau` file to Luau bytecode (a script that does not parse fails the build, with its file and line) and keeps `.luaurc`, theme `.json` files and images as they are; Rust sources and other dotfiles stay out. The packages the directory's `zgx.json` lists come along, each under `.packages/<name>/`, its `.luaurc` aliases into one pointing at that copy, and the bundled host requires them as `@name/…`. A bundled host reads nothing from the disk: `require`, `@self`, `.luaurc` aliases, packages, `ui.theme.load`, `ui.image` and `ScriptHost::plugins` all resolve inside the bundle, and a module it does not have is an error, not a read elsewhere. The plugins an app sets (`set_plugins`) are its users', read from the disk; `watch` on a bundled host watches only those.
 
 Errors are for the developer: `error_banner(true)` shows each over the interface with where it happened, and is the default in debug builds. In release builds the banner is off: a failed load or a handler's error leaves the last good interface running, and `host.on_error(|message| ...)` hears it, for the app's log or crash reports. The terminal example builds either way: with `--features terminal-bundle` it runs from its bundle (`ZGX_SCRIPTS=source` reads the source tree instead), without it from the source tree, reloading as it is edited; `scripts/zterm-app.sh` packages the bundled build.
-
-### Localized text
-
-`ui.i18n { dir = "locales" }` loads locale files of ICU MessageFormat messages, `ui.t(key, args)` shows one wherever text goes (following its locale, its file and its arguments' states, formatted in Rust), and `ui.locale` asks for a locale or follows the system's. See [Text: localized messages](reference/text.md#localized-messages).
-
-### Warnings
-
-Some mistakes are not errors but are probably wrong; each is reported once per call site, with its file and line, to stderr and to `ScriptHost::warnings()`. Durations are milliseconds everywhere (`ui.tween`, `ui.loop`, `layout_duration`, `anime`): a fractional duration under 10 (`duration = 0.16`, likely meant as seconds) and a non-looping one over a minute both warn. `ui.every` under 16 ms warns too: it calls the script more often than a display refreshes. A `ui.each` over more than 1,000 items warns: it builds every row, where `ui.list` builds only those in view. An `anime.animate` line that replaces its own unfinished animation again and again warns as well (what drives it changes faster than it plays).
 
 ## Theming
 

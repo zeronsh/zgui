@@ -86,6 +86,15 @@ architecture. Rows retain their state while mounted; removing an offscreen row
 disposes its owned subscriptions and tasks. See [virtual lists](composition.md)
 for complete signatures, anchoring and cache costs.
 
+Lists report their ends without a script or effect running as they scroll:
+`.on_end(distance, f)` calls `f` as the end comes within `distance` points,
+once each time and again once the rows grow, and `.on_start(distance, f)` does
+the same at the start (a history's earlier pages), keeping the rows in view
+where they are when rows are added above them. `.on_at_end(f)` hears whether the
+list rests at its end. `.overscroll_contain()`, CSS's `overscroll-behavior:
+contain`, keeps a wheel or trackpad gesture with the view at its edges, momentum
+included, so the scroll views around it neither move nor stretch.
+
 The lower-level `ScrollView::mount(ui, parent, width, height)` returns a clipped viewport, a `content` node, and signals for offset, extent, and viewport size. Set its content height explicitly as data changes. Scroll offsets clamp when content or viewport dimensions change. Moving content changes a retained transform; it does not relayout every child. Nested wheel scrolling chains to a parent when the inner scroll view cannot
 move farther, at the start of a gesture. Once a view scrolls, the gesture
 latches to it, as on macOS. The rest of the gesture along that axis, momentum
@@ -225,6 +234,10 @@ cx.tasks.spawn(async move {
 Use `cx.windows.open(options, builder)` to create another window. An application's windows share one reactive runtime (`Ui::with_runtime`): each has its own scene, focus and tasks, but a signal one window shows, another can change, and a theme change restyles them all. Closing an opener does not close its child windows. The application exits when no windows or pending window requests remain. `WindowHandle` is thread-safe and targets exactly one window; requests after closure are inert.
 
 `cx.on_close_requested(|| bool)` handles native close requests and `window.request_close()`: return false to keep the window open, for example while a save-confirmation dialog is shown. `window.close()` closes immediately and bypasses that policy. `cx.on_closed(|| ...)` runs once during window disposal. Asynchronous confirmation should reject the initial request and call `close` after the user completes it.
+
+## Giving memory back
+
+As a window goes idle, 1.5 s after its last frame, the desktop host gives back what a busy frame wouldn't stop for: a script host collects its scripts' garbage and drops the decoded pictures no node shows, and the allocator returns what was freed. `zgx::idle::on_idle(&runtime, f)` adds what else an app should let go of, for as long as the `IdleTrim` it returns lives. `ScriptHost::collect_garbage` collects at once, and `ScriptHost::image_cache(bytes)` sets how many bytes of unshown pictures stay while the app is in use. `zgx inspect memory` shows [what a running app holds](agents/inspect.md#what-it-holds).
 
 ## When something fails
 

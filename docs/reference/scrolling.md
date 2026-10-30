@@ -193,3 +193,28 @@ return ui.row {
 - All of a `scroll`'s children stay mounted however far away they are; past a few thousand rows, use `list`.
 - `offset` counts points from the top (the left for `scroll_x`). Setting it beyond the content clamps it, and a binding to a state that is not a number reads as 0.
 - There is no scrollbar unless asked (`scrollbar = true`): a viewport scrolls by wheel, touchpad, keyboard focus and `offset`, and with the keys as a page does (Space, Shift+Space, Page Up/Down, Home/End, arrows) once it has been pressed in or is under the pointer, while nothing has focus (a focused control keeps its keys).
+
+## Keeping a gesture
+
+A scrolling box inside a scrolling page hands a gesture on at its edges unless it says otherwise. With `overscroll = "contain"` a transcript keeps it, momentum included:
+
+```lua
+local lines = ui.state("lines", {} :: { string })
+for i = 1, 40 do
+	lines:push(`Line {i}`)
+end
+return ui.scroll {
+	w = "100%",
+	h = 400,
+	gap = 8,
+	ui.text { "A page" },
+	ui.scroll {
+		overscroll = "contain",
+		h = 200,
+		ui.each(lines, function(line: string)
+			return ui.text { line }
+		end),
+	},
+	ui.div { h = 600 },
+}
+```

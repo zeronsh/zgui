@@ -75,6 +75,9 @@ mod composition_guide {}
 #[cfg(doctest)]
 #[doc = include_str!("../../../docs/styling.md")]
 mod styling_guide {}
+#[cfg(doctest)]
+#[doc = include_str!("../../../docs/i18n.md")]
+mod i18n_guide {}
 
 pub mod actions;
 

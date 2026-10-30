@@ -29,7 +29,7 @@ const samples = await codeTabs(
   'hero',
 );
 const agentCode = await codeBlock({
-  code: `claude mcp add zgx -- zgx inspect mcp\nzgx inspect tree --depth 2\nzgx inspect click '"Add"'\nzgx inspect frames 5`,
+  code: `claude mcp add zgx -- zgx inspect mcp\nclaude mcp add --transport http zgx-docs https://zgx.zeron.sh/api/mcp\nzgx inspect tree --depth 2\nzgx inspect click '"Add"'\nzgx inspect frames 5`,
   lang: 'sh',
   title: 'terminal',
 });
@@ -52,6 +52,18 @@ if (launch)
     value: `${fmt(launch.content, 0)} ms`,
     note: `${fmt(launch.sooner, 0)} ms sooner than GPUI Fast, ${Math.round(launch.fewer * 100)}% fewer instructions`,
   });
+// Primitives an app is built from, each with the page that shows it.
+const primitives = [
+  { title: 'zgx new', text: 'Five app templates, clean under check, lint, audit and test.', href: '/luau/new-app' },
+  { title: 'zgx test', text: 'Tests in Luau, against the app mounted headless.', href: '/luau/testing' },
+  { title: 'Routing', text: 'Named routes, back and forward, deep links, modal routes.', href: '/luau/routing' },
+  { title: 'Live data', text: 'ui.resource, ui.paged and ui.socket, with cancelling and reconnects.', href: '/luau/data' },
+  { title: 'Plugins', text: 'Add, filter and replace, with grants declared in zgx.json.', href: '/luau/plugins' },
+  { title: 'Localized text', text: 'ICU messages that follow the locale, the file and their arguments.', href: '/luau/localized-text' },
+  { title: 'Files', text: 'Drops from outside the window, and uploads with progress.', href: '/luau/data#the-clipboard-and-files' },
+  { title: 'Notifications', text: 'System notifications and icon badges on all three platforms.', href: '/luau/windows#notifications-and-badges' },
+  { title: '3D', text: 'glTF models with animation and skins, image-based light, orbit controls.', href: '/luau/reference/3d' },
+];
 const navName = (dir: string, title: string) => (dir === 'rust' ? 'Rust' : dir === 'luau' ? 'Luau' : title);
 ---
 
@@ -171,12 +183,28 @@ const navName = (dir: string, title: string) => (dir === 'rust' ? 'Rust' : dir =
       </div>
     </section>
 
+    <section class="prims reveal" aria-labelledby="prims-title">
+      <p class="label" id="prims-title"><span class="label-icon" aria-hidden="true"><Layers size={14} strokeWidth={1.8} /></span>Building blocks</p>
+      <ul class="prim-grid">
+        {
+          primitives.map((p) => (
+            <li>
+              <a href={p.href}>
+                <span class="prim-title">{p.title}</span>
+                <span class="prim-text">{p.text}</span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
     <section class="split agents reveal" aria-labelledby="agents-title">
       <div class="copy">
         <p class="label"><span class="label-icon" aria-hidden="true"><SquareTerminal size={14} strokeWidth={1.8} /></span>Devtools</p>
         <h2 id="agents-title" class="lead">
           <strong>Built to be driven by agents.</strong>{' '}
-          <span><code>zgx inspect</code> reads a running app's tree, state and frame costs, and clicks, types and presses keys by the same targets its tests use. Over MCP, any agent can drive it.</span>
+          <span><code>zgx inspect</code> reads a running app's tree, state and frame costs, and clicks, types and presses keys by the same targets its tests use. Over MCP, any agent can drive it, and <a href="/devtools/docs-mcp">search these docs</a>.</span>
         </h2>
         <a class="more" href="/devtools">Devtools <ArrowRight size={14} aria-hidden="true" /></a>
       </div>
@@ -686,6 +714,53 @@ const navName = (dir: string, title: string) => (dir === 'rust' ? 'Rust' : dir =
   }
 
   /* ---- Documentation index ---- */
+  .prims {
+    padding: clamp(3.5rem, 7vw, 6rem) clamp(1.25rem, 3.5vw, 2.75rem);
+  }
+  .prim-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-gap: 2rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .prim-grid li {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .prim-grid a {
+    display: block;
+    height: 100%;
+    padding: 1.15rem 0.5rem;
+    transition: background-color 150ms ease-out;
+  }
+  .prim-grid a:hover {
+    background: color-mix(in oklab, var(--color-ink) 2.5%, transparent);
+  }
+  .prim-title {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .prim-text {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink-2);
+  }
+  @media (max-width: 900px) {
+    .prim-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 560px) {
+    .prim-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   .index {
     padding: clamp(3.5rem, 7vw, 6rem) clamp(1.25rem, 3.5vw, 2.75rem);
   }

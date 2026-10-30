@@ -413,6 +413,10 @@ Selection and read-only refreshes retain unchanged paint text and semantic value
 
 Editors accept the ordinary dimension, padding, decoration, typography, focus, and disabled styles. Their internals remain stable when layout reallocates their width. `text_area` preserves explicit line breaks and scrolls horizontally for long lines by default. Add `.text_wrap(true)` to wrap at the allocated content width. This inherited style also supports reactive changes; visual wrapping never inserts model newlines. Single-line `text_input` stays unwrapped. Both editor constructors are leaves and reject child views. Unmounting releases input handlers and model subscriptions. Custom headless hosts should call `Ui::prepare_frame()` before flushing or rendering the scene so editor viewports follow allocated layout.
 
+`.read_only_when(f)` keeps a field selectable and focusable and refuses the person's edits while `f` says so. `.input_mode(InputMode::Email)`, HTML's `inputmode`, says what kind of text a field takes. `.caret_color(color)` (or `.caret_color_when(f)`) and `.caret_width(points)` set a field's own caret, and `EditorHandle::set_caret_style` changes it later. `.span_highlighter(f)` styles a text area's lines with `SpanStyle`s (`SpanStyle::default().weight(600).italic()`): weights and italics are shaped, so carets and clicks follow them, and strikes and washes sit on top. `EditorHandle::set_span_highlighter` replaces it.
+
+`.at_caret()` places a popover at the caret of the field in its anchor, following it as text is typed, a line wraps, the field scrolls and an input method composes: a mention's or a slash command's suggestions. It takes no focus, so the field's keys move through them, and `.active_descendant(f)`, HTML's `aria-activedescendant`, tells assistive technology the one it is on.
+
 ### Virtual lists
 
 `virtual_list` mounts fixed-height rows from a reactive count and an indexed key

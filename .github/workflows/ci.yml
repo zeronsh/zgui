@@ -10,7 +10,9 @@ on:
       - "!**/*.md"
       # Markdown compiled as doctests.
       - "README.md"
+      - "docs/3d.md"
       - "docs/composition.md"
+      - "docs/i18n.md"
       - "docs/styling.md"
       - "docs/window-controls.md"
   pull_request:
@@ -22,7 +24,9 @@ on:
       - "!**/*.md"
       # Markdown compiled as doctests.
       - "README.md"
+      - "docs/3d.md"
       - "docs/composition.md"
+      - "docs/i18n.md"
       - "docs/styling.md"
       - "docs/window-controls.md"
 # A newer push to a PR supersedes its running check. On main every run
@@ -132,6 +136,7 @@ jobs:
       # whole workflow would fail to load.
       - run: "cargo test -p zgx --no-default-features --lib --test editor --test text --locked -- words:: chinese_japanese_or_thai"
       - run: cargo test --workspace --doc --locked
+      - run: cargo test -p zgx-3d --features gltf --doc --locked
       # The API docs build without a warning (a broken link, a name collision).
       - run: cargo doc --workspace --no-deps --locked
         env:

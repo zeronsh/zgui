@@ -177,7 +177,7 @@ return ui.row {
 }
 ```
 
-### While the person is away
+### Notifications and badges
 
 ```luau
 ui.window.active: State<boolean>

@@ -240,7 +240,7 @@ zgx run .                          # a window, reloading as you save
 zgx test                           # its tests, headless
 ```
 
-It writes `app.luau`, a component, a theme of the app's own tokens (`theme.luau`), a test (`tests/app.test.luau`), `zgx.json`, a README, and a GitHub Actions workflow that runs `zgx check`, `zgx lint`, `zgx audit` and `zgx test`. All four are clean from the start. The sections below build the same pieces by hand.
+It writes `app.luau`, a component, a theme of the app's own tokens (`theme.luau`), a test (`tests/app.test.luau`), `zgx.json`, a README, and a GitHub Actions workflow that runs `zgx check`, `zgx lint`, `zgx audit` and `zgx test`. All four are clean from the start. [Start an app](app-templates.md) has what each template shows. The sections below build the same pieces by hand.
 
 ### A window
 
@@ -340,4 +340,6 @@ A shipped app carries its scripts compiled into the binary: a build script bundl
 
 - [Components](composition.md), [styling](styling.md) and [layout](layout.md) in Rust.
 - [Scripting](scripting.md) and the [Luau reference](reference/index.md).
+- [Testing an app](scripting.md#testing-an-app), [routing](reference/state.md#routing) and [data, network and files](reference/state.md#host-calls-with-results).
+- [3D scenes](3d.md) and [localized text](i18n.md) in Rust.
 - [Windows](windows.md) and [Linux](linux.md) notes; [benchmarking](benchmarking.md).

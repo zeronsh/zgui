@@ -30,6 +30,10 @@
 //! ```
 #![warn(missing_docs)]
 
+#[cfg(all(doctest, feature = "gltf"))]
+#[doc = include_str!("../../../docs/3d.md")]
+mod guide {}
+
 #[cfg(feature = "gltf")]
 mod animation;
 mod environment;

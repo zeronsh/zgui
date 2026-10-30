@@ -65,3 +65,5 @@ Scrollable views forward container layout to their retained content, so `scroll(
 Ordinary row/column/overlay layouts keep the existing small cached layout path. Advanced containers allocate one retained Taffy 0.9 tree for their immediate children. Stable child IDs and Taffy caches survive resize and content updates; removed children release cache entries. Layout options use an optional shared allocation, so default styles do not allocate an extended options block. An unchanged scene performs no layout work. See [the feature cost audit](performance-feature-audit.md) for default-path and cache bounds.
 
 Run `cargo run -p zgx-desktop --example layout` for the resizable gallery. `cargo test -p zgx --test layout advanced_layout::` covers geometry, refinement precedence, visibility and scrolling; the core retained-cache regression checks allocation reuse and stale-child removal. These tests establish the documented cases, not universal browser CSS conformance.
+
+`View::hollow()` lets the pointer through a box while nothing it holds is displayed (`hidden` or `invisible`): a page kept mounted but hidden takes no presses meant for what's under it.
