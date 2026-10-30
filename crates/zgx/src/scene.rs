@@ -921,6 +921,47 @@ impl Default for Effects {
 /// one; being affine, it can be applied to each primitive of a subtree
 /// before blending with the same result as to the subtree as a group.
 pub type ColorMatrix = [[f32; 4]; 3];
+/// CSS `filter: hue-rotate()`, by the spec's matrix: colours turned `degrees`
+/// round the hue circle, keeping their luma.
+pub fn hue_rotate_matrix(degrees: f32) -> ColorMatrix {
+    let (s, c) = degrees.to_radians().sin_cos();
+    [
+        [
+            0.213 + c * 0.787 - s * 0.213,
+            0.715 - c * 0.715 - s * 0.715,
+            0.072 - c * 0.072 + s * 0.928,
+            0.,
+        ],
+        [
+            0.213 - c * 0.213 + s * 0.143,
+            0.715 + c * 0.285 + s * 0.140,
+            0.072 - c * 0.072 - s * 0.283,
+            0.,
+        ],
+        [
+            0.213 - c * 0.213 - s * 0.787,
+            0.715 - c * 0.715 + s * 0.715,
+            0.072 + c * 0.928 + s * 0.072,
+            0.,
+        ],
+    ]
+}
+/// CSS `filter: sepia()`, by the spec's matrix: `amount` from 0 (unchanged)
+/// to 1 (all sepia).
+pub fn sepia_matrix(amount: f32) -> ColorMatrix {
+    let i = 1. - amount.clamp(0., 1.);
+    [
+        [0.393 + 0.607 * i, 0.769 - 0.769 * i, 0.189 - 0.189 * i, 0.],
+        [0.349 - 0.349 * i, 0.686 + 0.314 * i, 0.168 - 0.168 * i, 0.],
+        [0.272 - 0.272 * i, 0.534 - 0.534 * i, 0.131 + 0.869 * i, 0.],
+    ]
+}
+/// CSS `filter: invert()`: `amount` from 0 (unchanged) to 1 (inverted).
+pub fn invert_matrix(amount: f32) -> ColorMatrix {
+    let a = amount.clamp(0., 1.);
+    let k = 1. - 2. * a;
+    [[k, 0., 0., a], [0., k, 0., a], [0., 0., k, a]]
+}
 impl Effects {
     /// Its colour filters as one matrix (brightness, then contrast, then
     /// saturate, as CSS lists them), or `None` when they change nothing.

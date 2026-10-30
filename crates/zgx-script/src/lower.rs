@@ -6757,6 +6757,9 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Brightness, Lit::Num(v)) => s.brightness(*v),
         (Contrast, Lit::Num(v)) => s.contrast(*v),
         (Saturate, Lit::Num(v)) => s.saturate(*v),
+        (HueRotate, Lit::Num(v)) => s.hue_rotate(*v),
+        (Sepia, Lit::Num(v)) => s.sepia(*v),
+        (Invert, Lit::Num(v)) => s.invert(*v),
         // CSS `mix-blend-mode` names; another leaves it normal.
         (Blend, Lit::Str(v)) => s.blend(zgx::scene::BlendMode::parse(v).unwrap_or_default()),
         (Fade, Lit::Pair(top, bottom)) => s.fade_edges(*top, *bottom),

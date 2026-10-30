@@ -125,6 +125,24 @@ pub struct ShaderUniforms {
     /// Sixteen user values, as four vec4s.
     pub params: [[f32; 4]; 4],
 }
+/// The layer shader `hue_rotate`, `sepia` and `invert` share: the layer's
+/// colours through the matrix in its uniforms, in the straight sRGB values
+/// CSS filters them in. One for a thread: its pipeline is made once.
+pub fn color_filter_shader() -> Arc<FillShader> {
+    thread_local! {
+        static SHADER: Arc<FillShader> = FillShader::new(
+            "fn layer(input: LayerInput) -> vec4<f32> {
+    let c = input.color.rgb;
+    let r = dot(input.params[0].xyz, c) + input.params[0].w;
+    let g = dot(input.params[1].xyz, c) + input.params[1].w;
+    let b = dot(input.params[2].xyz, c) + input.params[2].w;
+    return vec4(clamp(vec3(r, g, b), vec3(0.0), vec3(1.0)), input.color.a);
+}",
+            None,
+        );
+    }
+    SHADER.with(Arc::clone)
+}
 /// What a box's plain style can't say: per-corner radii, per-side and
 /// dashed borders, gradient, image and shader backgrounds, more shadows.
 /// Each unset field keeps the plain style's.

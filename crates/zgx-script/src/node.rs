@@ -1437,7 +1437,7 @@ props! {
     "outline" => Outline: Num, "outline_color" => OutlineColor: Color, "outline_offset" => OutlineOffset: Num,
     "border_over" => BorderOver: Bool, "border_dash" => BorderDash: Pair,
     "shadow" => Shadow: Shadow, "inset_shadow" => InsetShadow: Shadow, "opacity" => Opacity: Num,
-    "brightness" => Brightness: Num, "contrast" => Contrast: Num, "saturate" => Saturate: Num, "blur" => Blur: Num, "backdrop_blur" => BackdropBlur: Num,
+    "brightness" => Brightness: Num, "contrast" => Contrast: Num, "saturate" => Saturate: Num, "hue_rotate" => HueRotate: Num, "sepia" => Sepia: Num, "invert" => Invert: Num, "blur" => Blur: Num, "backdrop_blur" => BackdropBlur: Num,
     "blend" => Blend: Str,
     "fade" => Fade: Pair, "fade_x" => FadeX: Pair, "fade_sides" => FadeSides: Corners,
     "fade_overflow" => FadeOverflow: Bool, "snap" => Snap: Bool,

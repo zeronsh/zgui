@@ -123,6 +123,7 @@ return ui.div {
 | `inset_shadow` | `Shadow` | none | shadows inside the box (CSS's `inset`), over its fill and under its border and children: the box less itself moved by `x`, `y` and shrunk by `spread`, cut to its corners; drawn sharp (`blur` is not applied). A 1-point top highlight is `{ x = 0, y = 1, color = "#ffffff1f" }` |
 | `opacity` | `number` | `1` | 0 to 1 |
 | `brightness`, `contrast`, `saturate` | `number` | `1` | CSS filter functions over the node and its subtree |
+| `hue_rotate`, `sepia`, `invert` | `number` | `0` | CSS filter functions over the node and its subtree, by the spec's matrices: `hue_rotate` in degrees, `sepia` and `invert` from 0 to 1 (`invert = 1` for a dark-mode icon). They paint it once into a layer that composites through a shader, so they cost what a layer does, and take the place of a `layer_shader`. Not under Direct3D 11 |
 | `blur` | `number` | `0` | blurs the node's content (CSS `filter: blur()`) |
 | `backdrop_blur` | `number` | `0` | blurs what is behind it: frosted glass |
 | `fade` | `Pair` | | a clipping view's top and bottom edges fade over those widths |

@@ -2257,6 +2257,41 @@ pub trait Styled: Sized {
             .layer_uniforms = Some(uniforms);
         self
     }
+    /// CSS `filter: hue-rotate()`: colours turned `degrees` round the hue
+    /// circle. Unlike `brightness` and `saturate`, paints its subtree into a
+    /// layer that composites through a shader, so it costs what a layer
+    /// does, and only here. Several of these apply in the order given; it
+    /// takes the place of a `layer_shader`.
+    fn hue_rotate(self, degrees: f32) -> Self {
+        self.color_filter(crate::scene::hue_rotate_matrix(degrees))
+    }
+    /// CSS `filter: sepia()`, `amount` from 0 to 1 (see `hue_rotate`).
+    fn sepia(self, amount: f32) -> Self {
+        self.color_filter(crate::scene::sepia_matrix(amount))
+    }
+    /// CSS `filter: invert()`, `amount` from 0 to 1 (see `hue_rotate`).
+    fn invert(self, amount: f32) -> Self {
+        self.color_filter(crate::scene::invert_matrix(amount))
+    }
+    #[doc(hidden)]
+    fn color_filter(mut self, matrix: crate::scene::ColorMatrix) -> Self {
+        let shader = crate::decoration::color_filter_shader();
+        let rare = self.styles_mut().rare_mut();
+        let cold = rare.cold.get_or_insert_default();
+        // After one already set, this one applies to what it made.
+        let before = (rare.layer_shader.as_ref())
+            .and_then(|set| set.as_ref())
+            .filter(|set| std::sync::Arc::ptr_eq(set, &shader))
+            .and(cold.layer_uniforms)
+            .map(|uniforms| [uniforms.params[0], uniforms.params[1], uniforms.params[2]]);
+        let matrix = crate::scene::compose_color(Some(matrix), before).unwrap_or(matrix);
+        cold.layer_uniforms = Some(crate::decoration::ShaderUniforms {
+            time: 0.,
+            params: [matrix[0], matrix[1], matrix[2], [0.; 4]],
+        });
+        rare.layer_shader = Some(Some(shader));
+        self
+    }
     /// Clip the view and its descendants to its box inset by these pixels
     /// (CSS `clip-path: inset(top right bottom left)`); negative ones reach
     /// past it, so shadows and rings aren't cut. Animating it composites

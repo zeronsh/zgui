@@ -665,6 +665,21 @@ fn an_unknown_underline_style_says_which_there_are() {
 }
 
 #[test]
+fn a_box_takes_css_colour_filters() {
+    let mut h = Harness::inline(
+        r##"return ui.div { id = "icon", w = 20, h = 20, bg = "#ff0000",
+            invert = 1, hue_rotate = 90, sepia = 0.5 }"##,
+    );
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+    let icon = h.find("icon").unwrap();
+    assert!(
+        h.ui.scene.borrow().layer_shader(icon).is_some(),
+        "drawn through its shader"
+    );
+}
+
+#[test]
 fn a_link_span_underlines_under_the_pointer() {
     use zgx::scene::NodeKind;
     let mut h = Harness::inline(
