@@ -3,6 +3,19 @@ use super::CompactLength;
 use crate::geometry::Rect;
 use crate::style_helpers::{FromLength, FromPercent, TaffyAuto, TaffyZero};
 
+/// What a `calc` length points at, first in whatever else the value holds.
+/// A `calc` pointer in a `TaffyTree`'s styles must point at one of these,
+/// and stay live while the tree lays out with that style.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CalcValue {
+    /// Works the value at this pointer out, for a basis.
+    ///
+    /// # Safety
+    /// Given the pointer the style holds.
+    pub resolve: unsafe fn(*const (), f32) -> f32,
+}
+
 /// A unit of linear measurement
 ///
 /// This is commonly combined with [`Rect`], [`Point`](crate::geometry::Point) and [`Size<T>`](crate::geometry::Size).

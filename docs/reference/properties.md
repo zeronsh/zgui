@@ -64,6 +64,27 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `z` | `number` | `0` | paint and hit it over siblings with a lower `z`, under those with a higher; equal stays in document order (see [Stacking](#stacking)) |
 | `sticky_top` | `number` | none | inside a scroll view, hold this far below its top as it scrolls past, inside the parent ([sticky](#sticky)) |
 
+### Size math
+
+`w`, `h`, `min_w`, `max_w`, `min_h` and `max_h` take `calc(…)`, `min(…)`, `max(…)` and `clamp(…)`, worked out from the containing block as CSS's are. Layout does the work as sizes change, so a size like these needs no `on_resize` writing state.
+
+```lua
+return ui.column {
+	w_full = true,
+	h = 200,
+	ui.div { w = "calc(100% - 24px)", h = 40, bg = "$surface.raised" },
+	ui.div { w = "min(320px, 100%)", h = 40, bg = "$accent" },
+	ui.div { w = "clamp(120px, 50%, 480px)", h = 40, bg = "$accent" },
+}
+```
+
+- Percentages are of the parent's content box, as `w = "50%"` is. Under a parent with no size of its own they go as a percentage does.
+- A bare number is points, so `calc(100% - 24)` is `calc(100% - 24px)`. Of two factors one must be a plain number, and a divisor always, as CSS requires; anything else is an error when the script loads.
+- A result below zero is zero.
+- Only these six properties take them: written on `p`, `m` or an inset, one stops the script with an error. Other units (`em`, `vw`) aren't parsed.
+- `state` and function values work, and a value that isn't valid is reported and leaves the last size. A variant's plain `w` doesn't replace a base `calc(…)`: use one in the variant too.
+- A node with one makes its parent use the same layout as `wrap` or `gap_x`: its children are measured a little more slowly than a plain column's.
+
 ### Sticky
 
 `sticky_top` holds an element below the top of the scroll view around it once scrolling would take it past, for as long as its parent's box lasts, as CSS's `position: sticky` with `top`. A section's header stays in view until the next section pushes it out, with no script running as it scrolls.

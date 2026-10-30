@@ -1315,6 +1315,9 @@ pub(crate) enum Lit {
     Color(Color),
     Pair(f32, f32),
     Len(Length),
+    /// A size from the containing block (`calc(…)`, `min(…)`…): `w`, `h`
+    /// and their limits.
+    SizeCalc(Arc<zgx::size_calc::SizeCalc>),
     Shadows(Arc<[BoxShadow]>),
     Gradient(Arc<GradientLit>),
     Corners(Corners),
@@ -2075,7 +2078,13 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
             Lit::Pair(items[0].as_f64()? as f32, items[1].as_f64()? as f32)
         }
         (Ty::Pair, Value::Num(n)) => Lit::Pair(*n as f32, *n as f32),
-        (Ty::Len, v) => Lit::Len(length(v)?),
+        (Ty::Len, v) => match length(v) {
+            Some(length) => Lit::Len(length),
+            None => match v {
+                Value::Str(s) => Lit::SizeCalc(Arc::new(s.parse().ok()?)),
+                _ => return None,
+            },
+        },
         (Ty::Tracks, Value::Str(s)) => {
             s.parse::<zgx::grid_tracks::GridTracks>().ok()?;
             Lit::Str(s.clone())
@@ -2240,10 +2249,22 @@ fn source_linted(
                         if ty == Ty::Radial {
                             return mlua::Error::runtime(RADIAL_STOPS);
                         }
+                        if let (Ty::Len, Value::Str(s)) = (ty, &value)
+                            && let Err(why) = s.parse::<zgx::size_calc::SizeCalc>()
+                        {
+                            return mlua::Error::runtime(format!("`{name}`: {why}"));
+                        }
                         mlua::Error::runtime(format!("`{name}` expects a {ty:?}, got {value:?}"))
                     })?
                 }
             };
+            if matches!(lit, Lit::SizeCalc(_))
+                && !matches!(name, "w" | "h" | "min_w" | "max_w" | "min_h" | "max_h")
+            {
+                return Err(mlua::Error::runtime(format!(
+                    "`{name}`: calc(…), min(…), max(…) and clamp(…) size w, h and their limits"
+                )));
+            }
             if !raw {
                 lint_literal(lua, name, &lit, lint)?;
             }

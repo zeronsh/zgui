@@ -89,6 +89,7 @@ pub mod animation;
 
 pub mod grid_tracks;
 pub mod layout;
+pub mod size_calc;
 
 pub mod image_cache;
 pub mod memory;

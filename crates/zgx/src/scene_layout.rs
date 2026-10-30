@@ -2,6 +2,7 @@
 //! Ordinary rows/columns retain the existing allocation/cache path.
 use super::*;
 use crate::layout::{ContentAlign, Display as ViewDisplay, FlexWrap as ViewWrap, Length};
+use crate::size_calc::SizeCalc;
 use taffy::{
     prelude as t,
     style_helpers::{line, span},
@@ -553,6 +554,26 @@ impl Scene {
         style.padding_edges = Some(self.resolved_padding(id, constraints));
         style
     }
+    /// Name the sizes `id` works out from its containing block, if any, in
+    /// its mapped style: `Scene::set_size_calcs` keeps them for it.
+    #[cold]
+    #[inline(never)]
+    fn map_size_calcs(&self, id: NodeId, mapped: &mut t::Style) {
+        let Some(sizes) = self.size_calcs(id) else {
+            return;
+        };
+        let set = |dimension: &mut t::Dimension, size: &Option<std::sync::Arc<SizeCalc>>| {
+            if let Some(size) = size {
+                *dimension = t::Dimension::calc(std::sync::Arc::as_ptr(size).cast());
+            }
+        };
+        set(&mut mapped.size.width, &sizes.width);
+        set(&mut mapped.size.height, &sizes.height);
+        set(&mut mapped.min_size.width, &sizes.min_width);
+        set(&mut mapped.max_size.width, &sizes.max_width);
+        set(&mut mapped.min_size.height, &sizes.min_height);
+        set(&mut mapped.max_size.height, &sizes.max_height);
+    }
     pub(super) fn uses_advanced_layout(&self, id: NodeId) -> bool {
         // By reference: most nodes have no options, and a copy is ~170 bytes.
         let node = self.node(id);
@@ -573,6 +594,7 @@ impl Scene {
                     .as_deref()
                     .is_some_and(|options| {
                         let mut options = *options;
+                        let marked = options.visible == Some(true);
                         options.visible = None;
                         options.clip_x = None;
                         options.clip_y = None;
@@ -581,7 +603,7 @@ impl Scene {
                         if options.align_self != Some(Align::Baseline) {
                             options.align_self = None;
                         }
-                        !options.is_empty()
+                        !options.is_empty() || (marked && self.has_size_calcs(*child))
                     })
             })
     }
@@ -669,6 +691,9 @@ impl Scene {
                 };
                 let map = |scene: &Self| {
                     let mut mapped = style(&scene.node(*child).style, Layout::Column, true);
+                    if scene.node(*child).style.layout_options.is_some() {
+                        scene.map_size_calcs(*child, &mut mapped);
+                    }
                     // A `contents` child clips as the child it lays out as.
                     mapped.overflow = overflow(super::clips(&scene.node(laid).style));
                     if stacked {

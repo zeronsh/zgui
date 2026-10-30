@@ -639,7 +639,9 @@ export type HighlightSpan = {
 -- A number, or a number token: a standard one (`"$radius.md"`, see
 -- `NumberToken`) or an app's (`"$terminal.inset"`), hence any string.
 export type Num = number | string
--- Points, or a string: "50%", "auto" (margins), "12px", "$space.3".
+-- Points, or a string: "50%", "auto" (margins), "12px", "$space.3". `w`, `h`
+-- and their limits also take "calc(100% - 24px)", "min(…)", "max(…)" and
+-- "clamp(…)".
 export type Length = number | string
 -- Two numbers, `{ a, b }`, or one for both.
 export type Pair = number | { number }

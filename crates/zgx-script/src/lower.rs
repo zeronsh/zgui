@@ -5098,6 +5098,12 @@ fn refused(value: &Value, ty: Ty, vm: &Vm) -> Option<Lit> {
     {
         vm.report(mlua::Error::runtime(format!("a grid's tracks: {why}")));
     }
+    if ty == Ty::Len
+        && let Value::Str(text) = value
+        && let Err(why) = text.parse::<zgx::size_calc::SizeCalc>()
+    {
+        vm.report(mlua::Error::runtime(format!("a length: {why}")));
+    }
     None
 }
 fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
@@ -6625,6 +6631,17 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         return match token_field(prop) {
             Some(field) => s.token_mix(field, *from, *to, *t),
             None => s,
+        };
+    }
+    if let Lit::SizeCalc(size) = lit {
+        return match prop {
+            W => s.w_calc(size.clone()),
+            H => s.h_calc(size.clone()),
+            MinW => s.min_w_calc(size.clone()),
+            MaxW => s.max_w_calc(size.clone()),
+            MinH => s.min_h_calc(size.clone()),
+            MaxH => s.max_h_calc(size.clone()),
+            _ => s,
         };
     }
     // Lengths: points, percentages (of the containing block) or auto.

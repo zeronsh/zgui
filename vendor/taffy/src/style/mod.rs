@@ -14,7 +14,7 @@ mod grid;
 pub use self::alignment::{AlignContent, AlignItems, AlignSelf, JustifyContent, JustifyItems, JustifySelf};
 pub use self::available_space::AvailableSpace;
 pub use self::compact_length::CompactLength;
-pub use self::dimension::{Dimension, LengthPercentage, LengthPercentageAuto};
+pub use self::dimension::{CalcValue, Dimension, LengthPercentage, LengthPercentageAuto};
 use crate::sys::DefaultCheapStr;
 
 #[cfg(feature = "block_layout")]

@@ -16,6 +16,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Added
 
+- **Size math** (zgx, zgx-script): `w`, `h` and their limits take `calc(100% - 24px)`, `min(…)`, `max(…)` and `clamp(…)` (`.w_calc("…".parse()?)` in Rust), worked out from the containing block as CSS's are, with no `on_resize` writing state.
 - **Sticky elements in scroll views** (zgx, zgx-script): `.sticky_top(n)` and `sticky_top = n` hold an element `n` below the top of the `ui.scroll` around it as it scrolls past, inside its parent, as CSS's `position: sticky` with `top`: section headers, with no script running as it scrolls. Vertical scroll views only.
 - **Where a map sits on a 3D mesh**: `World::set_map_placement(id, Map::BaseColour, Some(MapPlacement::new().scaled(4., 4.).wrap(Wrap::Mirror, Wrap::Repeat)))` moves, scales and turns each of a mesh's maps on its own, says how it repeats, and with `.uv_set(1)` reads the coordinates `Geometry::with_second_uvs` gave it. glTF models bring theirs (`KHR_texture_transform`, samplers' `wrapS` and `wrapT`, `texCoord` and `TEXCOORD_1`). A mesh's maps share one sampler, its first map's wrap. A mesh using none binds nothing new; a wrap alone only takes another sampler.
 - **OpenType features in Luau** (zgx-script): `font_features = "ss01 cv02=3 liga=0"`, as CSS's `font-feature-settings`, on any text or what holds it, followed from a state or function ([properties](docs/reference/properties.md)).

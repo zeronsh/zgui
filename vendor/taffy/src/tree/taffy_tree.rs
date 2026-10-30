@@ -341,8 +341,11 @@ where
     }
 
     #[inline(always)]
-    fn resolve_calc_value(&self, _val: *const (), _basis: f32) -> f32 {
-        0.0
+    #[allow(unsafe_code)]
+    fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
+        // SAFETY: a tree's styles name calc values through `CalcValue`, whose
+        // contract is that they point at one, live for as long as they're used.
+        unsafe { ((*val.cast::<crate::style::CalcValue>()).resolve)(val, basis) }
     }
 
     #[inline(always)]
