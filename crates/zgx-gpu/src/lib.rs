@@ -12470,15 +12470,8 @@ fn polyline_quad(
     let reach = half * limit.max(1.42) + 1.;
     // Every pixel searches its reach: the points within any span of twice
     // it, and one segment either side, are at most the loop's.
-    let mut end = 0;
-    for (k, point) in line.iter().enumerate() {
-        end = end.max(k);
-        while end < line.len() && line[end][0] < point[0] + 2. * reach + 1. {
-            end += 1;
-        }
-        if end - k + 1 > POLYLINE_REACH_SEGMENTS {
-            return None;
-        }
+    if !fits_reach(&line, reach) {
+        return None;
     }
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for [x, y] in &line {
@@ -12507,6 +12500,188 @@ fn polyline_quad(
         shape: [0.; 4],
         border: [half, cap, join, limit],
         mask: [0., first as f32 + 1., line.len() as f32, 0.],
+    })
+}
+/// The most gradient stops an area's shader takes (`zgx_gradient` walks
+/// them): more rasterize.
+const AREA_STOPS: usize = 16;
+/// Whether every span of `2 * reach + 1` along `line` holds no more points
+/// than a pixel may search (`POLYLINE_REACH_SEGMENTS`).
+fn fits_reach(line: &[[f32; 2]], reach: f32) -> bool {
+    let mut end = 0;
+    line.iter().enumerate().all(|(k, point)| {
+        end = end.max(k);
+        while end < line.len() && line[end][0] < point[0] + 2. * reach + 1. {
+            end += 1;
+        }
+        end - k < POLYLINE_REACH_SEGMENTS
+    })
+}
+/// The y of `chain` (x never decreasing) at `x`, within it.
+fn chain_y(chain: &[[f32; 2]], x: f32) -> f32 {
+    let k = chain.partition_point(|p| p[0] < x);
+    match k {
+        0 => chain[0][1],
+        k if k >= chain.len() => chain[chain.len() - 1][1],
+        k => {
+            let (a, b) = (chain[k - 1], chain[k]);
+            let width = b[0] - a[0];
+            if width > 0. {
+                a[1] + (b[1] - a[1]) * (x - a[0]) / width
+            } else {
+                b[1]
+            }
+        }
+    }
+}
+/// Its points along each chain, left to right (`area_chains`).
+type AreaChains = (Vec<[f32; 2]>, Vec<[f32; 2]>);
+/// A closed polygon's two chains from its left end to its right, as
+/// `area_quad` takes them: one subpath of straight lines, its points on two
+/// runs with x never decreasing, one above the other all along (they never
+/// cross, so which fill rule doesn't matter). A chart's area, a band, a
+/// triangle. `None` for anything else.
+fn area_chains(
+    segments: &[zgx::canvas::Segment],
+    origin: (f32, f32),
+    zoom: f32,
+) -> Option<AreaChains> {
+    use zgx::canvas::Segment;
+    let mut ring: Vec<[f32; 2]> = Vec::with_capacity(segments.len());
+    for (k, segment) in segments.iter().enumerate() {
+        let point = match (k, segment) {
+            (0, Segment::Move(p)) | (1.., Segment::Line(p)) => p,
+            (1.., Segment::Close) if k + 1 == segments.len() => continue,
+            _ => return None,
+        };
+        let point = [point.x * zoom + origin.0, point.y * zoom + origin.1];
+        if !point.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        if ring.last() != Some(&point) {
+            ring.push(point);
+        }
+    }
+    if ring.len() > 1 && ring.first() == ring.last() {
+        ring.pop();
+    }
+    let n = ring.len();
+    if n < 3 {
+        return None;
+    }
+    let x_at = |k: usize| ring[k % n][0];
+    let (left, right) = ring
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, r), p| (l.min(p[0]), r.max(p[0])));
+    if left >= right {
+        return None;
+    }
+    // Where the ring leaves its left edge, going each way round: at most
+    // two points stand on it.
+    let forward = (0..n).find(|&k| x_at(k) == left && x_at(k + 1) > left)?;
+    let backward = (0..n).find(|&k| x_at(k) == left && x_at(k + n - 1) > left)?;
+    let walk = |start: usize, step: usize| {
+        let mut chain = vec![ring[start]];
+        let mut k = start;
+        while chain[chain.len() - 1][0] < right {
+            k = (k + step) % n;
+            chain.push(ring[k]);
+            if chain.len() > n {
+                return None;
+            }
+        }
+        Some(chain)
+    };
+    let top = walk(forward, 1)?;
+    let bottom = walk(backward, n - 1)?;
+    // Every point on one chain or the other, but for one more on the right
+    // edge at most (between their ends, a straight line).
+    if top.len() + bottom.len() > n + 2 || top.len() + bottom.len() < n {
+        return None;
+    }
+    if !(top.windows(2).all(|w| w[1][0] >= w[0][0])
+        && bottom.windows(2).all(|w| w[1][0] >= w[0][0]))
+    {
+        return None;
+    }
+    // One above the other at every point of either.
+    let side = |x: f32| chain_y(&top, x) - chain_y(&bottom, x);
+    let (mut above, mut below) = (false, false);
+    for [x, _] in top.iter().chain(&bottom) {
+        let gap = side(*x);
+        above |= gap > 0.;
+        below |= gap < 0.;
+    }
+    (!(above && below)).then_some((top, bottom))
+}
+/// A filled area's quad (polyline.wgsl's `zgx_area`): what `area_chains`
+/// takes, in a colour or a linear gradient, its points and stops added to
+/// `points`. It draws with the polyline strokes, which share its search and
+/// its points; `None` rasterizes it.
+fn area_quad(
+    path: &zgx::canvas::Path,
+    brush: &zgx::canvas::Brush,
+    origin: (f32, f32),
+    zoom: f32,
+    points: &mut Vec<[f32; 2]>,
+) -> Option<Quad> {
+    use zgx::canvas::Brush;
+    let (top, bottom) = area_chains(path.segments(), origin, zoom)?;
+    // A pixel's search reaches its antialiased edge (`zgx_area`).
+    const REACH: f32 = 2.;
+    if !fits_reach(&top, REACH) || !fits_reach(&bottom, REACH) {
+        return None;
+    }
+    let (color, along, stops) = match brush {
+        Brush::Solid(color) => (*color, [0.; 4], None),
+        Brush::Linear { start, end, stops } => {
+            let (from, to) = (
+                [start.x * zoom + origin.0, start.y * zoom + origin.1],
+                [end.x * zoom + origin.0, end.y * zoom + origin.1],
+            );
+            let way = [to[0] - from[0], to[1] - from[1]];
+            let length = way[0] * way[0] + way[1] * way[1];
+            if !(2..=AREA_STOPS).contains(&stops.len())
+                || !length.is_finite()
+                || length <= 0.
+                || !stops.iter().all(|s| (0. ..=1.).contains(&s.offset))
+                || !stops.windows(2).all(|w| w[0].offset <= w[1].offset)
+            {
+                return None;
+            }
+            (
+                Color(0, 0, 0, 0),
+                [from[0], from[1], way[0], way[1]],
+                Some(stops),
+            )
+        }
+        Brush::Slash { .. } => return None,
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for [x, y] in top.iter().chain(&bottom) {
+        (x0, y0, x1, y1) = (x0.min(*x), y0.min(*y), x1.max(*x), y1.max(*y));
+    }
+    let bounds = Rect::new(x0, y0, x1 - x0, y1 - y0).expand(REACH);
+    let first = points.len();
+    points.extend_from_slice(&top);
+    points.extend_from_slice(&bottom);
+    let stop_count = stops.map_or(0, |stops| stops.len());
+    for stop in stops.into_iter().flat_map(|stops| stops.iter()) {
+        let [r, g, b, a] = rgba(stop.color, 1.);
+        points.push([stop.offset, r * a]);
+        points.push([g * a, b * a]);
+        points.push([a, 0.]);
+    }
+    let rect = [bounds.x, bounds.y, bounds.width, bounds.height];
+    Some(Quad {
+        rect,
+        uv: [0.; 4],
+        color: rgba(color, 1.),
+        fade: rect,
+        options: [0.; 4],
+        shape: [1., bottom.len() as f32, stop_count as f32, 0.],
+        border: along,
+        mask: [0., first as f32 + 1., top.len() as f32, 0.],
     })
 }
 /// A grid fill's marks over a canvas's box (`bounds`), as plain quads.
@@ -12598,6 +12773,11 @@ fn canvas_quads_of(
     };
     for command in canvas.commands() {
         match command {
+            // Neither box nor circle: an area, if `zgx_area` draws it.
+            Draw::Fill { path, brush, .. } if path.shape().is_none() => {
+                let quad = area_quad(path, brush, origin, zoom, points)?;
+                out.push(CanvasQuad::Polyline(quad));
+            }
             Draw::Fill {
                 path,
                 brush: Brush::Solid(color),
