@@ -73,8 +73,23 @@
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
 
+/// What `ui.window { … }` reads (`WindowOptions`).
+const WINDOW_OPTIONS: &[&str] = &[
+    "id",
+    "title",
+    "width",
+    "height",
+    "open",
+    "frame_autosave",
+    "tabbing",
+];
+
 /// Every rule's name and a one-line summary.
 pub const RULES: &[(&str, &str)] = &[
+    (
+        "window-option",
+        "a ui.window option that doesn't exist, which types can't catch",
+    ),
     (
         "untracked-get",
         "state:get() while an element is built is read once",
@@ -1343,6 +1358,22 @@ impl Linter<'_> {
                 );
             }
         }
+        // A misspelled option of `ui.window`, which types can't catch: it's
+        // called through `__call`, so its table takes extra fields.
+        if let Some(frame) = stack.last()
+            && frame.open == Open::Brace
+            && frame.callee.as_deref() == Some("ui.window")
+            && self.is(at + 1, "=")
+            && let Some(key) = self.name(at)
+            && !WINDOW_OPTIONS.contains(&key)
+        {
+            let known = WINDOW_OPTIONS.join("`, `");
+            self.report(
+                at,
+                "window-option",
+                format!("`ui.window` has no option `{key}`: it takes `{known}`."),
+            );
+        }
         // `w = function() … ui.window.size … end`: a size from the window's.
         if self.is(at, "ui")
             && self.is(at + 1, ".")
@@ -1739,6 +1770,15 @@ mod tests {
              }\n",
         );
         assert_eq!(found, Vec::new());
+    }
+
+    #[test]
+    fn a_misspelled_window_option_is_reported() {
+        let source = r##"
+ui.window { id = "a", titel = "A", open = open, ui.text { "x", color = "#fff" } }
+ui.window { id = "b", title = "B", width = 300, height = 200, open = open, tabbing = "preferred" }
+"##;
+        assert_eq!(rules(source), one(2, "window-option"));
     }
 
     fn rules(source: &str) -> Vec<(u32, String)> {
