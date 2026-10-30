@@ -152,6 +152,12 @@ pub trait Platform {
             ))
         })
     }
+    /// The next notification the person clicks: its tag (as posted), the
+    /// app brought forward first. None where clicks aren't told (a host
+    /// without notifications).
+    fn next_notification_click(&self) -> Pending<Option<String>> {
+        Box::pin(async { None })
+    }
     /// Put `badge` on the app's icon (the Dock's, the taskbar's, a Linux
     /// dock's), a count of what is unread; `None` takes it off. Whether the
     /// system shows one.

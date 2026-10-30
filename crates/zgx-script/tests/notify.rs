@@ -19,6 +19,11 @@ return ui.column {
             function(err) shown:set(`{err.kind}: {err}`) end
         )
     end },
+    ui.button { id = "clickable", w = 40, h = 20, "k", on_click = function()
+        ui.notify({ title = "Grace", body = "Review?", on_click = function()
+            shown:set("opened")
+        end })
+    end },
     ui.button { id = "badge", w = 40, h = 20, "b", on_click = function()
         shown:set(tostring(ui.badge(3)))
     end },
@@ -94,4 +99,26 @@ fn the_badge_counts_and_clears() {
     h.click("clear");
     h.frames(1);
     assert_eq!(h.desktop.as_ref().unwrap().badge(), None);
+}
+
+#[test]
+fn a_click_on_a_notification_calls_its_on_click() {
+    let mut h = app();
+    h.click("clickable");
+    h.settle();
+    h.frames(1);
+    let desktop = h.desktop.clone().unwrap();
+    let posted = desktop.notifications();
+    let tag = posted[0].tag.clone().expect("given a tag of its own");
+    assert!(tag.starts_with("zgx-notification-"), "{tag}");
+    desktop.click_notification(&tag);
+    h.settle();
+    h.frames(1);
+    assert_eq!(h.text("shown"), "opened");
+    // A click on what nothing listens for calls nothing.
+    desktop.click_notification("elsewhere");
+    h.settle();
+    h.frames(1);
+    assert_eq!(h.text("shown"), "opened");
+    assert_eq!(h.error(), None);
 }

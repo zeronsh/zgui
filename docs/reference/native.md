@@ -159,12 +159,12 @@ The app's window zooms as a browser's page does: Cmd+= or Cmd++ zooms in, Cmd+- 
 ```luau
 ui.window.active: State<boolean>
 ui.window.shown: State<boolean>
-ui.notify(opts: { title: string, body: string?, tag: string? }) -> Promise<nil>
+ui.notify(opts: { title: string, body: string?, tag: string?, on_click: (() -> ())? }) -> Promise<nil>
 ui.badge(count: number | string | nil) -> boolean
 ```
 
 `ui.window.active` says whether the app's window is the active one, its keys going to it; `ui.window.shown`, whether it shows (not hidden, minimized or covered), as the web's `document.hasFocus()` and `document.visibilityState` do. Both are read-only and follow the window. `zgx run` keeps them; a Rust host passes its window with `ScriptHost::window_state`. What arrives while either is false is worth telling the person of:
-- `ui.notify { title, body, tag }` shows a system notification, as the web's `Notification` does. The promise settles once the system has it, or rejects with a `UiError` saying why not: `kind` `"unsupported"` where this system shows none for the app, `"denied"` where the person has not allowed them. One with the same `tag` replaces the last (a conversation's newest message, not one for each).
+- `ui.notify { title, body, tag }` shows a system notification, as the web's `Notification` does. The promise settles once the system has it, or rejects with a `UiError` saying why not: `kind` `"unsupported"` where this system shows none for the app, `"denied"` where the person has not allowed them. One with the same `tag` replaces the last (a conversation's newest message, not one for each). `on_click` runs when the person clicks it, the app's window brought forward first: open the conversation it is about. A click is heard while the app runs.
 - `ui.badge(n)` puts a count on the app's icon, as `navigator.setAppBadge` does; `0` or `nil` takes it off. It returns whether the system shows one.
 
 Each platform shows them its own way, and needs the app to say who it is:
@@ -172,7 +172,7 @@ Each platform shows them its own way, and needs the app to say who it is:
 | | Notifications | Badge |
 | --- | --- | --- |
 | macOS | The Notification Center, for an app run from its bundle (an `Info.plist` with a `CFBundleIdentifier`). The first one asks the person whether the app may notify; the answer is the system's to keep, changed in System Settings › Notifications. A binary run outside a bundle (`cargo run`) gets `"unsupported"`. | The Dock tile's label. |
-| Windows | A toast, for the app's AppUserModelID (`Application::application_id`). | Not shown yet: `false`. |
+| Windows | A toast, for the app's AppUserModelID: its `application_id` (`Application::application_id`, `zgx.json`'s `application_id`). Without one, `"unsupported"`. The first notification sets it as the process's AppUserModelID and registers it for the user, as an unpackaged app's toasts need: the key `HKEY_CURRENT_USER\Software\Classes\AppUserModelId\<application_id>` with a `DisplayName` value, the executable's name, which the toast shows as its sender. Nothing else is written, and nothing needs administrator rights. | An overlay on the taskbar button (`ITaskbarList3::SetOverlayIcon`): a red disc with the count (`9+` past 99), a plain disc for text, described to screen readers as "3 unread" (or the text). |
 | Linux | The desktop's notification server (`org.freedesktop.Notifications` on the session bus); none running gets `"unsupported"`. | The count docks read from a launcher entry (Dash to Dock, KDE's task manager, Plank), matched to the app's desktop file (`Application::desktop_id`, else `application_id`). |
 
 A plugin can do neither: they are the app's.

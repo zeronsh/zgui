@@ -1,18 +1,29 @@
-//! System notifications and the app icon's badge (`Platform::notify`,
+//! System notifications, their clicks, and the app icon's badge
+//! (`Platform::notify`, `Platform::next_notification_click`,
 //! `Platform::set_badge`), each where its platform keeps them:
 //! - macOS: the Notification Center (`UNUserNotificationCenter`), which
 //!   takes an app run from a bundle (an `Info.plist` with a
-//!   `CFBundleIdentifier`) and asks the person once whether it may; and the
-//!   Dock tile's badge.
+//!   `CFBundleIdentifier`) and asks the person once whether it may; its
+//!   delegate hears a click. The badge is the Dock tile's.
+//! - Windows: a toast (`ToastNotificationManager`) for the app's identity
+//!   (`Application::application_id`): set as the process's AppUserModelID
+//!   and registered under `HKCU\Software\Classes\AppUserModelId\<id>`
+//!   with its `DisplayName`, as an unpackaged app's toasts need. A toast's
+//!   `Activated` is its click. The badge is an overlay on the taskbar
+//!   button (`ITaskbarList3::SetOverlayIcon`): the count drawn here.
 //! - Linux: the desktop's notification server (`org.freedesktop.
-//!   Notifications` on the session bus), and the badge docks read from a
-//!   launcher entry (`com.canonical.Unity.LauncherEntry`), matched to the
-//!   app's desktop file (`Application::desktop_id`).
-//! - Windows: a toast (`ToastNotificationManager`), shown for the app's
-//!   identity (`Application::application_id`, registered as its AppUserModelID).
+//!   Notifications`), on a connection of its own that stays open, as a
+//!   server tells a click (`ActionInvoked`) to the connection that posted;
+//!   and the count docks read from a launcher entry
+//!   (`com.canonical.Unity.LauncherEntry`), matched to the app's desktop
+//!   file (`Application::desktop_id`).
 //!
 //! Anything else says why not (`NotifyError::Unsupported`).
-use std::sync::OnceLock;
+use std::{
+    collections::VecDeque,
+    sync::{Mutex, OnceLock},
+    task::{Poll, Waker},
+};
 use zgx::platform::{Notification, NotifyError, Pending};
 
 /// Who the app is to the system: its application id (reverse-DNS) and its
@@ -35,99 +46,257 @@ fn identity() -> Identity {
     IDENTITY.get().cloned().unwrap_or_default()
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-/// Settled later with what `work`, run on a thread of its own, returns:
-/// the system's answer may take a moment (a bus call, a permission).
-fn off_thread<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, NotifyError> + Send + 'static,
-) -> Pending<Result<T, NotifyError>> {
-    let (tell, mut heard) = zgx::task::latest::<Result<T, NotifyError>>();
-    std::thread::spawn(move || tell.send(work()));
-    Box::pin(async move {
-        heard
-            .recv()
-            .await
-            .unwrap_or_else(|| Err(NotifyError::Failed("the notification went nowhere".into())))
-    })
+/// Clicked notifications' tags, from whatever thread the system tells one
+/// on, for the main thread's `next_click`.
+struct Clicks {
+    tags: VecDeque<String>,
+    waker: Option<Waker>,
+}
+static CLICKS: Mutex<Clicks> = Mutex::new(Clicks {
+    tags: VecDeque::new(),
+    waker: None,
+});
+
+/// The notification tagged `tag` was clicked.
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos", windows)),
+    allow(dead_code)
+)]
+fn clicked(tag: String) {
+    let waker = {
+        let mut clicks = CLICKS.lock().unwrap();
+        clicks.tags.push_back(tag);
+        clicks.waker.take()
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+/// The next notification clicked: its tag.
+pub(crate) fn next_click() -> Pending<Option<String>> {
+    Box::pin(std::future::poll_fn(|cx| {
+        let mut clicks = CLICKS.lock().unwrap();
+        match clicks.tags.pop_front() {
+            Some(tag) => Poll::Ready(Some(tag)),
+            None => {
+                clicks.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }))
+}
+
+/// A count as the badge shows it.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+fn count_of(badge: &str) -> Option<u32> {
+    badge.trim().parse::<u32>().ok()
 }
 
 #[cfg(target_os = "linux")]
 mod imp {
     use super::*;
-    use dbus::arg::{RefArg, Variant};
-    use std::{collections::HashMap, sync::Mutex, time::Duration};
+    use dbus::{
+        arg::{RefArg, Variant},
+        blocking::Connection,
+        message::MatchRule,
+    };
+    use std::{
+        collections::HashMap,
+        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        sync::Arc,
+        time::Duration,
+    };
 
-    /// The server's id of each tagged notification shown: one posted with
-    /// the same tag replaces it.
-    static TAGGED: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+    /// A notification to post, and where its answer goes.
+    struct Post {
+        notification: Notification,
+        answer: zgx::task::LatestSender<Result<(), NotifyError>>,
+    }
+    /// The thread that talks to the notification server: what it is asked
+    /// to post, and the descriptor that wakes it.
+    struct Poster {
+        posts: Mutex<VecDeque<Post>>,
+        wake: OwnedFd,
+    }
+    impl Poster {
+        fn post(&self, post: Post) {
+            self.posts.lock().unwrap().push_back(post);
+            let one = 1u64;
+            // SAFETY: 8 bytes, a u64, to the eventfd `self` owns.
+            unsafe { libc::write(self.wake.as_raw_fd(), (&one as *const u64).cast(), 8) };
+        }
+    }
+    static POSTER: OnceLock<Option<Arc<Poster>>> = OnceLock::new();
 
-    pub(crate) fn notify(notification: Notification) -> Pending<Result<(), NotifyError>> {
-        let name = identity().name;
-        off_thread(move || {
-            let connection = dbus::blocking::Connection::new_session().map_err(|e| {
-                NotifyError::Unsupported(format!("no session bus for notifications: {e}"))
-            })?;
-            let server = connection.with_proxy(
-                "org.freedesktop.Notifications",
-                "/org/freedesktop/Notifications",
-                Duration::from_secs(5),
-            );
-            let replaces = notification
-                .tag
-                .as_ref()
-                .and_then(|tag| TAGGED.lock().unwrap().as_ref()?.get(tag).copied())
-                .unwrap_or(0);
-            let actions: Vec<&str> = Vec::new();
-            let hints: HashMap<&str, Variant<Box<dyn RefArg>>> = HashMap::new();
-            let (id,): (u32,) = server
-                .method_call(
-                    "org.freedesktop.Notifications",
-                    "Notify",
-                    (
-                        name.as_str(),
-                        replaces,
-                        "",
-                        notification.title.as_str(),
-                        notification.body.as_str(),
-                        actions,
-                        hints,
-                        -1_i32,
-                    ),
-                )
-                .map_err(|e| match e.name() {
-                    Some("org.freedesktop.DBus.Error.ServiceUnknown") => NotifyError::Unsupported(
-                        "no notification server runs on this desktop".into(),
-                    ),
-                    _ => NotifyError::Failed(e.to_string()),
-                })?;
-            if let Some(tag) = notification.tag {
-                TAGGED
-                    .lock()
-                    .unwrap()
-                    .get_or_insert_default()
-                    .insert(tag, id);
+    /// The poster's thread, started the first time: none where there is
+    /// no session bus.
+    fn poster() -> Option<Arc<Poster>> {
+        POSTER
+            .get_or_init(|| {
+                // SAFETY: takes no pointers; a new descriptor or -1.
+                let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+                if fd < 0 {
+                    return None;
+                }
+                // SAFETY: the descriptor just made, owned by nothing else.
+                let wake = unsafe { OwnedFd::from_raw_fd(fd) };
+                let connection = crate::linux_dbus::session().ok()?;
+                let poster = Arc::new(Poster {
+                    posts: Mutex::default(),
+                    wake,
+                });
+                let serving = poster.clone();
+                std::thread::Builder::new()
+                    .name("zgx notifications".into())
+                    .spawn(move || serve(connection, &serving))
+                    .ok()?;
+                Some(poster)
+            })
+            .clone()
+    }
+
+    /// Post what is asked and hear clicks, sleeping between.
+    fn serve(connection: Connection, poster: &Poster) {
+        // The server's id of each notification shown, both ways: a tag
+        // posted again replaces its notification, and a click is told by id.
+        let ids: Arc<Mutex<HashMap<u32, String>>> = Arc::default();
+        let mut tags: HashMap<String, u32> = HashMap::new();
+        let heard = ids.clone();
+        let rule = MatchRule::new_signal("org.freedesktop.Notifications", "ActionInvoked");
+        let _ = connection.add_match(rule, move |(id, _action): (u32, String), _, _| {
+            if let Some(tag) = heard.lock().unwrap().get(&id).cloned() {
+                clicked(tag);
             }
-            Ok(())
+            true
+        });
+        loop {
+            let posts: Vec<Post> = poster.posts.lock().unwrap().drain(..).collect();
+            for post in posts {
+                let replaces = (post.notification.tag.as_ref())
+                    .and_then(|tag| tags.get(tag).copied())
+                    .unwrap_or(0);
+                let answer = notify(&connection, &post.notification, replaces).map(|id| {
+                    if let Some(tag) = &post.notification.tag {
+                        tags.insert(tag.clone(), id);
+                        ids.lock().unwrap().insert(id, tag.clone());
+                    }
+                });
+                post.answer.send(answer);
+            }
+            // What has arrived, then sleep until the bus or a post wakes it.
+            loop {
+                match connection.process(Duration::ZERO) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(_) => return,
+                }
+            }
+            connection.channel().flush();
+            let watch = connection.channel().watch();
+            let mut fds = [
+                libc::pollfd {
+                    fd: watch.fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: poster.wake.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            // SAFETY: two pollfds, as many as given.
+            let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+            if ready < 0
+                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
+                return;
+            }
+            if fds[1].revents & libc::POLLIN != 0 {
+                let mut count = 0u64;
+                // SAFETY: 8 bytes into a u64, from the eventfd.
+                unsafe { libc::read(poster.wake.as_raw_fd(), (&mut count as *mut u64).cast(), 8) };
+            }
+        }
+    }
+
+    fn notify(
+        connection: &Connection,
+        notification: &Notification,
+        replaces: u32,
+    ) -> Result<u32, NotifyError> {
+        let name = identity().name;
+        let server = connection.with_proxy(
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            Duration::from_secs(5),
+        );
+        // "default": a click on the notification itself, told back.
+        let actions = vec!["default", "Open"];
+        let hints: HashMap<&str, Variant<Box<dyn RefArg>>> = HashMap::new();
+        let (id,): (u32,) = server
+            .method_call(
+                "org.freedesktop.Notifications",
+                "Notify",
+                (
+                    name.as_str(),
+                    replaces,
+                    "",
+                    notification.title.as_str(),
+                    notification.body.as_str(),
+                    actions,
+                    hints,
+                    -1_i32,
+                ),
+            )
+            .map_err(|e| match e.name() {
+                Some("org.freedesktop.DBus.Error.ServiceUnknown") => {
+                    NotifyError::Unsupported("no notification server runs on this desktop".into())
+                }
+                _ => NotifyError::Failed(e.to_string()),
+            })?;
+        Ok(id)
+    }
+
+    pub(crate) fn notify_now(notification: Notification) -> Pending<Result<(), NotifyError>> {
+        let Some(poster) = poster() else {
+            return Box::pin(async {
+                Err(NotifyError::Unsupported(
+                    "no session bus for notifications".into(),
+                ))
+            });
+        };
+        let (answer, mut heard) = zgx::task::latest::<Result<(), NotifyError>>();
+        poster.post(Post {
+            notification,
+            answer,
+        });
+        Box::pin(async move {
+            heard
+                .recv()
+                .await
+                .unwrap_or_else(|| Err(NotifyError::Failed("the notification went nowhere".into())))
         })
     }
 
     thread_local! {
         /// The bus the badge is told on, kept open: docks drop an entry
         /// whose sender leaves.
-        static BADGE: std::cell::RefCell<Option<dbus::blocking::Connection>> =
+        static BADGE: std::cell::RefCell<Option<Connection>> =
             const { std::cell::RefCell::new(None) };
     }
 
-    pub(crate) fn set_badge(badge: Option<&str>) -> bool {
+    pub(crate) fn set_badge(badge: Option<&str>, _window: Option<&winit::window::Window>) -> bool {
         let identity = identity();
         let Some(id) = identity.desktop_id.or(identity.application_id) else {
             return false;
         };
         // Docks read a count: text that is no number shows as one.
-        let count = badge.map_or(0, |badge| badge.trim().parse::<i64>().unwrap_or(1));
+        let count = badge.map_or(0, |badge| count_of(badge).map_or(1, i64::from));
         BADGE.with_borrow_mut(|bus| {
             if bus.is_none() {
-                *bus = dbus::blocking::Connection::new_session().ok();
+                *bus = Connection::new_session().ok();
             }
             let Some(bus) = bus.as_ref() else {
                 return false;
@@ -153,14 +322,72 @@ mod imp {
 mod imp {
     use super::*;
     use block2::RcBlock;
-    use objc2::runtime::Bool;
+    use objc2::{
+        AllocAnyThread, MainThreadMarker, define_class, msg_send,
+        rc::Retained,
+        runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject},
+    };
     use objc2_foundation::{NSBundle, NSError, NSString, NSUUID};
     use objc2_user_notifications::{
-        UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
-        UNUserNotificationCenter,
+        UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
+        UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+        UNUserNotificationCenter, UNUserNotificationCenterDelegate,
     };
 
-    pub(crate) fn notify(notification: Notification) -> Pending<Result<(), NotifyError>> {
+    // SAFETY: an NSObject subclass with no ivars; each method has its
+    // protocol's signature, and calls the completion handler it is given.
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[ivars = ()]
+        struct Delegate;
+        unsafe impl NSObjectProtocol for Delegate {}
+        unsafe impl UNUserNotificationCenterDelegate for Delegate {
+            // A click: the notification's identifier is the tag it was
+            // posted with.
+            #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+            fn did_receive(
+                &self,
+                _center: &UNUserNotificationCenter,
+                response: &UNNotificationResponse,
+                done: &block2::DynBlock<dyn Fn()>,
+            ) {
+                let tag = response.notification().request().identifier().to_string();
+                clicked(tag);
+                done.call(());
+            }
+            // Shown as a banner even while the app is in front.
+            #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+            fn will_present(
+                &self,
+                _center: &UNUserNotificationCenter,
+                _notification: &UNNotification,
+                done: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+            ) {
+                done.call((UNNotificationPresentationOptions::Banner
+                    | UNNotificationPresentationOptions::List,));
+            }
+        }
+    );
+    impl Delegate {
+        fn new() -> Retained<Self> {
+            let this = Self::alloc().set_ivars(());
+            // SAFETY: NSObject's init, on a freshly allocated object.
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    /// The center's delegate, made once and kept for the process: the
+    /// center holds it weakly.
+    fn delegate(center: &UNUserNotificationCenter) {
+        static SET: OnceLock<()> = OnceLock::new();
+        SET.get_or_init(|| {
+            let delegate = Delegate::new();
+            center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+            std::mem::forget(delegate);
+        });
+    }
+
+    pub(crate) fn notify_now(notification: Notification) -> Pending<Result<(), NotifyError>> {
         // The center raises an exception for a process with no bundle:
         // say so instead.
         if NSBundle::mainBundle().bundleIdentifier().is_none() {
@@ -174,6 +401,7 @@ mod imp {
         }
         let (tell, mut heard) = zgx::task::latest::<Result<(), NotifyError>>();
         let center = UNUserNotificationCenter::currentNotificationCenter();
+        delegate(&center);
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&notification.title));
         content.setBody(&NSString::from_str(&notification.body));
@@ -223,8 +451,8 @@ mod imp {
         })
     }
 
-    pub(crate) fn set_badge(badge: Option<&str>) -> bool {
-        let Some(main) = objc2::MainThreadMarker::new() else {
+    pub(crate) fn set_badge(badge: Option<&str>, _window: Option<&winit::window::Window>) -> bool {
+        let Some(main) = MainThreadMarker::new() else {
             return false;
         };
         let app = objc2_app_kit::NSApplication::sharedApplication(main);
@@ -239,17 +467,43 @@ mod imp {
     use super::*;
     use windows::{
         Data::Xml::Dom::XmlDocument,
+        Foundation::TypedEventHandler,
         UI::Notifications::{NotificationSetting, ToastNotification, ToastNotificationManager},
-        Win32::System::{
-            Registry::{
-                HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-                RegCreateKeyExW, RegSetValueExW,
+        Win32::{
+            Foundation::HWND,
+            Graphics::Gdi::{
+                BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection,
+                DIB_RGB_COLORS, DeleteObject, HBITMAP,
             },
-            WinRT::{RO_INIT_MULTITHREADED, RoInitialize},
+            System::{
+                Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
+                Registry::{
+                    HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
+                    RegCloseKey, RegCreateKeyExW, RegSetValueExW,
+                },
+                WinRT::{RO_INIT_MULTITHREADED, RoInitialize},
+            },
+            UI::{
+                Shell::{ITaskbarList3, SetCurrentProcessExplicitAppUserModelID, TaskbarList},
+                WindowsAndMessaging::{CreateIconIndirect, DestroyIcon, HICON, ICONINFO},
+            },
         },
-        Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID,
-        core::{HSTRING, PCWSTR},
+        core::{HSTRING, IInspectable, PCWSTR},
     };
+
+    /// Settled later with what `work`, run on a thread of its own, returns.
+    fn off_thread<T: Send + 'static>(
+        work: impl FnOnce() -> Result<T, NotifyError> + Send + 'static,
+    ) -> Pending<Result<T, NotifyError>> {
+        let (tell, mut heard) = zgx::task::latest::<Result<T, NotifyError>>();
+        std::thread::spawn(move || tell.send(work()));
+        Box::pin(async move {
+            heard
+                .recv()
+                .await
+                .unwrap_or_else(|| Err(NotifyError::Failed("the notification went nowhere".into())))
+        })
+    }
 
     /// Text as toast XML takes it.
     fn escape(text: &str) -> String {
@@ -299,7 +553,11 @@ mod imp {
         }
     }
 
-    pub(crate) fn notify(notification: Notification) -> Pending<Result<(), NotifyError>> {
+    /// Toasts shown, kept while they may be clicked (their `Activated`
+    /// fires only while the object lives): the newest few, by tag.
+    static SHOWN: Mutex<Vec<(String, ToastNotification)>> = Mutex::new(Vec::new());
+
+    pub(crate) fn notify_now(notification: Notification) -> Pending<Result<(), NotifyError>> {
         let identity = identity();
         let Some(aumid) = identity.application_id.clone() else {
             return Box::pin(async {
@@ -329,10 +587,22 @@ mod imp {
             )))
             .map_err(failed)?;
             let toast = ToastNotification::CreateToastNotification(&xml).map_err(failed)?;
-            if let Some(tag) = &notification.tag {
-                // At most 64 characters, as Windows takes a tag.
-                let tag: String = tag.chars().take(64).collect();
-                toast.SetTag(&HSTRING::from(tag)).map_err(failed)?;
+            // At most 64 characters, as Windows takes a tag.
+            let tag: String = (notification.tag.clone().unwrap_or_default())
+                .chars()
+                .take(64)
+                .collect();
+            if !tag.is_empty() {
+                toast.SetTag(&HSTRING::from(&tag)).map_err(failed)?;
+                let told = tag.clone();
+                toast
+                    .Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
+                        move |_, _| {
+                            clicked(told.clone());
+                            Ok(())
+                        },
+                    ))
+                    .map_err(failed)?;
             }
             let notifier =
                 ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(&aumid))
@@ -346,13 +616,176 @@ mod imp {
                     ));
                 }
             }
-            notifier.Show(&toast).map_err(failed)
+            notifier.Show(&toast).map_err(failed)?;
+            let mut shown = SHOWN.lock().unwrap();
+            shown.retain(|(kept, _)| *kept != tag);
+            shown.push((tag, toast));
+            let excess = shown.len().saturating_sub(32);
+            shown.drain(..excess);
+            Ok(())
         })
     }
 
-    pub(crate) fn set_badge(badge: Option<&str>) -> bool {
-        let _ = badge;
-        false
+    /// A tiny font for the badge's count: 3 by 5 pixels a glyph, rows from
+    /// the top, 4 the leftmost column.
+    const GLYPHS: [[u8; 5]; 11] = [
+        [7, 5, 5, 5, 7], // 0
+        [2, 6, 2, 2, 7], // 1
+        [7, 1, 7, 4, 7], // 2
+        [7, 1, 7, 1, 7], // 3
+        [5, 5, 7, 1, 1], // 4
+        [7, 4, 7, 1, 7], // 5
+        [7, 4, 7, 5, 7], // 6
+        [7, 1, 1, 1, 1], // 7
+        [7, 5, 7, 5, 7], // 8
+        [7, 5, 7, 1, 7], // 9
+        [0, 2, 7, 2, 0], // +
+    ];
+
+    /// The badge drawn, 16 by 16 premultiplied BGRA: a red disc and the
+    /// count in white (two digits at most, "9+" past them), a plain disc
+    /// for text that is no count.
+    fn badge_pixels(badge: &str) -> Vec<u32> {
+        const SIZE: usize = 16;
+        let mut pixels = vec![0u32; SIZE * SIZE];
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let (dx, dy) = (x as f32 + 0.5 - 8., y as f32 + 0.5 - 8.);
+                let coverage = (8. - (dx * dx + dy * dy).sqrt()).clamp(0., 1.);
+                let a = (coverage * 255.) as u32;
+                // #D93025, premultiplied.
+                let (r, g, b) = (0xD9 * a / 255, 0x30 * a / 255, 0x25 * a / 255);
+                pixels[y * SIZE + x] = (a << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        let text: Vec<usize> = match count_of(badge) {
+            Some(n) if n < 10 => vec![n as usize],
+            Some(n) if n < 100 => vec![(n / 10) as usize, (n % 10) as usize],
+            Some(_) => vec![9, 10],
+            None => vec![],
+        };
+        // Glyphs at twice their size, a pixel apart, centred.
+        let scale = 2;
+        let width = text.len() * 3 * scale + text.len().saturating_sub(1);
+        let (left, top) = ((SIZE - width.min(SIZE)) / 2, (SIZE - 5 * scale) / 2);
+        for (i, glyph) in text.iter().enumerate() {
+            let at = left + i * (3 * scale + 1);
+            for (row, bits) in GLYPHS[*glyph].iter().enumerate() {
+                for col in 0..3 {
+                    if bits & (4 >> col) == 0 {
+                        continue;
+                    }
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let (x, y) = (at + col * scale + sx, top + row * scale + sy);
+                            if x < SIZE && y < SIZE {
+                                pixels[y * SIZE + x] = 0xFFFF_FFFF;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        pixels
+    }
+
+    /// The badge as an icon, its alpha its own.
+    fn badge_icon(badge: &str) -> Option<HICON> {
+        let pixels = badge_pixels(badge);
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: 16,
+                // Negative: rows from the top.
+                biHeight: -16,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        // SAFETY: a 16 by 16 32-bit DIB; `bits` receives its pixel memory,
+        // filled with as many pixels below; both bitmaps are deleted once
+        // the icon has copied them.
+        unsafe {
+            let color: HBITMAP =
+                CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
+            std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits.cast::<u32>(), pixels.len());
+            let mask = [0u8; 32];
+            let mask = CreateBitmap(16, 16, 1, 1, Some(mask.as_ptr().cast()));
+            let icon = CreateIconIndirect(&ICONINFO {
+                fIcon: true.into(),
+                xHotspot: 0,
+                yHotspot: 0,
+                hbmMask: mask,
+                hbmColor: color,
+            });
+            let _ = DeleteObject(color.into());
+            let _ = DeleteObject(mask.into());
+            icon.ok()
+        }
+    }
+
+    thread_local! {
+        /// The taskbar, made the first time a badge is set.
+        static TASKBAR: std::cell::RefCell<Option<ITaskbarList3>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(crate) fn set_badge(badge: Option<&str>, window: Option<&winit::window::Window>) -> bool {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let Some(window) = window else { return false };
+        let Some(RawWindowHandle::Win32(handle)) = window.window_handle().ok().map(|h| h.as_raw())
+        else {
+            return false;
+        };
+        let hwnd = HWND(handle.hwnd.get() as *mut _);
+        TASKBAR.with_borrow_mut(|taskbar| {
+            if taskbar.is_none() {
+                // SAFETY: COM is initialized on the UI thread (winit's OLE).
+                *taskbar = unsafe {
+                    CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
+                }
+                .ok()
+                // SAFETY: the taskbar list just made.
+                .filter(|list| unsafe { list.HrInit() }.is_ok());
+            }
+            let Some(list) = taskbar.as_ref() else {
+                return false;
+            };
+            match badge {
+                None => {
+                    // The description reset first, as its own call: with the
+                    // icon taken off by a null one alone, the taskbar button
+                    // went on telling UI Automation the last count.
+                    let reset = HSTRING::new();
+                    // SAFETY: the window's handle, live while `window` is.
+                    unsafe {
+                        let _ = list.SetOverlayIcon(hwnd, HICON::default(), &reset);
+                        list.SetOverlayIcon(hwnd, HICON::default(), PCWSTR::null())
+                    }
+                    .is_ok()
+                }
+                Some(badge) => {
+                    let Some(icon) = badge_icon(badge) else {
+                        return false;
+                    };
+                    // What a screen reader says of the taskbar button.
+                    let description = HSTRING::from(match count_of(badge) {
+                        Some(n) => format!("{n} unread"),
+                        None => badge.to_string(),
+                    });
+                    // SAFETY: as above; the taskbar copies the icon, then it
+                    // is destroyed.
+                    let set = unsafe { list.SetOverlayIcon(hwnd, icon, &description) }.is_ok();
+                    // SAFETY: the icon made above, no longer used.
+                    let _ = unsafe { DestroyIcon(icon) };
+                    set
+                }
+            }
+        })
     }
 }
 
@@ -360,9 +793,8 @@ mod imp {
 mod imp {
     use super::*;
 
-    pub(crate) fn notify(notification: Notification) -> Pending<Result<(), NotifyError>> {
+    pub(crate) fn notify_now(notification: Notification) -> Pending<Result<(), NotifyError>> {
         let _ = notification;
-        let _ = off_thread::<()>;
         Box::pin(async {
             Err(NotifyError::Unsupported(
                 "this system shows no notifications from zgx".into(),
@@ -370,10 +802,10 @@ mod imp {
         })
     }
 
-    pub(crate) fn set_badge(badge: Option<&str>) -> bool {
+    pub(crate) fn set_badge(badge: Option<&str>, _window: Option<&winit::window::Window>) -> bool {
         let _ = badge;
         false
     }
 }
 
-pub(crate) use imp::{notify, set_badge};
+pub(crate) use imp::{notify_now as notify, set_badge};

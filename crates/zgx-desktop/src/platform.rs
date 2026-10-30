@@ -46,7 +46,20 @@ impl Platform for Desktop {
         crate::notify::notify(notification)
     }
     fn set_badge(&self, badge: Option<&str>) -> bool {
-        crate::notify::set_badge(badge)
+        let window = self.dialogs.window();
+        crate::notify::set_badge(badge, window.as_deref())
+    }
+    fn next_notification_click(&self) -> Pending<Option<String>> {
+        let (window, next) = (self.dialogs.window(), crate::notify::next_click());
+        Box::pin(async move {
+            let tag = next.await?;
+            // The app forward, to where the click asks it to go.
+            if let Some(window) = window {
+                window.set_minimized(false);
+                window.focus_window();
+            }
+            Some(tag)
+        })
     }
     fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow_mut().as_mut()?.get_text().ok()

@@ -3127,7 +3127,8 @@ declare ui: {
 	-- server), the app's: a promise settled once the system has it, or
 	-- with why not (`kind` "unsupported": no bundle, no server; "denied":
 	-- turned off). One with the same `tag` replaces it.
-	notify: (opts: { title: string, body: string?, tag: string? }) -> Promise<nil>,
+	-- `on_click`: the person clicked it, the app brought forward.
+	notify: (opts: { title: string, body: string?, tag: string?, on_click: (() -> ())? }) -> Promise<nil>,
 	-- A count on the app's icon (the Dock's, the taskbar's, a dock's);
 	-- 0 or nil takes it off. Whether the system shows one.
 	badge: (count: number | string | nil) -> boolean,

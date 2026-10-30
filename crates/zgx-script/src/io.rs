@@ -38,6 +38,38 @@ fn denied(what: &str, capability: &str) -> mlua::Error {
     ))
 }
 
+/// Call each clicked notification's `on_click` (`clicks`, by tag), the
+/// app brought forward first: a task waiting on the platform's clicks,
+/// started with the script's first `on_click` and gone with the script.
+fn listen(
+    lua: &Lua,
+    shared: SharedPlatform,
+    clicks: Rc<std::cell::RefCell<std::collections::HashMap<String, mlua::Function>>>,
+) -> mlua::Result<()> {
+    let env = crate::node::env(lua)?;
+    let vm = env.vm.clone();
+    env.timers.spawn(async move {
+        loop {
+            let next = shared
+                .borrow()
+                .clone()
+                .map(|platform| platform.0.next_notification_click());
+            let Some(next) = next else { return };
+            let Some(tag) = next.await else { return };
+            let Some(vm) = vm.upgrade() else { return };
+            let Some(on_click) = clicks.borrow().get(&tag).cloned() else {
+                continue;
+            };
+            vm.runtime.clone().batch(|| {
+                if let Err(e) = vm.call::<()>(&on_click, ()) {
+                    vm.report(e);
+                }
+            });
+        }
+    });
+    Ok(())
+}
+
 /// `{ path, name, size, type }`, as dialogs and drops give files to
 /// scripts (the web's `File`): `size` in bytes (0 for what is not a file
 /// to read, a folder), `type` its media type by its extension
@@ -278,6 +310,12 @@ pub(crate) fn install(
     let app = !crate::node::env(lua).is_ok_and(|env| matches!(*env.grants, crate::Grants::Only(_)));
     {
         let shared = shared.clone();
+        // Each notification's `on_click`, by its tag; and whether this
+        // script listens for clicks yet (from its first `on_click`).
+        let clicks: Rc<std::cell::RefCell<std::collections::HashMap<String, mlua::Function>>> =
+            Rc::default();
+        let listening = Rc::new(std::cell::Cell::new(false));
+        let made = std::cell::Cell::new(0u64);
         ui.set(
             "notify",
             lua.create_function(move |lua, opts: Table| {
@@ -290,9 +328,21 @@ pub(crate) fn install(
                     .get::<Option<String>>("title")?
                     .ok_or_else(|| mlua::Error::runtime("ui.notify needs a `title`"))?;
                 let body = opts.get::<Option<String>>("body")?.unwrap_or_default();
-                let mut notification = zgx::platform::Notification::new(title, body);
-                if let Some(tag) = opts.get::<Option<String>>("tag")? {
-                    notification = notification.tag(tag);
+                // Its tag, the script's or one of its own: what a click is
+                // told by.
+                let tag = match opts.get::<Option<String>>("tag")? {
+                    Some(tag) => tag,
+                    None => {
+                        made.set(made.get() + 1);
+                        format!("zgx-notification-{}", made.get())
+                    }
+                };
+                let notification = zgx::platform::Notification::new(title, body).tag(tag.clone());
+                if let Some(on_click) = opts.get::<Option<mlua::Function>>("on_click")? {
+                    clicks.borrow_mut().insert(tag, on_click);
+                    if !listening.replace(true) {
+                        listen(lua, shared.clone(), clicks.clone())?;
+                    }
                 }
                 let promise = pending(lua, "notify".into())?;
                 // The platform looked for as the promise first runs: a

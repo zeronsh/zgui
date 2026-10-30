@@ -59,6 +59,8 @@ pub struct FakeDesktop {
     notifications: RefCell<Vec<zgx::platform::Notification>>,
     badge: RefCell<Option<String>>,
     deny: std::cell::Cell<bool>,
+    /// Notifications clicked, not yet heard, and who waits for the next.
+    clicks: Rc<RefCell<(std::collections::VecDeque<String>, Option<std::task::Waker>)>>,
 }
 impl FakeDesktop {
     /// The notifications shown so far, in order.
@@ -72,6 +74,17 @@ impl FakeDesktop {
     /// Refuse notifications from now on, as a person who turned them off.
     pub fn deny_notifications(&self) {
         self.deny.set(true);
+    }
+    /// Click the notification tagged `tag`, as the person would.
+    pub fn click_notification(&self, tag: &str) {
+        let waker = {
+            let mut clicks = self.clicks.borrow_mut();
+            clicks.0.push_back(tag.to_string());
+            clicks.1.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
     }
     /// The next open dialog picks `files`.
     pub fn pick(&self, files: impl IntoIterator<Item = impl Into<std::path::PathBuf>>) {
@@ -157,6 +170,19 @@ impl zgx::platform::Platform for FakeDesktop {
     fn set_badge(&self, badge: Option<&str>) -> bool {
         *self.badge.borrow_mut() = badge.map(str::to_string);
         true
+    }
+    fn next_notification_click(&self) -> zgx::platform::Pending<Option<String>> {
+        let clicks = self.clicks.clone();
+        Box::pin(std::future::poll_fn(move |cx| {
+            let mut clicks = clicks.borrow_mut();
+            match clicks.0.pop_front() {
+                Some(tag) => std::task::Poll::Ready(Some(tag)),
+                None => {
+                    clicks.1 = Some(cx.waker().clone());
+                    std::task::Poll::Pending
+                }
+            }
+        }))
     }
 }
 
