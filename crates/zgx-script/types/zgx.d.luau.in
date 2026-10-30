@@ -1482,6 +1482,10 @@ export type Styles = {
 	overflow: Overflow?,
 	overflow_x: Overflow?,
 	overflow_y: Overflow?,
+	-- Painted and hit over its siblings with a lower `z`, under those with
+	-- a higher; 0, as written. Among its siblings only, unlike CSS's
+	-- `z-index`; focus and the accessibility tree keep document order.
+	z: number?,
 	hidden: boolean?,
 	invisible: boolean?,
 	-- Paint.
@@ -1656,6 +1660,7 @@ export type StyleProps = {
 	overflow: Reactive<Overflow>?,
 	overflow_x: Reactive<Overflow>?,
 	overflow_y: Reactive<Overflow>?,
+	z: Reactive<number>?,
 	hidden: Reactive<boolean>?,
 	invisible: Reactive<boolean>?,
 	-- Paint.

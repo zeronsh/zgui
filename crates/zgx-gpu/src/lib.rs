@@ -14332,6 +14332,77 @@ mod copy_blocker_tests {
 }
 
 #[cfg(test)]
+mod raised_copy_tests {
+    use super::*;
+    use zgx::{
+        compose::prelude::{rgba, *},
+        widgets::Ui,
+    };
+
+    /// A node raised over a scroll view keeps its scroll from copying, as
+    /// a later sibling does, though it comes first in the document; not
+    /// raised it lies under the list, and the same scroll copies.
+    #[test]
+    fn a_raised_node_over_a_scroll_view_keeps_it_from_copying() {
+        for raised in [false, true] {
+            let mut ui = Ui::new(160., 120.);
+            let offset = ui.signal(0_f32);
+            let rows = virtual_list(
+                offset.clone(),
+                24.,
+                2,
+                || 1000,
+                |i| i,
+                |_, key, _| {
+                    div().size(144., 24.).bg(if key % 2 == 0 {
+                        rgb(0x223344)
+                    } else {
+                        rgb(0x334455)
+                    })
+                },
+            )
+            .w(160.)
+            .h(100.)
+            .p(8.)
+            .bg(rgb(0x101820));
+            let mut badge = div()
+                .absolute()
+                .left(40.)
+                .top(40.)
+                .size(30., 30.)
+                .bg(rgba(0xffffff80));
+            if raised {
+                badge = badge.z(1);
+            }
+            ui.mount(
+                overlay()
+                    .w(160.)
+                    .h(120.)
+                    .bg(rgb(0x000000))
+                    .child(badge)
+                    .child(rows),
+            );
+            ui.prepare_frame();
+            ui.scene.borrow_mut().flush();
+            offset.set(14.);
+            ui.prepare_frame();
+            let damage = ui.scene.borrow_mut().flush().damage;
+            let scene = ui.scene.borrow();
+            let scroll = scene.scroll_moves().last().expect("it moved").clone();
+            let blocker = copy_blocker(&scene, &scroll, &damage, 1., &mut Vec::new(), &mut None);
+            if raised {
+                assert!(
+                    matches!(blocker, Some(CopyBlocker::Over(_))),
+                    "the raised square keeps it from copying: {blocker:?}"
+                );
+            } else {
+                assert_eq!(blocker, None);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod kept_index_tests {
     use super::*;
 

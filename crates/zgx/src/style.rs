@@ -729,6 +729,8 @@ pub(crate) struct ColdStyles {
     pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
     /// `Styled::grid_template_columns` and `grid_template_rows`.
     pub(crate) grid_template: Option<std::sync::Arc<crate::grid_tracks::GridTemplate>>,
+    /// `Styled::z`.
+    pub(crate) z: Option<i32>,
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
@@ -874,6 +876,9 @@ impl RareStyles {
             if theirs.layer_uniforms.is_some() {
                 mine.layer_uniforms = theirs.layer_uniforms;
             }
+            if theirs.z.is_some() {
+                mine.z = theirs.z;
+            }
             if let Some(template) = &theirs.grid_template {
                 match &mut mine.grid_template {
                     Some(mine) => {
@@ -944,6 +949,11 @@ impl RareStyles {
 }
 static NO_RARE: RareStyles = RareStyles::NONE;
 impl Styles {
+    /// Its rare properties, if it has any.
+    #[inline(always)]
+    pub(crate) fn rare_set(&self) -> Option<&RareStyles> {
+        self.rare.as_deref()
+    }
     pub(crate) fn rare(&self) -> &RareStyles {
         self.rare.as_deref().unwrap_or(&NO_RARE)
     }
@@ -1413,6 +1423,14 @@ pub trait Styled: Sized {
     /// `aspect-ratio`).
     fn aspect_ratio(mut self, value: f32) -> Self {
         self.styles_mut().layout_options_mut().aspect_ratio = Some(value);
+        self
+    }
+    /// Paint and hit it by `z` among its siblings, higher over lower (`0`, as
+    /// written, keeps document order). Unlike CSS's `z-index` it orders
+    /// siblings only; layout, focus and the accessibility tree keep document
+    /// order, as in CSS.
+    fn z(mut self, z: i32) -> Self {
+        self.styles_mut().rare_mut().cold.get_or_insert_default().z = Some(z);
         self
     }
     /// A grid's columns of any size (CSS `grid-template-columns`), over

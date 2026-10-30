@@ -1765,11 +1765,27 @@ struct Local {
     /// compare the transform with the identity field by field.
     maps: bool,
 }
+/// What few scenes have, by node; each entry goes with its node.
+#[derive(Default)]
+struct ColdMaps {
+    /// Track lists of grids that have them (`set_grid_template`): none kept
+    /// for a list no node has any more.
+    grid_templates: NodeMap<Arc<crate::grid_tracks::GridTemplate>>,
+    /// Paint order, back to front, of parents with raised children: the
+    /// paint and hit walks' exceptional path, so none pays nothing.
+    stacked: NodeMap<Vec<NodeId>>,
+    /// Nodes raised among their siblings (`set_z`), none at 0.
+    raised: NodeMap<i32>,
+}
 /// `Node::special`: a contents node.
 const CONTENTS: u8 = 1;
 /// `Node::special`: a zoomed node.
 const ZOOMED: u8 = 2;
-/// `Node::special`'s bits (`CONTENTS`, `ZOOMED`), as an enum rather than a
+/// `Node::special`: it has something few nodes do, in the scene's side maps
+/// (track lists, a `z`, a paint order of its children): what looks at them
+/// is behind `contents_count`, so a scene with none pays no test of its own.
+const COLD: u8 = 4;
+/// `Node::special`'s bits (`CONTENTS`, `ZOOMED`, `COLD`), as an enum rather than a
 /// `u8`: its unused values are a niche, as a `bool`'s are, so `Node` lays
 /// its byte fields out as it did with `contents: bool` (a field moved puts
 /// `invalidate_layout`'s two-byte store off its alignment).
@@ -1780,12 +1796,21 @@ enum Special {
     Contents = 1,
     Zoomed = 2,
     Both = 3,
+    Cold = 4,
+    ColdContents = 5,
+    ColdZoomed = 6,
+    ColdBoth = 7,
 }
 impl Special {
-    /// Whether it has any bit.
+    /// Whether it has any bit: the one test a node without any pays.
     #[inline(always)]
     fn any(self) -> bool {
         self != Special::None
+    }
+    /// Whether it lays out specially, contents or zoomed: asked past `any`.
+    #[inline(always)]
+    fn laid_out(self) -> bool {
+        self as u8 & (CONTENTS | ZOOMED) != 0
     }
     /// Whether it has `bit`.
     #[inline(always)]
@@ -1802,7 +1827,11 @@ impl Special {
             0 => Special::None,
             1 => Special::Contents,
             2 => Special::Zoomed,
-            _ => Special::Both,
+            3 => Special::Both,
+            4 => Special::Cold,
+            5 => Special::ColdContents,
+            6 => Special::ColdZoomed,
+            _ => Special::ColdBoth,
         }
     }
 }
@@ -2801,9 +2830,10 @@ pub struct Scene {
     /// (`laid_out_style`: it runs right to left, or sets a line's start or
     /// end): `Scene::style` returns it.
     given_styles: NodeMap<Style>,
-    /// Track lists of grids that have them (`set_grid_template`), by node:
-    /// freed with it, none kept for a list no node has any more.
-    grid_templates: NodeMap<Arc<crate::grid_tracks::GridTemplate>>,
+    /// What few scenes have (`ColdMaps`), allocated once one does. One
+    /// pointer: `Scene`'s fields past an aarch64 load pair's reach cost its
+    /// hottest functions an instruction each (`add_damage`, 10% of `anime`).
+    cold: Option<Box<ColdMaps>>,
     /// Directions nodes set themselves (`set_direction`); others inherit.
     directions: NodeMap<Direction>,
     /// Layer shaders and their uniforms, by node (`set_layer_shader`):
@@ -2974,7 +3004,7 @@ impl Scene {
             cursor_styles: 0,
             contents_styles: Default::default(),
             given_styles: Default::default(),
-            grid_templates: Default::default(),
+            cold: None,
             directions: Default::default(),
             layer_shaders: Default::default(),
             inert: Vec::new(),
@@ -3363,7 +3393,10 @@ impl Scene {
                 offset.y += ancestor.transform.y;
                 up = ancestor.parent;
             }
-            let children = self.children_raw(self.tree_node(parent));
+            let children = match self.cold.is_none() {
+                true => self.children_raw(self.tree_node(parent)).as_slice(),
+                false => self.paint_order(parent, self.tree_node(parent)),
+            };
             let after = children
                 .iter()
                 .position(|child| *child == node)
@@ -4430,8 +4463,20 @@ impl Scene {
     /// (`invalidate_layout`), it repaints with `CHILDREN`.
     fn children_changed(&mut self, parent: NodeId) {
         self.node_mut(parent).dirty |= CHILDREN;
-        if self.contents_count > 0 && self.node(parent).contents() {
+        if self.contents_count > 0 {
+            self.special_children_changed(parent);
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn special_children_changed(&mut self, parent: NodeId) {
+        let node = self.node(parent);
+        let (contents, cold) = (node.contents(), node.special.has(COLD));
+        if contents {
             self.sync_contents(parent);
+        }
+        if cold {
+            self.restack(parent);
         }
     }
     /// `id`'s own effects.
@@ -4446,12 +4491,35 @@ impl Scene {
     pub fn ancestors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
         std::iter::successors(self.parent(id), |id| self.parent(*id))
     }
+    /// Whether the paint and hit walks take their plain path: no popup
+    /// roots, and every parent painting its children in document order. The
+    /// exceptional one (`POPUPS`) reads both, so a scene without either pays
+    /// this one test a walk, and nothing per node.
+    #[inline]
+    fn plain_walks(&self) -> bool {
+        self.popups.is_empty()
+            && self
+                .cold
+                .as_ref()
+                .is_none_or(|cold| cold.stacked.is_empty())
+    }
+    /// `node`'s children in paint order, back to front: a parent with raised
+    /// children has its own (`stacked`), and layout, focus and the
+    /// accessibility tree keep document order. For the exceptional walks.
+    #[cold]
+    #[inline(never)]
+    fn paint_order<'a>(&'a self, id: NodeId, node: &'a Node) -> &'a [NodeId] {
+        match self.cold.as_ref().and_then(|cold| cold.stacked.get(&id)) {
+            Some(order) => order,
+            None => self.children_raw(node),
+        }
+    }
     /// Front-to-back hit targets, including containers; call after flushing layout.
     /// The point maps through each transformed ancestor's inverse, so nodes
     /// are hit where they are drawn; a singular transform hits nothing.
     pub fn hit_test_all(&self, x: f32, y: f32) -> Vec<NodeId> {
         self.settle_children();
-        match self.popups.is_empty() {
+        match self.plain_walks() {
             true => self.hit_test_walk::<false>(x, y),
             false => self.hit_test_walk::<true>(x, y),
         }
@@ -4686,7 +4754,10 @@ impl Scene {
                     parent_point,
                 ));
             }
-            siblings = self.children_raw(node).iter();
+            siblings = match POPUPS {
+                true => self.paint_order(id, node).iter(),
+                false => self.children_raw(node).iter(),
+            };
             parent_transform = transform;
             parent_opacity = opacity;
             parent_clip = clip;
@@ -5807,13 +5878,13 @@ impl Scene {
             if node.contents() {
                 self.contents_styles.remove(&id);
             }
+            if node.special.has(COLD) {
+                self.forget_cold(id);
+            }
             self.contents_count -= 1;
         }
         if !self.given_styles.is_empty() {
             self.given_styles.remove(&id);
-        }
-        if !self.grid_templates.is_empty() {
-            self.grid_templates.remove(&id);
         }
         if !self.directions.is_empty() {
             self.directions.remove(&id);
@@ -5880,11 +5951,95 @@ impl Scene {
     pub fn set_style(&mut self, id: NodeId, style: Style) {
         self.restyle(id, style, true);
     }
-    /// Whether any node has track lists: a style without one need not ask
-    /// `set_grid_template` to clear it unless so.
-    #[inline]
-    pub(crate) fn has_grid_templates(&self) -> bool {
-        !self.grid_templates.is_empty()
+    /// Whether any node has a `special` bit: what a style with nothing rare
+    /// must still look at, in case it has lost something.
+    #[inline(always)]
+    pub(crate) fn has_special_nodes(&self) -> bool {
+        self.contents_count > 0
+    }
+    /// Whether `id` has track lists or a `z` a style without them must
+    /// clear, or a paint order.
+    #[inline(always)]
+    pub(crate) fn has_cold_styles(&self, id: NodeId) -> bool {
+        self.contents_count > 0 && self.node(id).special.has(COLD)
+    }
+    /// `id`'s `COLD` bit, as what the side maps hold of it now.
+    fn sync_cold(&mut self, id: NodeId) {
+        let cold = self.cold.as_ref().is_some_and(|cold| {
+            cold.grid_templates.contains_key(&id)
+                || cold.raised.contains_key(&id)
+                || cold.stacked.contains_key(&id)
+        });
+        self.set_special(id, COLD, cold);
+    }
+    /// Paint and hit `id` by `z` among its siblings, higher over lower, equal
+    /// in document order (0: as written). Only among its siblings: it doesn't
+    /// lift it past what its parent is under, as a CSS stacking context
+    /// would let a descendant's `z-index` escape. Layout, focus and the
+    /// accessibility tree keep document order.
+    #[cold]
+    #[inline(never)]
+    pub fn set_z(&mut self, id: NodeId, z: i32) {
+        if self.z(id) == z {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match z {
+            0 => {
+                maps.raised.remove(&id);
+            }
+            z => {
+                maps.raised.insert(id, z);
+            }
+        }
+        self.sync_cold(id);
+        if let Some(parent) = self.node(id).parent {
+            self.restack(parent);
+        }
+        // It moved past others: all it paints repaints where it is, and a
+        // frame is due (`flush` reports damage only with a node dirty).
+        self.damage_subtree(id);
+        self.invalidate(id, PAINT);
+    }
+    /// `id`'s `z` (0 unless raised).
+    pub fn z(&self, id: NodeId) -> i32 {
+        let z = self.cold.as_ref().and_then(|cold| cold.raised.get(&id));
+        z.copied().unwrap_or(0)
+    }
+    /// `parent`'s paint order, once its children or their `z` change.
+    #[cold]
+    #[inline(never)]
+    fn restack(&mut self, parent: NodeId) {
+        self.finish_pending_children();
+        let order = {
+            let children = self.children_raw(self.tree_node(parent));
+            children.iter().any(|child| self.z(*child) != 0).then(|| {
+                let mut order = children.clone();
+                // Stable: equal `z` stays in document order.
+                order.sort_by_key(|child| self.z(*child));
+                order
+            })
+        };
+        let maps = self.cold.get_or_insert_default();
+        match order {
+            Some(order) => {
+                maps.stacked.insert(parent, order);
+            }
+            None => {
+                maps.stacked.remove(&parent);
+            }
+        }
+        self.sync_cold(parent);
+    }
+    /// `id` gone: what the side maps held of it.
+    #[cold]
+    #[inline(never)]
+    fn forget_cold(&mut self, id: NodeId) {
+        if let Some(maps) = &mut self.cold {
+            maps.grid_templates.remove(&id);
+            maps.raised.remove(&id);
+            maps.stacked.remove(&id);
+        }
     }
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
     #[cold]
@@ -5894,17 +6049,23 @@ impl Scene {
         id: NodeId,
         template: Option<&Arc<crate::grid_tracks::GridTemplate>>,
     ) {
-        if self.grid_templates.get(&id) == template {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.grid_templates.get(&id));
+        if held == template {
             return;
         }
+        let maps = self.cold.get_or_insert_default();
         match template {
             Some(template) => {
-                self.grid_templates.insert(id, template.clone());
+                maps.grid_templates.insert(id, template.clone());
             }
             None => {
-                self.grid_templates.remove(&id);
+                maps.grid_templates.remove(&id);
             }
         }
+        self.sync_cold(id);
         let node = self.node_mut(id);
         node.style_writes = node.style_writes.wrapping_add(1);
         self.invalidate_layout(id);
@@ -5912,15 +6073,15 @@ impl Scene {
     /// How many nodes hold track lists, for tests: they go with their nodes.
     #[doc(hidden)]
     pub fn grid_template_count(&self) -> usize {
-        self.grid_templates.len()
+        self.cold
+            .as_ref()
+            .map_or(0, |cold| cold.grid_templates.len())
     }
     /// `id`'s grid track lists, if it has any.
     #[inline]
     pub(crate) fn grid_template(&self, id: NodeId) -> Option<&crate::grid_tracks::GridTemplate> {
-        if self.grid_templates.is_empty() {
-            return None;
-        }
-        self.grid_templates.get(&id).map(|template| &**template)
+        let template = self.cold.as_ref()?.grid_templates.get(&id)?;
+        Some(&**template)
     }
     /// `set_style` for a style that may differ from `id`'s only in its box
     /// (width, height, their percentages and margins: a bar growing every
@@ -5941,7 +6102,7 @@ impl Scene {
             own: node.rtl,
             parent: node.parent.is_some_and(|parent| self.tree_node(parent).rtl),
         };
-        if (self.contents_count > 0 && node.special.any())
+        if (self.contents_count > 0 && node.special.any() && node.special.laid_out())
             || !laid_out_as_given(style, way)
             || !(known
                 || match (&old.layout_options, &style.layout_options) {
@@ -6062,7 +6223,8 @@ impl Scene {
                     style.layout_options = Some(Arc::new(normalized));
                 }
             }
-            if self.contents_count > 0 && self.node(id).special.any() {
+            let special = self.node(id).special;
+            if self.contents_count > 0 && special.any() && special.laid_out() {
                 self.restyle_special(id, style);
                 return;
             }
@@ -7681,6 +7843,8 @@ impl Scene {
     fn measure_uncached(&mut self, id: NodeId, constraints: Constraints) -> (f32, f32) {
         // Checked by `measured`, its one caller.
         let node = self.tree_node(id);
+        // Not `laid_out` here: joined to this test it's a mask on every
+        // measure's path. `measure_special` asks.
         if node.special.any()
             && let Some(size) = self.measure_special(id, constraints)
         {
@@ -8422,6 +8586,9 @@ impl Scene {
     #[cold]
     #[inline(never)]
     fn measure_special(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
+        if !self.tree_node(id).special.laid_out() {
+            return None;
+        }
         let node = self.node(id);
         let contents = node.contents() && !self.children_raw(node).is_empty();
         if !node.special.has(ZOOMED) {
@@ -9546,7 +9713,7 @@ impl Scene {
         root: Option<NodeId>,
         damage: Option<&[Rect]>,
     ) -> Vec<PaintItem<'_>> {
-        match self.popups.is_empty() {
+        match self.plain_walks() {
             true => self.layer_items_walk::<false, false>(root, damage, &mut Vec::new(), None),
             false => self.layer_items_walk::<true, false>(root, damage, &mut Vec::new(), None),
         }
@@ -9556,7 +9723,7 @@ impl Scene {
     /// [`Scene::item_in`] to work it out again alone.
     pub fn layer_items_recorded(&self, inherited: &mut Vec<Inherited>) -> Vec<PaintItem<'_>> {
         inherited.clear();
-        match self.popups.is_empty() {
+        match self.plain_walks() {
             true => self.layer_items_walk::<false, true>(None, None, inherited, None),
             false => self.layer_items_walk::<true, true>(None, None, inherited, None),
         }
@@ -9574,7 +9741,7 @@ impl Scene {
         out: &mut Vec<Inherited>,
     ) -> Vec<PaintItem<'_>> {
         out.clear();
-        match self.popups.is_empty() {
+        match self.plain_walks() {
             true => self.layer_items_walk::<false, true>(None, None, out, Some((id, inherited))),
             false => self.layer_items_walk::<true, true>(None, None, out, Some((id, inherited))),
         }
@@ -9903,8 +10070,12 @@ impl Scene {
                     }
                     .shared(),
                 };
+                let children = match POPUPS {
+                    true => self.paint_order(id, node),
+                    false => self.children_raw(node),
+                };
                 stack.extend(
-                    self.children_raw(node)
+                    children
                         .iter()
                         .rev()
                         .filter(|child| touches(self.ink(**child), transform))
@@ -9947,7 +10118,8 @@ impl Scene {
         }
         result
     }
-    /// Every paint item, in paint order from the root.
+    /// Every paint item, in document order from the root: paint order but
+    /// for raised nodes (`set_z`), which `layer_items` puts where they paint.
     pub fn paint_items(&self) -> impl Iterator<Item = PaintItem<'_>> {
         self.settle_children();
         PaintIter {
@@ -13115,6 +13287,25 @@ mod local_transform_tests {
     /// Reordering repaints the children whose paint order changed against
     /// the others, not the whole parent: in an overlay of four overlapping
     /// boxes, moving the last to second repaints it alone.
+    #[test]
+    fn raising_a_node_damages_it() {
+        let mut scene = Scene::new(400., 300.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let a = scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(1, 2, 3, 255)),
+            fixed(40., 40.),
+        );
+        let _b = scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(4, 5, 6, 255)),
+            fixed(40., 40.),
+        );
+        scene.flush();
+        scene.set_z(a, 1);
+        let frame = scene.flush();
+        assert_eq!(union(&frame.damage), Rect::new(0., 0., 40., 40.));
+    }
     #[test]
     fn reordering_damages_only_the_children_that_moved() {
         let mut scene = Scene::new(400., 300.);

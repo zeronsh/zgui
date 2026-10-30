@@ -12,6 +12,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Added
 
+- **`z`** (zgx, zgx-script): `.z(n)` and `z = n` paint and hit a node over its siblings with a lower `z`, for a raised card or a badge. Among siblings only, unlike CSS's `z-index`: there are no stacking contexts. Layout, Tab order and accessibility keep document order, as in CSS ([stacking](docs/reference/properties.md#stacking)).
 - **Double-sided and cut-out meshes in 3D scenes**: `World::set_double_sided(id, true)` draws a mesh's back faces too, and `World::set_alpha_cutoff(id, Some(0.5))` cuts it out by its base colour texture's alpha, in its shadow as well (leaves, hair, fences). glTF models bring theirs (`doubleSided`, `alphaMode: MASK` and `alphaCutoff`). A `BLEND` material whose alpha is only in its texture is now translucent, where it drew solid. A mesh using neither binds nothing new.
 - **Grid tracks of any size** (zgx, zgx-script): `cols` and `rows` take a list as CSS's `grid-template-columns` writes it, besides a number of equal tracks: `cols = "220 1fr auto"`, `minmax()`, `fit-content()`, `repeat()`, and `cols = "repeat(auto-fill, minmax(240, 1fr))"`, which reflows cards with the window and runs no script. In Rust, `.grid_template_columns(tracks)` and `.grid_template_rows(tracks)` with `zgx::grid_tracks::GridTracks`. What CSS rejects is an error saying why ([grid tracks](docs/reference/properties.md#grid-tracks)).
 

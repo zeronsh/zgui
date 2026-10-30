@@ -61,6 +61,25 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `overflow`, `overflow_x`, `overflow_y` | `"visible" \| "hidden" \| "clip"` | `"visible"` (scroll views: `"hidden"`) | `"hidden"` and `"clip"` clip paint and hit testing |
 | `hidden` | `boolean` | `false` | out of layout and input, keeping its state |
 | `invisible` | `boolean` | `false` | not drawn, keeping its space |
+| `z` | `number` | `0` | paint and hit it over siblings with a lower `z`, under those with a higher; equal stays in document order (see [Stacking](#stacking)) |
+
+### Stacking
+
+Siblings paint in document order, later over earlier. `z` changes that for a node among its siblings, for a raised card or a badge over its neighbour:
+
+```lua
+return ui.overlay {
+	w = 200,
+	h = 100,
+	ui.div { w = 120, h = 80, bg = "$accent", z = 1 },
+	ui.div { w = 200, h = 60, bg = "$surface.raised" },
+}
+```
+
+- **Among siblings only, unlike CSS's `z-index`.** There are no stacking contexts: a node can't rise past what its parent is under, whatever its `z`. To put something over a later branch, raise the branch.
+- Only painting and hit-testing change. Layout, Tab order and what assistive technology reads keep document order, as in CSS.
+- A raised node over a scroll view keeps that view from scrolling by copying pixels, as anything drawn over it does.
+- For what must rise above everything (a menu, a tooltip), use an overlay ([overlays](overlays.md)), not a large `z`.
 
 ### Grid tracks
 

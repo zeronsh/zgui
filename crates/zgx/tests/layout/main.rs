@@ -40,5 +40,7 @@ mod rtl_layout;
 mod rtl_scroll;
 #[path = "../wrapped_text_in_capped_box.rs"]
 mod wrapped_text_in_capped_box;
+#[path = "../z_order.rs"]
+mod z_order;
 #[path = "../zoom_relayout.rs"]
 mod zoom_relayout;

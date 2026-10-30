@@ -1426,7 +1426,7 @@ props! {
     "col_start" => ColStart: Num, "row_start" => RowStart: Num, "col_span" => ColSpan: Num, "row_span" => RowSpan: Num,
     "col_span_full" => ColSpanFull: Bool, "row_span_full" => RowSpanFull: Bool,
     "overflow" => Overflow: Str, "overflow_x" => OverflowX: Str, "overflow_y" => OverflowY: Str,
-    "hidden" => Hidden: Bool, "invisible" => Invisible: Bool,
+    "hidden" => Hidden: Bool, "invisible" => Invisible: Bool, "z" => Z: Num,
     // Paint.
     "bg" => Bg: Color, "gradient" => Gradient: Gradient, "color" => TextColor: Color,
     "bg_image" => BgImage: Str, "bg_fit" => BgFit: Str,

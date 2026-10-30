@@ -6700,6 +6700,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Cols, Lit::Num(v)) => s.grid_cols(v.max(1.) as u16),
         (Rows, Lit::Num(v)) => s.grid_rows(v.max(1.) as u16),
         (Cols | Rows, Lit::Str(list)) => track_list(s, prop, list),
+        (Z, Lit::Num(v)) => s.z(*v as i32),
         (ColStart, Lit::Num(v)) => s.col_start(*v as i16),
         (RowStart, Lit::Num(v)) => s.row_start(*v as i16),
         (ColSpan, Lit::Num(v)) => s.col_span(v.max(1.) as u16),
