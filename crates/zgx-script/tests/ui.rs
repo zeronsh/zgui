@@ -716,6 +716,30 @@ fn a_box_takes_css_colour_filters() {
 }
 
 #[test]
+#[should_panic(expected = "two or three stops")]
+fn a_radial_gradient_with_too_many_stops_says_so() {
+    Harness::inline(
+        r##"return ui.div { w = 20, h = 20, radial = { "#111", "#222", "#333", "#444" } }"##,
+    );
+}
+
+#[test]
+fn a_box_takes_a_radial_gradient() {
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.div { id = "a", w = 20, h = 20, radial = { "#ff0000", "#0000ff" } },
+            ui.div { id = "b", w = 20, h = 20,
+                radial = { center = { 0.5, 0 }, radius = 0.8, stops = { "#fff", { 0.3, "#888" }, "#0000" } } },
+        }"##,
+    );
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+    let a = h.find("a").unwrap();
+    let scene = h.ui.scene.borrow();
+    assert_eq!(scene.shader_uniforms(a).params[0], [0.5, 0.5, 1., 0.5]);
+}
+
+#[test]
 fn a_link_span_underlines_under_the_pointer() {
     use zgx::scene::NodeKind;
     let mut h = Harness::inline(

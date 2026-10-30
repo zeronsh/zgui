@@ -150,6 +150,7 @@ return ui.div {
 | --- | --- | --- | --- |
 | `bg` | `Color` | none (button, input, slider, progress: `#232e40`) | |
 | `gradient` | `Gradient` | | `{ "#f80", "#08f" }` or `{ angle = 135, stops = { … } }`; stops are colors (evenly spaced) or `{ offset, color }`; CSS angles: 0 runs bottom to top, 90 left to right, 180 (the default) top to bottom |
+| `radial` | `RadialGradient` | | a radial gradient (CSS `radial-gradient`, its default ellipse): `{ "#fff", "#0000" }` from the centre to the edge, or `{ center = { 0.5, 0 }, radius = 0.8, stops = { … } }` (`center` in fractions of the box; `radius` 1 reaches its farthest corner). Two or three stops, and an error for more: they don't fit its shader's uniforms. Boxes only, not a canvas, and it takes the place of a `bg_shader`. Native gradients with any number of stops, and conic and repeating ones, wait for 0.2 |
 | `color` | `Color` | `#e5edf7` | text, and a progress bar's fill and a slider's thumb; inherited |
 | `rounded` | `number` | `0` (controls: `6`) | corner radius |
 | `corners` | `Corners` | | `{ tl, tr, br, bl }`, as a list or keyed |

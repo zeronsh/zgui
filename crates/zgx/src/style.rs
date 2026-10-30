@@ -1927,6 +1927,24 @@ pub trait Styled: Sized {
             .paint_background = Some(Some(crate::decoration::Background::Image { image, fit }));
         self
     }
+    /// A radial gradient (CSS `radial-gradient`): an ellipse the box's shape
+    /// about `center` (fractions of the box, `(0.5, 0.5)` its middle), `radius`
+    /// 1 reaching its farthest corner, in two or three `stops` from the centre
+    /// to the edge. Drawn by a shader for each pixel: no raster, and nothing
+    /// for other boxes; boxes only, not a canvas's `Brush`.
+    fn bg_radial(
+        self,
+        center: (f32, f32),
+        radius: f32,
+        stops: impl Into<crate::decoration::RadialStops>,
+    ) -> Self {
+        self.bg_shader(crate::decoration::radial_shader())
+            .shader_uniforms(crate::decoration::radial_uniforms(
+                center,
+                radius,
+                stops.into(),
+            ))
+    }
     /// Fill the view with a shader (see `crate::decoration::FillShader`):
     /// a WGSL `fill` function run per pixel on the GPU, over its `bg`
     /// colour, cut to its rounded corners, under its border and children.

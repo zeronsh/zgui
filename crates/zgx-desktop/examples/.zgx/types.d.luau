@@ -651,6 +651,9 @@ export type ShadowSpec = { x: number?, y: number?, blur: number?, spread: number
 -- Or a shadow token (`"$shadow.md"`, an app's own too).
 export type Shadow = string | ShadowSpec | { ShadowSpec } | false
 -- Stops are colors (evenly spaced) or `{ offset, color }` pairs.
+-- A radial gradient: two or three colours from the centre to the edge, or with
+-- `center` (fractions of the box) and `radius` (1 reaches the farthest corner).
+export type RadialGradient = { any } | { center: { number }?, radius: number?, stops: { any } }
 export type Gradient = { read [number]: Color | { Color } } | { angle: number?, stops: { read [number]: Color | { Color } } }
 
 export type Direction = "row" | "row_reverse" | "column" | "column_reverse"
@@ -1708,6 +1711,7 @@ export type Styles = {
 	-- Paint.
 	bg: Color?,
 	gradient: Gradient?,
+	radial: RadialGradient?,
 	color: Color?,
 	bg_image: string?,
 	bg_fit: Fit?,
@@ -1890,6 +1894,7 @@ export type StyleProps = {
 	-- Paint.
 	bg: Reactive<Color>?,
 	gradient: Reactive<Gradient>?,
+	radial: Reactive<RadialGradient>?,
 	color: Reactive<Color>?,
 	bg_image: Reactive<string>?,
 	bg_fit: Reactive<Fit>?,
@@ -2279,6 +2284,7 @@ export type Props = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -2614,6 +2620,7 @@ export type Props_hidden = Reactive<boolean>?
 export type Props_invisible = Reactive<boolean>?
 export type Props_bg = Reactive<Color>?
 export type Props_gradient = Reactive<Gradient>?
+export type Props_radial = Reactive<RadialGradient>?
 export type Props_color = Reactive<Color>?
 export type Props_bg_image = Reactive<string>?
 export type Props_bg_fit = Reactive<Fit>?
@@ -2840,6 +2847,7 @@ export type ContainerProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -3190,6 +3198,7 @@ export type ScrollProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -3551,6 +3560,7 @@ export type TextProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -3900,6 +3910,7 @@ export type MarkdownViewProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -4302,6 +4313,7 @@ export type RichProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -4645,6 +4657,7 @@ export type ImageProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -4998,6 +5011,7 @@ export type SvgProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -5446,6 +5460,7 @@ export type Scene3DProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -5812,6 +5827,7 @@ export type CanvasProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -6187,6 +6203,7 @@ export type CheckboxProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -6540,6 +6557,7 @@ export type InputProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -6982,6 +7000,7 @@ export type ProgressProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -7326,6 +7345,7 @@ export type SliderProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -7685,6 +7705,7 @@ export type SegmentedProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -8040,6 +8061,7 @@ export type StepperProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -8396,6 +8418,7 @@ export type DisclosureProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -8749,6 +8772,7 @@ export type AccordionProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -9092,6 +9116,7 @@ export type SectionProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -9442,6 +9467,7 @@ export type SeparatorProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -9791,6 +9817,7 @@ export type TabsProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -10148,6 +10175,7 @@ export type TreeProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -10515,6 +10543,7 @@ export type DataGridProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -10878,6 +10907,7 @@ export type CalendarProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -11234,6 +11264,7 @@ export type DatePickerProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -11588,6 +11619,7 @@ export type TimeFieldProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -11941,6 +11973,7 @@ export type ComboboxProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -12302,6 +12335,7 @@ export type CommandPaletteProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -12651,6 +12685,7 @@ export type SelectProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -13007,6 +13042,7 @@ export type SplitProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -13368,6 +13404,7 @@ export type ListProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -13791,6 +13828,7 @@ export type LayerProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -14140,6 +14178,7 @@ export type ModalProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -14507,6 +14546,7 @@ export type PopoverProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -14884,6 +14924,7 @@ export type MenuItemProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -15232,6 +15273,7 @@ export type SubmenuProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -15587,6 +15629,7 @@ export type WebViewProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -15950,6 +15993,7 @@ export type TerminalProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -16294,6 +16338,7 @@ export type SlotProps = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -16684,6 +16729,7 @@ export type EachOptions = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -17043,6 +17089,7 @@ export type PresenceOptions = {
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,

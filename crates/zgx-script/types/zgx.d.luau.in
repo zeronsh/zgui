@@ -493,6 +493,9 @@ export type ShadowSpec = { x: number?, y: number?, blur: number?, spread: number
 -- Or a shadow token (`"$shadow.md"`, an app's own too).
 export type Shadow = string | ShadowSpec | { ShadowSpec } | false
 -- Stops are colors (evenly spaced) or `{ offset, color }` pairs.
+-- A radial gradient: two or three colours from the centre to the edge, or with
+-- `center` (fractions of the box) and `radius` (1 reaches the farthest corner).
+export type RadialGradient = { any } | { center: { number }?, radius: number?, stops: { any } }
 export type Gradient = { read [number]: Color | { Color } } | { angle: number?, stops: { read [number]: Color | { Color } } }
 
 export type Direction = "row" | "row_reverse" | "column" | "column_reverse"
@@ -1506,6 +1509,7 @@ export type Styles = {
 	-- Paint.
 	bg: Color?,
 	gradient: Gradient?,
+	radial: RadialGradient?,
 	color: Color?,
 	bg_image: string?,
 	bg_fit: Fit?,
@@ -1688,6 +1692,7 @@ export type StyleProps = {
 	-- Paint.
 	bg: Reactive<Color>?,
 	gradient: Reactive<Gradient>?,
+	radial: Reactive<RadialGradient>?,
 	color: Reactive<Color>?,
 	bg_image: Reactive<string>?,
 	bg_fit: Reactive<Fit>?,

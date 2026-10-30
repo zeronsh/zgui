@@ -1291,6 +1291,22 @@ pub(crate) enum Source {
     Variant(Rc<crate::variants::Selection>, Prop),
 }
 
+/// What `radial` is told when it can't draw what it was given.
+const RADIAL_STOPS: &str = "`radial` takes two or three stops, from the centre to the edge";
+/// A `radial`: where it is centred, how far it reaches and its stops.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RadialLit {
+    pub center: (f32, f32),
+    pub radius: f32,
+    pub stops: zgx::decoration::RadialStops,
+}
+/// One `Lit` variant for both: a third with a heap pointer takes `Lit`'s drop
+/// out of line, and every styled node pays for it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum GradientLit {
+    Linear(f32, Arc<[GradientStop]>),
+    Radial(RadialLit),
+}
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Lit {
     Num(f32),
@@ -1300,7 +1316,7 @@ pub(crate) enum Lit {
     Pair(f32, f32),
     Len(Length),
     Shadows(Arc<[BoxShadow]>),
-    Gradient(f32, Arc<[GradientStop]>),
+    Gradient(Arc<GradientLit>),
     Corners(Corners),
     /// A theme token (`"$surface.raised"`), resolved when the node styles.
     Token(zgx::theme::TokenId),
@@ -1379,6 +1395,7 @@ pub(crate) enum Ty {
     Tracks,
     Shadow,
     Gradient,
+    Radial,
     Corners,
 }
 
@@ -1432,7 +1449,7 @@ props! {
     "hidden" => Hidden: Bool, "invisible" => Invisible: Bool, "z" => Z: Num,
     "sticky_top" => StickyTop: Num,
     // Paint.
-    "bg" => Bg: Color, "gradient" => Gradient: Gradient, "color" => TextColor: Color,
+    "bg" => Bg: Color, "gradient" => Gradient: Gradient, "radial" => Radial: Radial, "color" => TextColor: Color,
     "bg_image" => BgImage: Str, "bg_fit" => BgFit: Str,
     "rounded" => Rounded: Num, "corners" => Corners: Corners,
     "rounded_tl" => RoundedTl: Num, "rounded_tr" => RoundedTr: Num,
@@ -2069,6 +2086,54 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
         }
         (Ty::Shadow, v @ Value::Map(_)) => Lit::Shadows(Arc::from([shadow(v)?])),
         (Ty::Shadow, Value::Bool(false) | Value::Nil) => Lit::Shadows(Arc::from([])),
+        (Ty::Radial, v) => {
+            let (center, radius, stops) = match v {
+                Value::List(stops) => ((0.5, 0.5), 1., stops.clone()),
+                Value::Map(_) => (
+                    match v.field("center") {
+                        Some(Value::List(c)) if c.len() == 2 => {
+                            (c[0].as_f64()? as f32, c[1].as_f64()? as f32)
+                        }
+                        _ => (0.5, 0.5),
+                    },
+                    v.field("radius").and_then(Value::as_f64).unwrap_or(1.) as f32,
+                    match v.field("stops")? {
+                        Value::List(s) => s.clone(),
+                        _ => return None,
+                    },
+                ),
+                _ => return None,
+            };
+            let n = stops.len();
+            if !(2..=3).contains(&n) {
+                // From a function, nothing else would say so.
+                eprintln!("zgx: {RADIAL_STOPS}");
+                return None;
+            }
+            let stops: Vec<GradientStop> = stops
+                .iter()
+                .enumerate()
+                .map(|(i, stop)| match stop {
+                    Value::List(pair) if pair.len() == 2 => Some(GradientStop {
+                        offset: pair[0].as_f64()? as f32,
+                        color: color_of(&pair[1])?,
+                    }),
+                    other => Some(GradientStop {
+                        offset: i as f32 / (n - 1) as f32,
+                        color: color_of(other)?,
+                    }),
+                })
+                .collect::<Option<_>>()?;
+            let stops = match <[GradientStop; 2]>::try_from(stops) {
+                Ok(two) => two.into(),
+                Err(three) => <[GradientStop; 3]>::try_from(three).ok()?.into(),
+            };
+            Lit::Gradient(Arc::new(GradientLit::Radial(RadialLit {
+                center,
+                radius,
+                stops,
+            })))
+        }
         (Ty::Gradient, v) => {
             let (angle, stops) = match v {
                 Value::List(stops) => (180., stops.clone()),
@@ -2101,7 +2166,10 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
                 .collect::<Option<_>>()?;
             // CSS angles (0 points up, clockwise; the default 180 runs top
             // to bottom); zgx's are clockwise from +x.
-            Lit::Gradient(((angle - 90.) as f32).to_radians(), stops.into())
+            Lit::Gradient(Arc::new(GradientLit::Linear(
+                ((angle - 90.) as f32).to_radians(),
+                stops.into(),
+            )))
         }
         (Ty::Corners, Value::List(r)) if r.len() == 4 => Lit::Corners(Corners {
             top_left: r[0].as_f64()? as f32,
@@ -2168,6 +2236,9 @@ fn source_linted(
                             && let Err(why) = s.parse::<zgx::grid_tracks::GridTracks>()
                         {
                             return mlua::Error::runtime(format!("`{name}`: {why}"));
+                        }
+                        if ty == Ty::Radial {
+                            return mlua::Error::runtime(RADIAL_STOPS);
                         }
                         mlua::Error::runtime(format!("`{name}` expects a {ty:?}, got {value:?}"))
                     })?

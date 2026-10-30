@@ -70,6 +70,9 @@ Platform-specific behavior is not considered validated merely because it compile
 0.1.x stays additive (cargo-semver-checks clean). Changes that need a break wait
 here, to land together:
 
+- [ ] `Brush` and `Background` `#[non_exhaustive]`, with radial, conic and
+  repeating gradients as brushes: a canvas can't fill with `radial` until then,
+  and it holds three stops as a shader's uniforms.
 - [ ] Deprecate `Styled::blur`: it is the backdrop blur, where Luau's `blur` is
   the content blur. `backdrop_blur` and `filter_blur` say which.
 - [ ] Named keys outside `Key`'s vocabulary. The desktop host drops every

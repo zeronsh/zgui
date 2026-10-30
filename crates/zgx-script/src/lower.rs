@@ -6771,7 +6771,12 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Hidden, Lit::Bool(false)) => s.visible(),
         (Invisible, Lit::Bool(true)) => s.invisible(),
         (Bg, Lit::Color(c)) => s.bg(*c),
-        (Gradient, Lit::Gradient(angle, stops)) => s.bg_gradient(*angle, stops.clone()),
+        (Gradient | Radial, Lit::Gradient(gradient)) => match &**gradient {
+            crate::node::GradientLit::Linear(angle, stops) => s.bg_gradient(*angle, stops.clone()),
+            crate::node::GradientLit::Radial(radial) => {
+                s.bg_radial(radial.center, radial.radius, radial.stops)
+            }
+        },
         (TextColor, Lit::Color(c)) => s.text_color(*c),
         (Rounded, Lit::Num(v)) => s.rounded(*v),
         (Corners, Lit::Corners(c)) => s.rounded_corners(*c),

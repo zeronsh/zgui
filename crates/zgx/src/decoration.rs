@@ -143,6 +143,96 @@ pub fn color_filter_shader() -> Arc<FillShader> {
     }
     SHADER.with(Arc::clone)
 }
+
+/// The fill shader `Styled::bg_radial` shares: `params[0]` its centre, as
+/// fractions of the box, its size against CSS's default ellipse reaching the
+/// farthest corner, and where its middle stop lies; `params[1..4]` its three
+/// colours, mixed premultiplied as CSS's are. One for a thread: its pipeline
+/// is made once.
+pub fn radial_shader() -> Arc<FillShader> {
+    thread_local! {
+        static SHADER: Arc<FillShader> = FillShader::new(
+            "fn fill(input: FillInput) -> vec4<f32> {
+    let g = input.params[0];
+    let centre = g.xy;
+    let far = max(centre, vec2(1.0) - centre) * 1.41421356 * max(g.z, 0.0001);
+    let t = clamp(length((input.p / input.size - centre) / far), 0.0, 1.0);
+    let a = vec4(input.params[1].rgb * input.params[1].a, input.params[1].a);
+    let b = vec4(input.params[2].rgb * input.params[2].a, input.params[2].a);
+    let c = vec4(input.params[3].rgb * input.params[3].a, input.params[3].a);
+    let m = select(
+        mix(b, c, (t - g.w) / max(1.0 - g.w, 0.00001)),
+        mix(a, b, t / max(g.w, 0.00001)),
+        t < g.w,
+    );
+    return vec4(m.rgb / max(m.a, 0.00001), m.a);
+}",
+            None,
+        );
+    }
+    SHADER.with(Arc::clone)
+}
+/// A radial gradient's stops: two or three, from the centre to the edge, as
+/// an array of either length. More can't be written: they don't fit its
+/// shader's uniforms (native gradients wait for 0.2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RadialStops {
+    first: crate::canvas::GradientStop,
+    middle: Option<crate::canvas::GradientStop>,
+    last: crate::canvas::GradientStop,
+}
+impl From<[crate::canvas::GradientStop; 2]> for RadialStops {
+    fn from([first, last]: [crate::canvas::GradientStop; 2]) -> Self {
+        Self {
+            first,
+            middle: None,
+            last,
+        }
+    }
+}
+impl From<[crate::canvas::GradientStop; 3]> for RadialStops {
+    fn from([first, middle, last]: [crate::canvas::GradientStop; 3]) -> Self {
+        Self {
+            first,
+            middle: Some(middle),
+            last,
+        }
+    }
+}
+/// `Styled::bg_radial`'s uniforms: `center` in fractions of the box, `radius`
+/// 1 for CSS's default.
+pub fn radial_uniforms(center: (f32, f32), radius: f32, stops: RadialStops) -> ShaderUniforms {
+    let color = |stop: &crate::canvas::GradientStop| {
+        let c = stop.color;
+        [
+            f32::from(c.0) / 255.,
+            f32::from(c.1) / 255.,
+            f32::from(c.2) / 255.,
+            f32::from(c.3) / 255.,
+        ]
+    };
+    let (first, last) = (color(&stops.first), color(&stops.last));
+    let (middle, at) = match &stops.middle {
+        Some(middle) => (color(middle), middle.offset),
+        None => (mix_colors(first, last), 0.5),
+    };
+    ShaderUniforms {
+        time: 0.,
+        params: [[center.0, center.1, radius, at], first, middle, last],
+    }
+}
+/// Halfway between two straight colours, as a premultiplied mix is.
+fn mix_colors(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let alpha = (a[3] + b[3]) / 2.;
+    let channel = |k: usize| {
+        if alpha > 0. {
+            (a[k] * a[3] + b[k] * b[3]) / 2. / alpha
+        } else {
+            0.
+        }
+    };
+    [channel(0), channel(1), channel(2), alpha]
+}
 /// What a box's plain style can't say: per-corner radii, per-side and
 /// dashed borders, gradient, image and shader backgrounds, more shadows.
 /// Each unset field keeps the plain style's.
