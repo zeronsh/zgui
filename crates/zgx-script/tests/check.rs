@@ -15,6 +15,25 @@ fn scripts(name: &str, files: &[(&str, &str)]) -> PathBuf {
     }
     dir
 }
+/// `from` copied to `to`, its generated `.zgx` left out; `to`.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> PathBuf {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (path, name) = (entry.path(), entry.file_name());
+        if name == ".zgx" {
+            continue;
+        }
+        match path.is_dir() {
+            true => {
+                copy_dir(&path, &to.join(&name));
+            }
+            false => {
+                std::fs::copy(&path, to.join(&name)).unwrap();
+            }
+        }
+    }
+    to.to_path_buf()
+}
 fn installed() -> bool {
     let found = zgx_script::check::find_luau_lsp().is_some();
     if !found {
@@ -116,9 +135,16 @@ fn every_shipped_example_passes_in_strict_mode() {
         return;
     }
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Copies: `zgx check` writes each directory's `.zgx/types.d.luau`, and a
+    // test writes nothing into the repository (the terminal's has none
+    // tracked, and the staleness test below reads the tracked ones).
+    let copies = scripts("examples", &[]);
     let examples = [
-        manifest.join("examples"),
-        manifest.join("../zgx-desktop/examples/terminal"),
+        copy_dir(&manifest.join("examples"), &copies.join("examples")),
+        copy_dir(
+            &manifest.join("../zgx-desktop/examples/terminal"),
+            &copies.join("terminal"),
+        ),
     ];
     // Strict where no `.luaurc` picks a mode; the terminal's says strict.
     let out = zgx().arg("check").args(&examples).output().unwrap();
@@ -134,6 +160,7 @@ fn every_shipped_example_passes_in_strict_mode() {
         .and_then(|n| n.parse().ok())
         .unwrap_or_default();
     assert!(files >= 25, "{stderr}");
+    std::fs::remove_dir_all(copies).unwrap();
 }
 
 #[test]
@@ -195,20 +222,26 @@ fn a_reload_writes_the_types_of_the_whole_app() {
 fn the_examples_types_files_are_what_zgx_types_writes() {
     // Committed for editors; a change to zgx's own definitions regenerates
     // them (`zgx types <dir>`), or every run of an example rewrites them.
-    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.ends_with(".zgx/types.d.luau") {
-                out.push(path);
-            } else if path.is_dir() && !path.ends_with("target") {
-                walk(&path, out);
-            }
-        }
-    }
+    // The tracked ones only: an untracked one (an editor's, a host's) is
+    // no one's to keep current.
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut files = Vec::new();
-    walk(&crates, &mut files);
-    assert!(!files.is_empty());
+    let Ok(listed) = Command::new("git")
+        .args(["ls-files", "-z", "--", "*/.zgx/types.d.luau"])
+        .current_dir(&crates)
+        .output()
+    else {
+        eprintln!("skipped: no git to list the tracked types files");
+        return;
+    };
+    let files: Vec<PathBuf> = String::from_utf8_lossy(&listed.stdout)
+        .split('\0')
+        .filter(|name| !name.is_empty())
+        .map(|name| crates.join(name))
+        .collect();
+    if !listed.status.success() || files.is_empty() {
+        eprintln!("skipped: not in the repository");
+        return;
+    }
     for file in files {
         let dir = file.parent().and_then(|zgx| zgx.parent()).unwrap();
         let sources: Vec<_> = zgx_script::check::scripts(dir)
