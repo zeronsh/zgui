@@ -597,6 +597,12 @@ impl TextEditor {
             }
         }
     }
+    /// Where Backspace takes the text back to (`backspace_takes`).
+    fn backspaced(&self) -> usize {
+        let pos = self.selection.focus;
+        let start = self.previous(false);
+        pos - backspace_takes(&self.text.slice(start..pos), NativeField::OF_PLATFORM)
+    }
     fn next(&self, word: bool) -> usize {
         if word && cfg!(windows) {
             return self.next_word_start();
@@ -905,17 +911,22 @@ impl TextEditor {
     pub fn move_document_end(&mut self, extend: bool) {
         self.move_to(self.text.len(), extend);
     }
-    /// Delete the selection, or the grapheme before the caret. False when
-    /// there was nothing to delete.
+    /// Delete the selection, or what is before the caret: its last code
+    /// point, or an emoji or a line break whole. False when there was
+    /// nothing to delete.
     pub fn backspace(&mut self) -> bool {
         self.delete_backward(false)
     }
-    /// Delete the selection, or before the caret: a grapheme, or back to
-    /// the start of a word with `word`. False when there was nothing to
-    /// delete.
+    /// Delete the selection, or before the caret: what Backspace takes
+    /// (`backspaced`), or back to the start of a word with `word`. False
+    /// when there was nothing to delete.
     pub fn delete_backward(&mut self, word: bool) -> bool {
         if self.selection.is_empty() {
-            let pos = self.previous(word);
+            let pos = if word {
+                self.previous(true)
+            } else {
+                self.backspaced()
+            };
             if pos == self.selection.focus {
                 return false;
             }
@@ -1211,6 +1222,75 @@ impl TextEditor {
         }
     }
 }
+/// Whose text field Backspace follows (`backspace_takes`).
+#[derive(Clone, Copy, PartialEq)]
+enum NativeField {
+    AppKit,
+    RichEdit,
+    Chromium,
+}
+impl NativeField {
+    const OF_PLATFORM: Self = if cfg!(target_os = "macos") {
+        Self::AppKit
+    } else if cfg!(target_os = "windows") {
+        Self::RichEdit
+    } else {
+        Self::Chromium
+    };
+}
+/// The bytes Backspace takes off the end of `grapheme`. Backspace undoes a
+/// keystroke, so a mistyped mark in a syllable goes and the syllable stays;
+/// what counts as one differs by platform, measured against its native field
+/// and browsers. A line break always goes whole.
+///
+/// `AppKit`, as `NSTextView` does, and Safari: one code point in the scripts
+/// from Hebrew to Limbu, U+0590 to U+193F (every combining mark in Unicode
+/// tried) but for Hangul's jamo, a trailing joiner with it; otherwise the
+/// whole grapheme, an accent with its letter.
+///
+/// `Chromium`: one code point, unless the grapheme holds an emoji, a keycap
+/// or a variation selector.
+///
+/// `RichEdit`, as Windows' does: as Chromium, but a flag or a keycap loses
+/// one code point too.
+fn backspace_takes(grapheme: &str, field: NativeField) -> usize {
+    let mut last = grapheme.chars().rev();
+    let code_point = last.next().map_or(0, char::len_utf8);
+    if grapheme == "\r\n" {
+        return grapheme.len();
+    }
+    if field == NativeField::AppKit {
+        let one_by_one = |c: char| matches!(c, '\u{590}'..='\u{10FF}' | '\u{1200}'..='\u{193F}');
+        return match (grapheme.chars().next_back(), last.next()) {
+            (Some('\u{200D}'), Some(before)) if one_by_one(before) => {
+                code_point + before.len_utf8()
+            }
+            (Some(end), _) if one_by_one(end) => code_point,
+            _ => grapheme.len(),
+        };
+    }
+    let whole = grapheme.chars().any(|c| {
+        matches!(
+            c,
+            '\u{20E3}'
+                | '\u{180B}'..='\u{180D}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{1F000}'..='\u{1FAFF}'
+                | '\u{E0100}'..='\u{E01EF}'
+        )
+    });
+    let in_parts = field == NativeField::RichEdit
+        && grapheme
+            .chars()
+            .next_back()
+            .is_some_and(|c| matches!(c, '\u{20E3}' | '\u{1F1E6}'..='\u{1F1FF}'));
+    if whole && !in_parts {
+        grapheme.len()
+    } else {
+        code_point
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1281,7 +1361,12 @@ mod tests {
     #[test]
     fn graphemes_are_atomic() {
         let mut e = TextEditor::new("a👩‍💻e\u{301}");
-        assert!(e.backspace());
+        // Backspace's own measure is `backspace_takes`; the caret and
+        // forward delete take graphemes.
+        e.delete_to(
+            e.selection().focus - "e\u{301}".len(),
+            Run::DeletingBackward,
+        );
         assert_eq!(e.text(), "a👩‍💻");
         e.move_left(false, false);
         assert_eq!(e.selection().focus, 1);
@@ -1676,6 +1761,101 @@ mod tests {
 #[cfg(test)]
 mod undo_run_tests {
     use super::*;
+    /// What Backspace takes off one grapheme, as `NSTextView` and Chromium
+    /// were measured to (Oct 30): code points on macOS, on the rest.
+    #[test]
+    fn backspace_takes_what_the_platform_does() {
+        // Code points taken on macOS, and by Chromium; RichEdit differs only
+        // on the two rows below.
+        let cases: &[(&str, &str, usize, usize)] = &[
+            ("accent", "e\u{301}", 2, 1),
+            ("two accents", "a\u{323}\u{302}", 3, 1),
+            ("Thai tone mark", "\u{E01}\u{E35}\u{E48}", 1, 1),
+            ("Thai sara am", "\u{E49}\u{E33}", 1, 1),
+            ("Lao", "\u{E81}\u{EC9}", 1, 1),
+            ("Devanagari vowel", "\u{915}\u{93F}", 1, 1),
+            ("Devanagari conjunct", "\u{915}\u{94D}\u{937}", 1, 1),
+            ("Devanagari joiner", "\u{915}\u{94D}\u{200D}", 2, 1),
+            ("Tamil", "\u{B95}\u{BCA}", 1, 1),
+            ("Bengali", "\u{995}\u{9BF}", 1, 1),
+            ("Arabic", "\u{628}\u{651}\u{64E}", 1, 1),
+            ("Hebrew", "\u{5E9}\u{5C1}\u{5B8}", 1, 1),
+            ("Hangul jamo", "\u{1112}\u{1161}\u{11AB}", 3, 1),
+            ("dakuten", "\u{304B}\u{3099}", 2, 1),
+            ("skin tone", "\u{1F44D}\u{1F3FD}", 2, 2),
+            (
+                "ZWJ family",
+                "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+                5,
+                5,
+            ),
+            ("flag", "\u{1F1EE}\u{1F1F9}", 2, 2),
+            ("keycap", "1\u{FE0F}\u{20E3}", 3, 3),
+            ("variation sequence", "\u{2764}\u{FE0F}", 2, 2),
+            ("line break", "\r\n", 2, 2),
+            ("letter", "a", 1, 1),
+        ];
+        let bytes = |text: &str, code_points: usize| {
+            text.chars()
+                .rev()
+                .take(code_points)
+                .map(char::len_utf8)
+                .sum::<usize>()
+        };
+        for (name, text, macos, other) in cases {
+            assert_eq!(
+                backspace_takes(text, NativeField::AppKit),
+                bytes(text, *macos),
+                "{name} on macOS"
+            );
+            assert_eq!(
+                backspace_takes(text, NativeField::Chromium),
+                bytes(text, *other),
+                "{name} in Chromium"
+            );
+            let richedit = match *name {
+                "flag" | "keycap" => 1,
+                _ => *other,
+            };
+            assert_eq!(
+                backspace_takes(text, NativeField::RichEdit),
+                bytes(text, richedit),
+                "{name} in RichEdit"
+            );
+        }
+    }
+
+    /// A long document's buffer takes the same as a short one's.
+    #[test]
+    fn backspace_is_the_same_in_a_long_document() {
+        for text in [
+            "\u{E01}\u{E35}\u{E48}",
+            "e\u{301}",
+            "\u{1F1EE}\u{1F1F9}",
+            "ab",
+        ] {
+            let mut short = TextEditor::new(text);
+            short.move_document_end(false);
+            short.backspace();
+            let lines = "line\n".repeat(20_000);
+            let mut long = TextEditor::new(format!("{lines}{text}"));
+            long.move_document_end(false);
+            long.backspace();
+            let kept = long.text().to_string();
+            assert_eq!(kept.strip_prefix(&lines), Some(&*short.text().to_string()));
+        }
+    }
+
+    /// Caret movement stays on graphemes.
+    #[test]
+    fn the_caret_still_moves_by_grapheme() {
+        let mut e = TextEditor::new("e\u{301}x");
+        e.move_document_end(false);
+        e.move_left(false, false);
+        e.move_left(false, false);
+        assert_eq!(e.selection().focus, 0);
+    }
+
     #[test]
     fn typing_and_deleting_undo_in_runs_as_appkit_does() {
         let mut e = TextEditor::new("");
@@ -1784,7 +1964,8 @@ mod undo_run_tests {
         assert_eq!(e.selection().focus, "🇫🇷".len(), "past the first flag whole");
         e.move_right(false, false);
         assert_eq!(e.selection().focus, e.text().len());
-        assert!(e.backspace());
+        e.set_selection("🇫🇷".len(), "🇫🇷".len());
+        assert!(e.delete_forward());
         assert_eq!(e.text(), "🇫🇷", "the second flag deleted whole");
         e.set_selection(4, 4);
         assert_eq!(e.selection().focus, 0, "inside a flag: back to its start");
