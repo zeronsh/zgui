@@ -92,6 +92,14 @@ html {
   text-rendering: optimizeLegibility;
 }
 
+/* The doc set switcher's menu is placed against the page but hangs from the
+   sticky sidebar, so a page scrolling under it drags it along until script
+   puts it back, every wheel tick. The page holds still while it's open, as
+   under a native menu; the stable gutter above keeps the layout where it is. */
+html:has(#nd-sidebar button[data-popup-open]) {
+  overflow: hidden;
+}
+
 html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
