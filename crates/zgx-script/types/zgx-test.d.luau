@@ -1,6 +1,6 @@
 -- The globals of a `zgx test` file (`*.test.luau`): `zgx check` gives them
 -- to test files alone, beside zgx.d.luau. Targets are devtools' own: `#id`,
--- `"label or text"`, `role:button`, `role:checkbox "Done"`, `#list row 3`,
+-- `"label or text"`, `~"part of it"`, `role:button`, `role:checkbox "Done"`, `#list row 3`,
 -- `"Copy"[2]`, `#a >> "b"` (inside).
 
 -- An app `mount` made, headless, driven as a person would.
@@ -38,14 +38,18 @@ declare extern type TestApp with
 	-- The clipboard's text, and text put on it as another app copies it.
 	function clipboard(self): string
 	function copy(self, text: string): ()
-	-- The target's text: its own, or the first inside it.
+	-- The target's text: a field's value, its own, or the first inside it.
 	function text(self, target: string): string
+	-- A field's selection, in bytes from 0 (equal for a caret, the second
+	-- where the caret is); nil for anything else.
+	function selection(self, target: string): (number?, number?)
 	-- Whether anything matches the target.
 	function has(self, target: string): boolean
 	-- How many nodes match the target.
 	function count(self, target: string): number
-	-- The interface as `zgx inspect tree` shows it, a node a line.
-	function tree(self): string
+	-- The interface, or the target and what is in it, as `zgx inspect tree`
+	-- shows it, a node a line.
+	function tree(self, target: string?): string
 	-- Deliver `n` display frames (1 if not given): an animation's worth.
 	function frames(self, n: number?): ()
 	-- Deliver frames until the target shows (its text holding `text`, if

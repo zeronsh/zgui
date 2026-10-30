@@ -199,6 +199,17 @@ fn select_option(option: &Value) -> (Value, String, bool) {
 }
 
 /// Add the library's functions to `ui`.
+/// A combobox's `items`: a state, or a list that never changes.
+fn items_of(lua: &Lua, items: &mlua::Value) -> mlua::Result<Signal<Value>> {
+    match (crate::node::state_of(items), items) {
+        (Some(items), _) => Ok(items),
+        (None, mlua::Value::Table(_)) => Ok(crate::node::env(lua)?
+            .runtime
+            .signal(mlua::FromLua::from_lua(items.clone(), lua)?)),
+        _ => expect_state(items, "ui.combobox's `items`"),
+    }
+}
+
 pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     // `ui.<widget> { label?, value = state, … }`.
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
@@ -378,7 +389,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
                 label: label(&table)?,
                 text: expect_state(&table.get("text")?, "ui.combobox's `text`")?,
                 value: optional_state("value")?,
-                items: expect_state(&table.get("items")?, "ui.combobox's `items`")?,
+                items: items_of(lua, &table.get("items")?)?,
                 loading: optional_state("loading")?,
                 empty: table.get("empty")?,
             }));

@@ -377,8 +377,21 @@ impl UserData for Mounted {
         methods.add_method("text", |_, m, target: String| {
             let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;
+            if let Some(editor) = app.ui.editor(node) {
+                return Ok(editor.editor.borrow().text().into_owned());
+            }
             let scene = app.ui.scene.borrow();
             Ok(crate::driver::first_text(&scene, node).unwrap_or_default())
+        });
+        // Where a field's selection is, in bytes from 0, as `string.find`
+        // counts them: nil for anything else.
+        methods.add_method("selection", |_, m, target: String| {
+            let mut app = m.app.borrow_mut();
+            let node = Self::node(&mut app, &target)?;
+            Ok(match app.ui.editor(node).map(|editor| editor.selection()) {
+                Some((anchor, focus)) => (Some(anchor), Some(focus)),
+                None => (None, None),
+            })
         });
         methods.add_method("has", |_, m, target: String| {
             let app = m.app.borrow();
@@ -423,7 +436,16 @@ impl UserData for Mounted {
             m.desktop().copy(text);
             Ok(())
         });
-        methods.add_method("tree", |_, m, ()| Ok(m.app.borrow_mut().tree()));
+        methods.add_method("tree", |_, m, target: Option<String>| {
+            let mut app = m.app.borrow_mut();
+            let Some(target) = target else {
+                return Ok(app.tree());
+            };
+            let from = Self::node(&mut app, &target)?;
+            let options = Default::default();
+            let (lines, hidden) = crate::driver::tree(&app.ui, &app.handle, Some(from), &options);
+            Ok(crate::driver::tree_text(&lines, hidden))
+        });
         methods.add_method("frames", |_, m, n: Option<usize>| {
             m.app.borrow().frames(n.unwrap_or(1));
             Ok(())

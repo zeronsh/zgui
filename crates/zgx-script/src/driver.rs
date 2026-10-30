@@ -7,7 +7,8 @@
 //! Targets:
 //! - `#send`: the node with that id (a script's `id = "send"`);
 //! - `"Send"`: the node labelled or reading so (its accessible name, or its
-//!   text), the outermost of a labelled node and its own text;
+//!   text), the outermost of a labelled node and its own text; `~"Sen"` the
+//!   same with that anywhere in it;
 //! - `role:button`: by role, ARIA's names (`button`, `textbox`, `option`…);
 //! - `@12`: a node by its number, as [`tree`] shows it (stable while the
 //!   node lives);
@@ -93,6 +94,8 @@ struct Part {
     id: Option<String>,
     hook: Option<String>,
     text: Option<String>,
+    /// `~"part"`: what its label or text holds, anywhere in it.
+    holding: Option<String>,
     role: Option<String>,
     number: Option<u32>,
     row: Option<usize>,
@@ -117,6 +120,12 @@ pub fn parse(text: &str) -> Result<Target, String> {
                     .find('"')
                     .ok_or_else(|| format!("`{text}`: an unclosed quote"))?;
                 part.text = Some(after[..end].to_string());
+                rest = after[end + 1..].trim_start();
+            } else if let Some(after) = rest.strip_prefix("~\"") {
+                let end = after
+                    .find('"')
+                    .ok_or_else(|| format!("`{text}`: an unclosed quote"))?;
+                part.holding = Some(after[..end].to_string());
                 rest = after[end + 1..].trim_start();
             } else if let Some(after) = rest.strip_prefix('#') {
                 let end = after
@@ -203,7 +212,11 @@ impl Static {
                 "`{text}`: a plugin's target is one element, without `>>`"
             ));
         };
-        if part.number.is_some() || part.row.is_some() || part.nth.is_some() {
+        if part.number.is_some()
+            || part.row.is_some()
+            || part.nth.is_some()
+            || part.holding.is_some()
+        {
             return Err(format!(
                 "`{text}`: a plugin's target is matched as the interface is built: \
                  an id, `hook:`, `role:` or a name, not `@n`, `row` or `[n]`"
@@ -379,6 +392,13 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
                         continue;
                     }
                 }
+                if let Some(part) = &part.holding {
+                    let labelled = semantics.get(node).is_some_and(|s| s.label.contains(part));
+                    let reads = own_text(&scene, node).is_some_and(|t| t.contains(part));
+                    if !labelled && !reads {
+                        continue;
+                    }
+                }
                 if !found.contains(&node) {
                     found.push(node);
                 }
@@ -386,7 +406,7 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
         }
         // A labelled node and the text inside it that reads the same are
         // one thing: the outermost stands for both.
-        if part.text.is_some() {
+        if part.text.is_some() || part.holding.is_some() {
             let all = found.clone();
             found.retain(|n| {
                 std::iter::successors(logical.parent(*n), |a| logical.parent(*a))
@@ -447,6 +467,9 @@ fn show_part(part: &Part) -> String {
     }
     if let Some(text) = &part.text {
         out.push(format!("{text:?}"));
+    }
+    if let Some(text) = &part.holding {
+        out.push(format!("~{text:?}"));
     }
     if let Some(n) = part.number {
         out.push(format!("@{n}"));

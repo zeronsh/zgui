@@ -12147,7 +12147,7 @@ export type ComboboxProps = {
 	text: State<string>,
 	-- The app's options for the text now: a computed filtering, or a state
 	-- an async fetch fills.
-	items: State<{ ComboItem }> | State<{ any }>,
+	items: { ComboItem } | { any } | State<{ ComboItem }> | State<{ any }>,
 	-- The chosen option's value, written as one is chosen.
 	value: State<any>?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its

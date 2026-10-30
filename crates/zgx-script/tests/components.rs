@@ -427,6 +427,17 @@ fn a_list_row_taller_than_its_height_is_a_layout_warning() {
 }
 
 #[test]
+fn a_comboboxs_items_may_be_a_plain_list() {
+    let mut h = Harness::inline(
+        r#"local text = ui.state("text", "")
+        return ui.combobox { id = "city", label = "City", text = text, items = { "Paris", "Porto" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.type_text("city", "P");
+    assert_eq!(with_role(&mut h, Role::ListBoxOption).len(), 2);
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")
