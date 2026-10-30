@@ -164,6 +164,14 @@ jobs:
         run: |
           set -o pipefail
           cargo test -p zgx-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgx-vulkan-tests.log"
+      # Its pixel tests pass without drawing where there's no GPU: here they
+      # must have one (lavapipe).
+      - name: 3D rendering
+        if: ${{ !cancelled() }}
+        env:
+          XDG_RUNTIME_DIR: /tmp
+          ZGX_REQUIRE_GPU: "1"
+        run: cargo test -p zgx-3d --features gltf --locked
       - name: Build native fixtures
         id: native-fixtures
         if: ${{ !cancelled() }}

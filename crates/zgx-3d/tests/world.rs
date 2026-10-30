@@ -115,7 +115,15 @@ struct Window {
 const SIZE: f32 = 100.;
 impl Window {
     fn new(world: &World) -> Option<Self> {
-        let gpu = GpuRenderer::new(SIZE as u32, SIZE as u32).ok()?;
+        // No GPU, no pixels to check, unless it must have one: every test
+        // here would pass without drawing (`ZGX_REQUIRE_GPU`, as in CI).
+        let gpu = match GpuRenderer::new(SIZE as u32, SIZE as u32) {
+            Ok(gpu) => gpu,
+            Err(error) if std::env::var_os("ZGX_REQUIRE_GPU").is_some() => {
+                panic!("ZGX_REQUIRE_GPU, but no renderer: {error}")
+            }
+            Err(_) => return None,
+        };
         let mut ui = Ui::new(SIZE, SIZE);
         let other = ui.signal(false);
         let lit = other.clone();
