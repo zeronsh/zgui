@@ -329,6 +329,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let crate::compose::ListOptions {
                 scrollbar,
                 keyboard_navigation,
+                contain,
                 edges,
             } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
@@ -393,6 +394,9 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         .min((wheel_extent.get() - wheel_size.get().1).max(0.0));
                     if before != after {
                         wheel_offset.set(after);
+                        cx.scrolled(false);
+                    } else if contain && delta_y != 0. {
+                        // At its edge, contained: taken all the same.
                         cx.scrolled(false);
                     }
                 }

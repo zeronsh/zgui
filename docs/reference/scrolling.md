@@ -19,6 +19,7 @@ ui.list(props: ListProps) -> Node
 | `row_text` | `(index: number) -> string` | the row's own texts | the plain text of row `index`: in a selectable region, copying a selection that spans rows the list has not mounted (select-all over a long transcript) takes theirs from it. Without it, the list builds the row's description (not mounted) and takes its texts, a `row`'s children joined by tabs and others by line breaks, as a copy of the row on screen does; give it for rows drawn or built in ways that don't say their text |
 | `follow` | `boolean` | `false` | stays at the end while the content grows, until scrolled away from it (a transcript, a log) |
 | `scrollbar` | `boolean` | `false` | an interactive scrollbar over the trailing edge: drag it, click its track to page; overlay style (hidden until scrolling) where the system has overlay scrollbars |
+| `overscroll` | `"auto"` \| `"contain"` | `"auto"` | `"contain"`: a wheel or trackpad gesture that starts over it stays with it at its edges, momentum included, as CSS's `overscroll-behavior: contain`: the scroll views around it neither move nor stretch (a transcript inside a page). `"auto"` hands what it can't scroll on to them |
 | `w`, `h` | `Length` | `320` by `240` when nothing else sizes it | a stretching parent, `grow`, `w`/`h` or `w_full` size it instead |
 | `gap`, `items`, `p`… | | | lay out the content as a column's (a row's for `scroll_x`) |
 | `overflow` | `Overflow` | `"hidden"` | |
@@ -42,6 +43,7 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | `overscan` | `number` | `2` | rows built beyond each edge of the view |
 | `offset` | `State<number>` | its own | the scroll position in points, as `scroll`'s |
 | `scrollbar` | `boolean` | `false` | an interactive scrollbar, as `scroll`'s |
+| `overscroll` | `"auto"` \| `"contain"` | `"auto"` | as `scroll`'s: `"contain"` keeps a gesture over the list with it at its ends |
 | `keyboard` | `boolean` | `false` | its rows are one Tab stop, landing on the row last focused, and the arrows, Page Up/Down, Home and End move focus through every row (mounting it), as a list box's do; typing jumps to the next row whose text starts with what was typed (letters within 750 ms build a prefix, the same letter again cycles), rows not mounted read by `row_text`. A row with `role = "option"` (or `"listitem"`) takes the focus itself, so its `on_focus` can open it (selection following focus); other controls in a row keep their own keys |
 | `on_end` | `() -> ()` | none | called as its end comes within `end_distance` points of the bottom of the view (an infinite scroll's next page, `ui.paged`'s `more`): once each time, and again once its rows have grown; while its rows are shorter than the view too, until they fill it or a call adds none. Watched in Rust: no script runs while it scrolls short of it |
 | `end_distance` | `number` | `200` | how far from the end `on_end` is called |

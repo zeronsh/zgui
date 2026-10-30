@@ -231,6 +231,8 @@ type VirtualBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment, ListOptions)>
 pub(crate) struct ListOptions {
     pub(crate) scrollbar: bool,
     pub(crate) keyboard_navigation: bool,
+    /// `View::overscroll_contain`.
+    pub(crate) contain: bool,
     pub(crate) edges: Option<Box<ListEdges>>,
 }
 /// What a virtual list reports of its edges: its end and its start coming
@@ -266,11 +268,13 @@ fn virtual_region(
     build: VirtualBuilder,
     scrollbar: bool,
     keyboard_navigation: bool,
+    contain: bool,
     edges: Option<Box<ListEdges>>,
 ) -> RegionBuilder {
     let options = ListOptions {
         scrollbar,
         keyboard_navigation,
+        contain,
         edges,
     };
     Box::new(move |ui: &mut Ui, root, environment| build(ui, root, environment, options))
@@ -482,6 +486,8 @@ pub(crate) struct Rare {
     pointer_events: Option<Box<dyn FnMut() -> bool>>,
     scrollbar: Option<bool>,
     follow_end: Option<bool>,
+    /// `View::overscroll_contain`: a wheel over it stays with it.
+    overscroll_contain: bool,
     animation: Option<animation::Animated>,
     keyboard_navigation: Option<bool>,
     /// `View::on_end`, `on_start`, `at_end`: a virtual list's edges.
@@ -564,6 +570,9 @@ impl Rare {
         }
         if self.follow_end.is_some() {
             inner.follow_end = self.follow_end;
+        }
+        if self.overscroll_contain {
+            inner.overscroll_contain = true;
         }
         if self.drag_preview.is_some() {
             inner.drag_preview = self.drag_preview;
@@ -830,6 +839,16 @@ impl View {
     /// Show an interactive overlay scrollbar on a scroll viewport or virtual list.
     pub fn scrollbar(mut self, visible: bool) -> Self {
         self.rare_mut().scrollbar = Some(visible);
+        self
+    }
+    /// Keep a wheel or trackpad gesture that starts over this scroll view,
+    /// virtual list or text area with it at its edges, as CSS's
+    /// `overscroll-behavior: contain`: what it can't scroll goes to none of
+    /// the scroll views around it (no page moving under a transcript, nor
+    /// stretching), its momentum included. Without it a gesture at an edge
+    /// goes on to them.
+    pub fn overscroll_contain(mut self) -> Self {
+        self.rare_mut().overscroll_contain = true;
         self
     }
     /// Keep a scroll viewport at its end while its content grows, as long as
@@ -2501,6 +2520,7 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let ListOptions {
                 scrollbar,
                 keyboard_navigation,
+                contain,
                 edges,
             } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
@@ -2555,6 +2575,8 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         .min((wheel_extent.get() - wheel_size.get().1).max(0.0));
                     if before != after {
                         wheel_offset.set(after);
+                        cx.scrolled(false);
+                    } else if contain && delta_y != 0. {
                         cx.scrolled(false);
                     }
                 }
@@ -3687,7 +3709,7 @@ struct Opened {
     root: NodeId,
     child_parent: NodeId,
     submenu_indicator: bool,
-    scroll_offset: Option<(Signal<f32>, bool)>,
+    scroll_offset: Option<(Signal<f32>, bool, bool)>,
     scroll_nodes: Option<(NodeId, NodeId)>,
     scrollbar: bool,
     follow_end: bool,
@@ -4077,7 +4099,8 @@ fn open_element(
                 crate::semantics::ScrollAxis::Vertical
             });
             ui.semantics.borrow_mut().set(root, semantics);
-            scroll_offset = Some((offset, horizontal));
+            let contain = rare.as_deref().is_some_and(|r| r.overscroll_contain);
+            scroll_offset = Some((offset, horizontal, contain));
             root
         }
         Kind::VirtualList(build) => {
@@ -4097,6 +4120,7 @@ fn open_element(
                 build,
                 scrollbar,
                 keyboard_navigation,
+                rare.as_deref().is_some_and(|r| r.overscroll_contain),
                 rare.as_deref_mut().and_then(|r| r.edges.take()),
             ));
             let root = ui.container(parent, Layout::Overlay, scroll_default_size(false));
@@ -4654,6 +4678,9 @@ fn open_element(
             let editor = editor.clone();
             ui.bind(root, move || editor.set_read_only(read_only()));
         }
+        if rare.as_deref().is_some_and(|r| r.overscroll_contain) {
+            editor.set_overscroll_contain(true);
+        }
         if let Some(select) = rare.as_deref().and_then(|r| r.select_on_focus) {
             editor.set_select_on_focus(select);
         }
@@ -4759,7 +4786,7 @@ fn open_element(
             },
         );
     }
-    let scroll_nodes = scroll_offset.as_ref().map(|(_, horizontal)| {
+    let scroll_nodes = scroll_offset.as_ref().map(|(_, horizontal, _)| {
         let viewport = ui.container(root, Layout::Overlay, Default::default());
         let content = ui.container(
             viewport,
@@ -4880,9 +4907,11 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
         let indicator = mount(ui, root, text("›"), environment.clone());
         ui.semantics.borrow_mut().remove(indicator);
     }
-    if let (Some((offset, horizontal)), Some((viewport, content))) = (scroll_offset, scroll_nodes) {
+    if let (Some((offset, horizontal, contain)), Some((viewport, content))) =
+        (scroll_offset, scroll_nodes)
+    {
         mount_scroll(
-            ui, root, viewport, content, offset, horizontal, scrollbar, follow_end,
+            ui, root, viewport, content, offset, horizontal, scrollbar, follow_end, contain,
         );
     }
     if let Some(mut compute) = compute {
@@ -5136,6 +5165,8 @@ fn mount_scroll(
     horizontal: bool,
     scrollbar: bool,
     follow_end: bool,
+    // `View::overscroll_contain`: a wheel at its edge stays here.
+    contain: bool,
 ) {
     use crate::scene::{Style, Transform};
     let main_size = move |size: (f32, f32)| if horizontal { size.0 } else { size.1 };
@@ -5274,6 +5305,10 @@ fn mount_scroll(
             let after = (before as f64 + delta as f64).clamp(0., limit) as f32;
             if before != after {
                 wheel_offset.set(after);
+                cx.scrolled(horizontal);
+            } else if contain && delta != 0. {
+                // At its edge, contained: taken all the same, so it latches
+                // here and the views around it never see it.
                 cx.scrolled(horizontal);
             }
         }

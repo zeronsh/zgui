@@ -1842,6 +1842,7 @@ fn kind_view(
             horizontal,
             follow,
             scrollbar,
+            contain,
         } => {
             let offset = match offset {
                 Some(offset) => bridge(need(&mut cx), offset, number, |x| Value::Num(x as f64)),
@@ -1856,6 +1857,11 @@ fn kind_view(
                 scroll(offset)
             };
             let view = view.follow_end(*follow);
+            let view = if *contain {
+                view.overscroll_contain()
+            } else {
+                view
+            };
             if *scrollbar {
                 view.scrollbar(true)
             } else {
@@ -2135,6 +2141,9 @@ fn kind_view(
             }
             if let Some(active) = active {
                 view = active_descendant(view, active, vm);
+            }
+            if rare.as_deref().is_some_and(|rare| rare.contain) {
+                view = view.overscroll_contain();
             }
             if *select_on_focus {
                 view = view.select_on_focus(true);
@@ -5368,6 +5377,9 @@ fn list_edges(mut list: View, rare: &crate::node::ListRare, vm: &Rc<Vm>) -> View
     }
     if let Some(start) = &rare.start {
         list = list.on_start(rare.start_distance.unwrap_or(200.), call(start));
+    }
+    if rare.contain {
+        list = list.overscroll_contain();
     }
     if let Some(at_end) = &rare.at_end {
         let at_end = at_end.clone();

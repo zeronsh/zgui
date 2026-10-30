@@ -157,6 +157,8 @@ struct EditorHint {
     /// (`EditorHandle::set_caret_style`).
     caret: Cell<(Option<Color>, Option<f32>)>,
     select_on_focus: Cell<bool>,
+    /// A wheel over it stays with it at its edges (`View::overscroll_contain`).
+    contain: Cell<bool>,
     /// A password field: its text shows masked and never leaves it.
     secure: Cell<bool>,
     /// What kind of text it takes (`View::input_mode`).
@@ -244,6 +246,7 @@ impl EditorHint {
             placeholder: RefCell::default(),
             caret: Cell::default(),
             select_on_focus: Cell::default(),
+            contain: Cell::default(),
             secure: Cell::default(),
             input_mode: Cell::default(),
             misspelled: RefCell::default(),
@@ -519,6 +522,12 @@ impl EditorHandle {
     /// Whether user editing is blocked. Selection, copying and model writes remain available.
     pub fn is_read_only(&self) -> bool {
         self.read_only.get()
+    }
+    /// Keep a wheel gesture that starts over it at its edges, as CSS's
+    /// `overscroll-behavior: contain`: the scroll views around it don't
+    /// take what it can't scroll (`View::overscroll_contain`).
+    pub fn set_overscroll_contain(&self, contain: bool) {
+        self.hint.contain.set(contain);
     }
     /// Change editing policy without moving focus or changing committed text/history.
     /// Entering read-only mode cancels an existing composition.
@@ -3737,6 +3746,7 @@ impl Ui {
         let gesture = Rc::new(EditorDrag::default());
         let draw_gesture = gesture.clone();
         let hint = Rc::new(EditorHint::new(value));
+        let wheel_hint = hint.clone();
         hint.composition_layer.set(Some(preedit_layer));
         let draw_hint = hint.clone();
         // Its text's line count and its semantic value, by the revision of
@@ -5003,6 +5013,13 @@ impl Ui {
                             offset.1 = (offset.1 + delta_y).clamp(0., limit.1);
                         }
                         if previous == *offset {
+                            // At its edge: contained, the gesture stays here
+                            // (taken, so the scroll views around it don't
+                            // move, and the rest of it latches here).
+                            if wheel_hint.contain.get() && (delta_y != 0. || delta_x != 0.) {
+                                cx.prevent_default();
+                                cx.stop_propagation();
+                            }
                             return;
                         }
                         drop(offset);

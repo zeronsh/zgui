@@ -3231,6 +3231,10 @@ export type ScrollProps = {
 	-- An interactive scrollbar over the trailing edge (none by default).
 	scrollbar: boolean?,
 	follow: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 }
 -- `ui.text { "Count: {count}", text_size = 18 }`: the text first.
 export type TextProps = {
@@ -6498,6 +6502,10 @@ export type InputProps = {
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
 	-- password field. A state or function follows it (a setting).
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 	-- The `id` of the suggestion it is on (HTML's `aria-activedescendant`),
 	-- nil for none: focus stays here, moving through a list of them with
 	-- its keys (a mention's, in a popover `at_caret`), and assistive
@@ -13117,6 +13125,10 @@ export type ListProps = {
 	-- With `measured` or `heights`: resting at the end, it stays there as
 	-- rows are added and measured (a chat); scrolled up, it stays put.
 	follow: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 	-- Each row's own height instead, in order: a list, a state holding one
 	-- (a host's shared value costs the script nothing), or a function
 	-- returning one (tracked). The row count is its length.

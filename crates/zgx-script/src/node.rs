@@ -804,6 +804,8 @@ pub(crate) struct ListRare {
     pub(crate) start_distance: Option<f32>,
     /// `at_end = state`: kept saying whether it rests at its end.
     pub(crate) at_end: Option<Signal<Value>>,
+    /// `overscroll = "contain"`: a wheel over it stays with it.
+    pub(crate) contain: bool,
 }
 
 /// `ui.list`'s `on_end`, called as its end comes within `distance` points.
@@ -828,6 +830,8 @@ pub(crate) struct InputRare {
     /// `active_descendant = id` (or a state or function of one): the
     /// suggestion it is on, for assistive technology, focus kept here.
     pub(crate) active_descendant: Option<Source>,
+    /// `overscroll = "contain"`: a wheel over it stays with it.
+    pub(crate) contain: bool,
 }
 
 #[derive(Clone)]
@@ -845,6 +849,8 @@ pub(crate) enum Kind {
         follow: bool,
         /// `scrollbar = true`: an interactive scrollbar over its edge.
         scrollbar: bool,
+        /// `overscroll = "contain"`: a wheel over it stays with it.
+        contain: bool,
     },
     Text(Text),
     /// `ui.markdown_view { text }`: markdown drawn, parsed as the text
@@ -2698,6 +2704,7 @@ const LATE_FIELDS: &[&str] = &[
     "on_start",
     "start_distance",
     "at_end",
+    "overscroll",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
@@ -2744,6 +2751,23 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
                     }
                     _ => rare.at_end = Some(expect_state(&value, "`at_end`")?),
                 }
+            }
+        }
+        "overscroll" => {
+            let contain = match value {
+                mlua::Value::String(ref text) if &*text.to_str()? == "contain" => true,
+                mlua::Value::String(ref text) if &*text.to_str()? == "auto" => false,
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "`overscroll` is \"auto\" or \"contain\"",
+                    ));
+                }
+            };
+            match &mut node.kind {
+                Kind::Scroll { contain: set, .. } => *set = contain,
+                Kind::List { rare, .. } => rare.get_or_insert_default().contain = contain,
+                Kind::Input { rare, .. } => rare.get_or_insert_default().contain = contain,
+                _ => {}
             }
         }
         "at_caret" => {
@@ -3849,6 +3873,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             horizontal,
                             follow,
                             scrollbar,
+                            // Set as `fill` walks the table (`late_field`).
+                            contain: false,
                         },
                     ),
                     table.as_ref(),
