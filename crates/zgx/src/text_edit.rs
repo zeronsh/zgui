@@ -613,7 +613,7 @@ impl TextEditor {
     fn backspaced(&self) -> usize {
         let pos = self.selection.focus;
         let start = self.previous(false);
-        pos - backspace_takes(&self.text.slice(start..pos), NativeField::OF_PLATFORM)
+        pos - backspace_takes(&self.text.slice(start..pos), cfg!(target_os = "macos"))
     }
     fn next(&self, word: bool) -> usize {
         if word && cfg!(windows) {
@@ -1234,44 +1234,27 @@ impl TextEditor {
         }
     }
 }
-/// Whose text field Backspace follows (`backspace_takes`).
-#[derive(Clone, Copy, PartialEq)]
-enum NativeField {
-    AppKit,
-    RichEdit,
-    Chromium,
-}
-impl NativeField {
-    const OF_PLATFORM: Self = if cfg!(target_os = "macos") {
-        Self::AppKit
-    } else if cfg!(target_os = "windows") {
-        Self::RichEdit
-    } else {
-        Self::Chromium
-    };
-}
 /// The bytes Backspace takes off the end of `grapheme`. Backspace undoes a
 /// keystroke, so a mistyped mark in a syllable goes and the syllable stays;
 /// what counts as one differs by platform, measured against its native field
 /// and browsers. A line break always goes whole.
 ///
-/// `AppKit`, as `NSTextView` does, and Safari: one code point in the scripts
+/// `macos`, as `NSTextView` does, and Safari: one code point in the scripts
 /// from Hebrew to Limbu, U+0590 to U+193F (every combining mark in Unicode
 /// tried) but for Hangul's jamo, a trailing joiner with it; otherwise the
 /// whole grapheme, an accent with its letter.
 ///
-/// `Chromium`: one code point, unless the grapheme holds an emoji, a keycap
-/// or a variation selector.
-///
-/// `RichEdit`, as Windows' does: as Chromium, but a flag or a keycap loses
-/// one code point too.
-fn backspace_takes(grapheme: &str, field: NativeField) -> usize {
+/// Otherwise as Chromium does: one code point, unless the grapheme holds an
+/// emoji, a keycap or a variation selector. On Windows too, whose `RichEdit`
+/// agrees but for flags and keycaps: there it leaves half of one behind, the
+/// defect this rule exists to avoid.
+fn backspace_takes(grapheme: &str, macos: bool) -> usize {
     let mut last = grapheme.chars().rev();
     let code_point = last.next().map_or(0, char::len_utf8);
     if grapheme == "\r\n" {
         return grapheme.len();
     }
-    if field == NativeField::AppKit {
+    if macos {
         let one_by_one = |c: char| matches!(c, '\u{590}'..='\u{10FF}' | '\u{1200}'..='\u{193F}');
         return match (grapheme.chars().next_back(), last.next()) {
             (Some('\u{200D}'), Some(before)) if one_by_one(before) => {
@@ -1291,16 +1274,7 @@ fn backspace_takes(grapheme: &str, field: NativeField) -> usize {
                 | '\u{E0100}'..='\u{E01EF}'
         )
     });
-    let in_parts = field == NativeField::RichEdit
-        && grapheme
-            .chars()
-            .next_back()
-            .is_some_and(|c| matches!(c, '\u{20E3}' | '\u{1F1E6}'..='\u{1F1FF}'));
-    if whole && !in_parts {
-        grapheme.len()
-    } else {
-        code_point
-    }
+    if whole { grapheme.len() } else { code_point }
 }
 
 #[cfg(test)]
@@ -1777,8 +1751,6 @@ mod undo_run_tests {
     /// were measured to (Oct 30): code points on macOS, on the rest.
     #[test]
     fn backspace_takes_what_the_platform_does() {
-        // Code points taken on macOS, and by Chromium; RichEdit differs only
-        // on the two rows below.
         let cases: &[(&str, &str, usize, usize)] = &[
             ("accent", "e\u{301}", 2, 1),
             ("two accents", "a\u{323}\u{302}", 3, 1),
@@ -1816,23 +1788,14 @@ mod undo_run_tests {
         };
         for (name, text, macos, other) in cases {
             assert_eq!(
-                backspace_takes(text, NativeField::AppKit),
+                backspace_takes(text, true),
                 bytes(text, *macos),
                 "{name} on macOS"
             );
             assert_eq!(
-                backspace_takes(text, NativeField::Chromium),
+                backspace_takes(text, false),
                 bytes(text, *other),
-                "{name} in Chromium"
-            );
-            let richedit = match *name {
-                "flag" | "keycap" => 1,
-                _ => *other,
-            };
-            assert_eq!(
-                backspace_takes(text, NativeField::RichEdit),
-                bytes(text, richedit),
-                "{name} in RichEdit"
+                "{name} elsewhere"
             );
         }
     }
@@ -1976,8 +1939,7 @@ mod undo_run_tests {
         assert_eq!(e.selection().focus, "🇫🇷".len(), "past the first flag whole");
         e.move_right(false, false);
         assert_eq!(e.selection().focus, e.text().len());
-        e.set_selection("🇫🇷".len(), "🇫🇷".len());
-        assert!(e.delete_forward());
+        assert!(e.backspace());
         assert_eq!(e.text(), "🇫🇷", "the second flag deleted whole");
         e.set_selection(4, 4);
         assert_eq!(e.selection().focus, 0, "inside a flag: back to its start");
