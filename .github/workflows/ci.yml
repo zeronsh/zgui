@@ -208,6 +208,7 @@ jobs:
         if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
         timeout-minutes: 100
         run: |
+          set +e
           fails=0
           for i in $(seq 1 24); do
             rm -rf /tmp/round
@@ -221,8 +222,11 @@ jobs:
                 python3 scripts/ime_parse.py /tmp/round/zgx-native-ime/ibus-monitor.txt
                 grep -n PREEDIT /tmp/round/zgx-native-ime/application.log | tail -14
               fi
-              grep -h 'presses to close' -r /tmp/round/zgx-portal-dialog/result.json 2>/dev/null
+              for f in $(grep -E '^FAIL ' /tmp/round.txt | cut -d' ' -f2); do
+                echo "--- $f"; sed -n "/^FAIL $f /,/^\(PASS\|FAIL\) /p" /tmp/round.txt | cut -c1-300 | tail -14
+              done
             fi
+            grep -h nudged_stages /tmp/round/zgx-native-ime/result.json 2>/dev/null | tr -d ' '
             grep -h 'presses to close' -r /tmp/round/zgx-portal-dialog/result.json 2>/dev/null | tr -d ' ,' | tr '\n' ' '; echo
           done
           echo "ROUNDS FAILED: $fails of 24"
