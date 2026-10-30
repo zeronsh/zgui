@@ -1469,6 +1469,100 @@ fn sticky_rows_hold_the_top_until_the_next_arrives() {
     assert_eq!(ys(&mut h, "row 1"), vec![-40., -10.]);
 }
 
+/// With `key`, a sticky row is its section's: the overlay builds it as the
+/// list does, given its key and its index as a state, and keeps it while the
+/// section moves; another section on top builds its own.
+#[test]
+fn keyed_sticky_rows_follow_their_sections() {
+    let mut h = Harness::inline(
+        r##"local off = ui.state("off", 0)
+        local names = ui.state("names", { "a", "b", "c" })
+        local built = ui.state("built", 0)
+        local rows = ui.computed(function()
+            local out = {}
+            for _, n in names:get() do
+                table.insert(out, n)
+                for i = 1, 3 do table.insert(out, `{n}{i}`) end
+            end
+            return out
+        end)
+        local heights = ui.computed(function()
+            local out = {}
+            for _, r in rows:get() do table.insert(out, if #r == 1 then 30 else 10) end
+            return out
+        end)
+        local sticky = ui.computed(function()
+            local out = {}
+            for i, r in rows:get() do if #r == 1 then table.insert(out, i) end end
+            return out
+        end)
+        return ui.column {
+            ui.text { id = "built", function() return tostring(built:get()) end },
+            ui.button { id = "down", on_click = function() off:set(70) end, "down" },
+            ui.button { id = "first", on_click = function() names:set({ "z", "a", "b", "c" }) end, "first" },
+            ui.button { id = "drop", on_click = function() names:set({ "b", "c" }) off:set(5) end, "drop" },
+            ui.list { id = "l", heights = heights, sticky = sticky, offset = off, w = 200, h = 100,
+                key = function(i) return rows:get()[i] end,
+                row = function(key, index)
+                    if #key == 1 then built:update(function(n) return n + 1 end) end
+                    return ui.text { function() return `{key}@{index:get()}` end, h = if #key == 1 then 30 else 10 }
+                end } }"##,
+    );
+    let tops = |h: &mut Harness| -> Vec<String> {
+        h.ui.prepare_frame();
+        let list = h.find("l").unwrap();
+        let scene = h.ui.scene.borrow();
+        let top = scene.bounds(list).y;
+        let mut out = Vec::new();
+        let mut stack = vec![list];
+        while let Some(n) = stack.pop() {
+            if let zgx::scene::NodeKind::Text { text, .. } = scene.kind(n) {
+                let at = scene.transformed_bounds(n).y - top;
+                if text.contains('@') && (-0.5..0.5).contains(&at) {
+                    out.push(text.to_string());
+                }
+            }
+            stack.extend(scene.children(n).iter().copied());
+        }
+        out.sort();
+        out
+    };
+    // Row 5 ("b", 60 down) has passed the top: its section holds it.
+    h.click("down");
+    assert_eq!(tops(&mut h), vec!["b@5".to_string()]);
+    // A section in front: the same row, its index moved on.
+    let built = h.text("built");
+    h.click("first");
+    assert_eq!(tops(&mut h), vec!["a@5".to_string()]);
+    h.click("down");
+    // Its section gone, the next takes over.
+    h.click("drop");
+    assert_eq!(tops(&mut h), vec!["b@1".to_string()]);
+    assert_ne!(h.text("built"), "0", "rows built: {built}");
+}
+
+/// A sticky list takes what any list takes: its scrollbar and edge callbacks
+/// go to the list under the sticky row.
+#[test]
+fn a_sticky_list_takes_a_scrollbar_and_edge_callbacks() {
+    let mut h = Harness::inline(
+        r##"local ended = ui.state("ended", 0)
+        local hs = {}
+        for _ = 1, 100 do table.insert(hs, 30) end
+        return ui.column {
+            ui.text { id = "ended", function() return tostring(ended:get()) end },
+            ui.list { id = "l", heights = hs, sticky = { 1, 50 }, w = 200, h = 100,
+                scrollbar = true, overscroll = "contain", end_distance = 10000,
+                on_end = function() ended:add(1) end,
+                row = function(i) return ui.text { "row " .. i, h = 30 } end } }"##,
+    );
+    h.ui.prepare_frame();
+    h.settle();
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    assert_eq!(h.text("ended"), "1");
+}
+
 #[test]
 fn sticky_top_holds_them_lower() {
     // As above, stuck 12 points down (a diff's headers under their gap).

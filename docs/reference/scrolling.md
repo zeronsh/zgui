@@ -38,7 +38,7 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | `measured` | `boolean` | `false` | rows take their content's height (wrapped text, images), measured as they mount; not with `heights` |
 | `follow` | `boolean` | `false` | with `measured` or `heights`: resting at the end, it stays at the end as rows are added and measured (a chat); scrolled away, it stays where it is |
 | `heights` | `{ number }`, a state of one, or a function returning one | none | each row's own height instead, in order; the count is its length |
-| `sticky` | `{ number }`, a state of one, or a function returning one | none | with `heights`: rows (from 1) that stick to the top while the rows after them scroll past, each pushed up by the next (section headers, a diff's file headers); the one in charge is built again over the list, as any row is |
+| `sticky` | `{ number }`, a state of one, or a function returning one | none | with `heights`, and with or without `key`: rows (from 1) that stick to the top while the rows after them scroll past, each pushed up by the next (section headers, a diff's file headers); the one in charge is built again over the list, as any row is |
 | `sticky_top` | `number` | `0` | how far below the top the sticky rows stick (CSS's sticky `top`): what scrolls above them still shows, so cover it if it shouldn't |
 | `overscan` | `number` | `2` | rows built beyond each edge of the view |
 | `offset` | `State<number>` | its own | the scroll position in points, as `scroll`'s |

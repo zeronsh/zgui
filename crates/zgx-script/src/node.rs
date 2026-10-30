@@ -4389,11 +4389,6 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             if sticky.is_some() && heights.is_none() {
                 return Err(mlua::Error::runtime("ui.list `sticky` needs `heights`"));
             }
-            if sticky.is_some() && table.contains_key("key")? {
-                return Err(mlua::Error::runtime(
-                    "ui.list `key` and `sticky` don't go together yet: a sticky row is built by its index",
-                ));
-            }
             let measured = table.get::<Option<bool>>("measured")?.unwrap_or(false);
             if measured && heights.is_some() {
                 return Err(mlua::Error::runtime(

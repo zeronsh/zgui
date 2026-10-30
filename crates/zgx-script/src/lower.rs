@@ -2466,14 +2466,12 @@ fn kind_view(
         Kind::List {
             scrollbar, rare, ..
         } => {
-            let mut list = lower_list(&node.kind, vm, low, &mut cx);
-            if *scrollbar {
-                list = list.scrollbar(true);
+            let list = lower_list(&node.kind, vm, low, &mut cx);
+            // Sticky rows wrap the list: it took these under the wrapper.
+            if rare.as_ref().is_some_and(|rare| rare.sticky.is_some()) {
+                return list;
             }
-            if let Some(rare) = rare {
-                list = list_edges(list, rare, vm);
-            }
-            list
+            list_chrome(list, *scrollbar, rare.as_deref(), vm)
         }
         Kind::Modal {
             label,
@@ -5565,6 +5563,22 @@ fn list_edges(mut list: View, rare: &crate::node::ListRare, vm: &Rc<Vm>) -> View
 /// A `ui.list` (kept out of `build`, which recurses: its locals would
 /// weigh on every level of a deep interface's stack).
 #[inline(never)]
+/// A list's scrollbar and what happens at its edges.
+fn list_chrome(
+    mut list: View,
+    scrollbar: bool,
+    rare: Option<&crate::node::ListRare>,
+    vm: &Rc<Vm>,
+) -> View {
+    if scrollbar {
+        list = list.scrollbar(true);
+    }
+    match rare {
+        Some(rare) => list_edges(list, rare, vm),
+        None => list,
+    }
+}
+
 fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut Context>) -> View {
     let Kind::List {
         count,
@@ -5579,6 +5593,7 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         follow,
         offset,
         keyboard,
+        scrollbar,
         ..
     } = kind
     else {
@@ -5730,6 +5745,8 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
             });
             let _ = r.replace(values);
         }));
+        let (sticky_key, sticky_row, sticky_plain) =
+            (list_key.clone(), row.clone(), plain_row.clone());
         let list = match key {
             None => {
                 variable_virtual_list(offset.clone(), rows.clone(), *overscan, |i| i, plain_row)
@@ -5743,7 +5760,23 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         match sticky {
             None => list,
             Some(sticky) => {
-                sticky_list(list, sticky, sticky_top, offset, rows, builder, vm, low, cx)
+                let list = list_chrome(list, *scrollbar, rare.as_deref(), vm);
+                match key {
+                    None => sticky_list(
+                        list,
+                        sticky,
+                        sticky_top,
+                        offset,
+                        rows,
+                        |i| i,
+                        sticky_plain,
+                        vm,
+                        cx,
+                    ),
+                    Some(_) => sticky_list(
+                        list, sticky, sticky_top, offset, rows, sticky_key, sticky_row, vm, cx,
+                    ),
+                }
             }
         }
     } else {
@@ -6031,17 +6064,32 @@ fn lower_item_list(
 /// whose section covers the top of the view (the last one at or above it),
 /// built as any row is and pushed up as the next sticky row arrives: CSS's
 /// `position: sticky` for section headers, with the rows virtualized.
+/// The sticky row in charge when the view's top is in row `top`: the last
+/// of `sticky` (sorted) at or above it.
+fn sticky_in_charge(sticky: &[usize], top: usize) -> Option<usize> {
+    let after = sticky.partition_point(|&i| i <= top);
+    after.checked_sub(1).map(|last| sticky[last])
+}
+
+/// How far the next sticky row pushes the one in charge up: `next` is how
+/// far below the view's top it starts, `height` the one in charge's own.
+fn sticky_push(next: Option<f32>, inset: f32, height: f32) -> f32 {
+    next.map_or(0., |next| (next - inset - height).min(0.))
+}
+
 #[allow(clippy::too_many_arguments)]
-fn sticky_list(
+fn sticky_list<K: PartialEq + Clone + 'static>(
     list: View,
     sticky: &crate::node::Heights,
     // How far below the top they stick (CSS's sticky `top`).
     inset: f32,
     offset: Signal<f32>,
     rows: zgx::compose::VariableHeights,
-    builder: &mlua::Function,
+    // A row's identity, and its row built as the list builds it: rows that
+    // keep a key stay the same row as the list changes.
+    key: impl Fn(usize) -> K + 'static,
+    row: impl Fn(Signal<usize>, K, &mut Context) -> View + 'static,
     vm: &Rc<Vm>,
-    low: &Rc<Lowering>,
     cx: &mut Context,
 ) -> View {
     // The sticky rows, from 0, kept sorted.
@@ -6072,7 +6120,7 @@ fn sticky_list(
         let (offset, rows, indices) = (offset.clone(), rows.clone(), indices.clone());
         move || -> Option<usize> {
             let top = rows.row_at((offset.get() + inset).max(0.))?;
-            indices.with(|list| list.iter().rev().find(|&&i| i <= top).copied())
+            indices.with(|list| sticky_in_charge(list, top))
         }
     };
     // How far the next sticky row pushes it up.
@@ -6083,15 +6131,29 @@ fn sticky_list(
             let Some(at) = current() else { return 0. };
             let height = rows.row_height(at).unwrap_or(0.);
             let next = indices.with(|list| list.iter().find(|&&i| i > at).copied());
-            match next {
-                Some(next) => (rows.row_offset(next) - offset.get() - inset - height).min(0.),
-                None => 0.,
-            }
+            sticky_push(
+                next.map(|next| rows.row_offset(next) - offset.get()),
+                inset,
+                height,
+            )
         }
     };
-    let (builder, vm, low) = (builder.clone(), vm.clone(), low.clone());
-    let header = zgx::compose::switch(current, move |at, cx| match at {
-        Some(at) => build_scoped(&vm, cx, &low, &builder, at + 1),
+    // Its identity picks what shows: a row that moves stays built.
+    let shown = {
+        let current = current.clone();
+        move || current().map(&key)
+    };
+    let header = zgx::compose::switch(shown, move |shown, cx| match shown {
+        Some(key) => {
+            let index = cx.runtime().signal(current().unwrap_or(0));
+            let (follow, at) = (index.clone(), current.clone());
+            cx.retain(cx.runtime().effect(move || {
+                if let Some(at) = at() {
+                    follow.set(at);
+                }
+            }));
+            row(index, key, cx)
+        }
         None => div(),
     });
     overlay().child(list.w_full().h_full()).child(
