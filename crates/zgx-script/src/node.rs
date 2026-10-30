@@ -1148,6 +1148,10 @@ pub(crate) struct Span {
     pub href: Option<std::sync::Arc<str>>,
     /// How far below the baseline its underline sits.
     pub underline_offset: Option<f32>,
+    /// How its underline is drawn: a line style, a colour, a thickness.
+    pub underline_style: Option<zgx::rich_text::LineStyle>,
+    pub underline_color: Option<Themed<Color>>,
+    pub underline_thickness: Option<f32>,
     /// A link's look under the pointer: underlined, and its colour.
     pub hover: Option<(bool, Option<Themed<Color>>)>,
     /// An icon before the text, in the line.
@@ -2541,6 +2545,22 @@ fn button_look(lua: &Lua, table: &Table) -> mlua::Result<()> {
 fn checkable_menu_role(name: &str) -> bool {
     matches!(name, "menuitemcheckbox" | "menuitemradio")
 }
+/// An `underline_style`, as CSS's `text-decoration-style` names it.
+fn line_style(name: &str) -> mlua::Result<zgx::rich_text::LineStyle> {
+    use zgx::rich_text::LineStyle;
+    Ok(match name {
+        "solid" => LineStyle::Solid,
+        "double" => LineStyle::Double,
+        "dotted" => LineStyle::Dotted,
+        "dashed" => LineStyle::Dashed,
+        "wavy" => LineStyle::Wavy,
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "unknown `underline_style` `{other}`: one of solid, double, dotted, dashed, wavy"
+            )));
+        }
+    })
+}
 /// A `role` as ARIA names it.
 fn a11y_role(name: &str) -> Option<zgx::semantics::Role> {
     use zgx::semantics::Role;
@@ -3729,6 +3749,9 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         click: None,
         href: None,
         underline_offset: None,
+        underline_style: None,
+        underline_color: None,
+        underline_thickness: None,
         hover: None,
         icon: None,
     };
@@ -3756,6 +3779,21 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         };
         span.radius = value("radius")?.as_f64().unwrap_or(0.) as f32;
         span.underline_offset = value("underline_offset")?.as_f64().map(|v| v as f32);
+        span.underline_style = match value("underline_style")? {
+            Value::Nil => None,
+            Value::Str(style) => Some(line_style(&style)?),
+            other => {
+                return Err(mlua::Error::runtime(format!(
+                    "`underline_style` is a name, not {other}"
+                )));
+            }
+        };
+        span.underline_color = themed_color(&value("underline_color")?);
+        span.underline_thickness = value("underline_thickness")?.as_f64().map(|v| v as f32);
+        // One of them says it is underlined, as `underline = true` does.
+        span.underline |= span.underline_style.is_some()
+            || span.underline_color.is_some()
+            || span.underline_thickness.is_some();
         // `hover = { underline = true, color = … }`: a link's look under
         // the pointer (CSS's `a:hover`).
         if let Some(hover) = t.get::<Option<Table>>("hover")? {

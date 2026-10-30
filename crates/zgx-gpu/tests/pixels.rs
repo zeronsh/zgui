@@ -5922,3 +5922,90 @@ fn a_rounded_image_keeps_its_corners_and_frame_however_it_fits() {
         );
     }
 }
+
+/// An underline in each style, on a run of spaces so only the line shows: a
+/// double has two rows, dots and dashes have gaps along it (dashes longer),
+/// and a wave moves up and down, in the colour asked for, at both scales.
+#[test]
+fn underlines_draw_in_each_line_style() {
+    use std::sync::Arc;
+    use zgx::rich_text::{Decoration, LineStyle, RichText, TextRun};
+    let _gpu_fixture = gpu_fixture();
+    let red = Color(240, 20, 30, 255);
+    for scale in [1u32, 2] {
+        // The line's pixels in each column, top to bottom.
+        let columns = |style: LineStyle| {
+            let mut scene = Scene::new(200., 40.);
+            let text = " ".repeat(40);
+            let run = TextRun {
+                range: 0..text.len(),
+                underline: Some(Decoration::new(2.).color(red).line(style)),
+                ..Default::default()
+            };
+            scene.append(
+                scene.root(),
+                NodeKind::RichText {
+                    text: Arc::new(RichText::new(text, vec![run]).unwrap()),
+                },
+                fixed(200., 40.),
+            );
+            let mut gpu = GpuRenderer::new(200 * scale, 40 * scale).unwrap();
+            gpu.set_scale_factor(scale as f32);
+            let damage = scene.flush().damage;
+            gpu.render(&scene, &damage).unwrap();
+            let pixels = gpu.readback().unwrap();
+            let (width, height) = (200 * scale as usize, 40 * scale as usize);
+            (0..width)
+                .map(|x| {
+                    (0..height)
+                        .filter(|y| {
+                            let p = &pixels[(y * width + x) * 4..][..4];
+                            p[0] > 120 && p[1] < 110 && p[2] < 110
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let drawn = |columns: &[Vec<usize>]| columns.iter().filter(|c| !c.is_empty()).count();
+        // Runs of columns with ink.
+        let pieces = |columns: &[Vec<usize>]| {
+            columns
+                .windows(2)
+                .filter(|w| w[0].is_empty() && !w[1].is_empty())
+                .count()
+                + usize::from(!columns[0].is_empty())
+        };
+        let solid = columns(LineStyle::Solid);
+        assert!(
+            drawn(&solid) > 50,
+            "scale {scale}: no line: {}",
+            drawn(&solid)
+        );
+        assert_eq!(pieces(&solid), 1, "scale {scale}");
+        let thick = solid.iter().map(Vec::len).max().unwrap();
+        let double = columns(LineStyle::Double);
+        assert_eq!(pieces(&double), 1, "scale {scale}");
+        assert!(double.iter().map(Vec::len).max().unwrap() >= 2 * thick);
+        let (dotted, dashed) = (columns(LineStyle::Dotted), columns(LineStyle::Dashed));
+        assert!(
+            pieces(&dotted) > 6,
+            "scale {scale}: {} dots",
+            pieces(&dotted)
+        );
+        assert!(
+            pieces(&dashed) > 3,
+            "scale {scale}: {} dashes",
+            pieces(&dashed)
+        );
+        assert!(pieces(&dashed) < pieces(&dotted));
+        assert!(
+            drawn(&dashed) * 100 > drawn(&dotted) * 110,
+            "dashes cover more"
+        );
+        let wavy = columns(LineStyle::Wavy);
+        assert_eq!(pieces(&wavy), 1, "scale {scale}: a wave doesn't break");
+        let tops: Vec<usize> = wavy.iter().filter_map(|c| c.first().copied()).collect();
+        let (low, high) = (tops.iter().min().unwrap(), tops.iter().max().unwrap());
+        assert!(high - low >= 2, "scale {scale}: it moves: {low} to {high}");
+    }
+}

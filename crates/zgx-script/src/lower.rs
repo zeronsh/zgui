@@ -6302,6 +6302,9 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         padding: [f32; 2],
         radius: f32,
         underline_offset: Option<f32>,
+        underline_style: Option<zgx::rich_text::LineStyle>,
+        underline_color: Option<zgx::theme::Themed<Color>>,
+        underline_thickness: Option<f32>,
         hover: Option<(bool, Option<zgx::theme::Themed<Color>>)>,
     }
     let owned: Vec<Owned> = spans
@@ -6332,6 +6335,9 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 padding: s.padding,
                 radius: s.radius,
                 underline_offset: s.underline_offset,
+                underline_style: s.underline_style,
+                underline_color: s.underline_color,
+                underline_thickness: s.underline_thickness,
                 hover: s.hover,
             },
             click: s.click.clone(),
@@ -6356,10 +6362,14 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                     padding,
                     radius,
                     underline_offset,
+                    underline_style,
+                    underline_color,
+                    underline_thickness,
                     hover,
                 } = span.style;
                 let decoration = || {
-                    let d = zgx::rich_text::Decoration::default();
+                    let d = zgx::rich_text::Decoration::new(underline_thickness.unwrap_or(1.))
+                        .line(underline_style.unwrap_or_default());
                     match underline_offset {
                         Some(offset) => d.offset(offset),
                         None => d,
@@ -6383,6 +6393,9 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 }
                 if underline {
                     out = out.underline(decoration());
+                }
+                if let Some(color) = underline_color {
+                    out = out.underline_color(color);
                 }
                 if let Some((underlined, color)) = hover {
                     out = out.hover(zgx::compose::SpanHover {

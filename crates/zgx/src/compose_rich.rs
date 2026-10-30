@@ -72,6 +72,8 @@ pub struct TextSpan {
     pub(crate) styles: Styles,
     pub(crate) background: Option<Color>,
     pub(crate) underline: Option<crate::rich_text::Decoration>,
+    /// The underline's colour as given, if a token: resolved as it mounts.
+    pub(crate) underline_color: Option<crate::theme::Themed<Color>>,
     pub(crate) strikethrough: Option<crate::rich_text::Decoration>,
     pub(crate) padding: [f32; 2],
     pub(crate) radius: f32,
@@ -96,6 +98,7 @@ pub fn text_span(text: impl Into<Arc<str>>) -> TextSpan {
         styles: Styles::new(),
         background: None,
         underline: None,
+        underline_color: None,
         strikethrough: None,
         padding: [0.; 2],
         radius: 0.,
@@ -171,6 +174,11 @@ impl TextSpan {
     /// Underline the span.
     pub fn underline(mut self, decoration: crate::rich_text::Decoration) -> Self {
         self.underline = Some(decoration);
+        self
+    }
+    /// The underline's colour, or a colour token, rather than the text's.
+    pub fn underline_color(mut self, color: impl Into<crate::theme::Themed<Color>>) -> Self {
+        self.underline_color = Some(color.into());
         self
     }
     /// Strike the span through.

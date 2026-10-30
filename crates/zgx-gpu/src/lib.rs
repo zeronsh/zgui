@@ -7660,13 +7660,16 @@ impl GpuRenderer {
                                         });
                                     }
                                 }
-                                shaped.quads.extend(
-                                    shaped
-                                        .decorations
-                                        .iter()
-                                        .filter(|d| !d.background)
-                                        .map(rich_decoration_quad),
-                                );
+                                for decoration in
+                                    shaped.decorations.iter().filter(|d| !d.background)
+                                {
+                                    self.line_quads(
+                                        decoration,
+                                        shaped.rich.as_deref(),
+                                        &mut shaped.quads,
+                                        &mut stats,
+                                    )?;
+                                }
                                 shaped.atlas_epoch = self.atlas_epoch;
                                 stats.geometry_rebuilds += 1;
                             }
@@ -10127,6 +10130,108 @@ impl GpuRenderer {
         self.cursor = (0, 0, 0);
         self.atlas_epoch = self.atlas_epoch.wrapping_add(1);
     }
+    /// The quads of a run's underline or strikethrough, as its `LineStyle`
+    /// says: pieces of the fill's own shapes, and for a wave a tile in the
+    /// atlas, repeated, tinted as an icon is. Nothing a frame draws differs
+    /// for a solid line, nor any shader for all of them.
+    fn line_quads(
+        &mut self,
+        d: &text::RichDecoration,
+        rich: Option<&zgx::rich_text::RichText>,
+        out: &mut Vec<TextQuad>,
+        stats: &mut GpuStats,
+    ) -> Result<(), GpuError> {
+        use zgx::rich_text::LineStyle;
+        let style = rich.map_or(LineStyle::Solid, |rich| d.line_style(rich));
+        if style == LineStyle::Solid || d.bounds.width <= 0. {
+            out.push(rich_decoration_quad(d));
+            return Ok(());
+        }
+        let b = d.bounds;
+        let thick = b.height.max(0.5);
+        let color = rgba(d.color, 1.);
+        let piece = |x: f32, y: f32, width: f32, height: f32, radius: f32| TextQuad {
+            rect: [x, y, width, height],
+            color,
+            uv: [0.; 4],
+            paint: if radius > 0. {
+                [radius, 0., 0., 1.]
+            } else {
+                [0.; 4]
+            },
+        };
+        let right = b.x + b.width;
+        // A row of `length`s, `step` apart, the last cut at the run's end.
+        let row = |length: f32, step: f32, radius: f32, out: &mut Vec<TextQuad>| {
+            for k in 0..LINE_PIECES {
+                let x = b.x + k as f32 * step;
+                if x >= right {
+                    break;
+                }
+                out.push(piece(x, b.y, length.min(right - x), thick, radius));
+            }
+        };
+        match style {
+            LineStyle::Double => {
+                out.push(piece(b.x, b.y, b.width, thick, 0.));
+                out.push(piece(b.x, b.y + 2. * thick, b.width, thick, 0.));
+            }
+            LineStyle::Dotted => row(thick, 2. * thick, thick / 2., out),
+            LineStyle::Dashed => row(3. * thick, 5. * thick, 0., out),
+            _ => {
+                // One period, in pixels: seamless, its gutter wrapping round.
+                let line = (thick * self.scale).max(1.);
+                let (period, height) = ((line * 6.).round() as u32, (line * 4.).ceil() as u32 + 2);
+                let key = WAVE_CELL | (line * 16.).round() as u64;
+                let (x, y) = match self.image_cells.get(&key) {
+                    Some(cell) => *cell,
+                    None => {
+                        let cell = self.atlas_cell(period, height, |rgba| {
+                            let row = (period + 2) as usize * 4;
+                            let (amplitude, middle) = (line, height as f32 / 2. + 0.5);
+                            let wave = std::f32::consts::TAU / period as f32;
+                            for (k, texel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                                let (cx, cy) = (k * 4 % row / 4, k * 4 / row);
+                                let px = cx as f32 - 0.5;
+                                let distance = (cy as f32 + 0.5
+                                    - middle
+                                    - amplitude * (px * wave).sin())
+                                .abs()
+                                    / (1. + (amplitude * wave * (px * wave).cos()).powi(2)).sqrt();
+                                let coverage = (0.5 + line / 2. - distance).clamp(0., 1.);
+                                texel.fill((coverage * 255.).round() as u8);
+                            }
+                        })?;
+                        self.image_cells.insert(key, cell);
+                        stats.glyph_uploads += 1;
+                        cell
+                    }
+                };
+                let (tile, tall) = (period as f32 / self.scale, height as f32 / self.scale);
+                let atlas = self.atlas_size as f32;
+                let top = b.y + thick / 2. - tall / 2.;
+                for k in 0..LINE_PIECES {
+                    let left = b.x + k as f32 * tile;
+                    if left >= right {
+                        break;
+                    }
+                    let part = ((right - left) / tile).min(1.);
+                    out.push(TextQuad {
+                        rect: [left, top, tile * part, tall],
+                        color,
+                        uv: [
+                            x as f32 / atlas,
+                            y as f32 / atlas,
+                            period as f32 * part / atlas,
+                            height as f32 / atlas,
+                        ],
+                        paint: [0., 2., 0., 0.],
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
     /// Make `visible_glyphs` the quads of `shaped`'s lines that can reach
     /// the band `top` to `top + height` (from its origin, logical points),
     /// if that leaves out most of its glyphs; whether it did. Out of line:
@@ -10193,7 +10298,18 @@ impl GpuRenderer {
                 visible.push(glyph_quad(glyph, entry, self.scale, self.atlas_size, color));
             }
         }
-        visible.extend(decorations(false));
+        let lines_from = visible.len();
+        for decoration in shaped.decorations.iter().filter(|d| !d.background) {
+            self.line_quads(decoration, shaped.rich.as_deref(), &mut visible, stats)?;
+        }
+        let mut kept = lines_from;
+        for k in lines_from..visible.len() {
+            if lines(&visible[k]) {
+                visible.swap(kept, k);
+                kept += 1;
+            }
+        }
+        visible.truncate(kept);
         self.visible_glyphs = visible;
         Ok(true)
     }
@@ -12074,6 +12190,12 @@ fn glyph_quad(
         paint: [0., 1., 0., 0.],
     }
 }
+/// The most pieces one line decoration is drawn in: past that, the rest of a
+/// very long run goes without.
+const LINE_PIECES: usize = 4096;
+/// Where wave tiles sit among `image_cells`, whose ids count up from 1: this
+/// bit and the wave's thickness in sixteenths of a pixel.
+const WAVE_CELL: u64 = 1 << 63;
 fn rich_decoration_quad(d: &text::RichDecoration) -> TextQuad {
     let rect = [d.bounds.x, d.bounds.y, d.bounds.width, d.bounds.height];
     TextQuad {

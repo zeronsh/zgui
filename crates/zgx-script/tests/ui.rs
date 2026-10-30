@@ -618,6 +618,53 @@ fn a_padded_span_wraps_its_icon_and_text() {
 }
 
 #[test]
+fn a_span_says_how_its_underline_is_drawn() {
+    use zgx::{
+        rich_text::LineStyle,
+        scene::{Color, NodeKind},
+    };
+    let mut h = Harness::inline(
+        r##"ui.theme.tokens { app = { squiggle = "#ff0010" } }
+        return ui.rich { id = "p", w = 300,
+            ui.span { "typo", literal = true, underline_style = "wavy",
+                underline_color = "$app.squiggle", underline_thickness = 2 },
+            ui.span { " note", literal = true, underline_style = "dotted" },
+            ui.span { " plain", literal = true, underline = true } }"##,
+    );
+    h.frames(2);
+    let p = h.find("p").unwrap();
+    let scene = h.ui.scene.borrow();
+    let mut stack = vec![p];
+    let text = loop {
+        let n = stack.pop().expect("a paragraph");
+        if let NodeKind::RichText { text } = scene.kind(n) {
+            break text.clone();
+        }
+        stack.extend(scene.children(n).iter().copied());
+    };
+    let line = |k: usize| text.runs()[k].underline.expect("underlined");
+    assert_eq!(line(0).line_style(), LineStyle::Wavy);
+    assert_eq!(line(0).thickness(), 2.);
+    assert_eq!(
+        line(0).color,
+        Some(Color(255, 0, 16, 255)),
+        "a token resolved"
+    );
+    assert_eq!(
+        line(1).line_style(),
+        LineStyle::Dotted,
+        "any of them underlines"
+    );
+    assert_eq!(line(2).line_style(), LineStyle::Solid);
+}
+
+#[test]
+#[should_panic(expected = "unknown `underline_style` `squiggly`")]
+fn an_unknown_underline_style_says_which_there_are() {
+    Harness::inline(r#"return ui.rich { ui.span { "a", underline_style = "squiggly" } }"#);
+}
+
+#[test]
 fn a_link_span_underlines_under_the_pointer() {
     use zgx::scene::NodeKind;
     let mut h = Harness::inline(

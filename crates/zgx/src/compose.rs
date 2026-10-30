@@ -4498,7 +4498,23 @@ fn open_element(
                 let text_end = content.len();
                 runs.push(crate::rich_text::TextRun {
                     background: span.background,
-                    underline: span.underline.or(inherited),
+                    underline: {
+                        let underline = span.underline.or(inherited);
+                        match span.underline_color {
+                            None => underline,
+                            Some(crate::theme::Themed::Value(tint)) => {
+                                underline.map(|d| d.color(tint))
+                            }
+                            Some(crate::theme::Themed::Token(token)) => underline.map(|d| {
+                                d.color(
+                                    theme
+                                        .get(token)
+                                        .color()
+                                        .unwrap_or(crate::scene::Color(0, 0, 0, 0)),
+                                )
+                            }),
+                        }
+                    },
                     strikethrough: span.strikethrough,
                     padding: if lead > 0. {
                         [0., span.padding[1]]

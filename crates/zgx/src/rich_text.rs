@@ -46,12 +46,29 @@ impl TextMeasure {
     }
 }
 
-/// A solid text decoration. An unspecified color uses the run foreground.
+/// How a decoration's line is drawn (CSS's `text-decoration-style`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LineStyle {
+    /// One unbroken line.
+    #[default]
+    Solid,
+    /// Two lines.
+    Double,
+    /// A row of dots.
+    Dotted,
+    /// A row of dashes.
+    Dashed,
+    /// A wave, as a spelling mistake or a diagnostic is marked.
+    Wavy,
+}
+/// A text decoration. An unspecified color uses the run foreground.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Decoration {
     /// Its colour; `None`, the run's text colour.
     pub color: Option<Color>,
     thickness: f32,
+    line: LineStyle,
     /// How far below the baseline it sits (CSS `text-underline-offset`);
     /// None, a tenth of the font size.
     offset: Option<f32>,
@@ -67,8 +84,18 @@ impl Decoration {
             } else {
                 1.
             },
+            line: LineStyle::Solid,
             offset: None,
         }
+    }
+    /// Drawn as `line`.
+    pub fn line(mut self, line: LineStyle) -> Self {
+        self.line = line;
+        self
+    }
+    /// How its line is drawn.
+    pub fn line_style(self) -> LineStyle {
+        self.line
     }
     /// Below the baseline by `px` (an underline's; CSS `text-underline-offset`).
     pub fn offset(mut self, px: f32) -> Self {
@@ -212,10 +239,10 @@ impl RichText {
         self.same_metrics(other)
             && self.runs.iter().zip(other.runs.iter()).all(|(a, b)| {
                 a.background.is_some() == b.background.is_some()
-                    && a.underline.map(|d| (d.thickness(), d.offset))
-                        == b.underline.map(|d| (d.thickness(), d.offset))
-                    && a.strikethrough.map(|d| d.thickness())
-                        == b.strikethrough.map(|d| d.thickness())
+                    && a.underline.map(|d| (d.thickness(), d.offset, d.line))
+                        == b.underline.map(|d| (d.thickness(), d.offset, d.line))
+                    && a.strikethrough.map(|d| (d.thickness(), d.line))
+                        == b.strikethrough.map(|d| (d.thickness(), d.line))
             })
     }
     pub(crate) fn same_metrics(&self, other: &Self) -> bool {

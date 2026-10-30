@@ -3941,6 +3941,11 @@ export type SpanProps = {
 	-- How far below the baseline the underline sits (CSS's
 	-- `text-underline-offset`).
 	underline_offset: number?,
+	-- How the underline is drawn, its colour and its thickness; any of them
+	-- underlines the span. `"wavy"` marks a mistake or a diagnostic.
+	underline_style: ("solid" | "double" | "dotted" | "dashed" | "wavy")?,
+	underline_color: Color?,
+	underline_thickness: number?,
 	strike: boolean?,
 	font: "mono"?,
 	-- A link (`on_click`) under the pointer: underlined, recoloured. With

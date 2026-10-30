@@ -2237,6 +2237,16 @@ pub struct RichDecoration {
     pub strike: bool,
 }
 impl RichDecoration {
+    /// How this line is drawn under `rich`; solid for a background.
+    pub fn line_style(&self, rich: &zgx::rich_text::RichText) -> zgx::rich_text::LineStyle {
+        let run = rich.runs().get(self.run);
+        let line = if self.strike {
+            run.and_then(|run| run.strikethrough)
+        } else {
+            run.and_then(|run| run.underline)
+        };
+        line.map(|line| line.line_style()).unwrap_or_default()
+    }
     /// This decoration's colour under `rich`, which has the same shape.
     pub fn color_in(&self, rich: &zgx::rich_text::RichText) -> zgx::scene::Color {
         let run = &rich.runs()[self.run];
