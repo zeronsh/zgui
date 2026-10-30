@@ -422,7 +422,9 @@ Zeron's windows for the run. `audit.json` records what the preflight found
 and the machine's state: displays (count, resolution, refresh), a live
 wallpaper, power mode, macOS build and uptime, beside the desktop-alone
 baseline each repeat measures. Those explain a shift between days in the
-desktop's own cost.
+desktop's own cost. With Zeron hidden, a window server above 2% of a core stops
+the run (`desktop_still`): a live wallpaper left drawing voids every
+WindowServer and GPU number, and only a person can decide to quit it.
 
 A looping animation would hold the floor for as long as it plays, at any
 rate (2 fps held it all, 2026-10-30). So a small declared loop (`anime.animate`

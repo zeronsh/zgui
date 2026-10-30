@@ -721,6 +721,8 @@ def main():
         log=lambda line: print(line, flush=True), threshold=args.preflight_threshold)
     hidden = hide(args.hide) if args.hide else False
     try:
+        if not args.no_preflight:
+            preflight.desktop_still()
         measure(args, frameworks, modes, repeats, commit, found)
     finally:
         if hidden:
