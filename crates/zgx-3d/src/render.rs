@@ -564,6 +564,10 @@ impl Viewport for Renderer {
                     (d.geometry.id(), d.matrix, cutoff)
                 })
                 .collect::<Vec<_>>();
+            // Poses: an empty palette has none, so no mesh need be asked.
+            if palette.is_empty() {
+                return (matrix, meshes, Vec::new(), Vec::new());
+            }
             let joints = drawn
                 .iter()
                 .filter(|d| !translucent(d))
