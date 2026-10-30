@@ -27,7 +27,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `relative` | `boolean` | `false` | a containing block for absolute descendants |
 | `top`, `left`, `right`, `bottom` | `Length` | | insets of an absolute node |
 | `inset_start`, `inset_end` | `Length` | | its inset from the start or end of a line (CSS's `inset-inline-start`/`-end`): `left` and `right` left to right, `right` and `left` with `dir = "rtl"` |
-| `dir` | `"ltr" \| "rtl"` | its parent's (`"ltr"` at the root) | which way lines run in it and what it holds (HTML's `dir`): `"rtl"` runs rows from the right, starts a column's children and text at the right, and turns the `ps`/`pe`, `ms`/`me`, `inset_start`/`inset_end` edges round; `pl`, `ml` and `left` stay on the left |
+| `dir` | `"ltr" \| "rtl"` | its parent's (`"ltr"` at the root) | which way lines run in it and what it holds (HTML's `dir`): `"rtl"` runs rows from the right, starts a column's children and text at the right, and turns the `ps`/`pe`, `ms`/`me`, `inset_start`/`inset_end` edges round; `pl`, `ml` and `left` stay on the left A function or state follows: [text from people](#which-way-text-from-people-runs), which may run either way |
 
 ## Spacing
 
@@ -199,6 +199,35 @@ return ui.div {
 | `tabular` | `boolean` | `false` | tabular figures: every digit one width, so a changing number holds still |
 | `underline` | `boolean` | `false` | underlined text, inherited (CSS's `text-decoration`): `hover = { underline = true }` underlines a link button's label |
 | `underline_offset` | `number` | a tenth of the text size | points below the baseline the underline sits; inherited |
+
+### Which way text from people runs
+
+A message or a field holds what someone wrote, in whichever language. Its letters always run the right way, but `dir` decides which side it starts from, and a function follows the text: HTML's `dir="auto"` looks at the first strong letter, and so can a script.
+
+```lua
+local message = ui.state("message", "مرحبا")
+
+local function direction(text: string): "ltr" | "rtl"
+	for _, c in utf8.codes(text) do
+		-- Hebrew, Arabic and their neighbours, and their presentation forms.
+		if (c >= 0x590 and c <= 0x8FF) or (c >= 0xFB1D and c <= 0xFDFF) or (c >= 0xFE70 and c <= 0xFEFF) then
+			return "rtl"
+		elseif (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c >= 0xC0 then
+			return "ltr"
+		end
+	end
+	return "ltr"
+end
+
+return ui.textarea {
+	w = 300,
+	h = 80,
+	value = message,
+	dir = function()
+		return direction(message:get())
+	end,
+}
+```
 
 ## Transforms
 
