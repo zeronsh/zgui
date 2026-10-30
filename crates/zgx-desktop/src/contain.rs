@@ -70,8 +70,9 @@ pub(crate) fn run<R>(
 }
 
 thread_local! {
-    /// Panics contained where no window host is at hand (a popup's frame,
-    /// drawn by its host), for the window's banner (`take_reported`).
+    /// What was contained where no window host is at hand (a popup's
+    /// frame, drawn by its host; layout that didn't settle, heard as it
+    /// prepares), for the window's banner (`take_reported`).
     static REPORTED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 /// Keep `message` for the window's banner (`run`'s `report` where only the

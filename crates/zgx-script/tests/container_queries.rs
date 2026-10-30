@@ -33,3 +33,35 @@ fn a_layout_answers_its_width_in_the_frame_it_changes() {
     assert!(h.find("sidebar").is_some());
     assert_eq!(h.bounds("content").width, 300.);
 }
+
+#[test]
+fn a_layout_that_answers_itself_forever_is_reported_once_and_kept() {
+    let mut h = Harness::inline(
+        r##"local box = ui.ref()
+        local on = ui.state("on", false)
+        return ui.column {
+            ui.div { id = "box", ref = box, h = 20, w = function()
+                if not on:get() then
+                    return 100
+                end
+                return if (box.width or 100) > 150 then 100 else 200
+            end },
+        }"##,
+    );
+    let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let told = heard.clone();
+    h.host
+        .on_error(move |error| told.borrow_mut().push(error.to_string()));
+    h.ui.contain_layout_feedback();
+    h.host
+        .set_state("on", zgx_script::Value::Bool(true))
+        .unwrap();
+    h.frames(5);
+    let box_ = h.find("box").unwrap();
+    let held = h.ui.scene.borrow().bounds(box_).width;
+    assert!(held == 100. || held == 200., "{held}");
+    h.frames(5);
+    assert_eq!(h.ui.scene.borrow().bounds(box_).width, held, "held");
+    assert_eq!(heard.borrow().len(), 1, "{:?}", heard.borrow());
+    assert!(heard.borrow()[0].contains("did not settle"));
+}

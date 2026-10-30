@@ -1363,6 +1363,7 @@ struct Host {
     /// and the damaged frames tried (`contain::run`).
     render_fault: Option<crate::contain::Fault>,
     popups_fault: Option<crate::contain::Fault>,
+    _layout_issues: zgx::issues::IssueListener,
     frames_tried: u64,
     adapter: Option<accesskit_winit::Adapter>,
     tree: AccessibilityTree,
@@ -1597,6 +1598,12 @@ impl Host {
         // No reader has asked for the window's tree yet: names and values
         // made from state wait for one (`InitialTreeRequested`).
         ui.set_assistive_technology(false);
+        // A layout that doesn't settle is reported, and the app goes on.
+        ui.contain_layout_feedback();
+        let layout_issues = zgx::issues::on_issue(&ui.runtime, |issue| {
+            eprintln!("zgx: {issue}");
+            crate::contain::queue(issue);
+        });
         let viewport = ui.signal((options.width as f32, options.height as f32));
         let frames = FrameClock::new();
         frames.set_max_rate(options.max_frame_rate);
@@ -1742,6 +1749,7 @@ impl Host {
             error_banner: None,
             render_fault: None,
             popups_fault: None,
+            _layout_issues: layout_issues,
             frames_tried: 0,
             adapter: None,
             tree: AccessibilityTree::new(),
@@ -2193,6 +2201,10 @@ impl Host {
             .ui
             .advance_interactions(std::time::Instant::now())?;
         self.context.ui.try_prepare_frame()?;
+        // What preparing it held back from the window (`Ui::contain_layout_feedback`).
+        for message in crate::contain::take_reported() {
+            self.show_error(&message);
+        }
         // A large removal's effects are freed a chunk per frame (`Ui::reclaim`,
         // as the frame is prepared): frames keep coming until they are.
         if self.context.ui.reclaiming() {

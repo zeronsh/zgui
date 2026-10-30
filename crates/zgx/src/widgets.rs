@@ -815,6 +815,11 @@ impl EditorHandle {
         self.refresh();
     }
 }
+/// The layout and notification passes a frame takes to settle.
+const LAYOUT_PASSES: usize = 64;
+/// The passes it takes once layout has failed to settle
+/// (`Ui::contain_layout_feedback`): each change is tried again, cheaply.
+const RETRY_LAYOUT_PASSES: usize = 16;
 /// Layout notifications repeatedly changed their own allocation without settling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutFeedbackError {
@@ -1161,6 +1166,12 @@ pub(crate) struct UiStorage {
     editor_layout_revision: Cell<Option<u64>>,
     bounds_geometry_revision: Cell<Option<u64>>,
     preparing_frame: Cell<bool>,
+    /// A host keeps going past layout that doesn't settle
+    /// (`Ui::contain_layout_feedback`).
+    contains_layout: Cell<bool>,
+    /// Layout that didn't settle, held as it was: the scene's layout and
+    /// geometry revisions then (`Ui::hold_layout`).
+    unsettled: Cell<Option<(u64, u64)>>,
     /// Where focus falls once the frame settles, if nothing took it: the
     /// nearest focusable ancestor of a removed focused node (`Ui::remove`).
     refocus: Cell<Option<NodeId>>,
@@ -1421,6 +1432,8 @@ impl Ui {
             editor_layout_revision: Cell::new(None),
             bounds_geometry_revision: Cell::new(None),
             preparing_frame: Cell::new(false),
+            contains_layout: Cell::new(false),
+            unsettled: Cell::new(None),
             refocus: Cell::new(None),
             content_sizes: RefCell::default(),
             observed_sizes: RefCell::default(),
@@ -2780,7 +2793,8 @@ impl Ui {
     /// of hanging the UI thread. At most 64 layout/notification passes are allowed.
     /// Reentrant calls defer notifications to the active outer preparation.
     /// An error does not roll back application mutations; correct the dependency
-    /// and call again. Native window hosts propagate this error to `Application::run`.
+    /// and call again. Under [`contain_layout_feedback`](Self::contain_layout_feedback),
+    /// as in a window, this is reported and the frame goes on instead.
     pub fn try_prepare_frame(&self) -> Result<(), LayoutFeedbackError> {
         if self.storage.preparing_frame.get() {
             return Ok(());
@@ -2802,6 +2816,19 @@ impl Ui {
         crate::caret_blink::settle(self);
         Ok(())
     }
+    /// Go on past layout that doesn't settle, rather than return
+    /// [`LayoutFeedbackError`]: the layout stands as the last pass left it,
+    /// nothing hears its geometry until something else changes it (so the
+    /// feedback stops, and idle stays idle), and [`issues::on_issue`]
+    /// hears of it once, naming the nodes that still moved. Then a frame
+    /// tries again, with fewer passes, whenever the layout has changed.
+    /// Window hosts call this: a layout that doesn't converge never ends an
+    /// app.
+    ///
+    /// [`issues::on_issue`]: crate::issues::on_issue
+    pub fn contain_layout_feedback(&self) {
+        self.storage.contains_layout.set(true);
+    }
     fn prepare_frame_once(&self) -> Result<(), LayoutFeedbackError> {
         if self.storage.preparing_frame.replace(true) {
             return Ok(());
@@ -2815,7 +2842,18 @@ impl Ui {
         } else {
             self.reclaim(RECLAIM_BUDGET);
         }
-        for _ in 0..64 {
+        let held = self.storage.unsettled.get();
+        if let Some(held) = held
+            && self.layout_still_held(held)
+        {
+            return Ok(());
+        }
+        let passes = if held.is_some() {
+            RETRY_LAYOUT_PASSES
+        } else {
+            LAYOUT_PASSES
+        };
+        for _ in 0..passes {
             self.scene.borrow_mut().prepare_layout();
             self.input.validate_drag(&self.scene);
             let (layout_revision, geometry_revision) = {
@@ -2837,6 +2875,7 @@ impl Ui {
                         self.input.focus(&self.scene, Some(id));
                     }
                     self.sync_selection();
+                    self.storage.unsettled.set(None);
                     return Ok(());
                 }
                 continue;
@@ -2933,7 +2972,85 @@ impl Ui {
             // Internal geometry bindings are constrained by their viewport.
             // A second pass also prepares editors mounted by virtual rows.
         }
-        Err(LayoutFeedbackError { passes: 64 })
+        if self.storage.contains_layout.get() {
+            self.hold_layout(passes, held.is_some());
+            return Ok(());
+        }
+        Err(LayoutFeedbackError { passes })
+    }
+    /// Whether layout held unsettled (`hold_layout`) stands: laid out, as a
+    /// frame needs, it is as it was held.
+    #[cold]
+    fn layout_still_held(&self, held: (u64, u64)) -> bool {
+        self.scene.borrow_mut().prepare_layout();
+        self.input.validate_drag(&self.scene);
+        let scene = self.scene.borrow();
+        (scene.layout_revision(), scene.geometry_revision()) == held
+    }
+    /// Layout didn't settle in `passes`: keep what the last one left, and
+    /// let what hears geometry wait, which ends the feedback. Reported
+    /// unless this was already a retry of the same trouble.
+    #[cold]
+    #[inline(never)]
+    fn hold_layout(&self, passes: usize, retry: bool) {
+        self.scene.borrow_mut().prepare_layout();
+        self.input.validate_drag(&self.scene);
+        let moved = self.nodes_still_moving();
+        let held = {
+            let scene = self.scene.borrow();
+            (scene.layout_revision(), scene.geometry_revision())
+        };
+        self.storage.unsettled.set(Some(held));
+        self.sync_selection();
+        if retry {
+            return;
+        }
+        let error = LayoutFeedbackError { passes };
+        let what = if moved.is_empty() {
+            "layout callbacks kept asking for another pass".to_string()
+        } else {
+            let nodes: Vec<String> = moved.iter().map(|n| format!("@{}", n.number())).collect();
+            format!("still moving: {}", nodes.join(" "))
+        };
+        crate::issues::report(
+            &self.runtime,
+            &format!("{error} ({what}); the layout stays as it is until something changes it"),
+        );
+    }
+    /// The nodes whose geometry differs from what was last told of it, at
+    /// most eight: those the last pass moved, and what reads them moved it.
+    fn nodes_still_moving(&self) -> Vec<NodeId> {
+        let scene = self.scene.borrow();
+        let sizes = {
+            let content = self.storage.content_sizes.borrow();
+            let own = self.storage.observed_sizes.borrow();
+            let content = content.iter().filter(|(node, signal)| {
+                scene.contains(**node)
+                    && signal.with_untracked(|size| *size != allocated_content_size(&scene, **node))
+            });
+            let own = own.iter().filter(|(node, signal)| {
+                scene.contains(**node)
+                    && signal.with_untracked(|size| {
+                        let bounds = scene.layout_box(**node);
+                        *size != (bounds.width, bounds.height)
+                    })
+            });
+            content
+                .chain(own)
+                .map(|(node, _)| *node)
+                .collect::<Vec<_>>()
+        };
+        let bounds = self.storage.observed_bounds.borrow();
+        let bounds = bounds.iter().filter(|(node, signal)| {
+            scene.contains(**node)
+                && signal.with_untracked(|bounds| *bounds != scene.world_bounds(**node))
+        });
+        let mut moved = sizes;
+        moved.extend(bounds.map(|(node, _)| *node));
+        moved.sort_by_key(|node| node.number());
+        moved.dedup();
+        moved.truncate(8);
+        moved
     }
     /// Recompute editor geometry after changing the font backend or display scale.
     pub(crate) fn observe_text_geometry_revision(&self) -> Signal<u64> {
@@ -6605,6 +6722,94 @@ mod bounds_observer_tests {
         assert!(!ui.scene.borrow().contains(node));
         assert!(ui.storage.observed_bounds.borrow().is_empty());
         assert_eq!(ui.runtime.effect_count(), 0);
+    }
+
+    /// A box whose width follows from its own width, 100 ↔ 200 for as long
+    /// as `broken` holds, and how often its binding ran.
+    fn oscillating(ui: &mut Ui, broken: Rc<Cell<bool>>) -> (NodeId, Rc<Cell<u32>>) {
+        let node = ui.container(ui.root(), Layout::Overlay, fixed(100., 40.));
+        let size = ui.observe_size(node);
+        let (scene, runs) = (Rc::downgrade(&ui.scene), Rc::new(Cell::new(0)));
+        let told = runs.clone();
+        ui.bind(node, move || {
+            let seen = size.get().0;
+            told.set(told.get() + 1);
+            if broken.get() {
+                let width = if seen == 200. { 100. } else { 200. };
+                let scene = scene.upgrade().unwrap();
+                scene.borrow_mut().set_style(node, fixed(width, 40.));
+            }
+        });
+        (node, runs)
+    }
+
+    #[test]
+    fn layout_that_never_settles_is_held_reported_once_and_recovers() {
+        let mut ui = Ui::new(400., 200.);
+        ui.contain_layout_feedback();
+        let issues = Rc::new(RefCell::new(Vec::<String>::new()));
+        let heard = issues.clone();
+        let _listener = crate::issues::on_issue(&ui.runtime, move |issue| {
+            heard.borrow_mut().push(issue.to_string());
+        });
+        let delivered = Rc::new(Cell::new(0));
+        let read = delivered.clone();
+        ui.on_event(ui.root(), false, move |_| read.set(read.get() + 1));
+        let broken = Rc::new(Cell::new(true));
+        let (node, runs) = oscillating(&mut ui, broken.clone());
+
+        // It would have ended the app: it goes on, told once which node.
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(issues.borrow().len(), 1);
+        let said = issues.borrow()[0].clone();
+        assert!(said.contains(&format!("@{}", node.number())), "{said}");
+        assert!(said.contains("did not settle after 64 passes"), "{said}");
+
+        // Held: frames do nothing more, so an idle window stays idle.
+        let held = runs.get();
+        let bounds = ui.scene.borrow().bounds(node);
+        for _ in 0..5 {
+            ui.try_prepare_frame().unwrap();
+        }
+        assert_eq!(runs.get(), held, "nothing hears a held layout");
+        assert_eq!(ui.scene.borrow().bounds(node), bounds);
+
+        // Input goes on, against what shows.
+        ui.try_dispatch(InputEvent::PointerMove { x: 1., y: 1. })
+            .unwrap();
+        assert!(delivered.get() > 0);
+
+        // Something else changes it: tried again in fewer passes, unreported.
+        let other = ui.container(ui.root(), Layout::Overlay, fixed(10., 10.));
+        ui.try_prepare_frame().unwrap();
+        let retried = runs.get() - held;
+        assert!((1..=16).contains(&retried), "{retried} passes");
+        assert_eq!(issues.borrow().len(), 1, "one trouble, one report");
+        ui.remove(other);
+
+        // Repaired (a reload), it settles and geometry is heard again.
+        broken.set(false);
+        ui.scene.borrow_mut().set_style(node, fixed(150., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(ui.scene.borrow().bounds(node).width, 150.);
+        let settled = runs.get();
+        ui.scene.borrow_mut().set_style(node, fixed(120., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert!(runs.get() > settled, "heard again once settled");
+        assert_eq!(issues.borrow().len(), 1);
+
+        // A new trouble is a new report.
+        broken.set(true);
+        ui.scene.borrow_mut().set_style(node, fixed(100., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(issues.borrow().len(), 2);
+    }
+
+    #[test]
+    fn without_containment_layout_that_never_settles_is_an_error() {
+        let mut ui = Ui::new(400., 200.);
+        oscillating(&mut ui, Rc::new(Cell::new(true)));
+        assert_eq!(ui.try_prepare_frame().unwrap_err().passes, 64);
     }
 
     #[test]

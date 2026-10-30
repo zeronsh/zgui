@@ -1199,6 +1199,8 @@ impl Ui {
     /// Keep highlights on the text as it is laid out again, and drop a
     /// selection whose text is gone. Frame preparation calls this; it
     /// returns at once unless a selection shows and the scene changed.
+    /// (Inlined: a second, cold caller would outline it from every frame.)
+    #[inline(always)]
     pub(crate) fn sync_selection(&self) {
         let synced = {
             let state = self.selection_state().borrow();

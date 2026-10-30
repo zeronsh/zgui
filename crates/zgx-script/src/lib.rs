@@ -981,6 +981,8 @@ struct Inner {
     show_errors: bool,
     /// What hears each script error (`on_error`), and what follows them.
     error_hooks: ErrorHooks,
+    /// Tells `error_hooks` of what the framework reports (`zgx::issues`).
+    _issues: zgx::issues::IssueListener,
     error_watch: RefCell<Option<Box<dyn std::any::Any>>>,
     plugin_dir: Option<PathBuf>,
     plugins: Vec<Script>,
@@ -1118,6 +1120,7 @@ impl ScriptHost {
             w.design = mode;
             w.design_forced = true;
         }
+        let error_hooks = ErrorHooks::default();
         let host = Self(Rc::new(Inner {
             runtime: runtime.clone(),
             app,
@@ -1136,7 +1139,13 @@ impl ScriptHost {
             picked: Rc::default(),
             opens: Rc::default(),
             show_errors: cfg!(debug_assertions),
-            error_hooks: Rc::default(),
+            error_hooks: error_hooks.clone(),
+            _issues: zgx::issues::on_issue(runtime, move |issue| {
+                let hooks: Vec<_> = error_hooks.borrow().clone();
+                for hook in hooks {
+                    hook(issue);
+                }
+            }),
             error_watch: RefCell::default(),
             plugin_dir: None,
             packages: Vec::new(),

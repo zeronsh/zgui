@@ -549,7 +549,7 @@ still report the bounded layout feedback error described below.
 
 ## Allocation feedback errors
 
-A size-dependent row constructor or disposal callback can repeatedly change its own viewport. `Ui::try_prepare_frame` returns `LayoutFeedbackError` after at most 64 stabilization passes instead of hanging. Reentrant preparation defers notifications to the outer call. Correct the model dependency before retrying; application mutations are not rolled back. `try_dispatch` also reports this error without delivering input against unstable geometry. The convenience `prepare_frame` and `dispatch` methods panic with the same diagnostic, while native drawing and input propagate it through `Application::run`.
+A size-dependent row constructor or disposal callback can repeatedly change its own viewport. `Ui::try_prepare_frame` returns `LayoutFeedbackError` after at most 64 stabilization passes instead of hanging. Reentrant preparation defers notifications to the outer call. Correct the model dependency before retrying; application mutations are not rolled back. Window hosts call `Ui::contain_layout_feedback`, so in a window this is reported through `zgx::issues::on_issue` and the app goes on with the layout it reached ([what an app keeps running through](application.md#when-something-fails)). `try_dispatch` also reports this error without delivering input against unstable geometry. The convenience `prepare_frame` and `dispatch` methods panic with the same diagnostic, while native drawing and input propagate it through `Application::run`.
 
 ```rust
 use zgx::{widgets::Ui, input::InputEvent};

@@ -25,6 +25,7 @@ pub mod gpu_view;
 pub mod components;
 
 pub mod i18n;
+pub mod issues;
 pub mod local_time;
 pub mod timer;
 
