@@ -67,6 +67,7 @@ impl LoopSheet {
             times,
             duration,
             phase: self.baked.started.elapsed().as_secs_f64() % duration,
+            frame: 1. / self.baked.fps as f64,
         }
     }
 }

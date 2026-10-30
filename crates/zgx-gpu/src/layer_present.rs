@@ -473,6 +473,8 @@ pub(crate) struct LoopShown<'a> {
     pub duration: f64,
     /// How far into the loop it is now, in seconds.
     pub phase: f64,
+    /// A frame's length, in seconds.
+    pub frame: f64,
 }
 unsafe extern "C" {
     fn CACurrentMediaTime() -> f64;
@@ -518,7 +520,10 @@ fn loop_animation(shown: &LoopShown<'_>) -> Option<Retained<AnyObject>> {
         let _: () = msg_send![&*animation, setDuration: shown.duration];
         let _: () = msg_send![&*animation, setRepeatCount: f32::INFINITY];
         let _: () = msg_send![&*animation, setRemovedOnCompletion: false];
-        let _: () = msg_send![&*animation, setBeginTime: CACurrentMediaTime() - shown.phase];
+        // On one clock: every loop at a rate steps at the same moments, so
+        // the window server composites them once, as one tick drew them.
+        let begin = ((CACurrentMediaTime() - shown.phase) / shown.frame).round() * shown.frame;
+        let _: () = msg_send![&*animation, setBeginTime: begin];
         Some(animation)
     }
 }
