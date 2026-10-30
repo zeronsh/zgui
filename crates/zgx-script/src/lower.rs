@@ -6332,9 +6332,11 @@ fn sticky_list<K: PartialEq + Clone + 'static>(
 
 fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
     /// A span with its text and handler owned by the closure.
-    struct Owned {
+    struct OwnedSpan {
         text: Text,
         style: SpanStyle,
+        font: Option<Rc<str>>,
+        followed: Vec<(&'static str, Ty, Owned)>,
         click: Option<Handler>,
         href: Option<Arc<str>>,
         icon: Option<crate::node::SpanIcon>,
@@ -6348,7 +6350,6 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         italic: bool,
         underline: bool,
         strike: bool,
-        mono: bool,
         padding: [f32; 2],
         radius: f32,
         underline_offset: Option<f32>,
@@ -6357,9 +6358,9 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         underline_thickness: Option<f32>,
         hover: Option<(bool, Option<zgx::theme::Themed<Color>>)>,
     }
-    let owned: Vec<Owned> = spans
+    let owned: Vec<OwnedSpan> = spans
         .iter()
-        .map(|s| Owned {
+        .map(|s| OwnedSpan {
             text: match &s.text {
                 Text::Literal(l) => Text::Literal(l.clone()),
                 Text::Template(segments) => Text::Template(
@@ -6381,7 +6382,6 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 italic: s.italic,
                 underline: s.underline,
                 strike: s.strike,
-                mono: s.mono,
                 padding: s.padding,
                 radius: s.radius,
                 underline_offset: s.underline_offset,
@@ -6390,6 +6390,10 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 underline_thickness: s.underline_thickness,
                 hover: s.hover,
             },
+            font: s.font.clone(),
+            followed: (s.followed.iter())
+                .map(|(name, ty, source)| (*name, *ty, resolve_owned(source)))
+                .collect(),
             click: s.click.clone(),
             href: s.href.clone(),
             icon: s.icon.clone(),
@@ -6400,6 +6404,37 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         owned
             .iter()
             .map(|span| {
+                let mut style = span.style;
+                let mut font = span.font.clone();
+                // Tracked: a change builds the paragraph again.
+                for (name, ty, source) in &span.followed {
+                    let lit = resolve(source, *ty, None, &vm);
+                    let themed = match &lit {
+                        Some(Lit::Color(color)) => Some(zgx::theme::Themed::Value(*color)),
+                        Some(Lit::Token(token)) => Some(zgx::theme::Themed::Token(*token)),
+                        _ => None,
+                    };
+                    let number = match lit {
+                        Some(Lit::Num(number)) => Some(number),
+                        _ => None,
+                    };
+                    let on = matches!(lit, Some(Lit::Bool(true)));
+                    match *name {
+                        "color" => style.color = themed,
+                        "bg" => style.background = themed,
+                        "text_size" => style.size = number,
+                        "weight" => style.weight = number.map(|weight| weight as u16),
+                        "bold" => style.weight = on.then_some(700),
+                        "italic" => style.italic = on,
+                        "underline" => style.underline = on,
+                        "strike" => style.strike = on,
+                        _ => {
+                            if let Some(Lit::Str(name)) = lit {
+                                font = Some(name);
+                            }
+                        }
+                    }
+                }
                 let SpanStyle {
                     color,
                     background,
@@ -6408,7 +6443,6 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                     italic,
                     underline,
                     strike,
-                    mono,
                     padding,
                     radius,
                     underline_offset,
@@ -6416,7 +6450,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                     underline_color,
                     underline_thickness,
                     hover,
-                } = span.style;
+                } = style;
                 let decoration = || {
                     let d = zgx::rich_text::Decoration::new(underline_thickness.unwrap_or(1.))
                         .line(underline_style.unwrap_or_default());
@@ -6456,8 +6490,8 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 if strike {
                     out = out.strikethrough(Default::default());
                 }
-                if mono {
-                    out = out.font_family(FontFamily::Monospace);
+                if let Some(font) = font {
+                    out = out.font_family(font_family(&font));
                 }
                 if padding != [0.; 2] {
                     out = out.padding(padding[0], padding[1]);
@@ -6856,12 +6890,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
             "end" => TextAlign::End,
             _ => TextAlign::Start,
         }),
-        (Font, Lit::Str(v)) => match &**v {
-            "mono" | "monospace" => s.font_family(FontFamily::Monospace),
-            "sans" | "sans-serif" => s.font_family(FontFamily::SansSerif),
-            "serif" => s.font_family(FontFamily::Serif),
-            name => s.font_family(FontFamily::Named(name.into())),
-        },
+        (Font, Lit::Str(v)) => s.font_family(font_family(v)),
         (Wrap, Lit::Bool(v)) => s.text_wrap(*v),
         (Truncate, Lit::Bool(true)) => s.truncate(),
         (Lines, Lit::Num(v)) => s.line_clamp(*v as u32),
@@ -6875,6 +6904,16 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         }
         (FontFeatures, Lit::Str(v)) => s.font_features(font_features(v)),
         _ => s,
+    }
+}
+
+/// A `font`: a generic family, or a family's name.
+fn font_family(name: &str) -> FontFamily {
+    match name {
+        "mono" | "monospace" => FontFamily::Monospace,
+        "sans" | "sans-serif" => FontFamily::SansSerif,
+        "serif" => FontFamily::Serif,
+        name => FontFamily::Named(name.into()),
     }
 }
 

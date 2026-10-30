@@ -1140,7 +1140,12 @@ pub(crate) struct Span {
     pub italic: bool,
     pub underline: bool,
     pub strike: bool,
-    pub mono: bool,
+    /// `font`: as `ui.text`'s, `"mono"` or a family's name.
+    pub font: Option<Rc<str>>,
+    /// Those of its options given a state or a function, and what it was
+    /// given: read as the paragraph is built, so a change builds it again.
+    /// Empty for most spans.
+    pub followed: Vec<(&'static str, Ty, Source)>,
     /// Room around it (across, down) and its background's corners: an
     /// inline code chip.
     pub padding: [f32; 2],
@@ -3809,6 +3814,19 @@ pub(crate) fn label(table: &Table) -> mlua::Result<String> {
     }
 }
 
+/// A span's options that follow a state or function, and their types.
+const SPAN_FOLLOWS: &[(&str, Ty)] = &[
+    ("color", Ty::Color),
+    ("bg", Ty::Color),
+    ("text_size", Ty::Num),
+    ("weight", Ty::Num),
+    ("bold", Ty::Bool),
+    ("italic", Ty::Bool),
+    ("underline", Ty::Bool),
+    ("strike", Ty::Bool),
+    ("font", Ty::Str),
+];
+
 /// `ui.span { "text", bold = true, color = "#f80", on_click = fn }`;
 /// `href = "https://…"` makes it a link that opens it.
 fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
@@ -3829,7 +3847,8 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         italic: false,
         underline: false,
         strike: false,
-        mono: false,
+        font: None,
+        followed: Vec::new(),
         padding: [0.; 2],
         radius: 0.,
         click: None,
@@ -3842,7 +3861,19 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         icon: None,
     };
     if let Some(t) = table {
-        let value = |k: &str| t.get::<Value>(k);
+        let followed = std::cell::RefCell::new(Vec::new());
+        let value = |k: &str| -> mlua::Result<Value> {
+            let given: mlua::Value = t.get(k)?;
+            if matches!(given, mlua::Value::Function(_) | mlua::Value::UserData(_))
+                && let Some((name, ty)) = SPAN_FOLLOWS.iter().find(|(name, _)| *name == k)
+            {
+                followed
+                    .borrow_mut()
+                    .push((*name, *ty, source(lua, *ty, name, given)?));
+                return Ok(Value::Nil);
+            }
+            lua.unpack(given)
+        };
         span.color = themed_color(&value("color")?);
         span.background = themed_color(&value("bg")?);
         span.size = value("text_size")?.as_f64().map(|v| v as f32);
@@ -3853,7 +3884,10 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         span.italic = value("italic")?.truthy();
         span.underline = value("underline")?.truthy();
         span.strike = value("strike")?.truthy();
-        span.mono = matches!(&value("font")?, Value::Str(f) if &**f == "mono");
+        span.font = match value("font")? {
+            Value::Str(font) => Some(font),
+            _ => None,
+        };
         // `padding = 4` (across) or `{ 4, 0.5 }` (across, down).
         span.padding = match value("padding")? {
             Value::Num(x) => [x as f32, 0.],
@@ -3876,6 +3910,7 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         };
         span.underline_color = themed_color(&value("underline_color")?);
         span.underline_thickness = value("underline_thickness")?.as_f64().map(|v| v as f32);
+        span.followed = followed.into_inner();
         // One of them says it is underlined, as `underline = true` does.
         span.underline |= span.underline_style.is_some()
             || span.underline_color.is_some()

@@ -4057,13 +4057,18 @@ export type MarkdownViewProps = {
 export type SpanProps = {
 	-- The text first.
 	[number]: Text,
-	color: Color?,
-	bg: Color?,
-	text_size: number?,
-	weight: number?,
-	bold: boolean?,
-	italic: boolean?,
-	underline: boolean?,
+	-- These follow a state or a function: a change builds the paragraph
+	-- again, keeping its node and any selection in it.
+	color: Reactive<Color>?,
+	bg: Reactive<Color>?,
+	text_size: Reactive<number>?,
+	weight: Reactive<number>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	underline: Reactive<boolean>?,
+	strike: Reactive<boolean>?,
+	-- As `ui.text`'s: "mono", "sans", "serif" or a family's name.
+	font: Reactive<string>?,
 	-- How far below the baseline the underline sits (CSS's
 	-- `text-underline-offset`).
 	underline_offset: number?,
@@ -4072,8 +4077,6 @@ export type SpanProps = {
 	underline_style: ("solid" | "double" | "dotted" | "dashed" | "wavy")?,
 	underline_color: Color?,
 	underline_thickness: number?,
-	strike: boolean?,
-	font: "mono"?,
 	-- A link (`on_click`) under the pointer: underlined, recoloured. With
 	-- it, the link isn't underlined at rest unless `underline` says so.
 	hover: { underline: boolean?, color: Color? }?,

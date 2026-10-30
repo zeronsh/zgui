@@ -61,12 +61,12 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | Span option | Type | Default | |
 | --- | --- | --- | --- |
 | `[1]` | `Text` | `""` | the run's text: a template or a function follows state |
-| `color` | `Color` | the paragraph's | |
+| `color` | `Color` | the paragraph's | a state or a function follows, as for the next five rows |
 | `bg` | `Color` | none | behind the run (a highlight) |
 | `text_size` | `number` | the paragraph's | |
 | `weight` | `number` | the paragraph's | `bold = true` is 700 |
 | `bold`, `italic`, `underline`, `strike` | `boolean` | `false` | |
-| `font` | `"mono"` | the paragraph's | |
+| `font` | `string` | the paragraph's | as `ui.text`'s: `"mono"`, `"sans"`, `"serif"`, or a family's name |
 | `padding` | `number` or `{ across, down }` | `0` | room around the run: across, before and after it (it takes space in the line); with `bg`, the background hugs the text plus this instead of filling the line, an inline code chip |
 | `radius` | `number` | `0` | the background's corner radius |
 | `underline_offset` | `number` | a tenth of the text size | how far below the baseline the underline sits (CSS's `text-underline-offset`) |
@@ -221,8 +221,7 @@ return ui.column {
 - Text from data is a template too: a commit message with `{id}` in it looks for state named `id` (an error if there is none), and `{{` shows as `{`. Pass `literal = true` (on `ui.text`, `ui.rich` or a span) for text the script didn't write.
 - A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called (a component's `ui.use_state` has no key: give `ui.text` the state itself, `ui.text { count }`), and `"{state.count}"` is state `state`'s field `count`, not a module's state. A name no state has is an error when the text is built.
 - Text does not wrap by default, and a row shrinks it no narrower than it is (its min-content, unwrapped): `wrap = true` (in a box with a width) lets it wrap down to its longest word, or `min_w = 0, truncate = true` ends it with "…" in a row.
-- Span options are plain values, read once: a state or function there is not followed (its value at build time is used). Only the run's text follows state. To restyle a run, build the paragraph in a function, or use two texts.
-- A span's `font` only knows `"mono"`; any other family is ignored (`ui.text`'s `font` takes names).
+- A span's `color`, `bg`, `text_size`, `weight`, `bold`, `italic`, `underline`, `strike` and `font` follow a state or a function, and its text does. Its other options are plain values, read once.
 - A span is used once: putting the same `ui.span` in two paragraphs is an error. Make a new one each time.
 - `ui.text` and `ui.rich` take no children; extra array entries in `ui.text` are an error.
 - A function's text is called again for each change it read; prefer a template for plain state, which costs no script call.

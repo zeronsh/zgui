@@ -1,5 +1,5 @@
 //! What text takes from a script beyond its size and colour: OpenType
-//! features.
+//! features, and spans that follow state.
 mod common;
 use common::Harness;
 
@@ -46,5 +46,115 @@ fn font_features_set_inherit_and_follow_state() {
         .unwrap();
     h.frames(1);
     assert_eq!(features(&mut h, "followed"), [pair("ss02", 1)]);
+    assert_eq!(h.error(), None);
+}
+
+/// The runs a rich text shows, as its text, weight, family and colour.
+fn runs(h: &mut Harness, id: &str) -> Vec<(String, u16, String, zgx::scene::Color)> {
+    use zgx::scene::NodeKind;
+    let node = h.find(id).unwrap();
+    let scene = h.ui.scene.borrow();
+    let mut pending = vec![node];
+    while let Some(next) = pending.pop() {
+        if let NodeKind::RichText { text } = scene.kind(next) {
+            return (text.runs().iter())
+                .map(|run| {
+                    (
+                        text.text()[run.range.clone()].to_string(),
+                        run.font.weight,
+                        format!("{:?}", run.font.family),
+                        run.color,
+                    )
+                })
+                .collect();
+        }
+        pending.extend(scene.children(next).iter().copied());
+    }
+    panic!("no rich text under {id}");
+}
+
+#[test]
+fn a_spans_style_and_font_follow_state() {
+    use zgx::scene::Color;
+    let mut h = Harness::inline(
+        r##"local on = ui.state("on", false)
+        return ui.rich {
+            id = "para",
+            "Plain ",
+            ui.span { "named", font = "Menlo" },
+            ui.span { " marked", bold = on, color = function()
+                return if on:get() then "#ff0000" else "#00ff00"
+            end },
+            ui.span { " still", color = "#0000ff" },
+            ui.span { " faced", font = function()
+                return if on:get() then "serif" else "mono"
+            end },
+        }"##,
+    );
+    h.frames(1);
+    assert_eq!(h.error(), None);
+    let (green, red) = (Color(0, 255, 0, 255), Color(255, 0, 0, 255));
+    let run = |h: &mut Harness, text: &str| {
+        let found = runs(h, "para").into_iter().find(|run| run.0 == text);
+        found.unwrap_or_else(|| panic!("no run {text:?}"))
+    };
+    assert!(run(&mut h, "named").2.contains("Menlo"));
+    assert_eq!(run(&mut h, " marked").3, green);
+    assert_eq!(run(&mut h, " marked").1, 400);
+    assert!(run(&mut h, " faced").2.contains("Monospace"));
+    let node = h.find("para").unwrap();
+    h.host
+        .set_state("on", zgx_script::Value::Bool(true))
+        .unwrap();
+    h.frames(1);
+    assert_eq!(run(&mut h, " marked").3, red, "follows");
+    assert_eq!(run(&mut h, " marked").1, 700);
+    assert!(run(&mut h, " faced").2.contains("Serif"));
+    assert_eq!(run(&mut h, " still").3, Color(0, 0, 255, 255));
+    assert_eq!(h.find("para"), Some(node), "the same node");
+    assert_eq!(h.error(), None);
+}
+
+#[test]
+fn a_restyled_span_keeps_a_selection_across_it() {
+    use zgx::input::{InputEvent, PointerButton};
+    let mut h = Harness::inline(
+        r##"local on = ui.state("on", false)
+        return ui.rich {
+            id = "para",
+            selectable = true,
+            w = 300,
+            "Some words ",
+            ui.span { "to select", color = function()
+                return if on:get() then "#ff0000" else "#00ff00"
+            end },
+        }"##,
+    );
+    h.frames(2);
+    let (x, y) = {
+        let node = h.find("para").unwrap();
+        let bounds = h.ui.scene.borrow().bounds(node);
+        (bounds.x, bounds.y + bounds.height / 2.)
+    };
+    let button = PointerButton::Primary;
+    h.ui.dispatch(InputEvent::PointerDown {
+        x: x + 1.,
+        y,
+        button,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x: x + 280., y });
+    h.ui.dispatch(InputEvent::PointerUp {
+        x: x + 280.,
+        y,
+        button,
+    });
+    h.frames(1);
+    let selected = h.ui.selected_text();
+    assert!(selected.contains("words"), "{selected:?}");
+    h.host
+        .set_state("on", zgx_script::Value::Bool(true))
+        .unwrap();
+    h.frames(2);
+    assert_eq!(h.ui.selected_text(), selected, "kept across the restyle");
     assert_eq!(h.error(), None);
 }
