@@ -12,9 +12,8 @@
 //! textures (PNG or JPEG, in the file, inline or beside it), and its
 //! animations' translations, rotations and scales (`Model::clips`,
 //! `Placed::pose`), skins moving its meshes by their joints, and morph
-//! targets (positions and normals; its weights, and clips moving them). Not
-//! yet: sparse accessors (a morph target in one is skipped), points and
-//! lines (skipped).
+//! targets (positions and normals; its weights, and clips moving them).
+//! Accessors may be sparse. Not yet: points and lines (skipped).
 use crate::{
     Geometry, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex,
     World, vec3,
@@ -721,8 +720,8 @@ impl Reader<'_> {
                         .map_err(|e| ModelError(e.into()))?;
                 }
             }
-            // Its morph targets, all or none (one that can't be read, as a
-            // sparse accessor, leaves the mesh as it is).
+            // Its morph targets, all or none: one that can't be read leaves
+            // the mesh as it is.
             let targets: Option<Vec<MorphTarget>> = list(primitive, "targets")
                 .iter()
                 .map(|target| self.morph_target(target, count))
@@ -757,9 +756,6 @@ impl Reader<'_> {
         let Some(accessor) = list(self.doc, "accessors").get(index) else {
             return error(format!("no accessor {index}"));
         };
-        if accessor.get("sparse").is_some() {
-            return error("sparse accessors are not read yet");
-        }
         let count = accessor.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
         let kind = accessor
             .get("componentType")
@@ -777,7 +773,11 @@ impl Reader<'_> {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let Some(view_index) = accessor.get("bufferView").and_then(Value::as_u64) else {
-            // No view: all zeros.
+            // No view: all zeros (a file can claim any count: the sizes it
+            // has the bytes for, sparse ones the most compact, stay small).
+            if count > MAX_ZEROS {
+                return error(format!("accessor {index} holds too many zeros"));
+            }
             return Ok(Accessor {
                 bytes: &[],
                 stride: element,
@@ -817,36 +817,99 @@ impl Reader<'_> {
             normalized,
         })
     }
+    /// Accessor `index`'s sparse part, if it has one.
+    fn sparse(&self, index: usize, components: usize) -> Result<Option<Sparse<'_>>, ModelError> {
+        let accessor = &list(self.doc, "accessors")[index];
+        let Some(sparse) = accessor.get("sparse") else {
+            return Ok(None);
+        };
+        let number = |key: &str| accessor.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let total = number("count") as usize;
+        let count = sparse.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
+        if count > total {
+            return error(format!("accessor {index} replaces more than it holds"));
+        }
+        let (Some(indices), Some(values)) = (sparse.get("indices"), sparse.get("values")) else {
+            return error(format!("accessor {index}'s sparse part is incomplete"));
+        };
+        let kind = indices
+            .get("componentType")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let size = match kind {
+            5121 => 1,
+            5123 => 2,
+            5125 => 4,
+            _ => return error(format!("accessor {index}'s sparse indices of type {kind}")),
+        };
+        let at = self.section(index, indices, count * size)?;
+        let mut slots = Vec::with_capacity(count);
+        for b in at.chunks_exact(size) {
+            let slot = match kind {
+                5121 => usize::from(b[0]),
+                5123 => usize::from(u16::from_le_bytes([b[0], b[1]])),
+                _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize,
+            };
+            if slot >= total {
+                return error(format!("accessor {index}'s sparse index {slot} is past it"));
+            }
+            slots.push(slot);
+        }
+        let element = component_size(number("componentType")) * components;
+        let values = self.section(index, values, count * element)?;
+        Ok(Some(Sparse { slots, values }))
+    }
+    /// `length` bytes at `part`'s `bufferView` and `byteOffset`.
+    fn section(&self, index: usize, part: &Value, length: usize) -> Result<&[u8], ModelError> {
+        let number = |v: &Value, key: &str| v.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let past = || {
+            ModelError(format!(
+                "accessor {index}'s sparse part runs past its buffer"
+            ))
+        };
+        let view = usize::try_from(number(part, "bufferView")).map_err(|_| past())?;
+        let view = list(self.doc, "bufferViews").get(view).ok_or_else(past)?;
+        let buffer = self
+            .buffers
+            .get(number(view, "buffer") as usize)
+            .ok_or_else(past)?;
+        let view_start = number(view, "byteOffset");
+        let view_end = view_start
+            .checked_add(number(view, "byteLength"))
+            .ok_or_else(past)?;
+        let start = view_start
+            .checked_add(number(part, "byteOffset"))
+            .ok_or_else(past)?;
+        let end = start.checked_add(length as u64).ok_or_else(past)?;
+        if end > view_end || view_end > buffer.len() as u64 {
+            return Err(past());
+        }
+        Ok(&buffer[start as usize..end as usize])
+    }
     /// Accessor `index`'s `components` numbers an element, as floats.
     fn floats(&self, index: usize, components: usize) -> Result<Vec<f32>, ModelError> {
         let a = self.view(index, components)?;
         let mut out = Vec::with_capacity(a.count * components);
+        let size = component_size(a.kind);
         if a.bytes.is_empty() {
             out.resize(a.count * components, 0.);
-            return Ok(out);
+        } else {
+            for i in 0..a.count {
+                for c in 0..components {
+                    let at = i * a.stride + c * size;
+                    out.push(float(&a.bytes[at..at + size], a.kind, a.normalized));
+                }
+            }
         }
-        let size = match a.kind {
-            5120 | 5121 => 1,
-            5122 | 5123 => 2,
-            _ => 4,
-        };
-        for i in 0..a.count {
-            for c in 0..components {
-                let at = i * a.stride + c * size;
-                let b = &a.bytes[at..at + size];
-                let v = match (a.kind, a.normalized) {
-                    (5126, _) => f32::from_le_bytes(b.try_into().unwrap()),
-                    (5121, true) => f32::from(b[0]) / 255.,
-                    (5121, false) => f32::from(b[0]),
-                    (5120, true) => (f32::from(b[0] as i8) / 127.).max(-1.),
-                    (5120, false) => f32::from(b[0] as i8),
-                    (5123, true) => f32::from(u16::from_le_bytes([b[0], b[1]])) / 65535.,
-                    (5123, false) => f32::from(u16::from_le_bytes([b[0], b[1]])),
-                    (5122, true) => (f32::from(i16::from_le_bytes([b[0], b[1]])) / 32767.).max(-1.),
-                    (5122, false) => f32::from(i16::from_le_bytes([b[0], b[1]])),
-                    _ => u32::from_le_bytes(b.try_into().unwrap()) as f32,
-                };
-                out.push(if v.is_finite() { v } else { 0. });
+        if let Some(sparse) = self.sparse(index, components)? {
+            let values = sparse.values.chunks_exact(size * components);
+            for (&slot, element) in sparse.slots.iter().zip(values) {
+                for (out, b) in out[slot * components..]
+                    .iter_mut()
+                    .zip(element.chunks_exact(size))
+                {
+                    *out = float(b, a.kind, a.normalized);
+                }
             }
         }
         Ok(out)
@@ -854,21 +917,60 @@ impl Reader<'_> {
     /// Accessor `index` as indices (unsigned bytes, shorts or ints).
     fn indices(&self, index: usize) -> Result<Vec<u32>, ModelError> {
         let a = self.view(index, 1)?;
-        if a.bytes.is_empty() {
-            return Ok(vec![0; a.count]);
+        let read = |b: &[u8]| match a.kind {
+            5121 => Ok(u32::from(b[0])),
+            5123 => Ok(u32::from(u16::from_le_bytes([b[0], b[1]]))),
+            5125 => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            kind => error(format!("indices of component type {kind}")),
+        };
+        let mut out = if a.bytes.is_empty() {
+            vec![0; a.count]
+        } else {
+            (0..a.count)
+                .map(|i| read(&a.bytes[i * a.stride..]))
+                .collect::<Result<Vec<u32>, ModelError>>()?
+        };
+        if let Some(sparse) = self.sparse(index, 1)? {
+            let values = sparse.values.chunks_exact(component_size(a.kind));
+            for (&slot, b) in sparse.slots.iter().zip(values) {
+                out[slot] = read(b)?;
+            }
         }
-        (0..a.count)
-            .map(|i| {
-                let b = &a.bytes[i * a.stride..];
-                match a.kind {
-                    5121 => Ok(u32::from(b[0])),
-                    5123 => Ok(u32::from(u16::from_le_bytes([b[0], b[1]]))),
-                    5125 => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
-                    kind => error(format!("indices of component type {kind}")),
-                }
-            })
-            .collect()
+        Ok(out)
     }
+}
+/// What a sparse accessor replaces: which elements, and their new values,
+/// packed.
+struct Sparse<'a> {
+    slots: Vec<usize>,
+    values: &'a [u8],
+}
+/// Elements an accessor with no buffer view of its own may hold: more than
+/// any mesh or clip, far less than memory.
+const MAX_ZEROS: usize = 1 << 26;
+/// Bytes a component of glTF's type `kind` takes.
+fn component_size(kind: u64) -> usize {
+    match kind {
+        5120 | 5121 => 1,
+        5122 | 5123 => 2,
+        _ => 4,
+    }
+}
+/// The component at `b`, of glTF's type `kind`, as a float.
+fn float(b: &[u8], kind: u64, normalized: bool) -> f32 {
+    let v = match (kind, normalized) {
+        (5126, _) => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+        (5121, true) => f32::from(b[0]) / 255.,
+        (5121, false) => f32::from(b[0]),
+        (5120, true) => (f32::from(b[0] as i8) / 127.).max(-1.),
+        (5120, false) => f32::from(b[0] as i8),
+        (5123, true) => f32::from(u16::from_le_bytes([b[0], b[1]])) / 65535.,
+        (5123, false) => f32::from(u16::from_le_bytes([b[0], b[1]])),
+        (5122, true) => (f32::from(i16::from_le_bytes([b[0], b[1]])) / 32767.).max(-1.),
+        (5122, false) => f32::from(i16::from_le_bytes([b[0], b[1]])),
+        _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32,
+    };
+    if v.is_finite() { v } else { 0. }
 }
 struct Accessor<'a> {
     bytes: &'a [u8],
@@ -1322,14 +1424,171 @@ mod tests {
         );
     }
 
+    /// Bytes appended to `doc`'s buffer as a new buffer view: its index.
+    fn add_view(doc: &mut Value, bin: &mut Vec<u8>, bytes: &[u8]) -> usize {
+        let at = bin.len();
+        bin.extend(bytes);
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": bytes.len() }));
+        views.len() - 1
+    }
+
     #[test]
-    fn a_sparse_morph_target_leaves_the_mesh_as_it_is() {
-        // Not read yet: the model still loads, unmorphed.
-        let (doc, bin) = morphing_square(json!([{ "mesh": 0 }]), |doc| {
-            doc["accessors"][2]["sparse"] = json!({ "count": 0 });
+    fn a_sparse_accessor_replaces_what_it_lists() {
+        // The square's positions, its corner 2 moved up to y = 3, by each
+        // size of sparse index.
+        let index_bytes: [(u64, Vec<u8>); 3] = [
+            (5121, vec![2]),
+            (5123, 2_u16.to_le_bytes().to_vec()),
+            (5125, 2_u32.to_le_bytes().to_vec()),
+        ];
+        for (kind, bytes) in index_bytes {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+            let indices = add_view(&mut doc, &mut bin, &bytes);
+            let values = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[0.5_f32, 3., 0.]));
+            doc["accessors"][0]["sparse"] = json!({
+                "count": 1,
+                "indices": { "bufferView": indices, "componentType": kind },
+                "values": { "bufferView": values },
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            let v = model.nodes[0].meshes[0].0.vertices();
+            assert_eq!(v[2].position, [0.5, 3., 0.], "index type {kind}");
+            assert_eq!(v[0].position, [-0.5, -0.5, 0.], "the rest as they were");
+        }
+    }
+
+    #[test]
+    fn a_sparse_accessor_with_no_view_is_zeros_but_for_what_it_lists() {
+        // As Blender exports a morph target: no base, three of the four
+        // corners moved 2 along x.
+        let (mut doc, mut bin) = square(json!([{ "mesh": 0, "weights": [1.0] }]), |_| {});
+        let indices = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[0_u16, 1, 3]));
+        let values = add_view(
+            &mut doc,
+            &mut bin,
+            bytemuck::cast_slice(&[[2_f32, 0., 0.]; 3]),
+        );
+        doc["accessors"].as_array_mut().unwrap().push(json!({
+            "componentType": 5126, "count": 4, "type": "VEC3",
+            "sparse": {
+                "count": 3,
+                "indices": { "bufferView": indices, "componentType": 5123 },
+                "values": { "bufferView": values },
+            },
+        }));
+        doc["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 2 }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let geometry = &model.nodes[0].meshes[0].0;
+        let morphs = geometry.morphs().expect("its target");
+        let deltas = morphs.deltas();
+        assert_eq!(deltas[morphs.at(1, 0)], [2., 0., 0., 0.]);
+        assert_eq!(deltas[morphs.at(2, 0)], [0.; 4], "not listed: unmoved");
+    }
+
+    #[test]
+    fn a_clip_reads_a_sparse_output() {
+        // Three keys at x 0, then 4 and 8 by sparse values over zeros.
+        let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        let times = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[0_f32, 1., 2.]));
+        let indices = add_view(&mut doc, &mut bin, &[1, 2]);
+        let values = add_view(
+            &mut doc,
+            &mut bin,
+            bytemuck::cast_slice(&[4_f32, 0., 0., 8., 0., 0.]),
+        );
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        accessors.push(
+            json!({ "bufferView": times, "componentType": 5126, "count": 3, "type": "SCALAR" }),
+        );
+        accessors.push(json!({
+            "componentType": 5126, "count": 3, "type": "VEC3",
+            "sparse": {
+                "count": 2,
+                "indices": { "bufferView": indices, "componentType": 5121 },
+                "values": { "bufferView": values },
+            },
+        }));
+        doc["animations"] = json!([{
+            "name": "slide",
+            "samplers": [{ "input": 2, "output": 3 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }],
+        }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        placed.pose(&world, model.clip("slide").unwrap(), 2.);
+        assert_eq!(
+            world
+                .object(placed.nodes[0].unwrap())
+                .unwrap()
+                .transform
+                .position,
+            vec3(8., 0., 0.)
+        );
+    }
+
+    #[test]
+    fn sparse_indices_are_read_as_indices() {
+        // The triangles' last index replaced: the second triangle changes.
+        let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        let indices = add_view(&mut doc, &mut bin, &[5]);
+        let values = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[1_u16]));
+        doc["accessors"][1]["sparse"] = json!({
+            "count": 1,
+            "indices": { "bufferView": indices, "componentType": 5121 },
+            "values": { "bufferView": values },
         });
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
-        assert!(model.nodes[0].meshes[0].0.morphs().is_none());
+        assert_eq!(model.nodes[0].meshes[0].0.indices(), [0, 1, 2, 0, 2, 1]);
+    }
+
+    #[test]
+    fn broken_sparse_accessors_say_what_is_wrong() {
+        let broken = |sparse: Value| {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+            let view = add_view(&mut doc, &mut bin, &[9; 12]);
+            let mut sparse = sparse;
+            for part in ["indices", "values"] {
+                if sparse.get(part).is_some() {
+                    sparse[part]["bufferView"] = json!(view);
+                }
+            }
+            doc["accessors"][0]["sparse"] = sparse;
+            Model::from_bytes(&glb_of(&doc, &bin))
+                .unwrap_err()
+                .to_string()
+        };
+        let indices = json!({ "componentType": 5121 });
+        let values = json!({});
+        // An index past the accessor: 9 of 4.
+        let past = broken(json!({ "count": 1, "indices": indices, "values": values }));
+        assert!(past.contains("past it"), "{past}");
+        // More than the view holds, and more than the accessor holds.
+        let long = broken(json!({ "count": 4, "indices": indices, "values": values }));
+        assert!(long.contains("past"), "{long}");
+        let more = broken(json!({ "count": 5, "indices": indices, "values": values }));
+        assert!(more.contains("more than it holds"), "{more}");
+        let missing = broken(json!({ "count": 1, "indices": indices }));
+        assert!(missing.contains("incomplete"), "{missing}");
+        let kind =
+            broken(json!({ "count": 1, "indices": { "componentType": 5126 }, "values": values }));
+        assert!(kind.contains("sparse indices"), "{kind}");
+        // A file can't ask for more zeros than memory.
+        let (mut doc, bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        doc["accessors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "componentType": 5126, "count": 1_u64 << 40, "type": "VEC3" }));
+        doc["meshes"][0]["primitives"][0]["attributes"]["POSITION"] = json!(2);
+        let huge = Model::from_bytes(&glb_of(&doc, &bin))
+            .unwrap_err()
+            .to_string();
+        assert!(huge.contains("too many zeros"), "{huge}");
     }
 
     #[test]
