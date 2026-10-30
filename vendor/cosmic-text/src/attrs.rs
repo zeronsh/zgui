@@ -545,7 +545,20 @@ impl AttrsOwned {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct AttrsList {
     defaults: AttrsOwned,
-    pub(crate) spans: RangeMap<usize, AttrsOwned>,
+    // Dropped by `Drop`, which most lists, with no spans, leave alone.
+    pub(crate) spans: core::mem::ManuallyDrop<RangeMap<usize, AttrsOwned>>,
+}
+
+impl Drop for AttrsList {
+    #[inline]
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        // An empty map holds no memory: walking it is all a drop would do.
+        if !self.spans.is_empty() {
+            // SAFETY: dropped here alone, and never read again.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.spans) };
+        }
+    }
 }
 
 impl AttrsList {
@@ -553,7 +566,7 @@ impl AttrsList {
     pub fn new(defaults: &Attrs) -> Self {
         Self {
             defaults: AttrsOwned::new(defaults),
-            spans: RangeMap::new(),
+            spans: core::mem::ManuallyDrop::new(RangeMap::new()),
         }
     }
 
