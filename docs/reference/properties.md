@@ -78,7 +78,7 @@ return ui.column {
 }
 ```
 
-- Percentages are of the parent's content box, as `w = "50%"` is. Under a parent with no size of its own they go as a percentage does.
+- Percentages are of the parent's content box, as `w = "50%"` is. Under a parent with no size of its own the whole expression lays out as `auto`, as in CSS: the box takes its content's size.
 - A bare number is points, so `calc(100% - 24)` is `calc(100% - 24px)`. Of two factors one must be a plain number, and a divisor always, as CSS requires; anything else is an error when the script loads.
 - A result below zero is zero.
 - Only these six properties take them: written on `p`, `m` or an inset, one stops the script with an error. Other units (`em`, `vw`) aren't parsed.

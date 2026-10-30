@@ -1315,9 +1315,6 @@ pub(crate) enum Lit {
     Color(Color),
     Pair(f32, f32),
     Len(Length),
-    /// A size from the containing block (`calc(…)`, `min(…)`…): `w`, `h`
-    /// and their limits.
-    SizeCalc(Arc<zgx::size_calc::SizeCalc>),
     Shadows(Arc<[BoxShadow]>),
     Gradient(Arc<GradientLit>),
     Corners(Corners),
@@ -2081,7 +2078,11 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
         (Ty::Len, v) => match length(v) {
             Some(length) => Lit::Len(length),
             None => match v {
-                Value::Str(s) => Lit::SizeCalc(Arc::new(s.parse().ok()?)),
+                // `w`, `h` and their limits: a string, as a track list is.
+                Value::Str(s) => {
+                    s.parse::<zgx::size_calc::SizeCalc>().ok()?;
+                    Lit::Str(s.clone())
+                }
                 _ => return None,
             },
         },
@@ -2258,7 +2259,8 @@ fn source_linted(
                     })?
                 }
             };
-            if matches!(lit, Lit::SizeCalc(_))
+            if ty == Ty::Len
+                && matches!(lit, Lit::Str(_))
                 && !matches!(name, "w" | "h" | "min_w" | "max_w" | "min_h" | "max_h")
             {
                 return Err(mlua::Error::runtime(format!(

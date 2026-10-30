@@ -6619,6 +6619,24 @@ fn track_list<S: Styled>(s: S, prop: Prop, list: &str) -> S {
         Err(_) => s,
     }
 }
+/// A size worked out from the containing block, checked as it came in
+/// (`node::lit`): a string in a `Lit`, as a track list is, so that dropping
+/// one has no other heap kind to tell apart.
+#[cold]
+#[inline(never)]
+fn size_math<S: Styled>(s: S, prop: Prop, written: &str) -> S {
+    let Ok(size) = written.parse::<zgx::size_calc::SizeCalc>() else {
+        return s;
+    };
+    match prop {
+        Prop::W => s.w_calc(size),
+        Prop::H => s.h_calc(size),
+        Prop::MinW => s.min_w_calc(size),
+        Prop::MaxW => s.max_w_calc(size),
+        Prop::MinH => s.min_h_calc(size),
+        _ => s.max_h_calc(size),
+    }
+}
 fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
     use Prop::*;
     if let Lit::Token(token) = lit {
@@ -6631,17 +6649,6 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         return match token_field(prop) {
             Some(field) => s.token_mix(field, *from, *to, *t),
             None => s,
-        };
-    }
-    if let Lit::SizeCalc(size) = lit {
-        return match prop {
-            W => s.w_calc(size.clone()),
-            H => s.h_calc(size.clone()),
-            MinW => s.min_w_calc(size.clone()),
-            MaxW => s.max_w_calc(size.clone()),
-            MinH => s.min_h_calc(size.clone()),
-            MaxH => s.max_h_calc(size.clone()),
-            _ => s,
         };
     }
     // Lengths: points, percentages (of the containing block) or auto.
@@ -6764,6 +6771,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Cols, Lit::Num(v)) => s.grid_cols(v.max(1.) as u16),
         (Rows, Lit::Num(v)) => s.grid_rows(v.max(1.) as u16),
         (Cols | Rows, Lit::Str(list)) => track_list(s, prop, list),
+        (W | H | MinW | MaxW | MinH | MaxH, Lit::Str(size)) => size_math(s, prop, size),
         (Z, Lit::Num(v)) => s.z(*v as i32),
         (StickyTop, Lit::Num(v)) => s.sticky_top(*v),
         (ColStart, Lit::Num(v)) => s.col_start(*v as i16),

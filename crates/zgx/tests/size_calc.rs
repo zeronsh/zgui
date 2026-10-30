@@ -116,18 +116,42 @@ fn clamp_follows_the_window() {
     }
 }
 
-/// Under an auto-sized parent an expression finds what a percentage does.
+/// A percentage of a parent with no size of its own is `auto`, as in CSS:
+/// the box takes its content's size.
 #[test]
-fn under_a_parent_with_no_size_it_goes_as_a_percentage_does() {
-    let height = |sized: fn(View) -> View| {
-        let mut ui = Ui::new(400., 300.);
-        let child = sized(column().id("a").child(div().w(30.).h(20.)));
-        laid(&mut ui, row().child(child), "a").height
-    };
-    assert_eq!(
-        height(|view| view.h_calc(calc("calc(50% + 0px)"))),
-        height(|view| view.h_percent(50.)),
+fn under_a_parent_with_no_size_it_sizes_as_auto() {
+    let mut ui = Ui::new(400., 300.);
+    let rect = laid(
+        &mut ui,
+        row().child(
+            column()
+                .id("a")
+                .h_calc(calc("calc(50% + 0px)"))
+                .child(div().w(30.).h(20.)),
+        ),
+        "a",
     );
+    assert_eq!(rect.height, 20.);
+}
+
+#[test]
+fn it_follows_a_parent_that_changes_size() {
+    let mut ui = Ui::new(600., 400.);
+    let wide = ui.signal(300_f32);
+    let state = wide.clone();
+    let view = ui.mount(
+        column()
+            .h(200.)
+            .reactive_style(move || Styles::new().w(state.get()))
+            .child(div().id("a").h(10.).w_calc(calc("calc(50% - 10px)"))),
+    );
+    ui.prepare_frame();
+    let a = view.find("a").unwrap();
+    for (parent, width) in [(300., 140.), (500., 240.), (100., 40.)] {
+        wide.set(parent);
+        ui.prepare_frame();
+        assert_eq!(ui.scene.borrow().bounds(a).width, width, "{parent}");
+    }
 }
 
 #[test]
