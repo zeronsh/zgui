@@ -991,6 +991,7 @@ struct Inner {
     /// Keeps `ui.window.titlebar_area` and `controls` as the window's
     /// (`window_chrome`).
     chrome: RefCell<Option<zgx::reactive::Effect>>,
+    window_size: RefCell<Option<zgx::reactive::Effect>>,
     /// Keeps the window's zoom and `ui.window.zoom` the same (`window_zoom`).
     zoom: RefCell<Option<zgx::reactive::Effect>>,
     /// What publishes the window's state (`window_state`).
@@ -1153,6 +1154,7 @@ impl ScriptHost {
             locales: Rc::default(),
             shared: Rc::new(Store::new(runtime)),
             chrome: RefCell::default(),
+            window_size: RefCell::default(),
             zoom: RefCell::default(),
             window_state: RefCell::default(),
             actions: Actions::default(),
@@ -1560,6 +1562,24 @@ impl ScriptHost {
             });
             self.0.window_state.borrow_mut().push(effect);
         }
+    }
+    /// Keep `ui.window.size` as the window's size in points: pass its
+    /// `WindowContext::viewport`. For what layout can't say (a sidebar
+    /// collapsing below a width); sizes themselves are layout's.
+    pub fn window_size(&self, viewport: Signal<(f32, f32)>) {
+        let (width, height) = viewport.with_untracked(|size| *size);
+        let state = self
+            .0
+            .shared
+            .state(windows::SIZE, windows::size(width, height));
+        let effect = self.0.runtime.effect(move || {
+            let (width, height) = viewport.get();
+            let now = windows::size(width, height);
+            if state.with_untracked(|was| *was != now) {
+                state.set(now);
+            }
+        });
+        *self.0.window_size.borrow_mut() = Some(effect);
     }
     /// Keep `ui.window.zoom` and `ui.window.zoomable` as window `ui` has
     /// them, and its zoom as a script sets them: the zoom's keys and menu

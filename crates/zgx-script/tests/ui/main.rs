@@ -11,6 +11,8 @@ mod container_queries;
 mod driver;
 #[path = "../each_reorder.rs"]
 mod each_reorder;
+#[path = "../editor_props.rs"]
+mod editor_props;
 #[path = "../failures.rs"]
 mod failures;
 #[path = "../file_drop.rs"]

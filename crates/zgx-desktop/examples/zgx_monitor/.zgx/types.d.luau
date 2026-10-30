@@ -1338,6 +1338,10 @@ export type WindowApi = ((opts: WindowOptions) -> ()) & {
 	-- is false is worth a notification or a badge.
 	active: State<boolean>,
 	shown: State<boolean>,
+	-- The window's size in points, read-only and followed: for decisions
+	-- layout can't make (a sidebar collapsing to icons below a width).
+	-- Sizes themselves are layout's: percentages, `grow`, `max_w`.
+	size: State<{ width: number, height: number }>,
 }
 
 ---------------------------------------------------------------------------
@@ -6526,6 +6530,9 @@ export type InputProps = {
 	-- edges (CSS's overscroll-behavior), the scroll views around it never
 	-- moving; "auto" (the default) hands what it can't scroll on to them.
 	overscroll: ("auto" | "contain")?,
+	-- Selectable and focusable, the person's edits refused (HTML's
+	-- `readonly`): a log, a generated file. `value` still sets the text.
+	read_only: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- The `id` of the suggestion it is on (HTML's `aria-activedescendant`),
 	-- nil for none: focus stays here, moving through a list of them with
 	-- its keys (a mention's, in a popover `at_caret`), and assistive
@@ -6539,9 +6546,11 @@ export type InputProps = {
 	-- color }` (bytes counted from 1, as `string.find` gives them; `color`
 	-- a colour or `"$token"`, or left out) with `weight`, `italic`,
 	-- `strike` and `bg` by name (`HighlightSpan`), and what the line leaves
-	-- the next (a block comment or string running on: any number of the
-	-- highlighter's). It must depend on nothing but its arguments.
-	highlight: ((line: string, state: number) -> ({ HighlightSpan }?, number?))?,
+	-- the next (a block comment or string running on: any value, a
+	-- number, a string, a table; the same string or number is the same
+	-- state, a table the same one only as itself). It must depend on
+	-- nothing but its arguments.
+	highlight: ((line: string, state: any) -> ({ HighlightSpan }?, any))?,
 	-- Several lines only: ranges of the whole text marked behind it (a
 	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
 	-- from 1; only those in view are drawn.

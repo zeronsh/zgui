@@ -392,6 +392,8 @@ pub fn run_hosting(
         host.window_zoom(&cx.ui);
         // `ui.window.active` and `ui.window.shown`.
         host.window_state(&cx.ui);
+        // `ui.window.size`.
+        host.window_size(cx.viewport.clone());
         // The network, unless the host's setup brings its own transport.
         #[cfg(feature = "fetch")]
         fetch::install(&host);

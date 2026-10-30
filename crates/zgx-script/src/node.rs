@@ -832,6 +832,9 @@ pub(crate) struct InputRare {
     pub(crate) active_descendant: Option<Source>,
     /// `overscroll = "contain"`: a wheel over it stays with it.
     pub(crate) contain: bool,
+    /// `read_only = true` (or a state or function of one): selectable and
+    /// focusable, the person's edits refused; `value` still sets it.
+    pub(crate) read_only: Option<Source>,
 }
 
 #[derive(Clone)]
@@ -2705,13 +2708,14 @@ const LATE_FIELDS: &[&str] = &[
     "start_distance",
     "at_end",
     "overscroll",
+    "read_only",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
 /// it, so no style key compares against it: an input's caret (few set it,
 /// read only from those that do), whether plugins may target the node
-/// (`hook`, `private`), an input's `active_descendant`, a popover's
-/// `at_caret`; `inputmode` is read by `ui.input` itself, `on_end` and
+/// (`hook`, `private`), an input's `active_descendant` and `read_only`, a
+/// popover's `at_caret`; `inputmode` is read by `ui.input` itself, `on_end` and
 /// `end_distance` by `ui.list`. Any other key is unknown.
 #[cold]
 #[inline(never)]
@@ -2738,6 +2742,12 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
             if let Kind::Input { rare, .. } = &mut node.kind {
                 let active = source(lua, Ty::Str, name, value)?;
                 rare.get_or_insert_default().active_descendant = Some(active);
+            }
+        }
+        "read_only" => {
+            if let Kind::Input { rare, .. } = &mut node.kind {
+                let read_only = source(lua, Ty::Bool, name, value)?;
+                rare.get_or_insert_default().read_only = Some(read_only);
             }
         }
         "on_start" | "start_distance" | "at_end" => {

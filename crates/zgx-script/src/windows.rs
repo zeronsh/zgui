@@ -117,6 +117,19 @@ pub(crate) const ZOOMABLE: &str = "zgx.window.zoomable";
 /// `ui.window.shown`, which a script reads.
 pub(crate) const ACTIVE: &str = "zgx.window.active";
 pub(crate) const SHOWN: &str = "zgx.window.shown";
+/// The shared key holding the app's window's size in points
+/// (`ScriptHost::window_size`): `ui.window.size`, `{ width, height }`,
+/// which a script reads.
+pub(crate) const SIZE: &str = "zgx.window.size";
+
+/// A window's size as `ui.window.size` holds it.
+pub(crate) fn size(width: f32, height: f32) -> Value {
+    let n = |v: f32| Value::Num(f64::from(v));
+    Value::Map(Rc::from([
+        (Rc::from("height"), n(height)),
+        (Rc::from("width"), n(width)),
+    ]))
+}
 
 /// Installs `ui.window`: called, it declares a window; its
 /// `titlebar_area` and `controls` are the app's own window's.
@@ -151,9 +164,12 @@ pub(crate) fn install(
                     Some("zoom") => shared.state(ZOOM, Value::Num(1.)),
                     Some("zoomable") => shared.state(ZOOMABLE, Value::Bool(true)),
                     // Read-only: the window's, as the system says.
-                    Some(read @ ("active" | "shown")) => {
-                        let at = if read == "active" { ACTIVE } else { SHOWN };
-                        let state = State::new(shared.state(at, Value::Bool(true)));
+                    Some(read @ ("active" | "shown" | "size")) => {
+                        let state = State::new(match read {
+                            "active" => shared.state(ACTIVE, Value::Bool(true)),
+                            "shown" => shared.state(SHOWN, Value::Bool(true)),
+                            _ => shared.state(SIZE, size(0., 0.)),
+                        });
                         window.raw_set(key.clone(), ReadState(state, read.into()))?;
                         return window.raw_get::<mlua::Value>(key);
                     }

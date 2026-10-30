@@ -483,7 +483,7 @@ impl StyleTheme {
         if !self.themed {
             return false;
         }
-        let epoch = self.scope.epoch() as u32;
+        let epoch = self.scope.revision() as u32;
         if epoch != self.epoch {
             self.epoch = epoch;
             self.fresh = 0;

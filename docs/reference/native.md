@@ -154,6 +154,29 @@ ui.window.zoomable: State<boolean>
 
 The app's window zooms as a browser's page does: Cmd+= or Cmd++ zooms in, Cmd+- out and Cmd+0 back to 100% (Ctrl elsewhere), through Chrome's levels from 25% to 500%, and its content reflows in the smaller or larger viewport, text and paths drawn crisply. `ui.window.zoom` is the zoom (1 at 100%): it follows the keys and the View menu's items, and setting it zooms the window (`ui.window.zoom:set(1.25)`). `ui.window.zoomable:set(false)` turns the keys off; a `ui.command` with one of the keys keeps it either way. `zgx run` keeps both; a Rust host passes its window with `ScriptHost::window_zoom`.
 
+### Size
+
+```luau
+ui.window.size: State<{ width: number, height: number }>
+```
+
+The app's window's size in points, read-only, followed as the window resizes, zooms or moves between displays, as the web's `innerWidth` and `innerHeight` are. It is for decisions layout can't make: a sidebar collapsing to icons below a width, a menu taking the place of tabs. Sizes themselves are layout's (percentages, `grow`, `min_w` and `max_w`), which follows a resize without the script, and `zgx lint` reports an element's size computed from it (`window-size-layout`). A ref's `width` gives the room one element has. `zgx run` keeps it; a Rust host passes its window's `WindowContext::viewport` with `ScriptHost::window_size`.
+
+```lua
+local narrow = ui.computed(function()
+	return ui.window.size:get().width < 700
+end)
+return ui.row {
+	ui.column {
+		w = function()
+			return if narrow:get() then 48 else 240
+		end,
+		ui.text { "Sidebar" },
+	},
+	ui.column { grow = 1, ui.text { "Content" } },
+}
+```
+
 ### While the person is away
 
 ```luau

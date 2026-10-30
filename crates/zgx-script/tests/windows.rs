@@ -173,3 +173,39 @@ fn a_window_says_how_it_reopens_and_tabs() {
     assert_eq!(windows[0].frame_autosave.as_deref(), Some("inspector"));
     assert_eq!(windows[0].tabbing.as_deref(), Some("disallowed"));
 }
+
+/// `ui.window.size`: the window's size in points, followed, for decisions
+/// layout can't make (a sidebar collapsing to icons below a width).
+#[test]
+fn the_window_size_is_followed_and_read_only() {
+    let mut h = Harness::inline(
+        r##"local narrow = ui.computed(function() return ui.window.size:get().width < 700 end)
+        return ui.column {
+            ui.text { id = "size", function()
+                local size = ui.window.size:get()
+                return `{size.width}x{size.height}`
+            end },
+            ui.text { id = "sidebar", function() return if narrow:get() then "icons" else "full" end },
+            ui.button { id = "set", w = 20, h = 20, on_click = function()
+                ui.window.size:set({ width = 1, height = 1 })
+            end },
+        }"##,
+    );
+    let viewport = h.ui.runtime.signal((960_f32, 720_f32));
+    h.host.window_size(viewport.clone());
+    h.frames(1);
+    assert_eq!(h.text("size"), "960x720");
+    assert_eq!(h.text("sidebar"), "full");
+    viewport.set((640., 480.));
+    h.frames(1);
+    assert_eq!(h.text("size"), "640x480");
+    assert_eq!(h.text("sidebar"), "icons");
+    assert_eq!(h.error(), None);
+    // The system's to say, not the script's.
+    h.click("set");
+    assert!(
+        h.error().is_some_and(|e| e.contains("size")),
+        "{:?}",
+        h.error()
+    );
+}

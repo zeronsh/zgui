@@ -95,6 +95,17 @@ here, to land together:
   texture moves onto its `Material`: in 0.1.x textures come in as the
   world's, per object, so nothing breaks.
 
+- [ ] An editor's tab width (`tab_width`, CSS's `tab-size`). Text is shaped
+  from `(text, size, width, &FontStyle)` alone (`FontTextShaper::shape`), and
+  every cosmic-text `Buffer` zgx-gpu builds (layout, raster, rich text, an
+  editor's lines) keeps cosmic-text's 8. `FontStyle` is a struct of public
+  fields made by literals outside zgx, so a field is a major change; carried
+  beside it instead, the width would thread through every shaping call and
+  its cache. Design: `FontStyle` becomes `#[non_exhaustive]` (made with
+  `..FontStyle::default()` or builders) and gains `tab_width`, inherited as
+  `tab-size` is; `View::tab_width` and Luau's `tab_width` set it, and each
+  `Buffer` takes it (`Buffer::set_tab_width`).
+
 ## Remaining validation and refinement
 
 Completed checkboxes describe implemented, tested capabilities, not complete platform coverage or a stable API release. The following work remains explicit:

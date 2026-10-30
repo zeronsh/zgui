@@ -46,6 +46,11 @@
 //!   assistive technology is the list's: selection and plain text leave it
 //!   out and copied HTML makes it a `<ul>` or `<ol>`; one that isn't is
 //!   copied, and read, as text.
+//! - `window-size-layout`: an element's size or place (`w`, `max_w`, `x`…)
+//!   a function computes from `ui.window.size`, which runs Luau on every
+//!   frame of a resize. Layout says it without the script (a percentage,
+//!   `grow`, `max_w`); the window's size is for decisions (a sidebar
+//!   collapsing).
 //! - `unknown-token`: a `"$…"` token in a style, a `hover` table or a
 //!   computed style that neither zgx nor the app's `ui.theme.tokens`
 //!   declares (`"$app.crad"`: did you mean `$app.card`?), one of the wrong
@@ -133,6 +138,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "list-marker-hidden",
         "a list item's marker text not `aria_hidden`: copied and read as text",
+    ),
+    (
+        "window-size-layout",
+        "an element's size computed from ui.window.size rather than laid out",
     ),
     (
         "unknown-token",
@@ -721,6 +730,12 @@ struct Frame {
     /// For a function: its parameters.
     params: Vec<String>,
 }
+
+/// Element fields layout sizes and places by itself.
+const LAID_OUT: &[&str] = &[
+    "w", "h", "size", "min_w", "max_w", "min_h", "max_h", "basis", "x", "y", "left", "right",
+    "top", "bottom",
+];
 
 const KEYWORDS: &[&str] = &[
     "and", "break", "continue", "do", "else", "elseif", "end", "false", "for", "function", "if",
@@ -1327,6 +1342,29 @@ impl Linter<'_> {
                 );
             }
         }
+        // `w = function() … ui.window.size … end`: a size from the window's.
+        if self.is(at, "ui")
+            && self.is(at + 1, ".")
+            && self.is(at + 2, "window")
+            && self.is(at + 3, ".")
+            && self.is(at + 4, "size")
+            && !self.is(at.wrapping_sub(1), ".")
+            && let Some(f) = function
+            && let Some(key) = stack[f].key.as_deref()
+            && LAID_OUT.contains(&key)
+        {
+            self.report(
+                at,
+                "window-size-layout",
+                format!(
+                    "`{key}` computed from `ui.window.size` runs Luau on every frame of a \
+                     resize, for what layout does without the script: a percentage \
+                     (`{key} = \"30%\"`), `grow`, `min_w` and `max_w`. Read the window's size \
+                     for decisions layout can't make (collapsing a sidebar to icons), and a \
+                     ref's `width` for the room one element has."
+                ),
+            );
+        }
         // `zoomable = state` in a table that also gives `zoom`.
         if self.is(at, "zoomable")
             && self.is(at + 1, "=")
@@ -1727,6 +1765,25 @@ ui.row { role = "option", ui.text { "•" } }
             vec![
                 (2, "list-marker-hidden".to_string()),
                 (3, "list-marker-hidden".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_size_from_the_window_is_reported_and_a_decision_is_not() {
+        let source = r##"
+ui.div { w = function() return ui.window.size:get().width * 0.3 end }
+ui.div { max_w = function() return ui.window.size:get().height - 40 end }
+local narrow = ui.computed(function() return ui.window.size:get().width < 700 end)
+ui.div { visible = function() return ui.window.size:get().width >= 700 end }
+ui.div { w = function() return if narrow:get() then 48 else 240 end }
+ui.div { w = "30%", grow = 1 }
+"##;
+        assert_eq!(
+            rules(source),
+            [
+                (2, "window-size-layout".to_string()),
+                (3, "window-size-layout".to_string())
             ]
         );
     }

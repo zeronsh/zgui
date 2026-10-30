@@ -2145,6 +2145,16 @@ fn kind_view(
             if rare.as_deref().is_some_and(|rare| rare.contain) {
                 view = view.overscroll_contain();
             }
+            match rare.as_deref().and_then(|rare| rare.read_only.as_ref()) {
+                None | Some(Source::Lit(Lit::Bool(false))) => {}
+                Some(Source::Lit(Lit::Bool(true))) => view = view.read_only(true),
+                Some(read_only) => {
+                    let (read_only, vm) = (resolve_owned(read_only), vm.clone());
+                    view = view.read_only_when(move || {
+                        resolve(&read_only, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
+                    });
+                }
+            }
             if *select_on_focus {
                 view = view.select_on_focus(true);
             }
@@ -4488,6 +4498,108 @@ fn resolve_style(source: &Owned, prop: Prop, scalar: Option<&Signal<f32>>, vm: &
 }
 /// A textarea's code editor props (`highlight`, `decorations`,
 /// `current_line`, `tab`) as its editor takes them.
+/// What a `highlight` leaves the next line, any Luau value, as the number
+/// the editor keeps for each line: a whole number below 2^31 as itself
+/// (the common case: no table), anything else by its place in a table of
+/// its own, strings and booleans kept once each so the same state is the
+/// same number (a line left as it was stops the lines after it being asked
+/// again), tables and functions by identity.
+#[derive(Default)]
+struct LineStates {
+    values: Vec<mlua::Value>,
+    known: HashMap<StateKey, u32>,
+}
+#[derive(PartialEq, Eq, Hash)]
+enum StateKey {
+    Text(Vec<u8>),
+    Bool(bool),
+    Number(u64),
+    At(usize),
+}
+/// What a `highlight` leaves the next line, read where it lies: a whole
+/// number (most highlighters' states) as itself, with no `Value` made.
+enum Next {
+    Whole(u32),
+    Other(mlua::Value),
+}
+impl mlua::FromLua for Next {
+    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
+        Ok(match LineStates::whole(&value) {
+            Some(number) => Self::Whole(number),
+            None => Self::Other(value),
+        })
+    }
+    unsafe fn from_stack(idx: std::ffi::c_int, lua: &mlua::state::RawLua) -> mlua::Result<Self> {
+        use mlua::ffi;
+        let state = lua.state();
+        // SAFETY: mlua converts a result at `idx` while it is on this
+        // stack; a number's type is checked first, so `lua_tonumber`
+        // converts nothing. Neither runs Lua or keeps a borrow.
+        unsafe {
+            match ffi::lua_type(state, idx) {
+                ffi::LUA_TNIL | ffi::LUA_TNONE => return Ok(Self::Whole(0)),
+                ffi::LUA_TNUMBER => {
+                    let n = ffi::lua_tonumber(state, idx);
+                    if (0. ..KEPT as f64).contains(&n) && n as u32 as f64 == n {
+                        return Ok(Self::Whole(n as u32));
+                    }
+                }
+                _ => {}
+            }
+            Ok(Self::Other(mlua::Value::from_stack(idx, lua)?))
+        }
+    }
+}
+/// A state's number from its place in `LineStates::values`.
+const KEPT: u32 = 1 << 31;
+impl LineStates {
+    /// A state that is its own number: nil (0), or a whole number below
+    /// 2^31.
+    #[inline]
+    fn whole(value: &mlua::Value) -> Option<u32> {
+        match value {
+            mlua::Value::Nil => Some(0),
+            mlua::Value::Number(n) if (0. ..KEPT as f64).contains(n) && *n as u32 as f64 == *n => {
+                Some(*n as u32)
+            }
+            mlua::Value::Integer(n) if (0..KEPT as i64).contains(n) => Some(*n as u32),
+            _ => None,
+        }
+    }
+    fn number(&mut self, value: mlua::Value) -> u32 {
+        if let Some(number) = Self::whole(&value) {
+            return number;
+        }
+        let key = match &value {
+            mlua::Value::Number(n) => StateKey::Number(n.to_bits()),
+            mlua::Value::Integer(n) => StateKey::Number((*n as f64).to_bits()),
+            mlua::Value::Boolean(b) => StateKey::Bool(*b),
+            mlua::Value::String(text) => StateKey::Text(text.as_bytes().to_vec()),
+            other => StateKey::At(other.to_pointer() as usize),
+        };
+        if let Some(&at) = self.known.get(&key) {
+            return KEPT | at;
+        }
+        // Few states differ in practice. A highlighter making a new table
+        // for every line would grow this without end: past this many, it
+        // starts again (lines left with a forgotten state are asked again).
+        if self.values.len() >= 1 << 16 {
+            self.values.clear();
+            self.known.clear();
+        }
+        let at = self.values.len() as u32;
+        self.values.push(value);
+        self.known.insert(key, at);
+        KEPT | at
+    }
+    fn value(&self, number: u32) -> mlua::Value {
+        if number & KEPT == 0 {
+            return mlua::Value::Integer(number as i64);
+        }
+        (self.values.get((number & !KEPT) as usize).cloned()).unwrap_or(mlua::Value::Nil)
+    }
+}
+
 fn code_editor(
     mut view: View,
     code: &Rc<crate::node::CodeProps>,
@@ -4496,19 +4608,27 @@ fn code_editor(
     theme: Rc<zgx::theme::ThemeScope>,
 ) -> View {
     // A colour as scripts write them (`"#ff8800"`, `"$accent"`), each
-    // distinct one parsed once.
-    let colors: Rc<std::cell::RefCell<HashMap<Rc<str>, Option<zgx::scene::Color>>>> = Rc::default();
+    // distinct one parsed once while the theme's tokens stay the same: a
+    // theme switch (which asks the highlighter anew) resolves them again.
+    type Colors = (u64, HashMap<Rc<str>, Option<zgx::scene::Color>>);
+    let colors: Rc<std::cell::RefCell<Colors>> = Rc::default();
     let color_of = {
         let theme = theme.clone();
         move |text: &str| -> Option<zgx::scene::Color> {
-            if let Some(color) = colors.borrow().get(text) {
-                return *color;
+            {
+                let mut colors = colors.borrow_mut();
+                let revision = theme.revision();
+                if colors.0 != revision {
+                    *colors = (revision, HashMap::new());
+                } else if let Some(color) = colors.1.get(text) {
+                    return *color;
+                }
             }
             let color = match text.strip_prefix('$') {
                 Some(token) => theme.get(zgx::theme::token(token)).color(),
                 None => crate::node::parse_color(text),
             };
-            colors.borrow_mut().insert(Rc::from(text), color);
+            colors.borrow_mut().1.insert(Rc::from(text), color);
             color
         }
     };
@@ -4588,11 +4708,23 @@ fn code_editor(
     };
     if let Some(highlight) = &code.highlight {
         let (highlight, vm) = (highlight.clone(), vm.clone());
+        let states = std::cell::RefCell::new(LineStates::default());
         view = view.span_highlighter(move |line, state| {
-            match vm.call::<(Option<mlua::Table>, Option<f64>)>(&highlight, (line, state)) {
+            // A whole number is passed as itself (most highlighters' states,
+            // no table touched); anything else from the side table.
+            let called = if state & KEPT == 0 {
+                vm.call::<(Option<mlua::Table>, Next)>(&highlight, (line, state))
+            } else {
+                let before = states.borrow().value(state);
+                vm.call::<(Option<mlua::Table>, Next)>(&highlight, (line, before))
+            };
+            match called {
                 Ok((list, next)) => (
                     list.map_or_else(Vec::new, |list| spans(&list)),
-                    next.map_or(0, |n| n as u32),
+                    match next {
+                        Next::Whole(number) => number,
+                        Next::Other(value) => states.borrow_mut().number(value),
+                    },
                 ),
                 Err(error) => {
                     vm.report(error);
