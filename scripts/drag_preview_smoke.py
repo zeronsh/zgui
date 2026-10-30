@@ -83,7 +83,7 @@ def main():
             lines = log.read_text().splitlines()
             return (sum(" render " in line for line in lines), sum(" popup draw " in line for line in lines))
 
-        main_window = until("the window", lambda: run("xdotool", "search", "--name", "^zgx typed drag$").split())[0]
+        main_window = until("the window", lambda: run("xdotool", "search", "--onlyvisible", "--name", "^zgx typed drag$").split())[0]
         run("xdotool", "windowactivate", "--sync", main_window)
         time.sleep(.5)
         x, y, w, h = geometry(main_window)

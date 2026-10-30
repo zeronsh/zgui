@@ -59,7 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .bg(card.color)
                                     .rounded(8.)
                                     .child(text(card.name))
-                                    .on_drag(move || payload.clone())
+                                    .on_drag(move || {
+                                        println!("DRAG_START {}", payload.name);
+                                        payload.clone()
+                                    })
                                     .drag_preview(|card: &Card| {
                                         div()
                                             .size(130., 60.)
