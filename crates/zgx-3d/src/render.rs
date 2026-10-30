@@ -65,7 +65,7 @@ struct FrameUniforms {
 type Casting = (Mat4, Vec<(u64, Mat4, u32)>, Vec<Mat4>, Vec<[f32; 2]>);
 
 /// What sets a pipeline apart from the plain one (`Variant::default()`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Variant {
     textured: bool,
     skinned: bool,
@@ -78,6 +78,28 @@ struct Variant {
     masked: bool,
     /// Its maps placed (`World::set_map_placement`).
     placed: bool,
+    /// Its geometry has vertex colours.
+    colored: bool,
+}
+impl std::hash::Hash for Variant {
+    /// As one byte: it keys the pipelines, looked up a run a frame, and each
+    /// field hashed on its own costs them all another write.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let Variant {
+            textured,
+            skinned,
+            lit,
+            morphing,
+            two_sided,
+            masked,
+            placed,
+            colored,
+        } = *self;
+        let fields = [
+            textured, skinned, lit, morphing, two_sided, masked, placed, colored,
+        ];
+        state.write_u8(fields.iter().fold(0, |bits, &on| bits << 1 | u8::from(on)));
+    }
 }
 /// Meshes drawn together: of one geometry, maps and variant.
 struct Run {
@@ -98,6 +120,8 @@ struct Buffers {
     /// Its second texture coordinates (its first where it has none), made
     /// with the first frame drawing it placed.
     second_uvs: Option<wgpu::Buffer>,
+    /// Its vertices' colours, if it has any.
+    colors: Option<wgpu::Buffer>,
     count: u32,
     used: u64,
 }
@@ -392,6 +416,15 @@ impl Viewport for Renderer {
                             })
                     }),
                     second_uvs: None,
+                    colors: d.geometry.colors().map(|colors| {
+                        frame
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("3D vertex colours"),
+                                contents: bytemuck::cast_slice(colors),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            })
+                    }),
                     morphs: d.geometry.morphs().filter(|_| skinning).map(|morphs| {
                         let buffer =
                             frame
@@ -532,6 +565,7 @@ impl Viewport for Renderer {
             // Cut by a base colour texture's alpha: without one, whole.
             masked: d.surface.alpha_cutoff.is_some() && d.maps[0].is_some(),
             placed: placed(d),
+            colored: d.geometry.colors().is_some(),
         };
         // Of one geometry and maps, a world without poses or surfaces has
         // one variant.
@@ -831,6 +865,13 @@ impl Viewport for Renderer {
                     if let Some(uvs) = buffers.second_uvs.as_ref().filter(|_| run.variant.placed) {
                         let slot = 2 + u32::from(run.variant.skinned);
                         pass.set_vertex_buffer(slot, uvs.slice(..));
+                    }
+                    if let Some(colors) = buffers.colors.as_ref().filter(|_| run.variant.colored) {
+                        let Variant {
+                            skinned, placed, ..
+                        } = run.variant;
+                        let slot = 2 + u32::from(skinned) + u32::from(placed);
+                        pass.set_vertex_buffer(slot, colors.slice(..));
                     }
                     if let Some(morphs) = morphs {
                         pass.set_bind_group(3, morphs, &[]);
@@ -1369,13 +1410,14 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array!
 const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![12 => Uint16x4, 13 => Float32x4];
 const SECOND_UV_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![14 => Float32x2];
+const COLOR_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![15 => Float32x4];
 /// The shader, sampling textures or not, skinning or not, lit by an
 /// environment or not: its lines marked `//T ` are a textured pipeline's
 /// alone (its maps' bindings, samples and normal mapping), `//S ` a skinned
 /// one's (its joints), `//M ` a morphing one's (its targets), `//P ` either's
 /// (the frame's joints and weights), `//E ` an environment-lit one's (its
 /// cube and diffuse light), `//U ` a placed one's (its maps' placements and
-/// second coordinates), `//K ` a cut-out one's and `//N ` any other's,
+/// second coordinates), `//C ` a colored one's (its vertex colours), `//K ` a cut-out one's and `//N ` any other's,
 /// comments in others'. (A cut-out or placed one is textured; a line with
 /// two prefixes is for a variant with both.)
 fn shader_source(variant: Variant) -> String {
@@ -1397,6 +1439,9 @@ fn shader_source(variant: Variant) -> String {
     }
     if variant.placed {
         source = source.replace("//U ", "");
+    }
+    if variant.colored {
+        source = source.replace("//C ", "");
     }
     source.replace(if variant.masked { "//K " } else { "//N " }, "")
 }
@@ -1492,6 +1537,13 @@ fn vertex_buffers(variant: Variant) -> Vec<wgpu::VertexBufferLayout<'static>> {
             array_stride: std::mem::size_of::<[f32; 2]>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &SECOND_UV_ATTRIBUTES,
+        });
+    }
+    if variant.colored {
+        buffers.push(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<[f32; 4]>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &COLOR_ATTRIBUTES,
         });
     }
     buffers
@@ -1874,6 +1926,7 @@ struct Out {
     @location(10) color: vec4<f32>, @location(11) emissive: vec4<f32>,
 //S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
 //U     @location(14) second_uv: vec2<f32>,
+//C     @location(15) vertex_color: vec4<f32>,
 //M     @builtin(vertex_index) index: u32,
 ) -> Out {
     var model = mat4x4(m0, m1, m2, m3);
@@ -1889,8 +1942,10 @@ struct Out {
 //S     normals = mat3x3(model[0].xyz, model[1].xyz, model[2].xyz);
     let world = model * vec4(at, 1.0);
     let n = normals * facing;
+    var tint = color;
+//C     tint *= vertex_color;
     return Out(
-        frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv,
+        frame.view_projection * world, world.xyz, n, tint, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv,
 //U         second_uv,
     );
 }
@@ -2202,6 +2257,7 @@ mod tests {
                 || l.contains("morphs")
                 || l.contains("placements")
                 || l.contains("second_uv")
+                || l.contains("vertex_color")
         }) {
             assert!(line.trim_start().starts_with("//"), "{line}");
         }
@@ -2223,6 +2279,9 @@ mod tests {
             v.placed = true;
         });
         assert!(placed.contains("var<uniform> placements"));
+        let colored = source(|v| v.colored = true);
+        assert!(colored.contains("@location(15) vertex_color: vec4<f32>"));
+        assert!(!colored.contains("//C") && colored.contains("//S"));
         assert!(!placed.contains("//U") && placed.contains("//S"));
         for line in plain.lines().filter(|l| l.contains("discard")) {
             assert!(line.trim_start().starts_with("//"), "{line}");

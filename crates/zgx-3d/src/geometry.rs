@@ -30,6 +30,8 @@ struct Data {
     morphs: Option<Arc<Morphs>>,
     /// Its second texture coordinates, if it has any (`with_second_uvs`).
     second_uvs: Option<Arc<Vec<[f32; 2]>>>,
+    /// Its vertices' colours, if it has any (`with_colors`).
+    colors: Option<Arc<Vec<[f32; 4]>>>,
 }
 /// A shape a geometry can blend toward (`Geometry::with_morph_targets`):
 /// how far each vertex moves at full weight, and how its normal turns.
@@ -134,6 +136,7 @@ impl Geometry {
             skin: None,
             morphs: None,
             second_uvs: None,
+            colors: None,
         })))
     }
     /// A new geometry of the same triangles and extras, `change` applied.
@@ -143,6 +146,7 @@ impl Geometry {
         data.skin = self.0.skin.clone();
         data.morphs = self.0.morphs.clone();
         data.second_uvs = self.0.second_uvs.clone();
+        data.colors = self.0.colors.clone();
         change(data);
         Ok(made)
     }
@@ -154,6 +158,15 @@ impl Geometry {
             return Err("second texture coordinates have an entry a vertex");
         }
         self.derived(|data| data.second_uvs = Some(Arc::new(uvs)))
+    }
+    /// It with a colour at each vertex, linear, multiplying its material's
+    /// and its base colour map's across each triangle. A new geometry. Fails
+    /// unless it has one entry a vertex.
+    pub fn with_colors(self, colors: Vec<[f32; 4]>) -> Result<Self, &'static str> {
+        if colors.len() != self.0.vertices.len() {
+            return Err("vertex colours have an entry a vertex");
+        }
+        self.derived(|data| data.colors = Some(Arc::new(colors)))
     }
     /// It skinned: each vertex moved by up to four joints of its object's
     /// skin (`World::set_skin`), `joints` their places in it and `weights`
@@ -233,6 +246,10 @@ impl Geometry {
     /// Its vertices' joints and weights, if it is skinned.
     pub(crate) fn skin(&self) -> Option<&[Influence]> {
         self.0.skin.as_deref().map(Vec::as_slice)
+    }
+    /// Its vertices' colours, if it has any.
+    pub(crate) fn colors(&self) -> Option<&[[f32; 4]]> {
+        self.0.colors.as_deref().map(Vec::as_slice)
     }
     /// Its second texture coordinates, if it has any.
     pub(crate) fn second_uvs(&self) -> Option<&[[f32; 2]]> {

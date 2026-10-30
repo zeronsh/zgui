@@ -410,6 +410,86 @@ fn a_texture_colours_a_mesh_across_its_coordinates() {
     );
 }
 
+/// A square coloured by its vertices, red at the left, blue at the right.
+fn colored_square() -> Geometry {
+    let square = facing_square();
+    let colors = square
+        .vertices()
+        .iter()
+        .map(|v| {
+            if v.position[0] < 0. {
+                [1., 0., 0., 1.]
+            } else {
+                [0., 0., 1., 1.]
+            }
+        })
+        .collect();
+    square.with_colors(colors).unwrap()
+}
+
+#[test]
+fn vertex_colours_tint_a_mesh_and_blend_across_it() {
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, _) = one(colored_square(), white);
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let (left, middle, right) = (
+        window.pixel(15, 50),
+        window.pixel(50, 50),
+        window.pixel(85, 50),
+    );
+    assert!(left[0] > left[2] + 150, "red at the left: {left:?}");
+    assert!(right[2] > right[0] + 150, "blue at the right: {right:?}");
+    assert!(
+        middle[0] > 100 && middle[2] > 100,
+        "both between: {middle:?}"
+    );
+    assert!(
+        facing_square().with_colors(vec![[1.; 4]]).is_err(),
+        "an entry a vertex"
+    );
+}
+
+#[test]
+fn vertex_colours_multiply_a_material_and_its_map() {
+    // Magenta by its material, a white texture changing nothing: red at the
+    // left by its vertices, blue at the right, and green nowhere.
+    let mut green_gone = Material::rgb(0xff00ff);
+    green_gone.unlit = true;
+    let (world, id) = one(colored_square(), green_gone);
+    let map = Texture::from_rgba8(1, 1, vec![255, 255, 255, 255]).unwrap();
+    world.set_texture(id, Some(map));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let (left, right) = (window.pixel(15, 50), window.pixel(85, 50));
+    assert!(left[0] > 200 && left[1] < 40, "{left:?}");
+    assert!(right[2] > 200 && right[1] < 40, "{right:?}");
+    // A skinned, placed and coloured mesh takes all its buffers at once.
+    let world = World::new();
+    let joint = world.add(Object::group());
+    let square = colored_square();
+    let count = square.vertices().len();
+    let square = square
+        .with_skin(vec![[0; 4]; count], vec![[1., 0., 0., 0.]; count])
+        .unwrap();
+    let id = world.add(Object::mesh(square, green_gone));
+    world.set_skin(id, Skin::new(vec![joint], vec![Mat4::IDENTITY]).ok());
+    let map = Texture::from_rgba8(1, 1, vec![255; 4]).unwrap();
+    world.set_texture(id, Some(map));
+    let moved = MapPlacement::new().offset(0.25, 0.);
+    world.set_map_placement(id, Map::BaseColour, Some(moved));
+    world.set_camera(Camera::looking_at([0., 0., 3.], [0., 0., 0.]));
+    let mut window = Window::new(&world).expect("a renderer, as above");
+    window.draw();
+    let (left, right) = (window.pixel(15, 50), window.pixel(85, 50));
+    assert!(left[0] > 200 && right[2] > 200, "{left:?} {right:?}");
+}
+
 #[test]
 fn a_meshs_maps_are_set_and_cleared_each_on_its_own() {
     let world = World::new();
