@@ -387,6 +387,28 @@ fn what_a_control_with_a_popup_is_given_lands_on_the_control() {
 }
 
 #[test]
+fn a_tabs_panel_fills_the_tabs() {
+    let mut h = Harness::inline(
+        r#"local items = ui.state("items", { { id = "a", label = "A" } })
+        local chosen = ui.state("chosen", "a")
+        return ui.column { w = 500, h = 400,
+            ui.tabs { label = "Files", items = items, value = chosen, grow = 1,
+                panel = function(id)
+                    return ui.column { id = "panel", grow = 1,
+                        ui.textarea { id = "editor", label = "Editor", value = ui.state("t", ""), grow = 1, w_full = true },
+                    }
+                end,
+            },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let (panel, editor) = (h.bounds("panel"), h.bounds("editor"));
+    assert_eq!(panel.width, 500.);
+    assert!(panel.height > 200., "{panel:?}");
+    assert_eq!((editor.width, editor.height), (panel.width, panel.height));
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")

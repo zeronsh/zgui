@@ -60,6 +60,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- **A `ui.tabs` panel can fill the tabs** (zgx-components): `grow` and `h_full` on a panel's root had nothing to fill, so an editor in a tab stayed at its default size, with layout warnings.
 - **A glTF file requiring Draco or meshopt compression says so**: its geometry can't be read yet, and it loaded as an empty model with no error.
 - **`zgx test` drives the desktop and the window's size** (zgx-script): `mount()` has a clipboard and file dialogs that answer as the test says (`save_to`, `pick`, `write_file`, `read_file`, `clipboard`, `copy`), so an Export or Import button can be tested instead of failing with "no platform here", and `app:resize(width, height)` lays out at a new size, `ui.window.size` following. `TestApp::try_with_desktop` for Rust tests.
 - **A capture of a window's frame shows its loops and caret** (zgx-gpu; macOS). `zgx inspect` captures and `Ui::snapshot` read the frame Metal drew, so what Core Animation plays over it (a baked loop, the blinking caret) was missing: an agent saw a page with its spinner gone. They now draw it in, at its current frame.

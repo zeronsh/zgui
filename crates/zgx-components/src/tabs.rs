@@ -449,10 +449,11 @@ pub fn tabs(
                     .bg(tok::BORDER_SUBTLE)
                     .accessible_hidden(),
             )
-            .child(div().role(Role::TabPanel).grow().child(switch(
-                move || panel_selected.get(),
-                move |id, cx| panel(id, cx),
-            )))
+            // The panel's root lays out as a child of the tab panel, so
+            // `grow` and `h_full` fill it.
+            .child(div().role(Role::TabPanel).grow().child(
+                switch(move || panel_selected.get(), move |id, cx| panel(id, cx)).contents(),
+            ))
     })
 }
 
