@@ -108,6 +108,39 @@ fn checked(h: &mut Harness, id: &str) -> Option<bool> {
 }
 
 #[test]
+fn a_controlled_fields_first_text_is_no_step_of_undo() {
+    let mut h = Harness::inline(
+        r#"local note = ui.state("note", "first text")
+        return ui.column {
+            ui.textarea {
+                id = "note",
+                label = "Note",
+                value = function() return note:get() end,
+                on_change = function(text) note:set(text) end,
+            },
+            ui.text { id = "saved", "{note}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.click("note");
+    h.keys("cmd+z");
+    assert_eq!(h.text("saved"), "first text", "nothing to undo yet");
+    h.keys("cmd+shift+z");
+    assert_eq!(h.text("saved"), "first text", "nothing to redo");
+
+    h.type_text("note", "!");
+    assert_eq!(h.text("saved"), "first text!");
+    h.keys("cmd+z");
+    assert_eq!(h.text("saved"), "first text", "the edit undone");
+    h.keys("cmd+z");
+    assert_eq!(h.text("saved"), "first text", "and no further");
+    h.keys("cmd+shift+z");
+    assert_eq!(h.text("saved"), "first text!", "redone");
+    h.keys("cmd+shift+z");
+    assert_eq!(h.text("saved"), "first text!");
+}
+
+#[test]
 fn a_controlled_checkbox_shows_its_function_and_asks_on_change() {
     let mut h = Harness::inline(CONTROLLED);
     assert_eq!(h.error(), None);

@@ -219,6 +219,8 @@ pub struct TextEditor {
     composition_cancel_revision: u64,
     /// How many times its text changed (`revision`).
     revision: u64,
+    /// `load_next`: the next text it is given leaves nothing to undo.
+    loading: bool,
     undo: VecDeque<Edit>,
     redo: VecDeque<Edit>,
     undo_bytes: usize,
@@ -260,6 +262,7 @@ impl TextEditor {
             preedit: None,
             composition_cancel_revision: 0,
             revision: 0,
+            loading: false,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             undo_bytes: 0,
@@ -509,6 +512,11 @@ impl TextEditor {
         }
         self.take(Incoming::Value(value))
     }
+    /// The next text it is given (`set_text`, `set_value`, its binding) is a
+    /// document rather than an edit: it leaves nothing to undo.
+    pub fn load_next(&mut self) {
+        self.loading = true;
+    }
     /// Its committed text as a value to keep: a copy while short, the
     /// long one shared.
     pub fn value(&self) -> TextValue {
@@ -570,6 +578,10 @@ impl TextEditor {
             self.history_limit,
             self.history_bytes,
         );
+        if std::mem::take(&mut self.loading) {
+            self.undo.clear();
+            self.undo_bytes = 0;
+        }
         true
     }
     fn previous(&self, word: bool) -> usize {

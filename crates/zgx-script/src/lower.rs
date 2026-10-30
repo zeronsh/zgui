@@ -1094,6 +1094,9 @@ pub(crate) fn bridge<T: PartialEq + Clone + 'static>(
     typed
 }
 
+/// A mounted editor's model, for a value the app gives it (`load_next`).
+type LoadedEditor = Rc<std::cell::OnceCell<Rc<std::cell::RefCell<zgx::text_edit::TextEditor>>>>;
+
 /// A controlled input's text (`value = function`): what the function shows
 /// while the input isn't focused; focused, what is being typed, each edit
 /// told to `on_change` (the function's answer to an edit, a number
@@ -1108,6 +1111,7 @@ fn controlled_input(
     commit: Option<Handler>,
     vm: &Rc<Vm>,
     low: &Rc<Lowering>,
+    editor: &LoadedEditor,
 ) -> (
     Signal<String>,
     impl FnMut(&mut zgx::input::EventContext) + 'static,
@@ -1122,10 +1126,20 @@ fn controlled_input(
     let echo: Rc<std::cell::Cell<bool>> = Rc::default();
     let (source, svm) = (resolve_owned(shown), vm.clone());
     let (t, l, e, o) = (text.clone(), latest.clone(), editing.clone(), echo.clone());
+    let loaded = editor.clone();
+    let mut first = true;
     cx.retain(runtime.effect(move || {
         let now = resolve_value(&source, &svm).to_string();
         let changed = *l.borrow() != now;
         *l.borrow_mut() = now.clone();
+        // Its first text arrives after it mounts: no edit, or the first undo
+        // would empty the field.
+        if std::mem::take(&mut first)
+            && !now.is_empty()
+            && let Some(editor) = loaded.get()
+        {
+            editor.borrow_mut().load_next();
+        }
         if !e.get() || (!o.replace(false) && changed) {
             t.set(now);
         }
@@ -2111,6 +2125,7 @@ fn kind_view(
                 crate::node::InputValue::Shown { .. } => None,
             };
             let mut committing = None;
+            let loaded = LoadedEditor::default();
             let (value, controlled): (zgx::widgets::EditorValue, _) = match value {
                 // A long document is shared with the editor, never copied
                 // on its way in or out.
@@ -2148,6 +2163,7 @@ fn kind_view(
                         commit.clone(),
                         vm,
                         low,
+                        &loaded,
                     );
                     (text.into(), Some(control))
                 }
@@ -2205,7 +2221,11 @@ fn kind_view(
                 view = view.caret_width(width);
             }
             if let Some(control) = controlled {
-                view = view.on_event(control);
+                view = view.on_event(control).on_mount(move |node| {
+                    if let Some(editor) = node.editor() {
+                        let _ = loaded.set(editor.editor);
+                    }
+                });
             }
             if let Some(commit) = committing {
                 view = view.on_event(commit);
