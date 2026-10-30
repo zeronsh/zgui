@@ -90,6 +90,9 @@ here, to land together:
   `Kana`), and so do the docs and lint. Each backend has a mapping test. Until
   then, a key's physical code binds it where the layout gives it a `Key`
   (`KeyBinding::code`, added in 0.1.6).
+- [ ] `zgx::switches::ALL` becomes a slice (`&[&Switch]`). An array's length is
+  part of its type, so each new switch is a change of type: 0.1.7's
+  `BAKED_LOOPS` took it from `[&Switch; 3]` to `[&Switch; 4]`.
 - [ ] zgx-3d's `Material` and `Object` become `#[non_exhaustive]`, made by
   builders (`Material::rgb(..).with(..)`, `Object::mesh(..).at(..)` already
   are), so later fields are additive. They're public structs of public fields

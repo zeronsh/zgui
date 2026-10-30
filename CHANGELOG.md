@@ -11,6 +11,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - **A `ui.list`'s rows fill its width** (zgx): a row's root shrank to what it held, where a block fills the row. Its `bg` and borders now reach the list's edge, and what `grow` or `justify` spread goes across the whole row. A row with a width of its own (`w`) keeps it.
 - **A scroll view or list under `ui.show`, `ui.switch` or `ui.presence` fills its parent** (zgx): it stayed at its default 320 points (240 tall for a `ui.scroll`), where on its own it stretches, and what lay past that was clipped and took no click or drop. Check a view that looked right at 320: give it a `w`, or a `max_w`, to keep that width.
 - **`ui.each` rows stretch as any child does** (zgx-script): a row of `each` shrank to what it held, where the same node on its own fills its parent (columns' and rows' `items` defaults to `"stretch"`). A row's `bg` now reaches the edge, and what `grow` spreads goes across. In a `ui.row`, a child of `each` likewise takes the row's height, as a plain child does. A child with a `w` or `h`, or a parent with `items`, keeps what it said; one that relied on shrinking wants `self = "start"`.
+- **`PaintExtras` has a new field, `outer_mask`** (zgx), for a fade inside a fade: a `PaintExtras` written out field by field stops compiling. *Migrate:* end the literal with `..Default::default()`, or set `outer_mask: None`.
+- **`zgx::switches::ALL` is `[&Switch; 4]`** (zgx), with `BAKED_LOOPS`; it was `[&Switch; 3]`, so code naming that length stops compiling. *Migrate:* iterate it, or take a slice (`&zgx::switches::ALL[..]`), and don't name its length.
 
 ### Added
 
