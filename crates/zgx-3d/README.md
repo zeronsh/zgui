@@ -31,6 +31,9 @@ What a world takes beyond meshes and lights, each costing nothing until used:
   scales and turns a map on its mesh (`MapPlacement`), says how it repeats
   (`Wrap`) and which coordinates it reads (`Geometry::with_second_uvs`). glTF
   models bring theirs: `KHR_texture_transform`, samplers' wrapping, `TEXCOORD_1`.
+- **Vertex colours**: `Geometry::with_colors(colors)` colours a mesh at each
+  vertex, multiplying its material and base colour map; glTF models bring
+  theirs (`COLOR_0`).
 - **Skins**: `Geometry::with_skin(joints, weights)` and
   `World::set_skin(id, Some(skin))` bend a mesh by its joints on the GPU, its
   shadow and picking following the pose; glTF models bring theirs.

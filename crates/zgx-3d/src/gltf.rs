@@ -15,7 +15,8 @@
 //! targets (positions and normals; its weights, and clips moving them).
 //! Accessors may be sparse. Materials' `doubleSided` and alpha modes are
 //! read, and where their maps sit: a second set of coordinates (`TEXCOORD_1`),
-//! samplers' wrapping and `KHR_texture_transform`. Not yet: points and lines (skipped); geometry compressed with Draco
+//! samplers' wrapping and `KHR_texture_transform`, and vertex colours
+//! (`COLOR_0`). Not yet: points and lines (skipped); geometry compressed with Draco
 //! or meshopt, an error where the file requires it.
 use crate::{
     Geometry, MapPlacement, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform,
@@ -789,7 +790,7 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let (material, maps, surface, placements) = primitive
+            let (mut material, maps, surface, placements) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
                 .and_then(|m| materials.get(m as usize).cloned())
@@ -819,6 +820,28 @@ impl Reader<'_> {
                 geometry = geometry
                     .with_second_uvs(uvs.as_chunks::<2>().0.to_vec())
                     .map_err(|e| ModelError(e.into()))?;
+            }
+            // Its vertices' colours, red, green and blue, with alpha or not.
+            if let Some(index) = attribute("COLOR_0") {
+                let with_alpha = self.accessor_type(index) == Some("VEC4");
+                let components = if with_alpha { 4 } else { 3 };
+                let flat = self.floats(index, components)?;
+                if flat.len() == count * components {
+                    let colors: Vec<[f32; 4]> = flat
+                        .chunks_exact(components)
+                        .map(|c| [c[0], c[1], c[2], c.get(3).copied().unwrap_or(1.)])
+                        .collect();
+                    // See-through by its vertices alone, as by a texture.
+                    if material.color[3] >= 1.
+                        && colors.iter().any(|c| c[3] < 1.)
+                        && self.blended(primitive)
+                    {
+                        material.color[3] = BLENDED_BY_TEXTURE;
+                    }
+                    geometry = geometry
+                        .with_colors(colors)
+                        .map_err(|e| ModelError(e.into()))?;
+                }
             }
             // Skinned: each vertex's four joints and their weights.
             if let (Some(joints), Some(weights)) = (attribute("JOINTS_0"), attribute("WEIGHTS_0")) {
@@ -852,6 +875,23 @@ impl Reader<'_> {
             out.push((geometry, material, maps, surface, placements));
         }
         Ok(out)
+    }
+    /// Accessor `index`'s element type (`VEC3`), if it says.
+    fn accessor_type(&self, index: usize) -> Option<&str> {
+        list(self.doc, "accessors")
+            .get(index)?
+            .get("type")?
+            .as_str()
+    }
+    /// Whether `primitive`'s material blends.
+    fn blended(&self, primitive: &Value) -> bool {
+        primitive
+            .get("material")
+            .and_then(Value::as_u64)
+            .and_then(|m| list(self.doc, "materials").get(m as usize))
+            .and_then(|m| m.get("alphaMode"))
+            .and_then(Value::as_str)
+            == Some("BLEND")
     }
     /// A primitive's morph target for its `count` vertices, or `None` if it
     /// can't be read.
@@ -1697,6 +1737,56 @@ mod tests {
             doc["materials"][0]["occlusionTexture"] = json!({ "index": 0 });
         });
         assert!(model.nodes[0].meshes[0].0.second_uvs().is_none());
+    }
+
+    #[test]
+    fn vertex_colours_are_read_in_any_form_and_blend_by_their_alpha() {
+        // `bytes` of `kind` as `COLOR_0`, in a material of `extra`.
+        fn with_colors(
+            bytes: &[u8],
+            kind: u64,
+            shape: &str,
+            normalized: bool,
+            extra: fn(&mut Value),
+        ) -> Node {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), extra);
+            let view = add_view(&mut doc, &mut bin, bytes);
+            doc["accessors"].as_array_mut().unwrap().push(json!({
+                "bufferView": view, "componentType": kind, "count": 4, "type": shape, "normalized": normalized,
+            }));
+            let accessor = doc["accessors"].as_array().unwrap().len() - 1;
+            doc["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"] = json!(accessor);
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].clone()
+        }
+        // Bytes, normalized, without alpha: alpha 1.
+        let bytes = [255, 0, 51, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let node = with_colors(&bytes, 5121, "VEC3", true, |_| {});
+        assert_eq!(
+            node.meshes[0].0.colors().unwrap()[0],
+            [1., 0., 0.2, 1.],
+            "scaled, and opaque"
+        );
+        // Floats with alpha, in a blending material: drawn translucent.
+        let floats: [[f32; 4]; 4] = [[1., 0.5, 0.25, 0.5]; 4];
+        let blend = |doc: &mut Value| {
+            doc["materials"][0]["alphaMode"] = json!("BLEND");
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] =
+                json!([1.0, 1.0, 1.0, 1.0]);
+        };
+        let node = with_colors(bytemuck::cast_slice(&floats), 5126, "VEC4", false, blend);
+        let (geometry, material, ..) = &node.meshes[0];
+        assert_eq!(geometry.colors().unwrap()[1], [1., 0.5, 0.25, 0.5]);
+        assert!(material.color[3] < 1., "its vertices see through");
+        // Solid vertices in a blending material stay as they were.
+        let node = with_colors(
+            bytemuck::cast_slice(&[[1_f32; 4]; 4]),
+            5126,
+            "VEC4",
+            false,
+            blend,
+        );
+        assert_eq!(node.meshes[0].1.color[3], 1.);
     }
 
     #[test]
