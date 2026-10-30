@@ -817,6 +817,8 @@ impl EditorHandle {
 }
 /// The layout and notification passes a frame takes to settle.
 const LAYOUT_PASSES: usize = 64;
+/// How much of a point a size may differ by and be the same (`resized`).
+const SIZE_NOISE: f32 = 1. / 1024.;
 /// The passes it takes once layout has failed to settle
 /// (`Ui::contain_layout_feedback`): each change is tried again, cheaply.
 const RETRY_LAYOUT_PASSES: usize = 16;
@@ -2946,7 +2948,9 @@ impl Ui {
             // mount, dispose, translate, or reenter frame preparation.
             self.runtime.batch(|| {
                 for (node, signal, size) in sizes {
-                    if self.scene.borrow().contains(node) {
+                    if self.scene.borrow().contains(node)
+                        && signal.with_untracked(|told| resized(*told, size))
+                    {
                         signal.set(size);
                     }
                 }
@@ -3026,13 +3030,15 @@ impl Ui {
             let own = self.storage.observed_sizes.borrow();
             let content = content.iter().filter(|(node, signal)| {
                 scene.contains(**node)
-                    && signal.with_untracked(|size| *size != allocated_content_size(&scene, **node))
+                    && signal.with_untracked(|told| {
+                        resized(*told, allocated_content_size(&scene, **node))
+                    })
             });
             let own = own.iter().filter(|(node, signal)| {
                 scene.contains(**node)
-                    && signal.with_untracked(|size| {
+                    && signal.with_untracked(|told| {
                         let bounds = scene.layout_box(**node);
-                        *size != (bounds.width, bounds.height)
+                        resized(*told, (bounds.width, bounds.height))
                     })
             });
             content
@@ -6478,6 +6484,17 @@ mod ownership_tests {
     }
 }
 
+/// Whether a size has changed from what was told of it: by a 1024th of a
+/// point or more. Less is rounding, not movement. Sums at a column's scale
+/// land on neighbouring floats (a list's 29.2342 and 29.234184) depending on
+/// what was laid out afresh, so a reader of the size that dirties layout
+/// would flip it each pass, for ever (#1027). What creeps is still told,
+/// as this compares with what was told last.
+#[inline]
+fn resized(told: (f32, f32), now: (f32, f32)) -> bool {
+    !((told.0 - now.0).abs() < SIZE_NOISE && (told.1 - now.1).abs() < SIZE_NOISE)
+}
+
 fn allocated_content_size(scene: &Scene, node: NodeId) -> (f32, f32) {
     // Its own box: a size, whatever moved it.
     let bounds = scene.layout_bounds(node);
@@ -6803,6 +6820,49 @@ mod bounds_observer_tests {
         ui.scene.borrow_mut().set_style(node, fixed(100., 40.));
         ui.try_prepare_frame().unwrap();
         assert_eq!(issues.borrow().len(), 2);
+    }
+
+    /// #1027: a size flipping between neighbouring floats, its reader
+    /// dirtying layout each time, settles; it is rounding, not movement.
+    #[test]
+    fn a_size_differing_only_by_rounding_settles_and_real_changes_are_told() {
+        let mut ui = Ui::new(400., 200.);
+        let node = ui.container(ui.root(), Layout::Overlay, fixed(100., 40.));
+        let size = ui.observe_size(node);
+        let (scene, seen) = (Rc::downgrade(&ui.scene), Rc::new(Cell::new((0., 0.))));
+        let (told, flips, wanted) = (
+            seen.clone(),
+            Rc::new(Cell::new(0)),
+            Rc::new(Cell::new(100.)),
+        );
+        let (flipped, want) = (flips.clone(), wanted.clone());
+        ui.bind(node, move || {
+            told.set(size.get());
+            // As a list's height does: each reading nudges it a float over.
+            let nudge = if flipped.get() % 2 == 0 { 2e-5 } else { 0. };
+            flipped.set(flipped.get() + 1);
+            let scene = scene.upgrade().unwrap();
+            scene
+                .borrow_mut()
+                .set_style(node, fixed(want.get() + nudge, 40.));
+        });
+        ui.try_prepare_frame().unwrap();
+        assert!((seen.get().0 - 100.).abs() < 0.001, "{:?}", seen.get());
+        assert!(flips.get() < 8, "{} readings", flips.get());
+        // A change anyone could see is told, at once.
+        wanted.set(120.);
+        ui.scene.borrow_mut().set_style(node, fixed(120., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(seen.get().0.round(), 120.);
+        // So is a creep too slow for any one step to tell, once it adds up.
+        let base = seen.get().0;
+        for step in 1..=4 {
+            let width = base + step as f32 * 0.0004;
+            wanted.set(width);
+            ui.scene.borrow_mut().set_style(node, fixed(width, 40.));
+            ui.try_prepare_frame().unwrap();
+        }
+        assert!(seen.get().0 > base + 0.0009, "{:?}", seen.get());
     }
 
     #[test]
