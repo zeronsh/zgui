@@ -29,6 +29,11 @@ caches as they were.
 2. In `src/tree/taffy_tree.rs`, `TaffyTree::set_style` clears the caches
    of a node's children when its `display` changes (rare: a few nodes'
    caches, which the change dirties anyway).
+3. In `src/tree/taffy_tree.rs`, `resolve_calc_value` calls what the value
+   points at (`style::CalcValue`), where taffy gave 0 unless a tree of its
+   own overrode it. Each resolve in `src/style` and `src/util/resolve.rs`
+   goes through `CompactLength::resolved_calc`, out of line and `#[cold]`,
+   so that plain lengths don't pay for the call.
 
 Drop the fork when a taffy release keeps the gaps and keys children's
 results by their parent's layout mode (the zgx tests are
