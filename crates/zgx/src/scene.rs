@@ -9825,8 +9825,28 @@ impl Scene {
                 let nested = self
                     .layer_bounds(item.id)
                     .expand(filter_spread(item.effects.filter_blur));
-                item.projective()
-                    .map_or(nested, |matrix| matrix.bounds(nested))
+                match item.projective() {
+                    Some(matrix) if matrix.affine().is_none() => {
+                        // In perspective, nearly at the eye, it reaches far
+                        // past any window: a layer holds what can show, the
+                        // window as its own zoom sees it (its box's corner
+                        // stays where layout put it; ancestors' maps aside).
+                        let root = self.bounds(id);
+                        let zoom = self.zoom(id).min(1.);
+                        let window = Rect::new(
+                            root.x - root.x / zoom,
+                            root.y - root.y / zoom,
+                            self.viewport.width / zoom,
+                            self.viewport.height / zoom,
+                        );
+                        matrix
+                            .bounds(nested)
+                            .intersection(window)
+                            .unwrap_or_default()
+                    }
+                    Some(matrix) => matrix.bounds(nested),
+                    None => nested,
+                }
             } else if let NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } = item.kind {
                 quad.paint_bounds(item.bounds)
             } else if let NodeKind::Svg(svg) = item.kind {

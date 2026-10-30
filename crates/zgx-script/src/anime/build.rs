@@ -522,6 +522,12 @@ pub(crate) fn compile(
                 } else {
                     ctx.to_v(&kf.to, &key, target, &from)?
                 };
+                // No perspective yet: 0 is none, not a distance to come from,
+                // and the way up from it passes through the eye.
+                let from = match (&key, &from) {
+                    (Key::Perspective, V::Num(0.)) if kf.from.is_none() => to.clone(),
+                    _ => from,
+                };
                 unit = unit.or(to_unit);
                 kf_composition = kf_composition.or(kf.composition);
                 kf_modifier = kf_modifier.or(kf.modifier);

@@ -1368,7 +1368,7 @@ mod macos {
                 if changed || resized {
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
                     let renderer = panel.renderer.as_mut().expect("made above");
-                    let drawn = crate::contain::run(
+                    let drawn = crate::contain::run_frame(
                         &mut panel.fault,
                         revision,
                         std::time::Instant::now(),
@@ -1379,6 +1379,9 @@ mod macos {
                             renderer.render(scene, &[])
                         },
                     );
+                    for issue in renderer.take_issues() {
+                        crate::contain::queue_issue(issue);
+                    }
                     if let Some(drawn) = drawn {
                         drawn?;
                     }
@@ -2357,7 +2360,7 @@ mod x11 {
                 if new || full || resized || popup.revision != Some(revision) {
                     popup.revision = Some(revision);
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
-                    let drawn = crate::contain::run(
+                    let drawn = crate::contain::run_frame(
                         &mut popup.fault,
                         revision,
                         std::time::Instant::now(),
@@ -2368,6 +2371,9 @@ mod x11 {
                             renderer.render(scene, &[])
                         },
                     );
+                    for issue in renderer.take_issues() {
+                        crate::contain::queue_issue(issue);
+                    }
                     if let Some(drawn) = drawn {
                         drawn?;
                         renderer.present()?;

@@ -577,6 +577,36 @@ fn motion_paths_text_split_scopes_and_drawn_strokes() {
     );
 }
 
+/// `perspective = 900` on a node with none is where it is seen from, from
+/// the first frame: tweened up from 0, a tilted edge passes the eye.
+#[test]
+fn a_bare_perspective_holds_from_the_first_frame() {
+    let mut h = Harness::inline(
+        r##"local box = ui.div { id = "card", w = 300, h = 420, bg = "#58a6ff",
+            on_mount = function(el)
+                anime.animate(el, { perspective = 900, rotateX = { 28, 0 }, duration = 820, ease = "out(3)" })
+            end }
+        anime.animate("#ranged", { perspective = { 200, 900 }, rotateX = { 28, 0 }, duration = 100, ease = "linear" })
+        return ui.column { box, ui.div { id = "ranged", w = 40, h = 40 } }"##,
+    );
+    h.frame();
+    h.run_ms(16.);
+    let local = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.scene.borrow().local_transform(node)
+    };
+    assert_eq!(h.host.error().get(), None);
+    let card = local(&mut h, "card");
+    assert_eq!(card.perspective, 900.);
+    assert!(card.rotate_x > 20f32.to_radians(), "{}", card.rotate_x);
+    h.run_ms(34.);
+    let ranged = local(&mut h, "ranged").perspective;
+    assert!(
+        ranged > 200. && ranged < 900.,
+        "a range still tweens: {ranged}"
+    );
+}
+
 #[test]
 fn tilts_in_perspective_animate_as_compositor_transforms() {
     let mut h = Harness::inline(

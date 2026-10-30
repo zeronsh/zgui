@@ -69,10 +69,11 @@ fn a_long_page_of_photos_scrolls_down_and_back() {
     );
 }
 
-/// More than the budget drawn in one frame is still refused: nothing drawn
-/// there can go. (Stacked, half transparent: each one shows.)
+/// More than the budget drawn in one frame: nothing drawn there can go, so
+/// the rest are left out, once said. (Stacked, half transparent: each one
+/// shows.)
 #[test]
-fn more_photos_than_the_budget_in_one_frame_fail() {
+fn more_photos_than_the_budget_in_one_frame_draw_what_fits() {
     let mut scene = Scene::new(800., 600.);
     let stack = scene.append(
         scene.root(),
@@ -88,6 +89,8 @@ fn more_photos_than_the_budget_in_one_frame_fail() {
     }
     let mut gpu = GpuRenderer::new(800, 600).unwrap();
     let damage = scene.flush().damage;
-    let error = gpu.render(&scene, &damage).unwrap_err();
-    assert!(error.to_string().contains("64 MiB"), "{error}");
+    gpu.render(&scene, &damage).unwrap();
+    let issues = gpu.take_issues();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert!(issues[0].contains("64 MiB"), "{issues:?}");
 }

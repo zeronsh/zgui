@@ -2153,6 +2153,30 @@ impl Host {
                 self.recover_renderer();
                 Ok(())
             }
+            // Whatever else a frame's GPU work returns (a present, a plane's
+            // frame, a popup's): this frame ends, and the next is whole. A
+            // new error is tried again at once, one that repeats when
+            // something changes.
+            Err(error) if error.is::<zgx_gpu::GpuError>() => {
+                let error = error.downcast_ref::<zgx_gpu::GpuError>().unwrap();
+                let mut faults = Vec::new();
+                let news = crate::contain::failed(
+                    &mut self.render_fault,
+                    self.frames_tried,
+                    std::time::Instant::now(),
+                    "the window's frame",
+                    |message| faults.push(message.to_string()),
+                    error,
+                );
+                for message in faults {
+                    self.show_error(&message);
+                }
+                self.force = true;
+                if news && let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+                Ok(())
+            }
             other => other,
         }
     }
@@ -2304,9 +2328,10 @@ impl Host {
                     });
                     // A panic in it skips the window's frames (their damage
                     // kept: the next drawn is whole) until it changes,
-                    // reported once; the rest of the app runs on.
+                    // reported once; the rest of the app runs on. So does an
+                    // error no frame can go on through.
                     self.frames_tried += 1;
-                    let rendered = crate::contain::run(
+                    let rendered = crate::contain::run_frame(
                         &mut self.render_fault,
                         self.frames_tried,
                         std::time::Instant::now(),
@@ -2314,6 +2339,9 @@ impl Host {
                         |message| faults.push(message.to_string()),
                         || renderer.render(&scene, damage),
                     );
+                    for issue in renderer.take_issues() {
+                        zgx::issues::report(&self.context.ui.runtime, &issue);
+                    }
                     if let Some(stats) = rendered {
                         let stats = stats?;
                         first_mark(&FIRST_RENDER, "first frame rendered");
@@ -2554,6 +2582,7 @@ impl Host {
             if let Some(updated) = updated {
                 updated?;
             }
+            crate::contain::report_issues(&self.context.ui.runtime);
             faults.extend(crate::contain::take_reported());
         }
         drop(scene);

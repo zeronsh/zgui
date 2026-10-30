@@ -26,7 +26,7 @@ pub fn on_issue(runtime: &Runtime, listener: impl Fn(&str) + 'static) -> IssueLi
 }
 
 /// Tells every listener of `message`.
-pub(crate) fn report(runtime: &Runtime, message: &str) {
+pub fn report(runtime: &Runtime, message: &str) {
     let listeners = runtime.extension(|_| Listeners::default());
     let live: Vec<_> = {
         let mut listeners = listeners.0.borrow_mut();
