@@ -1,0 +1,60 @@
+{
+ "commit": "e077e952f63030808a098ca54f3e69501e3271bd",
+ "started_utc": "2026-10-30T00:21:23.307193+00:00",
+ "finished_utc": "2026-10-30T02:52:50.860393+00:00",
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 47.3,
+  "busiest": [
+   "Zeron Engine 29.7%",
+   "opendirectoryd 3.7%",
+   "logd 1.7%",
+   "launchd 1.0%",
+   "ContinuityCaptureAgent 1.0%",
+   "claude 1.0%"
+  ],
+  "window_server_percent": 0.7,
+  "residents": [],
+  "zeron": [
+   "Zeron Engine (9988) 29.7%"
+  ],
+  "dialogs": []
+ },
+ "scenes": {
+  "heavy": {
+   "accepted": true,
+   "minutes": 55.0
+  },
+  "lab": {
+   "accepted": true,
+   "minutes": 35.5
+  },
+  "animate": {
+   "accepted": true,
+   "minutes": 12.3
+  },
+  "vlist": {
+   "accepted": true,
+   "minutes": 48.3
+  }
+ },
+ "frameworks": [
+  "zgx",
+  "zgx-luau",
+  "gpui-fast",
+  "mygo",
+  "rune",
+  "wgpu",
+  "zgx-composite"
+ ],
+ "powermetrics": true,
+ "protocol": {
+  "REQUESTED": 15,
+  "WARMUP": 5,
+  "SAMPLED": 10,
+  "IDLE_REPEATS": 6,
+  "PACING_REPEATS": 3,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1
+ }
+}

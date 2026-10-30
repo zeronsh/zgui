@@ -1,3 +1,42 @@
+# macOS suite (2026-10-30): 0.1.6, every scene on `e077e95`
+
+[`suite-macos-2026-10-30-e077e95`](suite-macos-2026-10-30-e077e95/): heavy, lab, animate and vlist on the v0.1.6 tag, in quiet window 39, on an M5 Max (Mac17,6) with macOS 26.4 (25E246) and a 120 Hz Studio Display XDR. It's the suite's protocol, with heavy idle in six rounds against each round's desktop, and powermetrics recording package, CPU and GPU power. Every scene was accepted, and no app exited abnormally. The rivals were built again from suite sources unchanged since 0.1.5. `python scripts/build_site.py docs/results/suite-macos-2026-10-30-e077e95 --startup docs/results/startup-macos-2026-10-26-03a9d89/startup.json --gate docs/results/gate-0.1.5-0.1.6/gate.json --previous docs/results/suite-macos-2026-10-28-d493d20 --field docs/results/field-macos-2026-10-27-238ef98 --rebuilt "…"` publishes it to `site/`.
+
+Medians, zgx / GPUI Fast / MyGo / Rune (vlist: zgx / zgx in Luau / GPUI Fast / MyGo / Rune):
+
+| Scene, mode | CPU (% of a core) | WindowServer CPU (%) | GPU power (mW) | Memory (MB) | Frame time p99 (ms) |
+| --- | --- | --- | --- | --- | --- |
+| heavy idle | 0.00 / 0.39 / 0.00 / 0.00 | -0.32 / -0.16 / -0.42 / -0.27 (over the desktop) | 0 / 0 / 0 / 0 | 53 / 74 / 65 / 75 | - |
+| heavy stream | 5.6 / 12.8 / 14.0 / 17.6 | 10.9 / 10.1 / 11.0 / 10.0 | 125 / 167 / 226 / 491 | 264 / 268 / 308 / 477 | 17.9 / 25.6 / 24.8 / 33.9 |
+| heavy scroll | 2.6 / 7.0 / 11.6 / 17.4 | 10.3 / 10.1 / 10.8 / 11.0 | 82 / 167 / 116 / 492 | 260 / 266 / 298 / 629 | 17.9 / 25.0 / 25.2 / 24.1 |
+| heavy both | 6.2 / 13.0 / 13.9 / 20.1 | 11.2 / 10.1 / 11.3 / 10.1 | 145 / 166 / 228 / 490 | 266 / 269 / 308 / 633 | 17.9 / 25.4 / 17.8 / 21.2 |
+| lab stream | 2.4 / 4.7 / 7.0 / 5.7 | 9.9 / 9.7 / 10.5 / 10.4 | 59 / 108 / 67 / 316 | 243 / 248 / 272 / 433 | 18.2 / 18.4 / 25.3 / 34.4 |
+| lab scroll | 2.2 / 3.8 / 5.5 / 5.2 | 10.1 / 9.6 / 10.8 / 9.8 | 63 / 106 / 100 / 308 | 242 / 246 / 263 / 430 | 17.8 / 18.0 / 17.9 / 41.2 |
+| lab both | 2.7 / 4.6 / 6.8 / 6.4 | 10.1 / 9.5 / 10.5 / 10.0 | 68 / 109 / 105 / 319 | 244 / 248 / 272 / 433 | 18.0 / 18.2 / 25.5 / 32.8 |
+| animate animate | 3.5 / 5.6 / 6.8 / 6.7 | 18.5 / 20.0 / 22.0 / 16.9 | 117 / 142 / 118 / 296 | 242 / 256 / 263 / 416 | 13.9 / 13.8 / 17.4 / 17.3 |
+| vlist scroll | 2.4 / 2.6 / 4.5 / 8.5 / 6.8 | 10.0 / 10.1 / 9.5 / 11.1 / 9.8 | 62 / 62 / 90 / 95 / 248 | 245 / 247 / 284 / 265 / 450 | 17.8 / 18.1 / 18.9 / 18.5 / 38.9 |
+| vlist fling | 2.5 / 2.6 / 4.7 / 8.6 / 8.0 | 10.1 / 10.1 / 9.4 / 11.1 / 9.7 | 62 / 62 / 90 / 96 / 248 | 245 / 247 / 287 / 265 / 452 | 18.0 / 18.4 / 18.4 / 18.5 / 41.1 |
+| vlist jump | 2.5 / 2.6 / 4.6 / 9.1 / 9.0 | 10.0 / 10.2 / 9.7 / 11.2 / 9.7 | 62 / 62 / 90 / 96 / 247 | 246 / 247 / 285 / 269 / 455 | 18.5 / 18.3 / 18.2 / 18.4 / 39.1 |
+
+In every test zgx uses the least CPU and the least GPU power, and none of its frames run long. It also has the least memory in every cell.
+
+**WindowServer CPU.** The site's verdict computes that WindowServer spends up to 1.6 points of a core more on zgx's window than on the lowest rival's, in 10 of 10 tests. At 0.1.5 it was 0.8 points, in 9 of 10. Much of that is this run's WindowServer CPU falling into per-launch levels:
+- **Animate:** read about 17 or about 20 per launch for several frameworks. Rune read 16.9, 16.9 and 20.2, GPUI Fast 17.7 to 20.6, and zgx 17.8 to 19.1. Rune's two low launches set the 1.6 points.
+- **Heavy:** zgx read 10.8 to 12.0 in both and 10.4 to 11.0 in stream (0.1.5: 10.4 to 10.9 and 10.0 to 10.5). In the same window, an hour earlier, a tiles build 27 commits before 0.1.6 read 10.47 in both and 10.51 in stream over six launches each. No renderer change between the two looks likely to affect WindowServer.
+
+Three launches can't separate these levels. A paired comparison of 0.1.5 and 0.1.6 (six launches each, against each round's desktop) is booked for the next quiet window, to rule a regression in or out.
+
+**Why zgx trails on WindowServer CPU at 60 Hz.** The remaining gap of about 0.4 points in the 60 Hz scenes is structural:
+- zgx shows each frame by flipping a tile layer: one Core Animation commit per frame.
+- With a main menu, AppKit gives every app 8 extra menu-bar contexts (11 in all on two displays), and a commit is delivered to every context in the process.
+- That's about 0.045 points per context at 60 commits a second, so about 0.35 to 0.4 points in all. Removing the menu measured 0.36 to 0.42 (window 39, cell A, in the flush lane's notes).
+- GPUI and Rune have the same 11 contexts, but commit nothing of their own per frame: they present Metal drawables.
+- zgx's tile path keeps its lead in app CPU, GPU power and memory.
+
+[`gate-0.1.5-0.1.6`](gate-0.1.5-0.1.6/) holds the release gate's exact counts: v0.1.5 (`d493d20a`) against the 0.1.6 freeze (`02319c0e`; the release commit bumps only versions), on arm64 (`gate.md`, sol's run in zgx-linux) and x86 (`gate-x86.md`, CI's perf job on probe PR #986). Every scene runs fewer instructions or is level:
+- **Luau:** the scenes run 2 to 3.6% fewer, mount 1.95% and the apps 1.5 to 3.1%. One VM now sets up in 1.53 M instructions, against 3.83 M at 0.1.5.
+- **Rust:** the scenes are level, −0.04 to +0.00%.
+
 # macOS suite (2026-10-28): 0.1.5, every scene on `d493d20`
 
 [`suite-macos-2026-10-28-d493d20`](suite-macos-2026-10-28-d493d20/): heavy, lab, animate and vlist on the v0.1.5 tag, measured right after it was published (quiet window 36), on an M5 Max (Mac17,6) with macOS 26.4 (25E246) and a 120 Hz Studio Display XDR. The protocol is the suite's, now with heavy idle in six rounds, each beside its desktop alone (#817). Every scene was accepted, and no app exited abnormally. The rivals were built again from suite sources unchanged since `1134537`. `python scripts/build_site.py docs/results/suite-macos-2026-10-28-d493d20 --startup docs/results/startup-macos-2026-10-26-03a9d89/startup.json --gate docs/results/gate-0.1.4-0.1.5/gate.json --previous docs/results/suite-macos-2026-10-27-1134537 --field docs/results/field-macos-2026-10-27-238ef98 --rebuilt "…"` publishes it to `site/`.
