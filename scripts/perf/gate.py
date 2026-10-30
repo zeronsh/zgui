@@ -96,6 +96,11 @@ SCENES = [
     ('script-update', 'zgx-script', 'update_bench', {'TICKS': '200'}),
     ('anime', 'zgx-script', 'anime_bench', {}),
     ('script-layout', 'zgx-script', 'script_layout_bench', {}),
+    # Spans in Luau: read, lowered and mounted again each pass (plain, then
+    # shaped as a markdown paragraph is), and restyled through a state.
+    ('spans-plain', 'zgx-script', 'span_bench', {'SCENE': 'spans-plain', 'N': '10', 'REPS': '15'}),
+    ('spans-follow', 'zgx-script', 'span_bench', {'SCENE': 'spans-follow', 'N': '10', 'REPS': '80'}),
+    ('spans-md', 'zgx-script', 'span_bench', {'SCENE': 'spans-md', 'N': '10', 'REPS': '10'}),
     ('list-state', 'zgx-script', 'list_state_bench', {}),
     ('style', 'zgx', 'style_bench', {}),
     # 3D frames' CPU work, drawn by wgpu's no-op backend (no driver, no JIT):
