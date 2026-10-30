@@ -2741,7 +2741,14 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             let at = Some((*index, width.to_bits()));
                             if placed.at != at {
                                 placed.at = at;
-                                scene.set_style(*node, crate::widgets::fixed(width, row_height));
+                                // Its root fills its width, as a block does.
+                                scene.set_style(
+                                    *node,
+                                    crate::scene::Style {
+                                        align: crate::scene::Align::Stretch,
+                                        ..crate::widgets::fixed(width, row_height)
+                                    },
+                                );
                                 scene.set_transform(
                                     *node,
                                     crate::scene::Transform {

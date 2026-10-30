@@ -3372,7 +3372,14 @@ fn follows_label(node: &Node) -> bool {
 /// cross axis in a column. (`show`, `switch` and `presence` hold one view
 /// at a time and are contents nodes: CSS `display: contents`, exactly.)
 fn flow(node: &Node) -> Vec<(Prop, Lit)> {
-    let mut row = matches!(node.kind, Kind::Row);
+    let scrolls = matches!(
+        node.kind,
+        Kind::Scroll {
+            horizontal: true,
+            ..
+        }
+    );
+    let mut row = scrolls || matches!(node.kind, Kind::Row);
     let mut out = Vec::new();
     for (prop, source) in &node.props {
         let Source::Lit(lit) = source else { continue };
@@ -3387,7 +3394,15 @@ fn flow(node: &Node) -> Vec<(Prop, Lit)> {
             _ => {}
         }
     }
-    if row {
+    if scrolls {
+        // A scrolling row is as long as its children: the region takes its
+        // height, and its own length from them.
+        out.insert(0, (Prop::Direction, Lit::Str("row".into())));
+        out.push((Prop::AlignSelf, Lit::Str("stretch".into())));
+        if !out.iter().any(|(prop, _)| *prop == Prop::Items) {
+            out.push((Prop::Items, Lit::Str("stretch".into())));
+        }
+    } else if row {
         // In a row the region takes the row's room, so its children wrap
         // and shrink against the row's width, not their own.
         out.insert(0, (Prop::Direction, Lit::Str("row".into())));

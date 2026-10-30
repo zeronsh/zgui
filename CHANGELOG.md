@@ -4,6 +4,10 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ## Unreleased
 
+### Changed: what to check in an existing app
+
+- **A `ui.list`'s rows fill its width** (zgx): a row's root shrank to what it held, where a block fills the row. Its `bg` and borders now reach the list's edge, and what `grow` or `justify` spread goes across the whole row. A row with a width of its own (`w`) keeps it.
+
 ### Added
 
 - **`zgx new --template plugins`** (zgx-script): tasks made to be extended. Its `zgx.json` exposes shared state, an action the script defines with `ui.actions`, and a list to filter. `plugins/focus` is allowed them, adds beside the app's hook, filters the list and calls the action. Its test mounts the app with its plugin, as `zgx run` does.
@@ -43,6 +47,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - **Luau's free pages leave memory as an app goes idle** (zgx-mlua, zgx-script): Luau frees a 16 KB page only when its last object goes, and the program's allocator kept such pages in larger runs it returns only whole. With the `mimalloc` feature they now come from a pool of their own, and each free page goes back to the system as a host goes idle (`mlua::release_free_pages`). Zeron's gallery, 200 pages browsed and left 15 s: 197–204 MB → 173–177 MB.
 - **An animation started while only unseen loops played starts on the next frame** (zgx-script): the engine, then looking a few times a second, started it up to 250 ms late and in one jump (a sidebar's width animating 286 → 542 in one frame). A clip's first frame now advances it one frame at most.
 - **Layout that never settles no longer ends the app** (zgx, zgx-desktop, zgx-script): a window keeps the layout the last of its 64 passes left, tells nothing more of its geometry, and goes on, taking input. It reports once, naming the nodes that still moved (`@12`, as `zgx inspect` does), on stderr, in the window's banner, and to the new `zgx::issues::on_issue` and `ScriptHost::on_error`. Whenever the layout changes it tries again in at most 16 passes. `Ui::try_prepare_frame` still returns `LayoutFeedbackError` unless a host calls `Ui::contain_layout_feedback`, as window hosts do ([what an app keeps running through](docs/application.md#when-something-fails)).
+- **`ui.each` in a `scroll_x` lays out across** (zgx-script): its rows stacked in a column there.
 - macOS: with zgx-desktop's `mimalloc` feature, the program's heap shows in vmmap, footprint and Activity Monitor as "Memory Tag 240", not "IOAccelerator". mimalloc's default tag, 100, is the one macOS names IOAccelerator, so an app's heap read as GPU memory: in one app 107 MB of "IOAccelerator" was its heap. `MIMALLOC_OS_TAG` still overrides it.
 - **An input bound to a state calls `on_commit`** (zgx-script): `ui.input { value = draft, on_commit = add }` heard nothing on Enter, as only a controlled input (`value = function`) told it. It now hears the text on Enter, and on leaving the input changed since it was focused, as a controlled input does.
 - **A scroll view, list or text area can keep a gesture at its edges** (zgx, zgx-script): `overscroll = "contain"` (`View::overscroll_contain`, CSS's `overscroll-behavior: contain`) on `ui.scroll`, `ui.list`, `ui.input` and `ui.textarea`. A wheel or trackpad gesture that starts over the view stays with it at its edges, momentum included, so the scroll views around it neither move nor stretch (a transcript inside a page). `"auto"`, the default, hands what it can't scroll on as before ([scrolling](docs/reference/scrolling.md)).

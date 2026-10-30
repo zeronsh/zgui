@@ -300,14 +300,19 @@ struct Entry {
     at: Option<(u32, u32, u32)>,
 }
 fn row_style(width: f32, height: f32, measured: bool) -> crate::scene::Style {
+    // A row's root fills its width, as a block does.
     if measured {
         crate::scene::Style {
             width: Some(width),
             min_height: Some(1.),
+            align: crate::scene::Align::Stretch,
             ..Default::default()
         }
     } else {
-        crate::widgets::fixed(width, height)
+        crate::scene::Style {
+            align: crate::scene::Align::Stretch,
+            ..crate::widgets::fixed(width, height)
+        }
     }
 }
 fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(

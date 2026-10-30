@@ -683,6 +683,59 @@ fn a_link_span_underlines_under_the_pointer() {
     assert!(!runs(&mut h)[1].1, "back at rest once the pointer leaves");
 }
 
+/// `ui.each` in a `scroll_x` lays out across, with the viewport's gap and as
+/// tall as a plain child there.
+#[test]
+fn each_in_a_scroll_x_lays_out_across() {
+    let mut h = Harness::inline(
+        r##"local names = ui.state("names", { "a", "b", "c" })
+        return ui.column { w = 200, h = 300,
+            ui.scroll_x { id = "s", h = 100, gap = 12,
+                ui.each(names, function(n) return ui.column { id = n, w = 100, ui.text { n } } end) },
+            ui.scroll_x { h = 100, ui.column { id = "plain", w = 100, ui.text { "p" } } } }"##,
+    );
+    h.ui.prepare_frame();
+    let bounds = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.scene.borrow().bounds(node)
+    };
+    assert_eq!(bounds(&mut h, "a").x, 0.);
+    assert_eq!(bounds(&mut h, "b").x, 112.);
+    assert_eq!(bounds(&mut h, "c").x, 224.);
+    let first = bounds(&mut h, "a");
+    assert_eq!(bounds(&mut h, "c").y, first.y);
+    let plain = bounds(&mut h, "plain");
+    assert_eq!(first.height, plain.height);
+}
+
+/// A list's row fills the list's width, whatever it holds, as a block does:
+/// fixed, variable and measured rows alike.
+#[test]
+fn list_rows_fill_the_width_of_the_list() {
+    let mut h = Harness::inline(
+        r##"local rows = ui.state("rows", { "short" })
+        return ui.column { w = 600, h = 600,
+            ui.list { w = 300, h = 80, height = 40, count = 1,
+                row = function() return ui.column { id = "fixed", ui.text { "x" } } end },
+            ui.list { w = 300, h = 80, heights = { 40 },
+                row = function() return ui.column { id = "variable", ui.text { "x" } } end },
+            ui.list { w = 300, h = 80, measured = true, height = 40, data = rows,
+                key = function(r) return r end,
+                row = function(r) return ui.column { id = "measured", ui.text { r } } end },
+            ui.list { w = 300, h = 80, height = 40, count = 1,
+                row = function() return ui.column { id = "sized", w = 120, ui.text { "x" } } end } }"##,
+    );
+    h.ui.prepare_frame();
+    let width = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.scene.borrow().bounds(node).width
+    };
+    assert_eq!(width(&mut h, "fixed"), 300.);
+    assert_eq!(width(&mut h, "variable"), 300.);
+    assert_eq!(width(&mut h, "measured"), 300.);
+    assert_eq!(width(&mut h, "sized"), 120., "a row with a width keeps it");
+}
+
 #[test]
 fn keys_reach_the_app_after_the_focused_node_goes() {
     let mut h = Harness::inline(
