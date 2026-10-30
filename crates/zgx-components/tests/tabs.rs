@@ -93,6 +93,106 @@ fn panel(ui: &Ui, view: &ViewHandle) -> String {
     }
 }
 
+type Strips = (
+    Ui,
+    ViewHandle,
+    [zgx::reactive::Signal<Vec<Tab>>; 2],
+    [zgx::reactive::Signal<String>; 2],
+);
+/// Two strips side by side, the left's tabs ids `a` and `b`, the right's `c`.
+fn two_strips(group: Option<&str>, told: Rc<RefCell<Vec<(String, String)>>>) -> Strips {
+    let mut ui = Ui::new(600., 200.);
+    let items = [
+        ui.signal(vec![Tab::new("a", "Alpha"), Tab::new("b", "Beta")]),
+        ui.signal(vec![Tab::new("c", "Gamma")]),
+    ];
+    let selected = [ui.signal("a".to_owned()), ui.signal("c".to_owned())];
+    let strip = |side: usize, label: &str| {
+        let told = told.clone();
+        tabs(
+            label,
+            items[side].clone(),
+            selected[side].clone(),
+            TabsOptions {
+                reorderable: true,
+                group: group.map(str::to_owned),
+                on_move: Some(Rc::new(move |id: &str, to: &str| {
+                    told.borrow_mut().push((id.to_owned(), to.to_owned()));
+                })),
+                ..Default::default()
+            },
+            |id, _| text(format!("Panel {id}")),
+        )
+        .w(300.)
+        .h(200.)
+    };
+    let view = ui.mount(
+        row()
+            .w(600.)
+            .h(200.)
+            .child(strip(0, "Left"))
+            .child(strip(1, "Right")),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    (ui, view, items, selected)
+}
+fn drag_tab(ui: &mut Ui, view: &ViewHandle, label: &str, x: f32, y: f32) {
+    let tabs = with_role(ui, view, Role::Tab);
+    let names = labels(ui, &tabs);
+    let at = names
+        .iter()
+        .position(|name| name == label)
+        .expect("the tab");
+    let b = ui.scene.borrow().bounds(tabs[at]);
+    let (from_x, from_y) = (b.x + b.width / 2., b.y + b.height / 2.);
+    ui.dispatch(InputEvent::PointerDown {
+        x: from_x,
+        y: from_y,
+        button: PointerButton::Primary,
+    });
+    ui.dispatch(InputEvent::PointerMove {
+        x: from_x + 20.,
+        y: from_y,
+    });
+    ui.dispatch(InputEvent::PointerMove { x, y });
+    ui.prepare_frame();
+    ui.dispatch(InputEvent::PointerUp {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    ui.prepare_frame();
+    ui.prepare_frame();
+}
+
+#[test]
+fn a_tab_dragged_over_another_strip_of_its_group_goes_there() {
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let (mut ui, view, items, selected) = two_strips(Some("panes"), told.clone());
+    drag_tab(&mut ui, &view, "Alpha", 450., 120.);
+    assert_eq!(order(&items[0]), ["b"]);
+    assert_eq!(order(&items[1]), ["c", "a"]);
+    assert_eq!(selected[0].get(), "b", "its neighbour is chosen");
+    assert_eq!(selected[1].get(), "a", "and it is, where it went");
+    assert_eq!(*told.borrow(), [("a".to_owned(), "Right".to_owned())]);
+
+    // Its last tab gone, a strip chooses nothing.
+    drag_tab(&mut ui, &view, "Beta", 450., 20.);
+    assert_eq!(order(&items[0]), Vec::<String>::new());
+    assert_eq!(selected[0].get(), "");
+    assert_eq!(order(&items[1]), ["c", "a", "b"]);
+}
+
+#[test]
+fn a_tab_stays_in_its_strip_without_a_group() {
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let (mut ui, view, items, _) = two_strips(None, told.clone());
+    drag_tab(&mut ui, &view, "Alpha", 450., 120.);
+    assert_eq!(order(&items[1]), ["c"]);
+    assert!(told.borrow().is_empty());
+}
+
 #[test]
 fn tabs_choose_their_panel_by_pointer_and_keyboard() {
     let (mut ui, view, _, selected) = mounted(500., TabsOptions::default());

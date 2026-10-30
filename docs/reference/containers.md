@@ -101,6 +101,8 @@ return ui.column {
 | `panel` | `(id: string) -> Node` | required | the chosen tab's panel, built as it is chosen |
 | `reorderable` | `boolean` | `false` | |
 | `keep` | `boolean` | `false` | a panel stays mounted once its tab is chosen, as Radix's `forceMount`, and goes when the tab closes: an editor keeps its undo, caret and scroll. Hidden, it takes no layout, paint or frames; its reactive bindings still follow state, and a script's own timers keep running |
+| `group` | `string` | none | `reorderable` strips of one group, in one window, take each other's tabs: a tab dragged over another's strip or panel goes there and is chosen, as in an editor's split panes. It arrives as `{ id, label, closable }`, without other fields, and its panel is built there, so `keep`'s state doesn't move with it |
+| `on_move` | `(id: string, to: string) -> ()` | none | a tab of this strip went to another of its group: its id and that strip's `label`, for an app's undo |
 | `on_close` | `(id: string) -> boolean?` | none | asked before a tab closes; `false` keeps it open (an editor asking to save first) |
 | `label` | `string` | `""` | the strip's accessible name |
 

@@ -9995,6 +9995,11 @@ export type TabsProps = {
 	-- A panel stays mounted once chosen, hidden, until its tab closes: an
 	-- editor keeps its undo, caret and scroll.
 	keep: boolean?,
+	-- Reorderable tabs of one group move between them: a tab dragged over
+	-- another's strip or panel goes there.
+	group: string?,
+	-- A tab of this strip went to another: its id, and that strip's `label`.
+	on_move: ((id: string, to: string) -> ())?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
 	label: Label?,

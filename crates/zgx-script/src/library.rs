@@ -28,6 +28,8 @@ pub(crate) enum Library {
         value: Signal<Value>,
         reorderable: bool,
         keep: bool,
+        group: Option<String>,
+        on_move: Option<Function>,
         on_close: Option<Function>,
         panel: Function,
     },
@@ -246,6 +248,8 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
                 value,
                 reorderable: table.get::<Option<bool>>("reorderable")?.unwrap_or(false),
                 keep: table.get::<Option<bool>>("keep")?.unwrap_or(false),
+                group: table.get("group")?,
+                on_move: table.get("on_move")?,
                 on_close: table.get("on_close")?,
                 panel,
             }));
@@ -1205,6 +1209,8 @@ pub(crate) fn view(
             value,
             reorderable,
             keep,
+            group,
+            on_move,
             on_close,
             panel,
         } => {
@@ -1228,14 +1234,19 @@ pub(crate) fn view(
                 let old = source.with_untracked(Clone::clone);
                 let kept: Vec<Value> = tabs
                     .iter()
-                    .filter_map(|tab| {
-                        old.list()
-                            .iter()
-                            .find(|item| {
-                                item.field("id").map(Value::to_string).as_deref()
-                                    == Some(tab.id.as_str())
-                            })
-                            .cloned()
+                    .map(|tab| {
+                        let known = old.list().iter().find(|item| {
+                            item.field("id").map(Value::to_string).as_deref()
+                                == Some(tab.id.as_str())
+                        });
+                        // A tab from another strip of the group: what it is.
+                        known.cloned().unwrap_or_else(|| {
+                            Value::record([
+                                ("id", Value::from(tab.id.as_str())),
+                                ("label", Value::from(tab.label.as_str())),
+                                ("closable", Value::Bool(tab.closable)),
+                            ])
+                        })
                     })
                     .collect();
                 Value::List(kept.into())
@@ -1260,6 +1271,16 @@ pub(crate) fn view(
                 reorderable: *reorderable,
                 on_close,
                 keep: *keep,
+                group: group.clone(),
+                on_move: on_move.clone().map(|f| {
+                    let vm = vm.clone();
+                    let told: MoveTab = Rc::new(move |id: &str, to: &str| {
+                        if let Err(error) = vm.call::<()>(&f, (id, to)) {
+                            vm.report(error);
+                        }
+                    });
+                    told
+                }),
             };
             let (panel, vm, low) = (panel.clone(), vm.clone(), low.clone());
             tabs(
