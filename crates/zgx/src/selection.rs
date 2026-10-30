@@ -209,7 +209,7 @@ pub(crate) struct State {
     /// The region last pressed in: what select-all selects.
     active_root: Option<NodeId>,
     /// The window is in the background: highlights take the inactive colour.
-    inactive: bool,
+    pub(crate) inactive: bool,
     /// Bumped by every change of selection.
     revision: u64,
     /// A press in this dispatch went to a selectable region.
@@ -1943,6 +1943,11 @@ impl Ui {
     /// The window was activated or sent to the back: selections show the
     /// active or inactive colour.
     pub fn set_window_active(&self, active: bool) {
+        if let Some(window_active) = self.window_active_observed()
+            && window_active.with_untracked(|was| *was != active)
+        {
+            window_active.set(active);
+        }
         let changed = {
             let mut state = self.selection_state().borrow_mut();
             let changed = state.inactive == active;

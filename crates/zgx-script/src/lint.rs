@@ -229,6 +229,8 @@ const NOT_ELEMENTS: &[&str] = &[
     "optimistic",
     "open_files",
     "save_file",
+    "notify",
+    "badge",
     "read_file",
     "write_file",
     "i18n",

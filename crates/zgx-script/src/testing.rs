@@ -56,8 +56,23 @@ pub struct FakeDesktop {
     opens: RefCell<std::collections::VecDeque<Vec<std::path::PathBuf>>>,
     saves: RefCell<std::collections::VecDeque<std::path::PathBuf>>,
     asked: RefCell<Vec<zgx::platform::FilePicker>>,
+    notifications: RefCell<Vec<zgx::platform::Notification>>,
+    badge: RefCell<Option<String>>,
+    deny: std::cell::Cell<bool>,
 }
 impl FakeDesktop {
+    /// The notifications shown so far, in order.
+    pub fn notifications(&self) -> Vec<zgx::platform::Notification> {
+        self.notifications.borrow().clone()
+    }
+    /// The app icon's badge, if it has one.
+    pub fn badge(&self) -> Option<String> {
+        self.badge.borrow().clone()
+    }
+    /// Refuse notifications from now on, as a person who turned them off.
+    pub fn deny_notifications(&self) {
+        self.deny.set(true);
+    }
     /// The next open dialog picks `files`.
     pub fn pick(&self, files: impl IntoIterator<Item = impl Into<std::path::PathBuf>>) {
         let files = files.into_iter().map(Into::into).collect();
@@ -124,6 +139,24 @@ impl zgx::platform::Platform for FakeDesktop {
         self.asked.borrow_mut().push(picker);
         let path = self.saves.borrow_mut().pop_front();
         Box::pin(async move { Ok(path) })
+    }
+    fn notify(
+        &self,
+        notification: zgx::platform::Notification,
+    ) -> zgx::platform::Pending<Result<(), zgx::platform::NotifyError>> {
+        if self.deny.get() {
+            return Box::pin(async {
+                Err(zgx::platform::NotifyError::Denied(
+                    "notifications are off for this app".into(),
+                ))
+            });
+        }
+        self.notifications.borrow_mut().push(notification);
+        Box::pin(async { Ok(()) })
+    }
+    fn set_badge(&self, badge: Option<&str>) -> bool {
+        *self.badge.borrow_mut() = badge.map(str::to_string);
+        true
     }
 }
 

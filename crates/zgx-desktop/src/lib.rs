@@ -44,6 +44,7 @@ mod look_up;
 mod native_drag;
 mod native_events;
 mod native_prompt;
+mod notify;
 mod platform;
 mod popup_window;
 #[cfg(target_os = "linux")]

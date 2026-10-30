@@ -872,6 +872,15 @@ impl Application {
     /// return once the application quits.
     pub fn run(self, build: impl FnOnce(&mut WindowContext)) -> Result<(), Box<dyn Error>> {
         zgx::profile::mark("run");
+        // Who the app is to the system's notifications and badge.
+        crate::notify::set_identity(crate::notify::Identity {
+            application_id: self.application_id.clone(),
+            desktop_id: self.desktop_id.clone(),
+            name: std::env::current_exe()
+                .ok()
+                .and_then(|exe| Some(exe.file_stem()?.to_string_lossy().into_owned()))
+                .unwrap_or_default(),
+        });
         // The GPU device, its pipelines and the fonts are made beside the
         // launch and the first window, which hold the main thread
         // meanwhile. Metal's adapter draws to any window, and Windows takes

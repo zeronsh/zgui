@@ -39,6 +39,15 @@ fn options(picker: &FilePicker) -> crate::FileDialogOptions {
 }
 
 impl Platform for Desktop {
+    fn notify(
+        &self,
+        notification: zgx::platform::Notification,
+    ) -> Pending<Result<(), zgx::platform::NotifyError>> {
+        crate::notify::notify(notification)
+    }
+    fn set_badge(&self, badge: Option<&str>) -> bool {
+        crate::notify::set_badge(badge)
+    }
     fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow_mut().as_mut()?.get_text().ok()
     }

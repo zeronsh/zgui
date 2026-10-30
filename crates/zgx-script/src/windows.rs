@@ -9,7 +9,7 @@
 //! runtime (`Ui::with_runtime`), so their state is the app's.
 use crate::{
     node::{Node, expect_node, expect_state},
-    value::{State, Store, Value},
+    value::{ReadState, State, Store, Value},
 };
 use mlua::{Lua, Table};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -112,6 +112,11 @@ pub(crate) const CONTROLS: &str = "zgx.window.controls";
 /// `ui.window.zoomable`, which a script reads and sets.
 pub(crate) const ZOOM: &str = "zgx.window.zoom";
 pub(crate) const ZOOMABLE: &str = "zgx.window.zoomable";
+/// The shared keys holding whether the app's window is the active one and
+/// whether it shows (`ScriptHost::window_state`): `ui.window.active` and
+/// `ui.window.shown`, which a script reads.
+pub(crate) const ACTIVE: &str = "zgx.window.active";
+pub(crate) const SHOWN: &str = "zgx.window.shown";
 
 /// Installs `ui.window`: called, it declares a window; its
 /// `titlebar_area` and `controls` are the app's own window's.
@@ -141,9 +146,17 @@ pub(crate) fn install(
         meta.set(
             "__index",
             lua.create_function(move |_, (window, key): (Table, mlua::Value)| {
-                let state = match key.as_string().map(|key| key.to_string_lossy()) {
-                    Some(name) if name == "zoom" => shared.state(ZOOM, Value::Num(1.)),
-                    Some(name) if name == "zoomable" => shared.state(ZOOMABLE, Value::Bool(true)),
+                let name = key.as_string().map(|key| key.to_string_lossy());
+                let state = match name.as_deref() {
+                    Some("zoom") => shared.state(ZOOM, Value::Num(1.)),
+                    Some("zoomable") => shared.state(ZOOMABLE, Value::Bool(true)),
+                    // Read-only: the window's, as the system says.
+                    Some(read @ ("active" | "shown")) => {
+                        let at = if read == "active" { ACTIVE } else { SHOWN };
+                        let state = State::new(shared.state(at, Value::Bool(true)));
+                        window.raw_set(key.clone(), ReadState(state, read.into()))?;
+                        return window.raw_get::<mlua::Value>(key);
+                    }
                     _ => return Ok(mlua::Value::Nil),
                 };
                 window.raw_set(key.clone(), State::new(state))?;

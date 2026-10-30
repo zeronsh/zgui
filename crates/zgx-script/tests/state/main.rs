@@ -17,6 +17,8 @@ mod io;
 mod large_data;
 #[path = "../module_overrides.rs"]
 mod module_overrides;
+#[path = "../notify.rs"]
+mod notify;
 #[path = "../packages.rs"]
 mod packages;
 #[path = "../paged.rs"]

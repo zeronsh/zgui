@@ -703,7 +703,7 @@ declare extern type UiError with
 	-- rejected), "network" (no answer came), "cancelled", "http" (a fetch
 	-- with `raise = true` answered outside 2xx), "io" (a file, the
 	-- clipboard).
-	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io"
+	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io" | "unsupported" | "denied"
 	-- "http": the response's status.
 	status: number?
 	-- "http": the response's body, its JSON decoded, else its text.
@@ -1314,6 +1314,11 @@ export type WindowApi = ((opts: WindowOptions) -> ()) & {
 	controls: State<WindowRect?>,
 	zoom: State<number>,
 	zoomable: State<boolean>,
+	-- Whether the window is the active one (keys go to it), and whether it
+	-- shows (not hidden, minimized or covered): what arrives while either
+	-- is false is worth a notification or a badge.
+	active: State<boolean>,
+	shown: State<boolean>,
 }
 
 ---------------------------------------------------------------------------
@@ -3096,6 +3101,14 @@ declare ui: {
 	open_files: (opts: FilePickerOptions?) -> Promise<{ File }>,
 	-- Where the user chooses to save: a promise of a `File`, or nil.
 	save_file: (opts: FilePickerOptions?) -> Promise<File?>,
+	-- A system notification (Notification Center, a toast, the desktop's
+	-- server), the app's: a promise settled once the system has it, or
+	-- with why not (`kind` "unsupported": no bundle, no server; "denied":
+	-- turned off). One with the same `tag` replaces it.
+	notify: (opts: { title: string, body: string?, tag: string? }) -> Promise<nil>,
+	-- A count on the app's icon (the Dock's, the taskbar's, a dock's);
+	-- 0 or nil takes it off. Whether the system shows one.
+	badge: (count: number | string | nil) -> boolean,
 	-- A file the user picked, read as text off the main thread: a promise.
 	read_file: (file: File | string) -> Promise<string>,
 	-- Write `text` to a file the user picked (beside it, then over it).

@@ -22,6 +22,57 @@ pub struct FilePicker {
     pub multiple: bool,
 }
 
+/// A notification the system shows (`Platform::notify`): in macOS's
+/// Notification Center, as a Windows toast, through a Linux desktop's
+/// notification server.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Notification {
+    /// Its title, in bold.
+    pub title: String,
+    /// The text under it.
+    pub body: String,
+    /// One posted with the same tag replaces it (a conversation's newest
+    /// message, not one for each).
+    pub tag: Option<String>,
+}
+impl Notification {
+    /// A notification of `title` and `body`.
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+            tag: None,
+        }
+    }
+    /// One with the same tag replaces it.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+}
+/// Why a notification was not shown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NotifyError {
+    /// This host or system shows none: why, and what would (an app
+    /// bundle on macOS, an app identity on Windows).
+    Unsupported(String),
+    /// The person has not allowed this app's notifications, or turned them
+    /// off.
+    Denied(String),
+    /// The system refused it, saying why.
+    Failed(String),
+}
+impl std::fmt::Display for NotifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotifyError::Unsupported(why) | NotifyError::Denied(why) | NotifyError::Failed(why) => {
+                f.write_str(why)
+            }
+        }
+    }
+}
+
 /// The clipboard, the system's URL handler and file dialogs, as a desktop
 /// host provides them (see the module docs).
 pub trait Platform {
@@ -90,6 +141,24 @@ pub trait Platform {
     fn open_files(&self, picker: FilePicker) -> Pending<Result<Vec<PathBuf>, String>>;
     /// Where the user chooses to save: none if they cancel.
     fn save_file(&self, picker: FilePicker) -> Pending<Result<Option<PathBuf>, String>>;
+    /// Show `notification`, settled once the system has it, or with why
+    /// not. The first asks the person's permission where the system does
+    /// (macOS). None shows none.
+    fn notify(&self, notification: Notification) -> Pending<Result<(), NotifyError>> {
+        let _ = notification;
+        Box::pin(async {
+            Err(NotifyError::Unsupported(
+                "this host shows no system notifications".into(),
+            ))
+        })
+    }
+    /// Put `badge` on the app's icon (the Dock's, the taskbar's, a Linux
+    /// dock's), a count of what is unread; `None` takes it off. Whether the
+    /// system shows one.
+    fn set_badge(&self, badge: Option<&str>) -> bool {
+        let _ = badge;
+        false
+    }
 }
 
 /// The platform, as a service components find.

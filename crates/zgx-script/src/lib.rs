@@ -991,6 +991,8 @@ struct Inner {
     chrome: RefCell<Option<zgx::reactive::Effect>>,
     /// Keeps the window's zoom and `ui.window.zoom` the same (`window_zoom`).
     zoom: RefCell<Option<zgx::reactive::Effect>>,
+    /// What publishes the window's state (`window_state`).
+    window_state: RefCell<Vec<zgx::reactive::Effect>>,
     elements: Rc<element::Elements>,
     engine: Rc<anime::Engine>,
     assets: Rc<lower::Assets>,
@@ -1150,6 +1152,7 @@ impl ScriptHost {
             shared: Rc::new(Store::new(runtime)),
             chrome: RefCell::default(),
             zoom: RefCell::default(),
+            window_state: RefCell::default(),
             actions: Actions::default(),
             functions: Functions::default(),
             current: RefCell::default(),
@@ -1532,6 +1535,29 @@ impl ScriptHost {
             buttons.set(rect(controls.get()));
         });
         *self.0.chrome.borrow_mut() = Some(effect);
+    }
+    /// Publish whether `ui`'s window is the active one and whether it
+    /// shows (`Ui::observe_window_active`, `Ui::observe_shown`), as
+    /// `ui.window.active` and `ui.window.shown`: an app tells someone of
+    /// what arrives while they are away (a system notification, a badge).
+    pub fn window_state(&self, ui: &zgx::widgets::Ui) {
+        self.0.window_state.borrow_mut().clear();
+        for (key, source) in [
+            (windows::ACTIVE, ui.observe_window_active()),
+            (windows::SHOWN, ui.observe_shown()),
+        ] {
+            let state = self
+                .0
+                .shared
+                .state(key, Value::Bool(source.with_untracked(|now| *now)));
+            let effect = self.0.runtime.effect(move || {
+                let now = Value::Bool(source.get());
+                if state.with_untracked(|was| *was != now) {
+                    state.set(now);
+                }
+            });
+            self.0.window_state.borrow_mut().push(effect);
+        }
     }
     /// Keep `ui.window.zoom` and `ui.window.zoomable` as window `ui` has
     /// them, and its zoom as a script sets them: the zoom's keys and menu
@@ -2690,7 +2716,9 @@ impl ScriptHost {
         let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
         lazy.ui(
             &[
+                "badge",
                 "clipboard",
+                "notify",
                 "open_files",
                 "read_file",
                 "save_file",

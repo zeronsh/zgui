@@ -389,6 +389,8 @@ pub fn run_hosting(
         );
         // `ui.window.zoom`: the window's zoom, as its keys or the script set it.
         host.window_zoom(&cx.ui);
+        // `ui.window.active` and `ui.window.shown`.
+        host.window_state(&cx.ui);
         // The network, unless the host's setup brings its own transport.
         #[cfg(feature = "fetch")]
         fetch::install(&host);

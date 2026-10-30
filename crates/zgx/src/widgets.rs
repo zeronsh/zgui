@@ -1097,6 +1097,10 @@ pub(crate) struct UiStorage {
     mount_theme: RefCell<Option<Rc<ThemeScope>>>,
     text_geometry_revision: Signal<u64>,
     presented: Signal<bool>,
+    /// Whether the window is the active one, as a signal, made the first
+    /// time something observes it (`Ui::observe_window_active`): an app
+    /// that never does pays nothing. The selection keeps the flag itself.
+    window_active: RefCell<Option<Signal<bool>>>,
     /// Where popups may show (`Ui::set_popup_screens`).
     popup_screens: Signal<Vec<Rect>>,
     /// The sizes the platform cut popups to, by their roots
@@ -1370,6 +1374,7 @@ impl Ui {
             mount_theme: RefCell::new(None),
             text_geometry_revision: runtime.signal(0),
             presented: runtime.signal(true),
+            window_active: RefCell::default(),
             overlay_scrollbars: runtime.signal(false),
             caret_width: Rc::new(Cell::new(1.)),
             caret_blink: Rc::default(),
@@ -2475,6 +2480,26 @@ impl Ui {
     }
     pub(crate) fn observe_presentation(&self) -> Signal<bool> {
         self.storage.presented.clone()
+    }
+    /// Whether the window shows (`Ui::set_presented`: not hidden, minimized
+    /// or covered), as it changes: an app tells someone of what arrives
+    /// while they can't see it.
+    pub fn observe_shown(&self) -> Signal<bool> {
+        self.storage.presented.clone()
+    }
+    /// Whether the window is the active one, its keys going to it
+    /// (`Ui::set_window_active`), as it changes.
+    pub fn observe_window_active(&self) -> Signal<bool> {
+        let active = !self.storage.selection.borrow().inactive;
+        self.storage
+            .window_active
+            .borrow_mut()
+            .get_or_insert_with(|| self.runtime.signal(active))
+            .clone()
+    }
+    /// The window's activity signal, if something observes it.
+    pub(crate) fn window_active_observed(&self) -> Option<Signal<bool>> {
+        self.storage.window_active.borrow().clone()
     }
     /// Whether the window can present now (`Ui::set_presented`), untracked:
     /// a hidden, minimized or covered window draws no frames.

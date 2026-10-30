@@ -481,7 +481,7 @@ pub(crate) fn settle_with(
 }
 /// As `settle_with`, for a future that tells its failures apart (a fetch:
 /// the transport, a cancel, a status).
-fn settle_failing(
+pub(crate) fn settle_failing(
     lua: &Lua,
     promise: &Rc<Promise>,
     future: impl Future<Output = Result<Value, Failure>> + 'static,

@@ -5,7 +5,7 @@
 //! files the user chose, as a web page does; reads and writes run off the
 //! main thread. A plugin gets none of it unless its host grants it.
 use crate::{
-    calls::{PromiseUd, pending, settle_with},
+    calls::{PromiseUd, pending, settle_failing, settle_with},
     value::Value,
 };
 use mlua::{Lua, Table};
@@ -269,6 +269,81 @@ pub(crate) fn install(
                     Ok(Value::List(paths.iter().map(|p| file_value(p)).collect()))
                 })?;
                 Ok(PromiseUd(promise))
+            })?,
+        )?;
+    }
+    // `ui.notify { title, body, tag }`: a system notification, the app's
+    // (a plugin posts none); a promise settled once the system has it, or
+    // with why not (`kind` "unsupported", "denied", or "io").
+    let app = !crate::node::env(lua).is_ok_and(|env| matches!(*env.grants, crate::Grants::Only(_)));
+    {
+        let shared = shared.clone();
+        ui.set(
+            "notify",
+            lua.create_function(move |lua, opts: Table| {
+                if !app {
+                    return Err(mlua::Error::runtime(
+                        "ui.notify: the app's own, not a plugin's",
+                    ));
+                }
+                let title: String = opts
+                    .get::<Option<String>>("title")?
+                    .ok_or_else(|| mlua::Error::runtime("ui.notify needs a `title`"))?;
+                let body = opts.get::<Option<String>>("body")?.unwrap_or_default();
+                let mut notification = zgx::platform::Notification::new(title, body);
+                if let Some(tag) = opts.get::<Option<String>>("tag")? {
+                    notification = notification.tag(tag);
+                }
+                let promise = pending(lua, "notify".into())?;
+                // The platform looked for as the promise first runs: a
+                // script calling as it loads is mounted by then.
+                let shared = shared.clone();
+                settle_failing(lua, &promise, async move {
+                    use crate::errors::{Failure, Kind};
+                    use zgx::platform::NotifyError;
+                    let shown =
+                        (shared.borrow().clone()).map(|platform| platform.0.notify(notification));
+                    let Some(shown) = shown else {
+                        return Err(Failure::new(
+                            Kind::Unsupported,
+                            "ui.notify: no system here (headless)",
+                        ));
+                    };
+                    shown.await.map(|()| Value::Nil).map_err(|e| match e {
+                        NotifyError::Unsupported(why) => Failure::new(Kind::Unsupported, why),
+                        NotifyError::Denied(why) => Failure::new(Kind::Denied, why),
+                        NotifyError::Failed(why) => Failure::new(Kind::Io, why),
+                    })
+                })?;
+                Ok(PromiseUd(promise))
+            })?,
+        )?;
+    }
+    // `ui.badge(n)`: a count on the app's icon (a number or text; 0 or nil
+    // takes it off); whether the system shows one.
+    {
+        let shared = shared.clone();
+        ui.set(
+            "badge",
+            lua.create_function(move |_, badge: mlua::Value| {
+                if !app {
+                    return Err(mlua::Error::runtime(
+                        "ui.badge: the app's own, not a plugin's",
+                    ));
+                }
+                let badge = match badge {
+                    mlua::Value::Nil => None,
+                    mlua::Value::Integer(0) => None,
+                    mlua::Value::Number(0.) => None,
+                    mlua::Value::Integer(n) => Some(n.to_string()),
+                    mlua::Value::Number(n) => Some(format!("{}", n.round() as i64)),
+                    mlua::Value::String(text) => Some(text.to_str()?.to_string()),
+                    _ => return Err(mlua::Error::runtime("ui.badge takes a number, text or nil")),
+                };
+                Ok(match &*shared.borrow() {
+                    Some(platform) => platform.0.set_badge(badge.as_deref()),
+                    None => false,
+                })
             })?,
         )?;
     }

@@ -154,6 +154,55 @@ ui.window.zoomable: State<boolean>
 
 The app's window zooms as a browser's page does: Cmd+= or Cmd++ zooms in, Cmd+- out and Cmd+0 back to 100% (Ctrl elsewhere), through Chrome's levels from 25% to 500%, and its content reflows in the smaller or larger viewport, text and paths drawn crisply. `ui.window.zoom` is the zoom (1 at 100%): it follows the keys and the View menu's items, and setting it zooms the window (`ui.window.zoom:set(1.25)`). `ui.window.zoomable:set(false)` turns the keys off; a `ui.command` with one of the keys keeps it either way. `zgx run` keeps both; a Rust host passes its window with `ScriptHost::window_zoom`.
 
+### While the person is away
+
+```luau
+ui.window.active: State<boolean>
+ui.window.shown: State<boolean>
+ui.notify(opts: { title: string, body: string?, tag: string? }) -> Promise<nil>
+ui.badge(count: number | string | nil) -> boolean
+```
+
+`ui.window.active` says whether the app's window is the active one, its keys going to it; `ui.window.shown`, whether it shows (not hidden, minimized or covered), as the web's `document.hasFocus()` and `document.visibilityState` do. Both are read-only and follow the window. `zgx run` keeps them; a Rust host passes its window with `ScriptHost::window_state`. What arrives while either is false is worth telling the person of:
+- `ui.notify { title, body, tag }` shows a system notification, as the web's `Notification` does. The promise settles once the system has it, or rejects with a `UiError` saying why not: `kind` `"unsupported"` where this system shows none for the app, `"denied"` where the person has not allowed them. One with the same `tag` replaces the last (a conversation's newest message, not one for each).
+- `ui.badge(n)` puts a count on the app's icon, as `navigator.setAppBadge` does; `0` or `nil` takes it off. It returns whether the system shows one.
+
+Each platform shows them its own way, and needs the app to say who it is:
+
+| | Notifications | Badge |
+| --- | --- | --- |
+| macOS | The Notification Center, for an app run from its bundle (an `Info.plist` with a `CFBundleIdentifier`). The first one asks the person whether the app may notify; the answer is the system's to keep, changed in System Settings › Notifications. A binary run outside a bundle (`cargo run`) gets `"unsupported"`. | The Dock tile's label. |
+| Windows | A toast, for the app's AppUserModelID (`Application::application_id`). | Not shown yet: `false`. |
+| Linux | The desktop's notification server (`org.freedesktop.Notifications` on the session bus); none running gets `"unsupported"`. | The count docks read from a launcher entry (Dash to Dock, KDE's task manager, Plank), matched to the app's desktop file (`Application::desktop_id`, else `application_id`). |
+
+A plugin can do neither: they are the app's.
+
+```lua
+local unread = ui.state("unread", 0)
+local function arrived(from: string, text: string)
+	if ui.window.active:peek() then
+		return
+	end
+	unread:set(unread:peek() + 1)
+	ui.badge(unread:peek())
+	ui.notify({ title = from, body = text, tag = from }):after(nil, function(err: UiError)
+		print(`no notification: {err}`)
+	end)
+end
+ui.effect(function()
+	if ui.window.active:get() then
+		unread:set(0)
+		ui.badge(0)
+	end
+end)
+return ui.button {
+	"Pretend a message",
+	on_click = function()
+		arrived("Ada", "Lunch?")
+	end,
+}
+```
+
 ## Example
 
 ```lua

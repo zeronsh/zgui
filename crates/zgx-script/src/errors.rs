@@ -28,6 +28,10 @@ pub(crate) enum Kind {
     Io,
     /// A script raised it (`error(...)`, or a Rust function's error).
     Raised,
+    /// The system can't do it here (`ui.notify` without an app bundle).
+    Unsupported,
+    /// The person has not allowed it (`ui.notify`'s permission).
+    Denied,
 }
 impl Kind {
     pub(crate) fn name(self) -> &'static str {
@@ -38,6 +42,8 @@ impl Kind {
             Kind::Http => "http",
             Kind::Io => "io",
             Kind::Raised => "raised",
+            Kind::Unsupported => "unsupported",
+            Kind::Denied => "denied",
         }
     }
 }
