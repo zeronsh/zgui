@@ -178,6 +178,9 @@ def main():
                 if time.monotonic()>deadline or ime.poll() is not None:
                     raise RuntimeError('IBus failed: '+ready.stdout+ready.stderr)
                 time.sleep(.2)
+            monitor_log = (args.output / 'ibus-monitor.txt').open('w')
+            address = subprocess.check_output(['ibus', 'address'], env=env, text=True).strip()
+            monitor = subprocess.Popen(['dbus-monitor', '--address', address], stdout=monitor_log, stderr=monitor_log)
             # The XIM frontend started here, not by the daemon (`--xim`), its
             # output and exit kept: #564's app hung on its way out in a
             # round trip to it, and by then it had gone, how unknown.

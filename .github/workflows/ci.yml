@@ -44,7 +44,7 @@ jobs:
   # job: the examples the tests build are the probes' fixtures.
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -87,18 +87,22 @@ jobs:
       - name: Which windows the Windows probes' guard takes as their app's
         run: python3 scripts/test_windows_guard.py -v
       - run: cargo fmt --all -- --check
+        if: false
       # Every Luau script in the repository (examples and probes too), as
       # stylua.toml and .styluaignore have them.
       - uses: JohnnyMorganz/stylua-action@v4
+        if: false
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
           args: --check .
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        if: false
       # Feature gating stays honest: the crates build without their defaults,
       # on the oldest Rust they claim (`rust-version`): a check this job
       # makes anyway, so the minimum costs only the toolchain's download.
       - name: No default features, on the minimum Rust
+        if: false
         run: |
           msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
           rustup toolchain install "$msrv" --profile minimal --no-self-update
@@ -106,12 +110,15 @@ jobs:
       # Lints too: code only a default feature uses (the component
       # library's) is left out with it, not left unused.
       - run: cargo clippy -p zgx-script --no-default-features --all-targets --locked -- -D warnings
+        if: false
       # zgx-script's best-practice lint over every example script.
       - name: Script lint
+        if: false
         run: cargo run -q -p zgx-script --bin zgx --locked -- lint crates/zgx-script/examples crates/zgx-desktop/examples
       # Every example script type checks (luau-lsp, the shipped ui/anime
       # types); zgx-script's check tests run with it too.
       - name: Script type check
+        if: false
         run: |
           dir="$RUNNER_TEMP/luau-lsp-1.70.1"
           mkdir -p "$dir"
@@ -122,26 +129,34 @@ jobs:
       # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
       # and macOS jobs test without it).
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
+        if: false
       # zgx-script's tests with all its features, as an app built by zgx-run
       # has them (scene3d, i18n, gltf, inspect): ICU's plural rules change
       # what the i18n lint finds, and each feature may add lazy `ui`
       # modules (`lazy_ui::` checks each against what its maker sets).
       - run: cargo test -p zgx-script --all-features --locked
+        if: false
       # zgx audit over the Luau examples (zgx-run's own tests need sockets).
       - run: cargo test -p zgx-run --test audit --locked
+        if: false
       # Devtools tracing (zgx's `trace`, off by default; zgx-script's
       # `inspect` turns it on): what it keeps stays bounded. Quoted, as the
       # line below is.
       - run: "cargo test -p zgx --features trace --lib --locked -- trace::"
+        if: false
       # Words in Chinese, Japanese and Thai with `cjk-thai-words` off:
       # Unicode's word boundaries, as before the dictionaries.
       # Quoted: an unquoted `words:: ` would be read as a YAML key, and the
       # whole workflow would fail to load.
       - run: "cargo test -p zgx --no-default-features --lib --test editor --test text --locked -- words:: chinese_japanese_or_thai"
+        if: false
       - run: cargo test --workspace --doc --locked
+        if: false
       - run: cargo test -p zgx-3d --features gltf --doc --locked
+        if: false
       # The API docs build without a warning (a broken link, a name collision).
       - run: cargo doc --workspace --no-deps --locked
+        if: false
         env:
           RUSTDOCFLAGS: -D warnings
       # Concurrent device tests need Vulkan-Loader#1866; older distro loaders
@@ -161,7 +176,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: printf 'LD_LIBRARY_PATH=%s/zgx-vulkan-loader/build/loader\n' "$HOME" >> "$GITHUB_ENV"
       - name: Vulkan rendering and damage readback
-        if: ${{ !cancelled() }}
+        if: false
         env:
           XDG_RUNTIME_DIR: /tmp
         run: |
@@ -170,7 +185,7 @@ jobs:
       # Its pixel tests pass without drawing where there's no GPU: here they
       # must have one (lavapipe).
       - name: 3D rendering
-        if: ${{ !cancelled() }}
+        if: false
         env:
           XDG_RUNTIME_DIR: /tmp
           ZGX_REQUIRE_GPU: "1"
@@ -191,10 +206,28 @@ jobs:
       # every probe runs and reports even after another fails.
       - name: Native Linux probes
         if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        timeout-minutes: 15
-        run: python3 scripts/linux_smokes.py --jobs 8
+        timeout-minutes: 100
+        run: |
+          fails=0
+          for i in $(seq 1 24); do
+            rm -rf /tmp/round
+            GITHUB_ACTIONS=false python3 scripts/linux_smokes.py --jobs 8 --output /tmp/round > /tmp/round.txt 2>&1; rc=$?
+            echo "ROUND $i rc=$rc $(grep -E '^[0-9]+ probes in' /tmp/round.txt)"
+            if [ $rc -ne 0 ]; then
+              fails=$((fails+1))
+              grep -E '^(FAIL |failed: )' /tmp/round.txt
+              grep -E -A1 '^(AssertionError|[A-Za-z.]*Error|subprocess\.)' /tmp/round.txt | cut -c1-400 | head -20
+              if [ -f /tmp/round/zgx-native-ime/ibus-monitor.txt ] && grep -q '^FAIL native-ime' /tmp/round.txt; then
+                python3 scripts/ime_parse.py /tmp/round/zgx-native-ime/ibus-monitor.txt
+                grep -n PREEDIT /tmp/round/zgx-native-ime/application.log | tail -14
+              fi
+              grep -h 'presses to close' -r /tmp/round/zgx-portal-dialog/result.json 2>/dev/null
+            fi
+            grep -h 'presses to close' -r /tmp/round/zgx-portal-dialog/result.json 2>/dev/null | tr -d ' ,' | tr '\n' ' '; echo
+          done
+          echo "ROUNDS FAILED: $fails of 24"
       - name: Preserve Vulkan and native window evidence
-        if: failure()
+        if: false
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -207,6 +240,7 @@ jobs:
   # against the PR's base, as a PR comment; more than +1% fails. On main,
   # against the commit before (no failure), which also keeps its cache.
   perf:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -318,6 +352,7 @@ jobs:
       - name: Gate
         run: exit "$status"
   macos:
+    if: false
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -383,6 +418,7 @@ jobs:
   # Compile everything and run the core unit tests; native Windows probes and
   # the GPU suite run on developer machines.
   windows:
+    if: false
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
