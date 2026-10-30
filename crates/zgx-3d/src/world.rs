@@ -275,6 +275,9 @@ pub(crate) struct Inner {
     /// Objects' morph weights (`World::set_morph_weights`), by index, with
     /// the generation they were set for.
     morph_weights: std::collections::HashMap<u32, (u32, Vec<f32>)>,
+    /// Maps' placements (`World::set_map_placement`), by index, with the
+    /// generation they were set for: most have none.
+    placements: std::collections::HashMap<u32, (u32, Placements)>,
     /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
     /// index, with the generation they were set for: most have none.
     surfaces: std::collections::HashMap<u32, (u32, Surface)>,
@@ -308,6 +311,8 @@ pub(crate) struct Surface {
     pub(crate) alpha_cutoff: Option<f32>,
 }
 
+/// A mesh's maps' placements, by `Map::ALL`'s order.
+type Placements = [crate::MapPlacement; crate::texture::MAPS];
 /// What a frame draws: each visible mesh with its world matrix.
 pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
@@ -322,6 +327,8 @@ pub(crate) struct Drawn<'a> {
     /// at rest (it draws as any mesh).
     pub(crate) morph: Option<Vec<[f32; 2]>>,
     pub(crate) surface: Surface,
+    /// Its maps' placements, if any is set.
+    pub(crate) placement: Option<&'a Placements>,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -361,10 +368,20 @@ impl Inner {
                     palette,
                     morph,
                     surface: self.surface(index, generation),
+                    placement: self.placement(index, generation),
                 });
             }
         }
         out
+    }
+    /// Object `index`'s maps' placements, if any is set (no lookup in a
+    /// world with none set).
+    fn placement(&self, index: usize, generation: u32) -> Option<&Placements> {
+        if self.placements.is_empty() {
+            return None;
+        }
+        let (set_for, placements) = self.placements.get(&(index as u32))?;
+        (*set_for == generation).then_some(placements)
     }
     /// Object `index`'s surface (no lookup in a world with none set).
     fn surface(&self, index: usize, generation: u32) -> Surface {
@@ -559,6 +576,7 @@ impl World {
             textures: Default::default(),
             skins: Default::default(),
             morph_weights: Default::default(),
+            placements: Default::default(),
             surfaces: Default::default(),
             revision: 0,
         }));
@@ -600,6 +618,7 @@ impl World {
                 inner.skins.remove(&id.index);
                 inner.morph_weights.remove(&id.index);
                 inner.surfaces.remove(&id.index);
+                inner.placements.remove(&id.index);
                 true
             }
             _ => false,
@@ -749,6 +768,43 @@ impl World {
     /// shadows are on.
     pub fn set_shadows(&self, on: bool) {
         self.change(|inner| std::mem::replace(&mut inner.shadows, on) != on);
+    }
+    /// Where object `id`'s `map` sits, if it was placed.
+    pub fn map_placement(&self, id: ObjectId, map: crate::Map) -> Option<crate::MapPlacement> {
+        let inner = self.inner.borrow();
+        inner.live(id.index, id.generation)?;
+        let placed = inner.placement(id.index as usize, id.generation)?[map as usize];
+        (placed != crate::MapPlacement::default()).then_some(placed)
+    }
+    /// Where object `id`'s `map` sits on it (`None`: its first texture
+    /// coordinates as they are, repeating). A mesh whose maps read anywhere
+    /// else draws with a pipeline of its own, a wrap alone only with another
+    /// sampler; others pay nothing.
+    pub fn set_map_placement(
+        &self,
+        id: ObjectId,
+        map: crate::Map,
+        placement: Option<crate::MapPlacement>,
+    ) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let (set_for, placements) = inner
+                .placements
+                .entry(id.index)
+                .or_insert((id.generation, Placements::default()));
+            if *set_for != id.generation {
+                *set_for = id.generation;
+                *placements = Placements::default();
+            }
+            let placement = placement.unwrap_or_default();
+            let before = std::mem::replace(&mut placements[map as usize], placement);
+            if *placements == Placements::default() {
+                inner.placements.remove(&id.index);
+            }
+            before != placement
+        });
     }
     /// Whether object `id`'s back faces draw too, lit as their other side
     /// is (a leaf, a sheet, an open shell). Off by default: a closed shape

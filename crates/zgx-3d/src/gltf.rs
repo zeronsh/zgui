@@ -14,11 +14,12 @@
 //! `Placed::pose`), skins moving its meshes by their joints, and morph
 //! targets (positions and normals; its weights, and clips moving them).
 //! Accessors may be sparse. Materials' `doubleSided` and alpha modes are
-//! read. Not yet: points and lines (skipped); geometry compressed with Draco
+//! read, and where their maps sit: a second set of coordinates (`TEXCOORD_1`),
+//! samplers' wrapping and `KHR_texture_transform`. Not yet: points and lines (skipped); geometry compressed with Draco
 //! or meshopt, an error where the file requires it.
 use crate::{
-    Geometry, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex,
-    World, vec3, world::Surface,
+    Geometry, MapPlacement, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform,
+    Vec3, Vertex, World, Wrap, vec3, world::Surface,
 };
 use serde_json::Value;
 
@@ -48,7 +49,7 @@ pub struct Model {
 struct Node {
     transform: Transform,
     children: Vec<usize>,
-    meshes: Vec<(Geometry, Material, Maps, Surface)>,
+    meshes: Vec<Mesh>,
     /// The skin moving its skinned meshes, by index.
     skin: Option<usize>,
     /// Its meshes' morph weights: its own, else its mesh's.
@@ -63,6 +64,12 @@ struct ModelSkin {
 
 /// A mesh's textures, in `Map::ALL`'s order.
 type Maps = [Option<Texture>; crate::texture::MAPS];
+/// Where they sit on it, in the same order.
+type Placements = [MapPlacement; crate::texture::MAPS];
+/// A material, read.
+type Look = (Material, Maps, Surface, Placements);
+/// A primitive, read.
+type Mesh = (Geometry, Material, Maps, Surface, Placements);
 
 /// Deeper than this, a node tree is taken for a cycle.
 const MAX_DEPTH: usize = 256;
@@ -136,7 +143,8 @@ impl Model {
                         })
                         .clone()
                 });
-                (material(value), maps, surface(value))
+                let placements = MAP_TEXTURES.map(|path| map_placement(&doc, value, path));
+                (material(value), maps, surface(value), placements)
             })
             .collect::<Vec<_>>();
         let meshes = list(&doc, "meshes")
@@ -295,7 +303,7 @@ impl World {
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
             nodes[index] = Some(id);
-            for (geometry, material, maps, surface) in &node.meshes {
+            for (geometry, material, maps, surface, placements) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
                 if surface.double_sided {
                     self.set_double_sided(mesh, true);
@@ -306,6 +314,11 @@ impl World {
                 for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
                     if texture.is_some() {
                         self.set_map(mesh, map, texture.clone());
+                    }
+                }
+                for (map, placement) in crate::Map::ALL.into_iter().zip(placements) {
+                    if *placement != MapPlacement::default() {
+                        self.set_map_placement(mesh, map, Some(*placement));
                     }
                 }
                 if let Some(skin) = node.skin.and_then(|s| model.skins.get(s)) {
@@ -548,6 +561,44 @@ fn material_image(doc: &Value, material: &Value, path: &[&str]) -> Option<usize>
     let source = list(doc, "textures").get(texture as usize)?.get("source")?;
     source.as_u64().map(|i| i as usize)
 }
+/// Where the texture `material` names at `path` sits: its `texCoord`, its
+/// sampler's wrapping and its `KHR_texture_transform`.
+fn map_placement(doc: &Value, material: &Value, path: &[&str]) -> MapPlacement {
+    let mut placement = MapPlacement::new();
+    let Some(info) = path.iter().try_fold(material, |at, key| at.get(key)) else {
+        return placement;
+    };
+    let mut set = info.get("texCoord").and_then(Value::as_u64);
+    if let Some(transform) = info
+        .get("extensions")
+        .and_then(|e| e.get("KHR_texture_transform"))
+    {
+        if let Some([u, v]) = floats::<2>(transform.get("offset")) {
+            placement = placement.offset(u, v);
+        }
+        if let Some(radians) = transform.get("rotation").and_then(Value::as_f64) {
+            placement = placement.rotated(radians as f32);
+        }
+        if let Some([u, v]) = floats::<2>(transform.get("scale")) {
+            placement = placement.scaled(u, v);
+        }
+        set = transform.get("texCoord").and_then(Value::as_u64).or(set);
+    }
+    let sampler = info
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|texture| list(doc, "textures").get(texture as usize)?.get("sampler"))
+        .and_then(Value::as_u64)
+        .and_then(|sampler| list(doc, "samplers").get(sampler as usize));
+    let wrap = |key: &str| match sampler.and_then(|s| s.get(key)).and_then(Value::as_u64) {
+        Some(33071) => Wrap::Clamp,
+        Some(33648) => Wrap::Mirror,
+        _ => Wrap::Repeat,
+    };
+    placement
+        .uv_set(set.map_or(0, |set| set.min(u64::from(u8::MAX)) as u8))
+        .wrap(wrap("wrapS"), wrap("wrapT"))
+}
 
 struct Reader<'a> {
     doc: &'a Value,
@@ -692,11 +743,7 @@ impl Reader<'_> {
             .map(<[u8]>::to_vec)
     }
     /// A mesh's triangle primitives as geometries in their materials.
-    fn mesh(
-        &self,
-        mesh: &Value,
-        materials: &[(Material, Maps, Surface)],
-    ) -> Result<Vec<(Geometry, Material, Maps, Surface)>, ModelError> {
+    fn mesh(&self, mesh: &Value, materials: &[Look]) -> Result<Vec<Mesh>, ModelError> {
         let mut out = Vec::new();
         for primitive in list(mesh, "primitives") {
             // Triangles only: points, lines, strips and fans are skipped.
@@ -742,7 +789,7 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let (material, maps, surface) = primitive
+            let (material, maps, surface, placements) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
                 .and_then(|m| materials.get(m as usize).cloned())
@@ -753,10 +800,26 @@ impl Reader<'_> {
                         roughness: 1.,
                         ..Material::default()
                     };
-                    (plain, Maps::default(), Surface::default())
+                    (
+                        plain,
+                        Maps::default(),
+                        Surface::default(),
+                        Placements::default(),
+                    )
                 });
             let mut geometry =
                 Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
+            // Its second coordinates, if a map reads them.
+            if placements.iter().any(|p| p.uv_set == 1)
+                && let Some(uvs) = attribute("TEXCOORD_1")
+                    .map(|i| self.floats(i, 2))
+                    .transpose()?
+                    .filter(|uv| uv.len() == count * 2)
+            {
+                geometry = geometry
+                    .with_second_uvs(uvs.as_chunks::<2>().0.to_vec())
+                    .map_err(|e| ModelError(e.into()))?;
+            }
             // Skinned: each vertex's four joints and their weights.
             if let (Some(joints), Some(weights)) = (attribute("JOINTS_0"), attribute("WEIGHTS_0")) {
                 let (joints, weights) = (self.floats(joints, 4)?, self.floats(weights, 4)?);
@@ -786,7 +849,7 @@ impl Reader<'_> {
                     .with_morph_targets(targets)
                     .map_err(|e| ModelError(e.into()))?;
             }
-            out.push((geometry, material, maps, surface));
+            out.push((geometry, material, maps, surface, placements));
         }
         Ok(out)
     }
@@ -1562,6 +1625,78 @@ mod tests {
         let views = doc["bufferViews"].as_array_mut().unwrap();
         views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": bytes.len() }));
         views.len() - 1
+    }
+
+    #[test]
+    fn a_maps_placement_is_read_from_its_texture_and_sampler() {
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["samplers"] = json!([{ "wrapS": 33071, "wrapT": 33648 }, { "wrapS": 10497 }]);
+            doc["textures"] = json!([{ "sampler": 0 }, { "sampler": 1 }, {}]);
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({
+                "index": 0,
+                "texCoord": 1,
+                "extensions": { "KHR_texture_transform": {
+                    "offset": [0.25, 0.5],
+                    "rotation": 1.5,
+                    "scale": [2.0, 3.0],
+                }},
+            });
+            // A transform's coordinates are those it says, over the map's.
+            doc["materials"][0]["normalTexture"] = json!({
+                "index": 2,
+                "texCoord": 1,
+                "extensions": { "KHR_texture_transform": { "texCoord": 0 } },
+            });
+            doc["materials"][0]["emissiveTexture"] = json!({ "index": 1 });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let [base, _, normal, emission, _] = model.nodes[0].meshes[0].4;
+        assert_eq!(
+            base,
+            MapPlacement::new()
+                .offset(0.25, 0.5)
+                .rotated(1.5)
+                .scaled(2., 3.)
+                .uv_set(1)
+                .wrap(Wrap::Clamp, Wrap::Mirror)
+        );
+        assert_eq!(normal, MapPlacement::new());
+        assert_eq!(emission, MapPlacement::new(), "a repeat is no placement");
+        let world = World::new();
+        let placed = world.place_model(&model);
+        let mesh = placed.meshes[0][0];
+        assert_eq!(
+            world.map_placement(mesh, crate::Map::BaseColour),
+            Some(base)
+        );
+        assert_eq!(world.map_placement(mesh, crate::Map::Emission), None);
+    }
+
+    #[test]
+    fn second_coordinates_are_read_for_a_map_that_uses_them() {
+        let with_second_uvs = |extra: fn(&mut Value)| {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+            let uvs = [[0_f32, 0.], [1., 0.], [1., 1.], [0., 1.]];
+            let view = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&uvs));
+            doc["accessors"].as_array_mut().unwrap().push(
+                json!({ "bufferView": view, "componentType": 5126, "count": 4, "type": "VEC2" }),
+            );
+            let accessor = doc["accessors"].as_array().unwrap().len() - 1;
+            doc["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_1"] = json!(accessor);
+            doc["textures"] = json!([{}]);
+            extra(&mut doc);
+            Model::from_bytes(&glb_of(&doc, &bin)).unwrap()
+        };
+        let model = with_second_uvs(|doc| {
+            doc["materials"][0]["occlusionTexture"] = json!({ "index": 0, "texCoord": 1 });
+        });
+        let uvs = model.nodes[0].meshes[0].0.second_uvs().unwrap();
+        assert_eq!(uvs[2], [1., 1.]);
+        // Unused, as a lightmap's often is, they're left out.
+        let model = with_second_uvs(|doc| {
+            doc["materials"][0]["occlusionTexture"] = json!({ "index": 0 });
+        });
+        assert!(model.nodes[0].meshes[0].0.second_uvs().is_none());
     }
 
     #[test]

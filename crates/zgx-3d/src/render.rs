@@ -76,6 +76,8 @@ struct Variant {
     two_sided: bool,
     /// Cut out by its base colour's alpha.
     masked: bool,
+    /// Its maps placed (`World::set_map_placement`).
+    placed: bool,
 }
 /// Meshes drawn together: of one geometry, maps and variant.
 struct Run {
@@ -93,6 +95,9 @@ struct Buffers {
     skin: Option<wgpu::Buffer>,
     /// A morphing geometry's targets' deltas, bound.
     morphs: Option<wgpu::BindGroup>,
+    /// Its second texture coordinates (its first where it has none), made
+    /// with the first frame drawing it placed.
+    second_uvs: Option<wgpu::Buffer>,
     count: u32,
     used: u64,
 }
@@ -103,9 +108,9 @@ struct Gpu {
     plain: [wgpu::RenderPipeline; 2],
     /// Meshes' of any other variant, made with the first frame drawing one.
     variants: HashMap<Variant, [wgpu::RenderPipeline; 2]>,
-    /// Skinned, morphing or cut-out meshes' depth from the sun, by which
-    /// of those, made with the first such shadow.
-    shadow_variants: HashMap<(bool, bool, bool), wgpu::RenderPipeline>,
+    /// Skinned, morphing, cut-out or cut-out and placed meshes' depth from
+    /// the sun, by which of those, made with the first such shadow.
+    shadow_variants: HashMap<(bool, bool, bool, bool), wgpu::RenderPipeline>,
     shadow_layout: wgpu::BindGroupLayout,
     /// Group 1 of a skinned untextured pipeline: nothing.
     empty_layout: wgpu::BindGroupLayout,
@@ -145,8 +150,11 @@ struct Gpu {
     /// Uploaded textures by id and whether read as sRGB (a texture may be
     /// a colour map in one place, data in another).
     views: HashMap<(u64, bool), (wgpu::TextureView, u64)>,
-    /// Each set of maps meshes draw with (`Map::ALL`'s ids, 0 for none),
-    /// bound.
+    /// Group 1 with placements as well, and samplers wrapping other than
+    /// by repeating: made with the first mesh needing them.
+    placed_layout: Option<wgpu::BindGroupLayout>,
+    wrapped_samplers: HashMap<[crate::Wrap; 2], wgpu::Sampler>,
+    /// Each set of maps meshes draw with (`map_set`), bound.
     bindings: HashMap<[u64; MAPS], (wgpu::BindGroup, u64)>,
     /// What a map a mesh hasn't got reads: white (its factors as they are)
     /// and a flat normal. Made with the first textured frame.
@@ -261,9 +269,7 @@ impl Viewport for Renderer {
             -p.z
         };
         let translucent = |d: &crate::world::Drawn| d.material.color[3] < 1.;
-        // Opaque ones by geometry, then texture.
-        let texture_of =
-            |d: &crate::world::Drawn| d.maps.map(|map| map.map_or(0, crate::Texture::id));
+        // Opaque ones by geometry, then maps.
         let key = |d: &crate::world::Drawn| {
             if translucent(d) {
                 // Its depth's bits in total order, the farthest least.
@@ -273,9 +279,9 @@ impl Viewport for Renderer {
                 } else {
                     bits | 1 << 31
                 };
-                (1 << 63 | u64::from(!ordered), texture_of(d))
+                (1 << 63 | u64::from(!ordered), map_set(d))
             } else {
-                (d.geometry.id() & !(1 << 63), texture_of(d))
+                (d.geometry.id() & !(1 << 63), map_set(d))
             }
         };
         let mut order: Vec<((u64, [u64; MAPS]), usize)> = all.iter().map(key).zip(0..).collect();
@@ -377,6 +383,7 @@ impl Viewport for Renderer {
                                 usage: wgpu::BufferUsages::VERTEX,
                             })
                     }),
+                    second_uvs: None,
                     morphs: d.geometry.morphs().filter(|_| skinning).map(|morphs| {
                         let buffer =
                             frame
@@ -400,6 +407,24 @@ impl Viewport for Renderer {
                 }
             });
             entry.used = gpu.frame;
+            if placed(d) && entry.second_uvs.is_none() {
+                use wgpu::util::DeviceExt;
+                let first: Vec<[f32; 2]>;
+                let uvs = match d.geometry.second_uvs() {
+                    Some(uvs) => uvs,
+                    None => {
+                        first = d.geometry.vertices().iter().map(|v| v.uv).collect();
+                        &first
+                    }
+                };
+                entry.second_uvs = Some(frame.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("3D second texture coordinates"),
+                        contents: bytemuck::cast_slice(uvs),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    },
+                ));
+            }
             for (map, texture) in crate::Map::ALL.into_iter().zip(d.maps) {
                 if let Some(texture) = texture {
                     // A texture that can't be read draws as if it had none.
@@ -416,10 +441,10 @@ impl Viewport for Renderer {
             }
         }
         // Each set of maps bound once, against stand-ins where a map is
-        // missing.
-        for d in &drawn {
-            let key = texture_of(d);
-            if key == [0; MAPS] {
+        // missing. (Meshes sharing one are mostly neighbours by now.)
+        let mut last = [0; MAPS];
+        for (d, &((_, key), _)) in drawn.iter().zip(&order) {
+            if std::mem::replace(&mut last, key) == key || key == [0; MAPS] {
                 continue;
             }
             let stand_ins = gpu.stand_ins.get_or_insert_with(|| {
@@ -437,14 +462,44 @@ impl Viewport for Renderer {
             });
             let views = &gpu.views;
             let (layout, sampler) = (&gpu.texture_layout, &gpu.texture_sampler);
+            let (placed_layout, wrapped) = (&mut gpu.placed_layout, &mut gpu.wrapped_samplers);
             let entry = gpu.bindings.entry(key).or_insert_with(|| {
                 let view = |i: usize| {
                     d.maps[i]
                         .and_then(|t| views.get(&(t.id(), crate::Map::ALL[i].srgb())))
                         .map_or(&stand_ins[i], |(view, _)| view)
                 };
+                let wrap = wrap_of(d);
+                let sampler = if wrap == [crate::Wrap::Repeat; 2] {
+                    sampler
+                } else {
+                    wrapped
+                        .entry(wrap)
+                        .or_insert_with(|| texture_sampler(frame.device, wrap))
+                };
+                let rows = d.placement.filter(|_| placed(d)).map(|placement| {
+                    use wgpu::util::DeviceExt;
+                    let rows = placement.map(|p| p.rows());
+                    frame
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("3D map placements"),
+                            contents: bytemuck::cast_slice(&rows),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        })
+                });
+                let layout = match rows {
+                    Some(_) => placed_layout.get_or_insert_with(|| map_layout(frame.device, true)),
+                    None => layout,
+                };
                 (
-                    map_binding(frame.device, layout, sampler, std::array::from_fn(view)),
+                    map_binding(
+                        frame.device,
+                        layout,
+                        sampler,
+                        std::array::from_fn(view),
+                        rows.as_ref(),
+                    ),
                     0,
                 )
             });
@@ -460,13 +515,14 @@ impl Viewport for Renderer {
         // Runs of one geometry and texture, of one pass (opaque, then
         // translucent).
         let variant_of = |d: &crate::world::Drawn| Variant {
-            textured: texture_of(d) != [0; MAPS],
+            textured: d.maps.iter().any(Option::is_some),
             skinned: skinned(d),
             lit,
             morphing: morphing(d),
             two_sided: d.surface.double_sided,
             // Cut by a base colour texture's alpha: without one, whole.
             masked: d.surface.alpha_cutoff.is_some() && d.maps[0].is_some(),
+            placed: placed(d),
         };
         let mut runs: Vec<Run> = Vec::new();
         let mut start = 0;
@@ -475,16 +531,17 @@ impl Viewport for Renderer {
             let (geometry, glass, maps, variant) = (
                 first.geometry.id(),
                 translucent(first),
-                texture_of(first),
+                order[start].0.1,
                 variant_of(first),
             );
             let end = start
                 + drawn[start..]
                     .iter()
-                    .take_while(|d| {
+                    .zip(&order[start..])
+                    .take_while(|(d, ((_, set), _))| {
                         d.geometry.id() == geometry
                             && translucent(d) == glass
-                            && texture_of(d) == maps
+                            && *set == maps
                             && variant_of(d) == variant
                     })
                     .count();
@@ -525,32 +582,37 @@ impl Viewport for Renderer {
                     skinned,
                     morphing,
                     masked,
+                    placed,
                     ..
                 } = run.variant;
-                let key = (skinned, morphing, masked);
+                // Only a cut-out shadow reads a map.
+                let placed = masked && placed;
+                let key = (skinned, morphing, masked, placed);
                 if run.glass
-                    || key == (false, false, false)
+                    || key == (false, false, false, false)
                     || gpu.shadow_variants.contains_key(&key)
                 {
                     continue;
                 }
-                let source = shader_source(Variant {
+                let variant = Variant {
                     textured: masked,
                     skinned,
                     morphing,
                     masked,
+                    placed,
                     ..Variant::default()
-                });
+                };
+                let source = shader_source(variant);
                 let shader = frame
                     .device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("3D skinned, morphing or cut-out shadows"),
                         source: wgpu::ShaderSource::Wgsl(source.into()),
                     });
-                let group1 = if masked {
-                    &gpu.texture_layout
-                } else {
-                    &gpu.empty_layout
+                let group1 = match &gpu.placed_layout {
+                    Some(layout) if placed => layout,
+                    _ if masked => &gpu.texture_layout,
+                    _ => &gpu.empty_layout,
                 };
                 let layouts = [
                     Some(&gpu.shadow_layout),
@@ -563,8 +625,7 @@ impl Viewport for Renderer {
                     (true, false) => 3,
                     (false, false) => 2,
                 };
-                let pipeline =
-                    shadow_pipeline(frame.device, &shader, &layouts[..count], (skinned, masked));
+                let pipeline = shadow_pipeline(frame.device, &shader, &layouts[..count], variant);
                 gpu.shadow_variants.insert(key, pipeline);
             }
         }
@@ -596,9 +657,14 @@ impl Viewport for Renderer {
                     skinned,
                     morphing,
                     masked,
+                    placed,
                     ..
                 } = run.variant;
-                match gpu.shadow_variants.get(&(skinned, morphing, masked)) {
+                let placed = masked && placed;
+                match gpu
+                    .shadow_variants
+                    .get(&(skinned, morphing, masked, placed))
+                {
                     Some(pipeline) => {
                         pass.set_pipeline(pipeline);
                         let maps = gpu.bindings.get(&run.maps).filter(|_| masked);
@@ -614,6 +680,9 @@ impl Viewport for Renderer {
                         }
                         if let Some(skin) = buffers.skin.as_ref().filter(|_| skinned) {
                             pass.set_vertex_buffer(2, skin.slice(..));
+                        }
+                        if let Some(uvs) = buffers.second_uvs.as_ref().filter(|_| placed) {
+                            pass.set_vertex_buffer(2 + u32::from(skinned), uvs.slice(..));
                         }
                         if let Some(morphs) = buffers.morphs.as_ref().filter(|_| morphing) {
                             pass.set_bind_group(3, morphs, &[]);
@@ -646,10 +715,10 @@ impl Viewport for Renderer {
                 Some((layout, _)) if variant.lit => layout,
                 _ => &gpu.layout,
             };
-            let group1 = if variant.textured {
-                &gpu.texture_layout
-            } else {
-                &gpu.empty_layout
+            let group1 = match &gpu.placed_layout {
+                Some(layout) if variant.placed => layout,
+                _ if variant.textured => &gpu.texture_layout,
+                _ => &gpu.empty_layout,
             };
             let layouts = [
                 Some(group0),
@@ -743,6 +812,10 @@ impl Viewport for Renderer {
                     if let Some(skin) = skin {
                         pass.set_vertex_buffer(2, skin.slice(..));
                     }
+                    if let Some(uvs) = buffers.second_uvs.as_ref().filter(|_| run.variant.placed) {
+                        let slot = 2 + u32::from(run.variant.skinned);
+                        pass.set_vertex_buffer(slot, uvs.slice(..));
+                    }
                     if let Some(morphs) = morphs {
                         pass.set_bind_group(3, morphs, &[]);
                     }
@@ -816,6 +889,45 @@ fn morph_block(d: &crate::world::Drawn, palette: &mut Vec<[[f32; 4]; 4]>) {
             [target, weight, 0., 0.]
         }));
     }
+}
+
+/// Whether any of `d`'s maps reads other than its first coordinates as they
+/// are: those need the placed pipelines, a wrap alone only a sampler.
+fn placed(d: &crate::world::Drawn) -> bool {
+    d.placement.is_some_and(|placement| {
+        let mut maps = placement.iter().zip(d.maps);
+        maps.any(|(p, map)| map.is_some() && !p.in_place())
+    })
+}
+/// How `d`'s maps repeat: its first map's wrap, its base colour's if it has
+/// one (a mesh's maps share one sampler).
+fn wrap_of(d: &crate::world::Drawn) -> [crate::Wrap; 2] {
+    let Some(placement) = d.placement else {
+        return [crate::Wrap::Repeat; 2];
+    };
+    let mut maps = placement.iter().zip(d.maps);
+    maps.find(|(_, map)| map.is_some())
+        .map_or([crate::Wrap::Repeat; 2], |(p, _)| p.wrap)
+}
+/// The maps `d` draws with, as a key: their ids (`Map::ALL`'s, 0 for none),
+/// the first mixed with its placements' numbers, so meshes placed alike share
+/// a binding. (No `Hasher`: this runs for every mesh, a frame, and a second
+/// `DefaultHasher` caller outlined the hash of the lookups it's for.)
+fn map_set(d: &crate::world::Drawn) -> [u64; MAPS] {
+    let mut maps = d.maps.map(|map| map.map_or(0, crate::Texture::id));
+    if let Some(placement) = d.placement
+        && maps != [0; MAPS]
+    {
+        maps[0] ^= placement_key(placement);
+    }
+    maps
+}
+/// A number for what `placement` says, never 0.
+fn placement_key(placement: &[crate::MapPlacement; MAPS]) -> u64 {
+    let numbers = placement.iter().flat_map(crate::MapPlacement::numbers);
+    numbers.fold(0xcbf2_9ce4_8422_2325, |key, number| {
+        (key ^ u64::from(number)).wrapping_mul(0x0100_0000_01b3)
+    }) | 1
 }
 
 /// The shader's third material word: unlit from 1 up, lit below, with the
@@ -1120,39 +1232,8 @@ impl Gpu {
         });
         let stand_in = depth_map(device, 1, "3D shadow stand-in");
         let bind = frame_binding(device, &layout, &uniforms, &stand_in, &sampler, None);
-        let map_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let map_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..MAPS as u32)
-            .map(map_entry)
-            .chain(std::iter::once(wgpu::BindGroupLayoutEntry {
-                binding: MAPS as u32,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            }))
-            .collect();
-        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("3D maps"),
-            entries: &map_entries,
-        });
-        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("3D texture"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 8,
-            ..Default::default()
-        });
+        let texture_layout = map_layout(device, false);
+        let texture_sampler = texture_sampler(device, [crate::Wrap::Repeat; 2]);
         let plain = main_pipelines(
             device,
             (format, samples),
@@ -1172,7 +1253,7 @@ impl Gpu {
                 resource: uniforms.as_entire_binding(),
             }],
         });
-        let shadow = shadow_pipeline(device, &shader, &[Some(&shadow_layout)], (false, false));
+        let shadow = shadow_pipeline(device, &shader, &[Some(&shadow_layout)], Variant::default());
         let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D nothing"),
             entries: &[],
@@ -1234,6 +1315,8 @@ impl Gpu {
             shadow_drawn: None,
             texture_layout,
             texture_sampler,
+            placed_layout: None,
+            wrapped_samplers: HashMap::new(),
             views: HashMap::new(),
             bindings: HashMap::new(),
             stand_ins: None,
@@ -1254,14 +1337,16 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array!
 ];
 const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![12 => Uint16x4, 13 => Float32x4];
+const SECOND_UV_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![14 => Float32x2];
 /// The shader, sampling textures or not, skinning or not, lit by an
 /// environment or not: its lines marked `//T ` are a textured pipeline's
 /// alone (its maps' bindings, samples and normal mapping), `//S ` a skinned
 /// one's (its joints), `//M ` a morphing one's (its targets), `//P ` either's
 /// (the frame's joints and weights), `//E ` an environment-lit one's (its
-/// cube and diffuse light), `//K ` a cut-out one's and `//N ` any other's,
-/// comments in others'. (A cut-out one is textured: its alpha comes from
-/// its base colour's.)
+/// cube and diffuse light), `//U ` a placed one's (its maps' placements and
+/// second coordinates), `//K ` a cut-out one's and `//N ` any other's,
+/// comments in others'. (A cut-out or placed one is textured; a line with
+/// two prefixes is for a variant with both.)
 fn shader_source(variant: Variant) -> String {
     let mut source = SHADER.to_owned();
     if variant.textured {
@@ -1279,6 +1364,9 @@ fn shader_source(variant: Variant) -> String {
     if variant.lit {
         source = source.replace("//E ", "");
     }
+    if variant.placed {
+        source = source.replace("//U ", "");
+    }
     source.replace(if variant.masked { "//K " } else { "//N " }, "")
 }
 /// `source` drawing `samples` a pixel: multisampled, its `//A ` lines
@@ -1291,9 +1379,64 @@ fn antialiased(source: String, samples: u32) -> String {
         source
     }
 }
-/// The vertex buffers a pipeline reads: vertices, instances, and a skinned
-/// one's joints and weights.
-fn vertex_buffers(skinned: bool) -> Vec<wgpu::VertexBufferLayout<'static>> {
+/// Group 1's layout: the maps, their sampler and, `placed`, their placements.
+fn map_layout(device: &wgpu::Device, placed: bool) -> wgpu::BindGroupLayout {
+    let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0..MAPS as u32)
+        .map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        })
+        .collect();
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: MAPS as u32,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    });
+    if placed {
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: MAPS as u32 + 1,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+    }
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("3D maps"),
+        entries: &entries,
+    })
+}
+/// A mipmapped, anisotropic sampler wrapping as `wrap` says along u and v.
+fn texture_sampler(device: &wgpu::Device, wrap: [crate::Wrap; 2]) -> wgpu::Sampler {
+    let mode = |wrap| match wrap {
+        crate::Wrap::Clamp => wgpu::AddressMode::ClampToEdge,
+        crate::Wrap::Mirror => wgpu::AddressMode::MirrorRepeat,
+        _ => wgpu::AddressMode::Repeat,
+    };
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("3D texture"),
+        address_mode_u: mode(wrap[0]),
+        address_mode_v: mode(wrap[1]),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: 8,
+        ..Default::default()
+    })
+}
+/// The vertex buffers a pipeline reads: vertices, instances, a skinned
+/// one's joints and weights, and a placed one's second coordinates.
+fn vertex_buffers(variant: Variant) -> Vec<wgpu::VertexBufferLayout<'static>> {
     let mut buffers = vec![
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
@@ -1306,22 +1449,30 @@ fn vertex_buffers(skinned: bool) -> Vec<wgpu::VertexBufferLayout<'static>> {
             attributes: &INSTANCE_ATTRIBUTES,
         },
     ];
-    if skinned {
+    if variant.skinned {
         buffers.push(wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<crate::geometry::Influence>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &SKIN_ATTRIBUTES,
         });
     }
+    if variant.placed {
+        buffers.push(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<[f32; 2]>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &SECOND_UV_ATTRIBUTES,
+        });
+    }
     buffers
 }
-/// Depth from the sun with `shader`, bound as `layouts` say; `masked`, cut
-/// by its alpha in a fragment shader (depth alone needs none otherwise).
+/// Depth from the sun with `shader`, bound as `layouts` say; a cut-out
+/// `variant`'s by its alpha in a fragment shader (depth alone needs none
+/// otherwise).
 fn shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layouts: &[Option<&wgpu::BindGroupLayout>],
-    (skinned, masked): (bool, bool),
+    variant: Variant,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("3D shadows"),
@@ -1336,9 +1487,9 @@ fn shadow_pipeline(
             module: shader,
             entry_point: Some("shadow_vertex"),
             compilation_options: Default::default(),
-            buffers: &vertex_buffers(skinned),
+            buffers: &vertex_buffers(variant),
         },
-        fragment: masked.then(|| wgpu::FragmentState {
+        fragment: variant.masked.then(|| wgpu::FragmentState {
             module: shader,
             entry_point: Some("shadow_fragment"),
             compilation_options: Default::default(),
@@ -1373,7 +1524,7 @@ fn main_pipelines(
     layouts: &[Option<&wgpu::BindGroupLayout>],
     variant: Variant,
 ) -> [wgpu::RenderPipeline; 2] {
-    let buffers = vertex_buffers(variant.skinned);
+    let buffers = vertex_buffers(variant);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("3D"),
         bind_group_layouts: layouts,
@@ -1460,6 +1611,7 @@ fn map_binding(
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
     maps: [&wgpu::TextureView; MAPS],
+    placements: Option<&wgpu::Buffer>,
 ) -> wgpu::BindGroup {
     let entries: Vec<wgpu::BindGroupEntry> = maps
         .iter()
@@ -1471,6 +1623,10 @@ fn map_binding(
         .chain(std::iter::once(wgpu::BindGroupEntry {
             binding: MAPS as u32,
             resource: wgpu::BindingResource::Sampler(sampler),
+        }))
+        .chain(placements.map(|buffer| wgpu::BindGroupEntry {
+            binding: MAPS as u32 + 1,
+            resource: buffer.as_entire_binding(),
         }))
         .collect();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1628,6 +1784,18 @@ struct Frame {
 //T @group(1) @binding(3) var emission_texture: texture_2d<f32>;
 //T @group(1) @binding(4) var occlusion_texture: texture_2d<f32>;
 //T @group(1) @binding(5) var map_sampler: sampler;
+//U struct Placement {
+//U     u: vec4<f32>,
+//U     v: vec4<f32>,
+//U }
+//U @group(1) @binding(6) var<uniform> placements: array<Placement, 5>;
+//U // Where map `i` reads: its coordinates (the second, if its row says)
+//U // through its rows.
+//U fn placed(i: u32, first: vec2<f32>, second: vec2<f32>) -> vec2<f32> {
+//U     let p = placements[i];
+//U     let uv = vec3(select(first, second, p.u.w > 0.5), 1.0);
+//U     return vec2(dot(p.u.xyz, uv), dot(p.v.xyz, uv));
+//U }
 //P @group(2) @binding(0) var<storage, read> palette: array<mat4x4<f32>>;
 //M @group(3) @binding(0) var<storage, read> morphs: array<vec4<f32>>;
 //M struct Morphed {
@@ -1665,6 +1833,7 @@ struct Out {
     @location(3) emissive: vec3<f32>,
     @location(4) material: vec3<f32>,
     @location(5) uv: vec2<f32>,
+//U     @location(6) second_uv: vec2<f32>,
 }
 
 @vertex fn vertex(
@@ -1673,6 +1842,7 @@ struct Out {
     @location(7) n0: vec4<f32>, @location(8) n1: vec4<f32>, @location(9) n2: vec4<f32>,
     @location(10) color: vec4<f32>, @location(11) emissive: vec4<f32>,
 //S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
+//U     @location(14) second_uv: vec2<f32>,
 //M     @builtin(vertex_index) index: u32,
 ) -> Out {
     var model = mat4x4(m0, m1, m2, m3);
@@ -1688,7 +1858,10 @@ struct Out {
 //S     normals = mat3x3(model[0].xyz, model[1].xyz, model[2].xyz);
     let world = model * vec4(at, 1.0);
     let n = normals * facing;
-    return Out(frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv);
+    return Out(
+        frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv,
+//U         second_uv,
+    );
 }
 
 @vertex fn shadow_vertex(
@@ -1697,6 +1870,7 @@ struct Out {
 //P     @location(11) emissive: vec4<f32>,
 //S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
 //M     @builtin(vertex_index) index: u32,
+//U     @location(14) second_uv: vec2<f32>,
 //K     @location(2) uv: vec2<f32>, @location(9) n2: vec4<f32>,
 //N ) -> @builtin(position) vec4<f32> {
 //K ) -> ShadowOut {
@@ -1708,7 +1882,9 @@ struct Out {
 //M     joints_from = morphed.joints;
 //S     model = skinned(joints_from, joints, weights);
 //N     return frame.shadow * model * vec4(at, 1.0);
-//K     return ShadowOut(frame.shadow * model * vec4(at, 1.0), uv, n2.w);
+//K     var cut_uv = uv;
+//K //U     cut_uv = placed(0u, uv, second_uv);
+//K     return ShadowOut(frame.shadow * model * vec4(at, 1.0), cut_uv, n2.w);
 }
 //K struct ShadowOut {
 //K     @builtin(position) position: vec4<f32>,
@@ -1854,15 +2030,19 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
     var bump = vec3(0.5, 0.5, 1.0);
     var glow = vec3(1.0);
     var occlusion = 1.0;
-//T     texel = textureSample(base_texture, map_sampler, in.uv);
-//T     surface = textureSample(metal_rough_texture, map_sampler, in.uv);
-//T     bump = textureSample(normal_texture, map_sampler, in.uv).xyz;
-//T     glow = textureSample(emission_texture, map_sampler, in.uv).rgb;
-//T     occlusion = textureSample(occlusion_texture, map_sampler, in.uv).r;
+//T     var uvs = array<vec2<f32>, 5>(in.uv, in.uv, in.uv, in.uv, in.uv);
+//U     for (var i = 0u; i < 5u; i++) {
+//U         uvs[i] = placed(i, in.uv, in.second_uv);
+//U     }
+//T     texel = textureSample(base_texture, map_sampler, uvs[0]);
+//T     surface = textureSample(metal_rough_texture, map_sampler, uvs[1]);
+//T     bump = textureSample(normal_texture, map_sampler, uvs[2]).xyz;
+//T     glow = textureSample(emission_texture, map_sampler, uvs[3]).rgb;
+//T     occlusion = textureSample(occlusion_texture, map_sampler, uvs[4]).r;
 //T     let dpx = dpdx(in.world);
 //T     let dpy = dpdy(in.world);
-//T     let duvx = dpdx(in.uv);
-//T     let duvy = dpdy(in.uv);
+//T     let duvx = dpdx(uvs[2]);
+//T     let duvy = dpdy(uvs[2]);
     // How fast the surface's normal turns across the pixel, in uniform
     // control flow: widened into its roughness below (geometric specular
     // anti-aliasing, Tokuyoshi and Kaplanyan), so a highlight on a curve
@@ -1964,6 +2144,8 @@ mod tests {
                 || l.contains("palette")
                 || l.contains("environment_cube")
                 || l.contains("morphs")
+                || l.contains("placements")
+                || l.contains("second_uv")
         }) {
             assert!(line.trim_start().starts_with("//"), "{line}");
         }
@@ -1977,6 +2159,15 @@ mod tests {
         assert!(morphing.contains("var<storage, read> palette"));
         assert!(!morphing.contains("//M") && morphing.contains("//S"));
         assert!(masked.contains("discard;") && masked.contains("-> ShadowOut"));
+        for line in textured.lines().filter(|l| l.contains("second_uv")) {
+            assert!(line.trim_start().starts_with("//"), "{line}");
+        }
+        let placed = source(|v| {
+            v.textured = true;
+            v.placed = true;
+        });
+        assert!(placed.contains("var<uniform> placements"));
+        assert!(!placed.contains("//U") && placed.contains("//S"));
         for line in plain.lines().filter(|l| l.contains("discard")) {
             assert!(line.trim_start().starts_with("//"), "{line}");
         }

@@ -28,6 +28,8 @@ struct Data {
     skin: Option<Arc<SkinWeights>>,
     /// Its shapes to blend toward, if it has any (`with_morph_targets`).
     morphs: Option<Arc<Morphs>>,
+    /// Its second texture coordinates, if it has any (`with_second_uvs`).
+    second_uvs: Option<Arc<Vec<[f32; 2]>>>,
 }
 /// A shape a geometry can blend toward (`Geometry::with_morph_targets`):
 /// how far each vertex moves at full weight, and how its normal turns.
@@ -131,7 +133,27 @@ impl Geometry {
             },
             skin: None,
             morphs: None,
+            second_uvs: None,
         })))
+    }
+    /// A new geometry of the same triangles and extras, `change` applied.
+    fn derived(&self, change: impl FnOnce(&mut Data)) -> Result<Self, &'static str> {
+        let mut made = Self::new(self.0.vertices.clone(), self.0.indices.clone())?;
+        let data = Arc::get_mut(&mut made.0).expect("a geometry just made");
+        data.skin = self.0.skin.clone();
+        data.morphs = self.0.morphs.clone();
+        data.second_uvs = self.0.second_uvs.clone();
+        change(data);
+        Ok(made)
+    }
+    /// It with a second set of texture coordinates, for a map to read
+    /// instead of its first (`MapPlacement::uv_set`): often its occlusion's.
+    /// A new geometry. Fails unless it has one entry a vertex.
+    pub fn with_second_uvs(self, uvs: Vec<[f32; 2]>) -> Result<Self, &'static str> {
+        if uvs.len() != self.0.vertices.len() {
+            return Err("second texture coordinates have an entry a vertex");
+        }
+        self.derived(|data| data.second_uvs = Some(Arc::new(uvs)))
     }
     /// It skinned: each vertex moved by up to four joints of its object's
     /// skin (`World::set_skin`), `joints` their places in it and `weights`
@@ -162,11 +184,7 @@ impl Geometry {
                 }
             })
             .collect();
-        let mut made = Self::new(self.0.vertices.clone(), self.0.indices.clone())?;
-        let data = Arc::get_mut(&mut made.0).expect("a geometry just made");
-        data.skin = Some(Arc::new(influences));
-        data.morphs = self.0.morphs.clone();
-        Ok(made)
+        self.derived(|data| data.skin = Some(Arc::new(influences)))
     }
     /// It with shapes to blend toward: an object's weights
     /// (`World::set_morph_weights`) add that much of each target's movement
@@ -202,21 +220,23 @@ impl Geometry {
                     })
             })
             .collect();
-        let mut made = Self::new(self.0.vertices.clone(), self.0.indices.clone())?;
-        let data = Arc::get_mut(&mut made.0).expect("a geometry just made");
-        data.skin = self.0.skin.clone();
-        data.morphs = (!targets.is_empty()).then(|| {
-            Arc::new(Morphs {
-                targets: targets.len(),
-                deltas,
-                reach,
-            })
-        });
-        Ok(made)
+        self.derived(|data| {
+            data.morphs = (!targets.is_empty()).then(|| {
+                Arc::new(Morphs {
+                    targets: targets.len(),
+                    deltas,
+                    reach,
+                })
+            });
+        })
     }
     /// Its vertices' joints and weights, if it is skinned.
     pub(crate) fn skin(&self) -> Option<&[Influence]> {
         self.0.skin.as_deref().map(Vec::as_slice)
+    }
+    /// Its second texture coordinates, if it has any.
+    pub(crate) fn second_uvs(&self) -> Option<&[[f32; 2]]> {
+        self.0.second_uvs.as_deref().map(Vec::as_slice)
     }
     /// Its morph targets, if it has any.
     pub(crate) fn morphs(&self) -> Option<&Morphs> {

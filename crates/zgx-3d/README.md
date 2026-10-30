@@ -27,6 +27,10 @@ What a world takes beyond meshes and lights, each costing nothing until used:
 - **Surfaces**: `World::set_double_sided(id, true)` draws a mesh's back faces
   too, and `World::set_alpha_cutoff(id, Some(0.5))` cuts it out by its base
   colour texture's alpha, in its shadow as well.
+- **Map placement**: `World::set_map_placement(id, map, Some(placement))` moves,
+  scales and turns a map on its mesh (`MapPlacement`), says how it repeats
+  (`Wrap`) and which coordinates it reads (`Geometry::with_second_uvs`). glTF
+  models bring theirs: `KHR_texture_transform`, samplers' wrapping, `TEXCOORD_1`.
 - **Skins**: `Geometry::with_skin(joints, weights)` and
   `World::set_skin(id, Some(skin))` bend a mesh by its joints on the GPU, its
   shadow and picking following the pose; glTF models bring theirs.

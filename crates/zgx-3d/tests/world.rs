@@ -509,6 +509,7 @@ fn a_metal_roughness_map_scales_the_materials_factors() {
     );
 }
 
+#[cfg(feature = "gltf")]
 #[test]
 fn a_decoded_texture_uploads_again_on_another_device() {
     // A renderer on a device of its own (as after a lost one) uploads the
@@ -1072,10 +1073,9 @@ fn an_alpha_cutoff_with_no_texture_draws_it_whole() {
     assert!(window.pixel(50, 50)[0] > 240);
 }
 
-#[test]
-fn a_cut_out_mesh_casts_a_cut_out_shadow() {
-    // A flat square over a floor, under a sun straight above, its left half
-    // see-through: light passes there and falls short of the right half.
+/// What the floor shows under a flat square's left and right, under a sun
+/// straight above: its left half see-through, as `placement` puts its map.
+fn under_a_cut_out(placement: Option<MapPlacement>) -> Option<(u8, u8)> {
     let vertex = |x: f32, z: f32, u: f32| Vertex {
         position: [x, 0., z],
         normal: [0., 1., 0.],
@@ -1103,24 +1103,223 @@ fn a_cut_out_mesh_casts_a_cut_out_shadow() {
     let pixels = vec![255, 255, 255, 0, 255, 255, 255, 255];
     world.set_texture(caster, Some(Texture::from_rgba8(2, 1, pixels).unwrap()));
     world.set_alpha_cutoff(caster, Some(0.5));
+    world.set_map_placement(caster, Map::BaseColour, placement);
     world.add(Object::mesh(
         Geometry::plane(8., 8.),
         Material::rgb(0xffffff).with(0., 1.),
     ));
     // From the front, under the caster's height, onto the floor beneath it.
     world.set_camera(Camera::looking_at([0., 0.6, 4.], [0., 0., 0.]));
+    let mut window = Window::new(&world)?;
+    window.draw();
+    let left = seen_at(&world, vec3(-0.5, 0., 0.5));
+    let right = seen_at(&world, vec3(0.5, 0., 0.5));
+    Some((
+        window.pixel(left.0, left.1)[0],
+        window.pixel(right.0, right.1)[0],
+    ))
+}
+
+#[test]
+fn a_cut_out_mesh_casts_a_cut_out_shadow() {
+    let Some((clear, solid)) = under_a_cut_out(None) else {
+        return;
+    };
+    assert!(
+        clear > solid + 30,
+        "under the clear half {clear}, the solid half {solid}"
+    );
+}
+
+#[test]
+fn a_cut_out_shadow_falls_where_its_map_is_placed() {
+    // Moved half across, the map's clear half is on the right.
+    let moved = MapPlacement::new().offset(0.5, 0.);
+    let Some((solid, clear)) = under_a_cut_out(Some(moved)) else {
+        return;
+    };
+    assert!(
+        clear > solid + 30,
+        "under the clear half {clear}, the solid half {solid}"
+    );
+}
+
+/// An unlit white square showing a texture, red on the left, blue on the
+/// right, on `geometry`.
+fn red_and_blue(geometry: Geometry) -> (World, ObjectId) {
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(geometry, white);
+    let texture = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    world.set_texture(id, Some(texture));
+    (world, id)
+}
+
+fn is_red(pixel: [u8; 4]) -> bool {
+    pixel[0] > pixel[2] + 100
+}
+fn is_blue(pixel: [u8; 4]) -> bool {
+    pixel[2] > pixel[0] + 100
+}
+
+#[test]
+fn a_placement_moves_scales_and_turns_a_map() {
+    let (world, id) = red_and_blue(facing_square());
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    let place = |placement| world.set_map_placement(id, Map::BaseColour, Some(placement));
+    window.draw();
+    assert!(is_red(window.pixel(30, 50)) && is_blue(window.pixel(70, 50)));
+    // Half across, its colours change sides.
+    place(MapPlacement::new().offset(0.5, 0.));
+    window.draw();
+    assert!(is_blue(window.pixel(30, 50)) && is_red(window.pixel(70, 50)));
+    // Half as many: its left half fills the square.
+    place(MapPlacement::new().scaled(0.5, 1.));
+    window.draw();
+    assert!(is_red(window.pixel(50, 50)), "its red texel's centre");
+    // A quarter turn: v (down the square) reads across it.
+    place(MapPlacement::new().rotated(PI / 2.));
+    window.draw();
+    assert!(is_red(window.pixel(50, 30)) && is_blue(window.pixel(50, 70)));
+    // Taken off, it's where it was.
+    world.set_map_placement(id, Map::BaseColour, None);
+    assert_eq!(world.map_placement(id, Map::BaseColour), None);
+    window.draw();
+    assert!(is_red(window.pixel(30, 50)) && is_blue(window.pixel(70, 50)));
+}
+
+#[test]
+fn a_placement_says_what_a_map_does_past_its_edge() {
+    let (world, id) = red_and_blue(facing_square());
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    let mut shown = |wrap: Wrap| {
+        let tripled = MapPlacement::new().scaled(3., 1.).wrap(wrap, wrap);
+        world.set_map_placement(id, Map::BaseColour, Some(tripled));
+        window.draw();
+        (window.pixel(43, 50), window.pixel(57, 50))
+    };
+    // Coordinates 1.25 and 1.75 across, its texels' centres past its edge.
+    let (first, second) = shown(Wrap::Repeat);
+    assert!(is_red(first) && is_blue(second), "{first:?} {second:?}");
+    let (first, second) = shown(Wrap::Clamp);
+    assert!(is_blue(first) && is_blue(second), "{first:?} {second:?}");
+    let (first, second) = shown(Wrap::Mirror);
+    assert!(is_blue(first) && is_red(second), "{first:?} {second:?}");
+}
+
+#[test]
+fn a_wrap_alone_needs_no_other_coordinates() {
+    // Coordinates running to 2 across: a wrap, in place, clamps them.
+    let vertex = |x: f32, y: f32, u: f32| Vertex {
+        position: [x, y, 0.],
+        normal: [0., 0., 1.],
+        uv: [u, 0.5],
+    };
+    let wide = Geometry::new(
+        vec![
+            vertex(-1., -1., 0.),
+            vertex(1., -1., 2.),
+            vertex(1., 1., 2.),
+            vertex(-1., 1., 0.),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .unwrap();
+    let (world, id) = red_and_blue(wide);
     let Some(mut window) = Window::new(&world) else {
         return;
     };
     window.draw();
-    let clear = seen_at(&world, vec3(-0.5, 0., 0.5));
-    let shaded = seen_at(&world, vec3(0.5, 0., 0.5));
-    let (lit, dark) = (
-        window.pixel(clear.0, clear.1)[0],
-        window.pixel(shaded.0, shaded.1)[0],
-    );
+    assert!(is_red(window.pixel(60, 50)), "1.2 across repeats");
+    let clamped = MapPlacement::new().wrap(Wrap::Clamp, Wrap::Clamp);
+    world.set_map_placement(id, Map::BaseColour, Some(clamped));
+    window.draw();
+    assert!(is_blue(window.pixel(60, 50)), "1.2 across clamps");
+}
+
+#[test]
+fn a_map_reads_its_meshes_second_coordinates_if_placed_there() {
+    // The second coordinates run the other way.
+    let square = facing_square();
+    let mirrored = square.vertices().iter().map(|v| [1. - v.uv[0], v.uv[1]]);
+    let square = square.clone().with_second_uvs(mirrored.collect()).unwrap();
+    let (world, id) = red_and_blue(square);
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert!(is_red(window.pixel(30, 50)) && is_blue(window.pixel(70, 50)));
+    let second = MapPlacement::new().uv_set(1);
+    world.set_map_placement(id, Map::BaseColour, Some(second));
+    window.draw();
+    assert!(is_blue(window.pixel(30, 50)) && is_red(window.pixel(70, 50)));
+    // A mesh with only one set reads that.
+    let (world, id) = red_and_blue(facing_square());
+    world.set_map_placement(id, Map::BaseColour, Some(second));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert!(is_red(window.pixel(30, 50)) && is_blue(window.pixel(70, 50)));
     assert!(
-        lit > dark + 30,
-        "under the clear half {lit}, the solid half {dark}"
+        facing_square().with_second_uvs(vec![[0.; 2]]).is_err(),
+        "an entry a vertex"
     );
+}
+
+#[test]
+fn each_map_is_placed_on_its_own() {
+    // A black square glowing by its emission map, its base colour's map
+    // moved: the glow stays. Then the glow's moved.
+    let mut black = Material::rgb(0x000000);
+    black.emissive = [1., 1., 1.];
+    let (world, id) = one(facing_square(), black);
+    let map = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    world.set_map(id, Map::BaseColour, Some(map.clone()));
+    world.set_map(id, Map::Emission, Some(map));
+    let moved = MapPlacement::new().offset(0.5, 0.);
+    world.set_map_placement(id, Map::BaseColour, Some(moved));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert!(is_red(window.pixel(30, 50)) && is_blue(window.pixel(70, 50)));
+    world.set_map_placement(id, Map::BaseColour, None);
+    world.set_map_placement(id, Map::Emission, Some(moved));
+    window.draw();
+    assert!(is_blue(window.pixel(30, 50)) && is_red(window.pixel(70, 50)));
+}
+
+#[test]
+fn meshes_placed_differently_draw_each_its_own_way() {
+    // One geometry and texture, side by side, one placed: not one batch.
+    let world = World::new();
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let square = facing_square();
+    let texture = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    let add = |at: f32| {
+        let id = world.add(Object::mesh(square.clone(), white));
+        world.set_transform(id, Transform::at([at, 0., 0.]));
+        world.set_texture(id, Some(texture.clone()));
+        id
+    };
+    add(-1.);
+    let moved = MapPlacement::new().offset(0.5, 0.);
+    world.set_map_placement(add(1.), Map::BaseColour, Some(moved));
+    world.set_camera(Camera::looking_at([0., 0., 5.], [0., 0., 0.]));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let colour_at = |x: f32| {
+        let at = seen_at(&world, vec3(x, 0., 0.));
+        window.pixel(at.0, at.1)
+    };
+    assert!(is_red(colour_at(-1.5)) && is_blue(colour_at(-0.5)));
+    assert!(is_blue(colour_at(0.5)) && is_red(colour_at(1.5)));
 }

@@ -56,7 +56,7 @@ pub use gltf::{Model, ModelError};
 pub use math::{Mat4, Quat, Transform, Vec3, vec3};
 pub use orbit::{Answer, Orbit, OrbitControls};
 pub use pick::Hit;
-pub use texture::{Map, Texture};
+pub use texture::{Map, MapPlacement, Texture, Wrap};
 pub use world::{
     Camera, Light, LightId, MAX_JOINTS, Material, Object, ObjectId, POINT_LIGHTS, Skin,
     ToneMapping, World, srgb_to_linear,
