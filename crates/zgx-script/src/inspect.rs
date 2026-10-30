@@ -462,7 +462,7 @@ impl Session {
                 return Ok((x, y));
             }
             let node = driver::find(ui, &self.0.handle, &said)?;
-            Ok(driver::middle(ui.scene.borrow().bounds(node)))
+            Ok(driver::middle(ui.scene.borrow().transformed_bounds(node)))
         };
         let answer = match cmd.as_str() {
             "help" => Ok((HELP.to_string(), Value::Nil)),
@@ -622,7 +622,7 @@ impl Session {
                 Ok((format!("{name} set"), Value::Nil))
             })(),
             "click" => target(&ui).map(|node| {
-                let b = ui.scene.borrow().bounds(node);
+                let b = ui.scene.borrow().transformed_bounds(node);
                 driver::click_at(&mut ui, b);
                 (format!("clicked @{}", driver::number(node)), Value::Nil)
             }),
@@ -957,7 +957,7 @@ impl Session {
                         .and_then(|l| l.split_whitespace().next()?.parse::<f64>().ok())
                         .unwrap_or(0.)
                         .clamp(0., 60_000.);
-                    let b = ui.scene.borrow().bounds(node);
+                    let b = ui.scene.borrow().transformed_bounds(node);
                     let at = (b.x + b.width / 2., b.y + b.height / 2.);
                     let from = zgx::trace::now_ms();
                     let said = ui.wheel_tape(zgx::widgets::WheelTape::Play {

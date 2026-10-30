@@ -4550,3 +4550,99 @@ fn a_redrawn_canvas_reuses_its_text_nodes() {
     }
     assert_eq!(h.host.error().get(), None);
 }
+
+/// A pointer's place in a node's box is the same however it is zoomed, in
+/// any column: a hover tilt read from it stays in its range, so a far card
+/// doesn't tilt itself across its neighbours. Each event that says where.
+#[test]
+fn local_points_read_through_a_zoom_and_a_scroll() {
+    use zgx::input::{InputEvent, PointerButton};
+    for (zoom, scrolled) in [(1., 0.), (0.76, 0.), (0.76, 30.)] {
+        let script = r##"
+        local said = ui.state("said", "")
+        local function note(name)
+            return function(e)
+                said:set(said:peek() .. string.format("%s %.2f %.2f;", name, e.local_x, e.local_y))
+            end
+        end
+        return ui.column {
+            ui.text { id = "said", said },
+            ui.scroll { id = "page", w = 380, h = 240, ui.div { zoom = ZOOM, w = 500, h = 900,
+                ui.row { gap = 10,
+                    ui.div { w = 100, h = 120, shrink = 0 },
+                    ui.div { w = 100, h = 120, shrink = 0 },
+                    ui.div { id = "card", w = 100, h = 120, shrink = 0, bg = "#334",
+                        on_pointer_move = note("move"), on_press = note("press"),
+                        context_menu = function(e)
+                            note("menu")(e)
+                            return {}
+                        end } } } } }"##
+            .replace("ZOOM", &zoom.to_string());
+        let mut h = Harness::inline(&script);
+        h.frames(2);
+        if scrolled > 0. {
+            h.scroll("page", scrolled);
+        }
+        let card = h.find("card").unwrap();
+        let laid = h.bounds("card");
+        let (x, y) = {
+            let scene = h.ui.scene.borrow();
+            scene.window_point(card, laid.x + 50., laid.y + 60.)
+        };
+        h.ui.dispatch(InputEvent::PointerMove { x, y });
+        for button in [PointerButton::Secondary, PointerButton::Primary] {
+            h.ui.dispatch(InputEvent::PointerDown { x, y, button });
+            h.ui.dispatch(InputEvent::PointerUp { x, y, button });
+        }
+        h.frames(2);
+        let said = h.text("said");
+        for name in ["move", "press", "menu"] {
+            assert!(
+                said.contains(&format!("{name} 50.00 60.00;")),
+                "zoom {zoom}, scrolled {scrolled}: {said}"
+            );
+        }
+    }
+}
+
+/// `Harness::click` reaches a node where it shows, zoomed and tilted, as
+/// `zgx inspect click` does.
+#[test]
+fn a_zoomed_tilted_card_is_clicked_where_it_shows() {
+    let mut h = Harness::inline(
+        r##"local clicks = ui.state("clicks", 0)
+        return ui.column { ui.text { id = "clicks", "{clicks}" },
+            ui.div { zoom = 0.76, w = 500, h = 200, ui.row { gap = 10,
+                ui.div { w = 100, h = 120, shrink = 0 }, ui.div { w = 100, h = 120, shrink = 0 },
+                ui.div { id = "card", w = 100, h = 120, shrink = 0, bg = "#334",
+                    perspective = 900, rotate_y = 12,
+                    on_click = function() clicks:set(clicks:peek() + 1) end } } } }"##,
+    );
+    h.frames(2);
+    h.click("card");
+    h.frames(1);
+    assert_eq!(h.text("clicks"), "1");
+}
+
+/// A drag over a zoomed target says where it is in the target's own box.
+#[test]
+fn a_drag_over_a_zoomed_target_says_its_local_point() {
+    let mut h = Harness::inline(
+        r##"local said = ui.state("said", "")
+        return ui.column { ui.text { id = "said", said },
+            ui.div { zoom = 0.76, w = 500, h = 200, ui.row { gap = 10,
+                ui.div { id = "from", w = 100, h = 120, shrink = 0, bg = "#222",
+                    on_drag = function() return "card" end },
+                ui.div { w = 100, h = 120, shrink = 0 },
+                ui.div { id = "to", w = 100, h = 120, shrink = 0, bg = "#334",
+                    on_drag_over = function(_, e)
+                        said:set(string.format("%.0f %.0f %.0f", e.local_x, e.w, e.h))
+                    end,
+                    on_drop = function() end } } } }"##,
+    );
+    h.frames(2);
+    h.drag("from", "to");
+    h.frames(2);
+    let said = h.text("said");
+    assert_eq!(said, "50 100 120", "its middle, in its own box");
+}

@@ -373,6 +373,14 @@ impl Scene {
         }
         Some(point)
     }
+    /// Window point (`x`, `y`) in `id`'s box, from its top-left corner as
+    /// laid out: `point_in`, so the same place however it is transformed or
+    /// zoomed, and hit testing and it agree on what lies under a pointer.
+    pub fn local_point(&self, id: NodeId, x: f32, y: f32) -> (f32, f32) {
+        let bounds = self.bounds(id);
+        let (x, y) = self.point_in(id, x, y).unwrap_or((x, y));
+        (x - bounds.x, y - bounds.y)
+    }
     /// Order `a` and `b` as a document would: an ancestor before what it
     /// holds, siblings as their parent orders them. Both must be in the
     /// scene.

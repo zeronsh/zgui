@@ -1073,8 +1073,10 @@ fn picking(
             // What is at window point `x`, `y`, in the box.
             let pick = |x: f32, y: f32| {
                 let scene = handle.borrow().as_ref()?.scene()?;
-                let bounds = scene.borrow().bounds(event.current_target);
-                world.pick((x - bounds.x, y - bounds.y), (bounds.width, bounds.height))
+                let scene = scene.borrow();
+                let bounds = scene.bounds(event.current_target);
+                let at = scene.local_point(event.current_target, x, y);
+                world.pick(at, (bounds.width, bounds.height))
             };
             let hover = |now: Option<(ObjectId, Rc<ObjectSpec>)>| {
                 let before = over.replace(now.clone());
