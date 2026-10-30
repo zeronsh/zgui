@@ -35,7 +35,7 @@ icu_datetime = { version = "~2.4", default-features = false, features = ["compil
 icu_calendar = { version = "~2.4", default-features = false, features = ["compiled_data"], optional = true }
 # Find in page folds accents and composed forms (`find`).
 unicode-normalization = "0.1.24"
-taffy = { package = "zgx-taffy", version = "=0.9.1", path = "../../vendor/taffy", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size", "calc"] }
+taffy = { package = "zgx-taffy", version = "=0.9.2", path = "../../vendor/taffy", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size", "calc"] }
 stacker = "0.1.25"
 smallvec = "1.16"
 rustc-hash = "2.1"

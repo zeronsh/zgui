@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.65"
 name = "zgx-taffy"
-version = "0.9.1"
+version = "0.9.2"
 authors = [
     "Alice Cecile <alice.i.cecile@gmail.com>",
     "Johnathan Kelley <jkelleyrtp@gmail.com>",
