@@ -210,6 +210,48 @@ struct Edit {
     before: Selection,
     after: Selection,
 }
+impl Edit {
+    fn bytes(&self) -> usize {
+        self.deleted.len() + self.inserted.len()
+    }
+    /// What undoes it.
+    fn inverted(self) -> Self {
+        Self {
+            start: self.start,
+            deleted: self.inserted,
+            inserted: self.deleted,
+            before: self.after,
+            after: self.before,
+        }
+    }
+    /// `first` and then `second`, as one step; `text` is what `second`
+    /// left.
+    fn joined(first: Edit, second: Edit, text: &str) -> Self {
+        let first_end = first.start + first.inserted.len();
+        let second_end = second.start + second.deleted.len();
+        let (from, to) = (first.start.min(second.start), first_end.max(second_end));
+        // What lay between them after `first`: `text`, with `second` undone.
+        let beyond = second.start + second.inserted.len();
+        let mut between = String::with_capacity(to - from);
+        between.push_str(&text[from..second.start]);
+        between.push_str(&second.deleted);
+        between.push_str(&text[beyond..beyond + (to - second_end)]);
+        let swapped = |start: usize, end: usize, with: &str| {
+            let mut out = String::with_capacity(between.len() + with.len());
+            out.push_str(&between[..start - from]);
+            out.push_str(with);
+            out.push_str(&between[end - from..]);
+            out
+        };
+        Self {
+            start: from,
+            deleted: swapped(first.start, first_end, &first.deleted),
+            inserted: swapped(second.start, second_end, &second.inserted),
+            before: first.before,
+            after: second.after,
+        }
+    }
+}
 /// A plain-text editing model: the text, its selection, IME preedit
 /// and a bounded undo history.
 pub struct TextEditor {
@@ -221,6 +263,10 @@ pub struct TextEditor {
     revision: u64,
     /// `load_next`: the next text it is given leaves nothing to undo.
     loading: bool,
+    /// `answer_next`: the next text it is given joins the last step.
+    answering: bool,
+    /// Its last step undone, rather than redone or edited.
+    undone: bool,
     undo: VecDeque<Edit>,
     redo: VecDeque<Edit>,
     undo_bytes: usize,
@@ -263,6 +309,8 @@ impl TextEditor {
             composition_cancel_revision: 0,
             revision: 0,
             loading: false,
+            answering: false,
+            undone: false,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             undo_bytes: 0,
@@ -535,6 +583,11 @@ impl TextEditor {
                 .map_or(text.len(), |(at, _)| at + 1),
         }
     }
+    /// The next text it is given answers the last step (an app trimming
+    /// what was typed): it joins that step.
+    pub fn answer_next(&mut self) {
+        self.answering = true;
+    }
     /// Its committed text as a value to keep: a copy while short, the
     /// long one shared.
     pub fn value(&self) -> TextValue {
@@ -568,8 +621,11 @@ impl TextEditor {
         let deleted = self.text.slice(prefix..old_end).into_owned();
         let inserted = value.slice(prefix..new_end).into_owned();
         self.cancel_preedit();
-        self.redo.clear();
-        self.redo_bytes = 0;
+        // An answer to an undo keeps what redoes it.
+        if !(self.answering && self.undone) {
+            self.redo.clear();
+            self.redo_bytes = 0;
+        }
         match value {
             // A long text is taken as it is, shared with whoever gave it.
             Incoming::Value(TextValue::Long(text)) if text.len() >= LONG / 2 => {
@@ -600,7 +656,40 @@ impl TextEditor {
             self.undo.clear();
             self.undo_bytes = 0;
         }
+        if std::mem::take(&mut self.answering) {
+            self.fold_answer();
+        }
         true
+    }
+    /// The step just taken is what the app made of the one before: they
+    /// are one step, or undo would go to text the app answers again and
+    /// stick there. After an undo, it joins what redoes it.
+    fn fold_answer(&mut self) {
+        let Some(answer) = self.undo.pop_back() else {
+            return;
+        };
+        self.undo_bytes -= answer.bytes();
+        let text = self.text.to_cow().into_owned();
+        if self.undone
+            && let Some(redo) = self.redo.pop_back()
+        {
+            // Offsets of older steps hold only if the text kept its length.
+            if answer.deleted.len() != answer.inserted.len() {
+                self.undo.clear();
+                self.undo_bytes = 0;
+            }
+            self.redo_bytes -= redo.bytes();
+            let joined = Edit::joined(redo.inverted(), answer, &text).inverted();
+            self.redo_bytes += joined.bytes();
+            self.redo.push_back(joined);
+        } else if let Some(edit) = self.undo.pop_back() {
+            self.undo_bytes -= edit.bytes();
+            let joined = Edit::joined(edit, answer, &text);
+            if joined.deleted != joined.inserted {
+                self.undo_bytes += joined.bytes();
+                self.undo.push_back(joined);
+            }
+        }
     }
     fn previous(&self, word: bool) -> usize {
         let pos = self.selection.focus;
@@ -1063,6 +1152,7 @@ impl TextEditor {
         let Some(edit) = self.undo.pop_back() else {
             return false;
         };
+        self.undone = true;
         self.text
             .replace_range(edit.start..edit.start + edit.inserted.len(), &edit.deleted);
         self.revision = self.revision.wrapping_add(1);
@@ -1087,6 +1177,7 @@ impl TextEditor {
         let Some(edit) = self.redo.pop_back() else {
             return false;
         };
+        self.undone = false;
         self.text
             .replace_range(edit.start..edit.start + edit.deleted.len(), &edit.inserted);
         self.revision = self.revision.wrapping_add(1);
@@ -1717,6 +1808,66 @@ mod tests {
             assert!(editor.redo());
             assert_eq!(editor.text(), new);
         }
+    }
+
+    #[test]
+    fn an_answer_joins_the_step_it_answers() {
+        let mut editor = TextEditor::new("ab");
+        editor.set_selection(2, 2);
+        editor.insert("c ");
+        editor.answer_next();
+        editor.set_text("ABC");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "ab", "one step back, past the answer");
+        assert!(!editor.undo());
+        assert!(editor.redo());
+        assert_eq!(editor.text(), "ABC");
+        assert!(!editor.redo());
+        assert_eq!(editor.undo_bytes + editor.redo_bytes, 2 + 3);
+    }
+
+    #[test]
+    fn an_answer_that_takes_an_edit_back_leaves_no_step() {
+        let mut editor = TextEditor::new("ab");
+        editor.set_selection(2, 2);
+        editor.insert(" ");
+        editor.answer_next();
+        editor.set_text("ab");
+        assert_eq!(editor.text(), "ab");
+        assert!(!editor.undo(), "nothing happened, in the end");
+        assert_eq!(editor.undo_bytes, 0);
+    }
+
+    #[test]
+    fn an_answer_to_an_undo_joins_what_redoes_it() {
+        let mut editor = TextEditor::new("one");
+        editor.set_selection(3, 3);
+        editor.insert(" two");
+        assert!(editor.undo());
+        // The app makes something else of what the undo left.
+        editor.answer_next();
+        editor.set_text("ONE");
+        assert_eq!(editor.text(), "ONE");
+        assert!(!editor.undo());
+        assert!(editor.redo());
+        assert_eq!(editor.text(), "one two", "redo goes where it went");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "ONE");
+    }
+
+    #[test]
+    fn an_answer_that_moves_text_keeps_older_steps_whole() {
+        let mut editor = TextEditor::new("日本");
+        editor.set_selection(6, 6);
+        editor.insert("語");
+        editor.set_selection(9, 9);
+        editor.insert(" x");
+        editor.answer_next();
+        editor.set_text("日本語 X");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "日本語");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "日本");
     }
 
     #[test]

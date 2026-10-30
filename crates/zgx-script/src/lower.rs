@@ -1138,10 +1138,13 @@ fn bound_text(cx: &mut Context, value: &Signal<Value>, editor: &LoadedEditor) ->
     cx.retain(runtime.effect(move || {
         let next = v.with(text_of);
         if t.with_untracked(|now| *now != next) {
-            if e.get().is_none_or(|at| at.elapsed() > ANSWER)
-                && let Some(editor) = loaded.get()
-            {
-                editor.borrow_mut().load_next();
+            if let Some(editor) = loaded.get() {
+                let mut editor = editor.borrow_mut();
+                if e.get().is_none_or(|at| at.elapsed() > ANSWER) {
+                    editor.load_next();
+                } else {
+                    editor.answer_next();
+                }
             }
             t.set(next);
         }
@@ -1209,8 +1212,14 @@ fn controlled_input(
         }
         let answer = o.replace(false);
         if !e.get() || (!answer && changed) {
-            if !answer && let Some(editor) = loaded.get() {
-                editor.borrow_mut().load_next();
+            if t.with_untracked(|shown| *shown != now)
+                && let Some(editor) = loaded.get()
+            {
+                if answer {
+                    editor.borrow_mut().answer_next();
+                } else {
+                    editor.borrow_mut().load_next();
+                }
             }
             t.set(now);
         }
@@ -1232,18 +1241,29 @@ fn controlled_input(
             }
         }));
     }
-    let (t, l, e, o, vm, actions) = (
+    let (t, l, e, o, vm, actions, loaded) = (
         text.clone(),
         latest,
         editing,
         echo,
         vm.clone(),
         low.actions.clone(),
+        editor.clone(),
     );
     let listener = move |cx: &mut zgx::input::EventContext| {
         if cx.phase == EventPhase::Capture || cx.target != cx.current_target {
             return;
         }
+        // What the function made of the edit, shown: part of that edit.
+        let answered = || {
+            let now = l.borrow().clone();
+            if t.with_untracked(|shown| *shown != now)
+                && let Some(editor) = loaded.get()
+            {
+                editor.borrow_mut().answer_next();
+            }
+            t.set(now);
+        };
         let commit_now = |cx: &mut zgx::input::EventContext| {
             let typed = t.with_untracked(Clone::clone);
             if typed != *l.borrow()
@@ -1263,14 +1283,12 @@ fn controlled_input(
             } if !modifiers.shift => {
                 commit_now(cx);
                 // Shown as the function has it now, still focused.
-                let now = l.borrow().clone();
-                t.set(now);
+                answered();
             }
             InputEvent::Blur => {
                 commit_now(cx);
                 e.set(false);
-                let now = l.borrow().clone();
-                t.set(now);
+                answered();
             }
             _ => {}
         }

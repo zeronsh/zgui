@@ -231,6 +231,33 @@ fn a_controlled_fields_answer_keeps_its_history() {
 }
 
 #[test]
+fn a_controlled_fields_answer_folds_into_its_edit_as_it_is_left() {
+    let mut h = Harness::inline(
+        r#"local note = ui.state("note", "ab")
+        return ui.column {
+            ui.textarea { id = "note", label = "Note",
+                value = function() return note:get() end,
+                on_change = function(text) note:set(string.upper(text)) end },
+            ui.input { id = "other", label = "Other", value = ui.state("other", "") },
+            ui.text { id = "shown", "{note}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.type_text("note", "c");
+    h.click("other");
+    h.frames(2);
+    assert_eq!(h.text("shown"), "ABC", "left, it shows the function's text");
+    h.click("note");
+    h.keys("cmd+z");
+    h.frames(2);
+    assert_eq!(
+        h.text("shown"),
+        "AB",
+        "one undo, past the edit and its answer"
+    );
+}
+
+#[test]
 fn a_bound_fields_answer_keeps_its_history() {
     let mut h = Harness::inline(
         r#"local note = ui.state("note", "ab")
@@ -249,11 +276,14 @@ fn a_bound_fields_answer_keeps_its_history() {
     assert_eq!(h.text("shown"), "ABC");
     h.keys("cmd+z");
     h.frames(2);
-    let editor = h.ui.focused_editor().expect("still focused");
-    assert!(
-        editor.editor.borrow_mut().undo(),
+    assert_eq!(
+        h.text("shown"),
+        "AB",
         "typing keeps undo through a trim or a format"
     );
+    h.keys("cmd+shift+z");
+    h.frames(2);
+    assert_eq!(h.text("shown"), "ABC", "and redo");
 }
 
 #[test]
