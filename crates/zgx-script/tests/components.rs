@@ -5,7 +5,7 @@ mod common;
 
 use common::Harness;
 use zgx::{
-    input::{Key, Modifiers},
+    input::{InputEvent, Key, Modifiers, PointerButton},
     scene::NodeId,
     semantics::{Role, SemanticNode},
 };
@@ -604,6 +604,67 @@ fn a_fields_undo_and_text_position_answer_a_script() {
     assert_eq!(h.text("shown"), "hello world!");
     assert!(h.host.run_command("at"));
     assert_eq!(h.text("said"), "0", "the line's start");
+}
+
+#[test]
+fn a_tab_moved_to_another_strip_is_in_its_states() {
+    let mut h = Harness::inline(
+        r#"local left = ui.state("left", { { id = "a", label = "Alpha", closable = true }, { id = "b", label = "Beta" } })
+        local right = ui.state("right", { { id = "c", label = "Gamma" } })
+        local left_chosen = ui.state("left_chosen", "a")
+        local right_chosen = ui.state("right_chosen", "c")
+        local moved = ui.state("moved", "")
+        local function strip(name: string, items: any, chosen: any): Node
+            return ui.tabs { id = name, label = name, w = 300, h = 200, items = items, value = chosen,
+                reorderable = true, group = "panes",
+                on_move = function(id: string, to: string) moved:set(`{id} to {to}`) end,
+                panel = function(id: string): Node return ui.text { id } end }
+        end
+        local function names(list: any)
+            local out = {}
+            for _, t in list do table.insert(out, t.id) end
+            return table.concat(out, ",")
+        end
+        return ui.column {
+            ui.row { strip("Left", left, left_chosen), strip("Right", right, right_chosen) },
+            ui.text { id = "left", function() return names(left:get()) end },
+            ui.text { id = "right", function() return names(right:get()) end },
+            ui.text { id = "chosen", function() return right_chosen:get() end },
+            ui.text { id = "moved", "{moved}" },
+            ui.text { id = "closable", function()
+                local last = right:get()[#right:get()]
+                return tostring(last.closable) .. " " .. last.label
+            end },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let tab = with_role(&mut h, Role::Tab)[0];
+    let from = h.ui.scene.borrow().bounds(tab);
+    let to = h.bounds("Right");
+    let start = (from.x + from.width / 2., from.y + from.height / 2.);
+    let end = (to.x + to.width / 2., to.y + to.height / 2.);
+    h.ui.dispatch(InputEvent::PointerDown {
+        x: start.0,
+        y: start.1,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerMove {
+        x: start.0 + 20.,
+        y: start.1,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x: end.0, y: end.1 });
+    h.frames(1);
+    h.ui.dispatch(InputEvent::PointerUp {
+        x: end.0,
+        y: end.1,
+        button: PointerButton::Primary,
+    });
+    h.frames(2);
+    assert_eq!(h.text("left"), "b");
+    assert_eq!(h.text("right"), "c,a");
+    assert_eq!(h.text("chosen"), "a");
+    assert_eq!(h.text("moved"), "a to Right");
+    assert_eq!(h.text("closable"), "true Alpha");
 }
 
 #[test]

@@ -7,7 +7,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 use zgx::{
     compose::{
@@ -53,6 +53,10 @@ impl Tab {
 /// first returns `false` and closes it itself later).
 pub type CloseTab = Rc<dyn Fn(&str) -> bool>;
 
+/// Told a tab went to another strip of its group: its id, and that strip's
+/// label.
+pub type MoveTab = Rc<dyn Fn(&str, &str)>;
+
 /// How [`tabs`] behave beyond choosing.
 #[derive(Clone, Default)]
 pub struct TabsOptions {
@@ -64,6 +68,79 @@ pub struct TabsOptions {
     /// hidden, it keeps its state (an editor's undo, caret and scroll) and
     /// takes no layout, paint or frames.
     pub keep: bool,
+    /// Strips of one group take each other's tabs: a tab dragged over
+    /// another strip or its panel goes there, as an editor's split panes do.
+    /// Reorderable strips only.
+    pub group: Option<String>,
+    /// Told a tab of this strip went to another of its group.
+    pub on_move: Option<MoveTab>,
+}
+
+/// A strip of a group: what another's dragged tab needs of it.
+struct Strip {
+    group: String,
+    label: String,
+    /// Which window it is in: a strip takes tabs from its own.
+    scene: Cell<usize>,
+    bounds: Signal<Rect>,
+    items: Signal<Vec<Tab>>,
+    selected: Signal<String>,
+    /// A tab is over it.
+    over: Signal<bool>,
+    /// Where this strip's dragged tab would go.
+    target: RefCell<Option<Rc<Strip>>>,
+}
+thread_local! {
+    /// The strips of every group.
+    static STRIPS: RefCell<Vec<Weak<Strip>>> = const { RefCell::new(Vec::new()) };
+}
+impl Strip {
+    /// Follow the pointer at `x`, `y`: whether it is over another strip of
+    /// the group.
+    fn aim(self: &Rc<Self>, x: f32, y: f32) -> bool {
+        let found = STRIPS.with_borrow_mut(|strips| {
+            strips.retain(|strip| strip.strong_count() > 0);
+            strips.iter().filter_map(Weak::upgrade).find(|strip| {
+                let b = strip.bounds.with_untracked(|b| *b);
+                !Rc::ptr_eq(strip, self)
+                    && strip.group == self.group
+                    && strip.scene.get() == self.scene.get()
+                    && (b.x..b.x + b.width).contains(&x)
+                    && (b.y..b.y + b.height).contains(&y)
+            })
+        });
+        let aimed = found.is_some();
+        if let Some(was) = self.target.replace(found.clone()) {
+            was.over.set(false);
+        }
+        if let Some(now) = found {
+            now.over.set(true);
+        }
+        aimed
+    }
+    /// The drag ended: `id` goes where it was aimed, if `drop`; the strip
+    /// it went to.
+    fn land(&self, id: &str, drop: bool) -> Option<Rc<Strip>> {
+        let to = self.target.take()?;
+        to.over.set(false);
+        if !drop {
+            return None;
+        }
+        let mut list = self.items.with_untracked(Clone::clone);
+        let at = list.iter().position(|t| t.id == id)?;
+        let tab = list.remove(at);
+        if self.selected.with_untracked(|s| s == id) {
+            let next = list.get(at).or_else(|| list.get(at.wrapping_sub(1)));
+            self.selected
+                .set(next.map_or(String::new(), |t| t.id.clone()));
+        }
+        self.items.set(list);
+        if !to.items.with_untracked(|l| l.iter().any(|t| t.id == id)) {
+            to.items.update(|l| l.push(tab));
+        }
+        to.selected.set(id.to_owned());
+        Some(to)
+    }
 }
 
 /// The ids in `items`, in order.
@@ -96,6 +173,23 @@ pub fn tabs(
         let strip_bounds = runtime.signal(Rect::new(0., 0., 0., 0.));
         let content_bounds = runtime.signal(Rect::new(0., 0., 0., 0.));
         let overflow_open = runtime.signal(false);
+        let bounds = runtime.signal(Rect::new(0., 0., 0., 0.));
+        let over = runtime.signal(false);
+        let strip_of_group = options.group.clone().map(|group| {
+            let strip = Rc::new(Strip {
+                group,
+                label: label.clone(),
+                scene: Cell::new(0),
+                bounds: bounds.clone(),
+                items: items.clone(),
+                selected: selected.clone(),
+                over: over.clone(),
+                target: RefCell::default(),
+            });
+            STRIPS.with_borrow_mut(|strips| strips.push(Rc::downgrade(&strip)));
+            cx.retain(strip.clone());
+            strip
+        });
 
         // Close `id`: asked first, then gone, its neighbour chosen if it was.
         let close = {
@@ -162,7 +256,9 @@ pub fn tabs(
             let (items, selected, nodes) = (items.clone(), selected.clone(), nodes.clone());
             let (close, move_to, reveal) = (close.clone(), move_to.clone(), reveal.clone());
             let reorderable = options.reorderable;
+            let (grouped, on_move) = (strip_of_group.clone(), options.on_move.clone());
             move |id: String, _: &mut Context| {
+                let (grouped, on_move) = (grouped.clone(), on_move.clone());
                 let lookup = {
                     let items = items.clone();
                     let id = id.clone();
@@ -322,7 +418,7 @@ pub fn tabs(
                             DRAGGED.with(|d| d.set(false));
                             cx.capture_pointer();
                         }
-                        InputEvent::PointerMove { x, .. } => {
+                        InputEvent::PointerMove { x, y, .. } => {
                             let Some((start, moved)) = drag.get() else {
                                 return;
                             };
@@ -331,6 +427,9 @@ pub fn tabs(
                             }
                             drag.set(Some((start, true)));
                             DRAGGED.with(|d| d.set(true));
+                            if grouped.as_ref().is_some_and(|strip| strip.aim(*x, *y)) {
+                                return;
+                            }
                             // Past a neighbour's middle, it takes its place.
                             let order = items.with_untracked(|l| ids(l));
                             let nodes = nodes.borrow();
@@ -363,7 +462,14 @@ pub fn tabs(
                         | InputEvent::PointerCancel
                             if drag.take().is_some() =>
                         {
+                            let drop = matches!(cx.event, InputEvent::PointerUp { .. });
                             cx.release_pointer();
+                            let landed = grouped
+                                .as_ref()
+                                .and_then(|strip| strip.land(&id_focused, drop));
+                            if let (Some(to), Some(told)) = (landed, &on_move) {
+                                told(&id_focused, &to.label);
+                            }
                         }
                         _ => {}
                     }
@@ -481,8 +587,30 @@ pub fn tabs(
         } else {
             switch(move || panel_selected.get(), move |id, cx| panel(id, cx)).contents()
         };
+        let tabs_row = row().items_center().child(strip).child(more);
+        let tabs_row = match &strip_of_group {
+            // Lit while a tab of its group is over it.
+            Some(_) => tabs_row.reactive_style(move || {
+                if over.get() {
+                    Styles::new().bg(tok::SELECTION)
+                } else {
+                    Styles::new().bg(Color(0, 0, 0, 0))
+                }
+            }),
+            None => tabs_row,
+        };
         column()
-            .child(row().items_center().child(strip).child(more))
+            .on_mount({
+                let (strip, runtime) = (strip_of_group, runtime.clone());
+                move |handle| {
+                    if let Some(strip) = strip {
+                        follow(&runtime, &bounds, &handle);
+                        let scene = handle.scene().map_or(0, |s| Rc::as_ptr(&s) as usize);
+                        strip.scene.set(scene);
+                    }
+                }
+            })
+            .child(tabs_row)
             .child(
                 div()
                     .h(1.)
