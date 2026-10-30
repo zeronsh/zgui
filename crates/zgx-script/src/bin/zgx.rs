@@ -12,6 +12,9 @@
 //! (`<dir>/.zgx/types.d.luau`, `zgx_script::app_types`), for editors to
 //! complete `"$app.…"`.
 //!
+//! `zgx test [<app-dir>] [<filter>]` runs the app's Luau tests
+//! (`*.test.luau`) against it mounted headless (`zgx_script::test_runner`).
+//!
 //! `zgx inspect <command>…` asks a running app serving devtools (`zgx-run
 //! --inspect`): its tree, nodes, states and errors, and clicks, typing and
 //! keys (`zgx_script::inspect`; `docs/agents/inspect.md`).
@@ -22,6 +25,7 @@ const USAGE: &str = "usage: zgx check [--nonstrict] <file-or-dir>...
        zgx lint [--format text|json] <file-or-dir>...
        zgx lint --rules
        zgx types <dir>...
+       zgx test [<app-dir>] [<name filter>]
        zgx inspect [--app PID] [--json] <command> [args]   (zgx inspect help)
        zgx audit [--human] <app.luau-or-dir>
 
@@ -42,7 +46,12 @@ audit: what assistive technology gets of an app, headless (zgx-run
 --audit): its first screen, then each command, each of its buttons
 pressed and each route, from a fresh start. One line of JSON (each finding's
 rule, target, role, name, detail, source line and state), or a table with
---human. It exits 1 when it finds any (docs/accessibility-audit.md).";
+--human. It exits 1 when it finds any (docs/accessibility-audit.md).
+
+test: runs the app's tests (files named *.test.luau under <app-dir>, `.` if
+not given), each against the app mounted headless: `test(name, body)`,
+`mount()` and `expect(v)` (docs/scripting.md, Testing an app). A filter runs the
+tests whose names hold it. It exits 1 when any fails.";
 
 /// `zgx types <dir>...`
 fn types(args: Vec<String>) -> ExitCode {
@@ -104,10 +113,48 @@ fn audit(args: Vec<String>) -> ExitCode {
     }
 }
 
+/// `zgx test [<app-dir>] [<name filter>]`
+fn test(args: Vec<String>) -> ExitCode {
+    if args.len() > 2 || args.iter().any(|a| a.starts_with('-')) {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let dir = PathBuf::from(args.first().map_or(".", String::as_str));
+    let filter = args.get(1).map(String::as_str);
+    let report = zgx_script::test_runner::run(&dir, filter, |outcome| {
+        let millis = outcome.duration.as_secs_f64() * 1e3;
+        match &outcome.failure {
+            None => println!("ok   {} ({millis:.0} ms)", outcome.name),
+            Some(failure) => {
+                println!("FAIL {} ({})", outcome.name, outcome.file.display());
+                for line in failure.lines() {
+                    println!("     {line}");
+                }
+            }
+        }
+    });
+    match report {
+        Ok(report) => {
+            let failed = report.failed();
+            eprintln!("{} passed, {failed} failed", report.outcomes.len() - failed);
+            if failed > 0 {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("zgx test: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("check") => {}
+        Some("test") => return test(args.collect()),
         Some("lint") => return lint(args.collect()),
         Some("types") => return types(args.collect()),
         Some("inspect") => return inspect(args.collect()),

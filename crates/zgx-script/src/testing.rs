@@ -193,11 +193,20 @@ impl TestApp {
         host: impl FnOnce(&Runtime) -> ScriptHost,
         wrap: impl FnOnce(View) -> View,
     ) -> Self {
+        Self::try_wrapped(host, wrap).unwrap_or_else(|error| panic!("{error}"))
+    }
+    /// [`TestApp::new`], or the script's error when it fails to load.
+    pub fn try_new(host: impl FnOnce(&Runtime) -> ScriptHost) -> Result<Self, String> {
+        Self::try_wrapped(host, |view| view)
+    }
+    /// [`TestApp::wrapped`], or the script's error when it fails to load.
+    pub fn try_wrapped(
+        host: impl FnOnce(&Runtime) -> ScriptHost,
+        wrap: impl FnOnce(View) -> View,
+    ) -> Result<Self, String> {
         let mut ui = Ui::new(400., 300.);
         let host = host(&ui.runtime);
-        if let Err(error) = host.reload() {
-            panic!("{error}");
-        }
+        host.reload().map_err(|error| error.to_string())?;
         let executor = Rc::new(RefCell::new(LocalExecutor::new()));
         let clock = FrameClock::new();
         let natives = zgx::native_view::NativeViews::new();
@@ -223,7 +232,7 @@ impl TestApp {
         // A window lays out before its first frame.
         app.ui.prepare_frame();
         app.settle();
-        app
+        Ok(app)
     }
 
     /// Run what is ready (handlers' tasks, settled host calls) until

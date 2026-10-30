@@ -403,7 +403,37 @@ Reaching for something it was not given is an error that names what it needs; a 
 
 ### Testing an app
 
-`zgx_script::testing::TestApp` mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window. `TestApp::fill(id, text)` replaces a field's text as a person selecting it all and typing would, so a form's `dirty` and validation follow.
+An app's own tests are Luau files named `*.test.luau` (in `tests/`, by custom). `zgx test` runs them, each file in a VM of its own, and exits 1 when any fails. `zgx test . sav` runs only the tests whose names hold `sav`.
+
+```lua
+-- tests/app.test.luau
+test("adding a task counts it", function()
+	local app = mount() -- the directory's app.luau, headless, at zgx.json's size
+	app:type("#new", "Water the plants")
+	app:key("Enter")
+	expect(app:text("#count")).to_be("1 task")
+	expect(app:has('role:checkbox "Water the plants"')).to_be(true)
+	app:click('role:button "Clear done"')
+	expect(app:wait("#empty", { timeout_ms = 1000 })).to_be(true)
+end)
+```
+
+- **The globals.** A test file gets three:
+  - `test(name, body)` adds a test. Tests run in the file's order, and each mounts fresh apps.
+  - `mount(path?)` mounts the app headless (`path` from the app's directory).
+  - `expect(actual)` checks a value: `to_be` (`==`), `to_equal` (tables field by field), `to_contain` (a substring, or a member of a list), `to_be_truthy` and `to_be_nil`. Each also has a negated form under `never`.
+- **Failures** name the test file's line: an `expect` that fails, a target that matches nothing, an unknown key.
+- **Targets are devtools' own** (`zgx inspect`): `#id`, `"label or text"`, `role:button`, `role:checkbox "Done"`, `#list row 3`, `"Copy"[2]`, `#dialog >> "OK"`.
+- **An app's methods:**
+  - acting: `click`, `type` (click a field and type), `fill` (replace its whole text), `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)` and `command(id)` (a `ui.command`);
+  - reading: `text`, `has`, `count` and `tree`;
+  - waiting: `frames(n)`, and `wait(target, { text?, gone?, timeout_ms? })`, which delivers frames until the target shows (holding `text`) or is gone and answers whether it did;
+  - state: `state(name)` and `set_state(name, value)`;
+  - `error()`, the script error showing, if any.
+- **What a headless app lacks:** a fetcher (`ui.fetch` fails as it does offline) and storage (`ui.persist` keeps state in memory).
+- **Types.** `zgx check` gives test files these globals' types (`types/zgx-test.d.luau`); the app's own scripts don't see them.
+
+`zgx_script::testing::TestApp` is the same kit for Rust: it mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window. `TestApp::fill(id, text)` replaces a field's text as a person selecting it all and typing would, so a form's `dirty` and validation follow.
 
 ```rust
 use zgx_script::{ScriptHost, testing::TestApp};

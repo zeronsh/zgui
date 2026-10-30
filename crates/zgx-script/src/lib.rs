@@ -74,6 +74,7 @@ mod scene3d;
 mod socket;
 mod sorted;
 mod term;
+pub mod test_runner;
 pub mod testing;
 mod theme;
 mod timers;
