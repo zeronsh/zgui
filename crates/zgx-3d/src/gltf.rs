@@ -13,10 +13,12 @@
 //! animations' translations, rotations and scales (`Model::clips`,
 //! `Placed::pose`), skins moving its meshes by their joints, and morph
 //! targets (positions and normals; its weights, and clips moving them).
-//! Accessors may be sparse. Not yet: points and lines (skipped).
+//! Accessors may be sparse. Materials' `doubleSided` and alpha modes are
+//! read. Not yet: points and lines (skipped); geometry compressed with Draco
+//! or meshopt, an error where the file requires it.
 use crate::{
     Geometry, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex,
-    World, vec3,
+    World, vec3, world::Surface,
 };
 use serde_json::Value;
 
@@ -46,7 +48,7 @@ pub struct Model {
 struct Node {
     transform: Transform,
     children: Vec<usize>,
-    meshes: Vec<(Geometry, Material, Maps)>,
+    meshes: Vec<(Geometry, Material, Maps, Surface)>,
     /// The skin moving its skinned meshes, by index.
     skin: Option<usize>,
     /// Its meshes' morph weights: its own, else its mesh's.
@@ -84,6 +86,16 @@ impl Model {
         };
         let doc: Value =
             serde_json::from_slice(json).map_err(|e| ModelError(format!("its JSON: {e}")))?;
+        // Its geometry can't be read without these: better said than drawn
+        // as nothing. (Other extensions it requires change how it looks.)
+        for required in list(&doc, "extensionsRequired") {
+            if let Some(name) = required
+                .as_str()
+                .filter(|name| COMPRESSED_GEOMETRY.contains(name))
+            {
+                return error(format!("it needs {name}, which isn't read yet"));
+            }
+        }
         let buffers = list(&doc, "buffers")
             .iter()
             .enumerate()
@@ -124,7 +136,7 @@ impl Model {
                         })
                         .clone()
                 });
-                (material(value), maps)
+                (material(value), maps, surface(value))
             })
             .collect::<Vec<_>>();
         let meshes = list(&doc, "meshes")
@@ -283,8 +295,14 @@ impl World {
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
             nodes[index] = Some(id);
-            for (geometry, material, maps) in &node.meshes {
+            for (geometry, material, maps, surface) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
+                if surface.double_sided {
+                    self.set_double_sided(mesh, true);
+                }
+                if surface.alpha_cutoff.is_some() {
+                    self.set_alpha_cutoff(mesh, surface.alpha_cutoff);
+                }
                 for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
                     if texture.is_some() {
                         self.set_map(mesh, map, texture.clone());
@@ -316,6 +334,13 @@ impl World {
         }
     }
 }
+
+/// Extensions a file's geometry may be compressed with.
+const COMPRESSED_GEOMETRY: [&str; 3] = [
+    "KHR_draco_mesh_compression",
+    "KHR_meshopt_compression",
+    "EXT_meshopt_compression",
+];
 
 /// A `.glb`'s JSON chunk and its binary chunk, if any.
 fn glb(bytes: &[u8]) -> Result<(&[u8], Option<&[u8]>), ModelError> {
@@ -452,6 +477,10 @@ fn material(value: &Value) -> Material {
     let mut color = floats::<4>(pbr.and_then(|p| p.get("baseColorFactor"))).unwrap_or([1.; 4]);
     if value.get("alphaMode").and_then(Value::as_str) != Some("BLEND") {
         color[3] = 1.;
+    } else if color[3] >= 1. && pbr.is_some_and(|p| p.get("baseColorTexture").is_some()) {
+        // See-through by its texture alone: only an alpha under 1 draws it
+        // with the translucent meshes, reading that texture's.
+        color[3] = BLENDED_BY_TEXTURE;
     }
     Material {
         color,
@@ -472,6 +501,32 @@ fn material(value: &Value) -> Material {
         unlit: value
             .get("extensions")
             .is_some_and(|e| e.get("KHR_materials_unlit").is_some()),
+    }
+}
+
+/// A blended material's colour alpha when only its texture has any.
+const BLENDED_BY_TEXTURE: f32 = 0.9999;
+/// How a material's faces show: `doubleSided`, and `MASK` as a cutoff for
+/// its texture's alpha alone (its factor's taken out: a mesh is drawn
+/// opaque, its colour's alpha 1 here).
+fn surface(value: &Value) -> Surface {
+    let masked = value.get("alphaMode").and_then(Value::as_str) == Some("MASK");
+    let cutoff = value
+        .get("alphaCutoff")
+        .and_then(Value::as_f64)
+        .map_or(0.5, |c| c as f32);
+    let factor = floats::<4>(
+        value
+            .get("pbrMetallicRoughness")
+            .and_then(|p| p.get("baseColorFactor")),
+    )
+    .map_or(1., |c| c[3]);
+    Surface {
+        double_sided: value
+            .get("doubleSided")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        alpha_cutoff: masked.then(|| if factor > 0. { cutoff / factor } else { 2. }),
     }
 }
 
@@ -640,8 +695,8 @@ impl Reader<'_> {
     fn mesh(
         &self,
         mesh: &Value,
-        materials: &[(Material, Maps)],
-    ) -> Result<Vec<(Geometry, Material, Maps)>, ModelError> {
+        materials: &[(Material, Maps, Surface)],
+    ) -> Result<Vec<(Geometry, Material, Maps, Surface)>, ModelError> {
         let mut out = Vec::new();
         for primitive in list(mesh, "primitives") {
             // Triangles only: points, lines, strips and fans are skipped.
@@ -687,7 +742,7 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let (material, maps) = primitive
+            let (material, maps, surface) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
                 .and_then(|m| materials.get(m as usize).cloned())
@@ -698,7 +753,7 @@ impl Reader<'_> {
                         roughness: 1.,
                         ..Material::default()
                     };
-                    (plain, Maps::default())
+                    (plain, Maps::default(), Surface::default())
                 });
             let mut geometry =
                 Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
@@ -731,7 +786,7 @@ impl Reader<'_> {
                     .with_morph_targets(targets)
                     .map_err(|e| ModelError(e.into()))?;
             }
-            out.push((geometry, material, maps));
+            out.push((geometry, material, maps, surface));
         }
         Ok(out)
     }
@@ -1339,6 +1394,78 @@ mod tests {
             doc["skins"] = json!([{ "joints": [4] }]);
         });
         assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_err());
+    }
+
+    #[test]
+    fn a_material_says_how_its_faces_show() {
+        let shown = |extra: Value| {
+            let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+                for (key, value) in extra.as_object().unwrap() {
+                    doc["materials"][0][key] = value.clone();
+                }
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].meshes[0].3
+        };
+        assert_eq!(shown(json!({})), Surface::default());
+        assert!(shown(json!({ "doubleSided": true })).double_sided);
+        assert_eq!(
+            shown(json!({ "alphaMode": "MASK" })).alpha_cutoff,
+            Some(0.5 / 0.5),
+            "glTF's default cutoff, its colour factor's alpha (0.5) taken out"
+        );
+        assert_eq!(
+            shown(json!({ "alphaMode": "MASK", "alphaCutoff": 0.25 })).alpha_cutoff,
+            Some(0.5)
+        );
+        assert_eq!(
+            shown(json!({ "alphaMode": "BLEND", "alphaCutoff": 0.25 })).alpha_cutoff,
+            None,
+            "a cutoff means nothing but with MASK"
+        );
+    }
+
+    #[test]
+    fn a_blended_material_with_alpha_in_its_texture_alone_is_translucent() {
+        let alpha = |blend: bool, textured: bool| {
+            let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+                let material = &mut doc["materials"][0];
+                material["pbrMetallicRoughness"]["baseColorFactor"] = json!([1.0, 1.0, 1.0, 1.0]);
+                material["alphaMode"] = json!(if blend { "BLEND" } else { "OPAQUE" });
+                if textured {
+                    material["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
+                    doc["textures"] = json!([{ "source": 0 }]);
+                    doc["images"] = json!([{ "uri": format!("data:image/png;base64,{RED_BLUE}") }]);
+                }
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].meshes[0].1.color[3]
+        };
+        assert!(alpha(true, true) < 1., "blended, by its texture");
+        assert_eq!(alpha(true, false), 1., "no alpha anywhere: opaque");
+        assert_eq!(
+            alpha(false, true),
+            1.,
+            "not blended: its texture's alpha unread"
+        );
+    }
+
+    #[test]
+    fn compressed_geometry_it_needs_is_an_error_not_an_empty_model() {
+        let (mut doc, bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        doc["extensionsRequired"] = json!(["KHR_draco_mesh_compression"]);
+        let error = Model::from_bytes(&glb_of(&doc, &bin)).unwrap_err();
+        assert!(
+            error.to_string().contains("KHR_draco_mesh_compression"),
+            "{error}"
+        );
+        // Used, not required: its plain data is there, and read.
+        doc["extensionsUsed"] = doc["extensionsRequired"].take();
+        doc["extensionsRequired"] = json!([]);
+        assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_ok());
+        // One changing only how it looks still loads.
+        doc["extensionsRequired"] = json!(["KHR_materials_sheen"]);
+        assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_ok());
     }
 
     /// `square`'s document and buffer with one morph target moving it 2

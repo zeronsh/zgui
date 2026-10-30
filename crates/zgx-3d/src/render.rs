@@ -59,9 +59,32 @@ struct FrameUniforms {
     look: [f32; 4],
 }
 
-/// What the shadow map holds: the sun's view, each opaque mesh's geometry
-/// and place, skinned ones' joint matrices and morphing ones' weights.
-type Casting = (Mat4, Vec<(u64, Mat4)>, Vec<Mat4>, Vec<[f32; 2]>);
+/// What the shadow map holds: the sun's view, each opaque mesh's geometry,
+/// place and alpha cutoff, skinned ones' joint matrices and morphing ones'
+/// weights.
+type Casting = (Mat4, Vec<(u64, Mat4, u32)>, Vec<Mat4>, Vec<[f32; 2]>);
+
+/// What sets a pipeline apart from the plain one (`Variant::default()`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+struct Variant {
+    textured: bool,
+    skinned: bool,
+    /// Lit by an environment.
+    lit: bool,
+    morphing: bool,
+    /// Its back faces draw.
+    two_sided: bool,
+    /// Cut out by its base colour's alpha.
+    masked: bool,
+}
+/// Meshes drawn together: of one geometry, maps and variant.
+struct Run {
+    geometry: u64,
+    glass: bool,
+    maps: [u64; MAPS],
+    variant: Variant,
+    instances: std::ops::Range<u32>,
+}
 
 struct Buffers {
     vertices: wgpu::Buffer,
@@ -78,12 +101,11 @@ struct Gpu {
     /// Opaque and translucent meshes', without textures: an untextured
     /// scene binds none (a bound texture costs Apple's driver 16 MB).
     plain: [wgpu::RenderPipeline; 2],
-    /// Textured, skinned, environment-lit or morphing meshes' (by whether
-    /// each), made with the first frame drawing one.
-    variants: HashMap<(bool, bool, bool, bool), [wgpu::RenderPipeline; 2]>,
-    /// Skinned or morphing meshes' depth from the sun (by whether each),
-    /// made with the first such shadow.
-    shadow_variants: HashMap<(bool, bool), wgpu::RenderPipeline>,
+    /// Meshes' of any other variant, made with the first frame drawing one.
+    variants: HashMap<Variant, [wgpu::RenderPipeline; 2]>,
+    /// Skinned, morphing or cut-out meshes' depth from the sun, by which
+    /// of those, made with the first such shadow.
+    shadow_variants: HashMap<(bool, bool, bool), wgpu::RenderPipeline>,
     shadow_layout: wgpu::BindGroupLayout,
     /// Group 1 of a skinned untextured pipeline: nothing.
     empty_layout: wgpu::BindGroupLayout,
@@ -437,16 +459,24 @@ impl Viewport for Renderer {
 
         // Runs of one geometry and texture, of one pass (opaque, then
         // translucent).
-        let mut runs = Vec::new();
+        let variant_of = |d: &crate::world::Drawn| Variant {
+            textured: texture_of(d) != [0; MAPS],
+            skinned: skinned(d),
+            lit,
+            morphing: morphing(d),
+            two_sided: d.surface.double_sided,
+            // Cut by a base colour texture's alpha: without one, whole.
+            masked: d.surface.alpha_cutoff.is_some() && d.maps[0].is_some(),
+        };
+        let mut runs: Vec<Run> = Vec::new();
         let mut start = 0;
         while start < drawn.len() {
             let first = drawn[start];
-            let (geometry, glass, texture, bent, blended) = (
+            let (geometry, glass, maps, variant) = (
                 first.geometry.id(),
                 translucent(first),
                 texture_of(first),
-                skinned(first),
-                morphing(first),
+                variant_of(first),
             );
             let end = start
                 + drawn[start..]
@@ -454,19 +484,17 @@ impl Viewport for Renderer {
                     .take_while(|d| {
                         d.geometry.id() == geometry
                             && translucent(d) == glass
-                            && texture_of(d) == texture
-                            && skinned(d) == bent
-                            && morphing(d) == blended
+                            && texture_of(d) == maps
+                            && variant_of(d) == variant
                     })
                     .count();
-            runs.push((
+            runs.push(Run {
                 geometry,
                 glass,
-                texture,
-                bent,
-                blended,
-                start as u32..end as u32,
-            ));
+                maps,
+                variant,
+                instances: start as u32..end as u32,
+            });
             start = end;
         }
         // What the map would hold now; drawn only if it holds something else.
@@ -474,7 +502,10 @@ impl Viewport for Renderer {
             let meshes = drawn
                 .iter()
                 .filter(|d| !translucent(d))
-                .map(|d| (d.geometry.id(), d.matrix))
+                .map(|d| {
+                    let cutoff = d.surface.alpha_cutoff.map_or(0, f32::to_bits);
+                    (d.geometry.id(), d.matrix, cutoff)
+                })
                 .collect::<Vec<_>>();
             let joints = drawn
                 .iter()
@@ -489,31 +520,51 @@ impl Viewport for Renderer {
             (matrix, meshes, joints, weights)
         });
         if casting.is_some() {
-            for &(_, glass, _, bent, blended, _) in &runs {
-                let key = (bent, blended);
-                if glass || key == (false, false) || gpu.shadow_variants.contains_key(&key) {
+            for run in &runs {
+                let Variant {
+                    skinned,
+                    morphing,
+                    masked,
+                    ..
+                } = run.variant;
+                let key = (skinned, morphing, masked);
+                if run.glass
+                    || key == (false, false, false)
+                    || gpu.shadow_variants.contains_key(&key)
+                {
                     continue;
                 }
+                let source = shader_source(Variant {
+                    textured: masked,
+                    skinned,
+                    morphing,
+                    masked,
+                    ..Variant::default()
+                });
                 let shader = frame
                     .device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some("3D skinned or morphing shadows"),
-                        source: wgpu::ShaderSource::Wgsl(
-                            shader_source(false, bent, false, blended).into(),
-                        ),
+                        label: Some("3D skinned, morphing or cut-out shadows"),
+                        source: wgpu::ShaderSource::Wgsl(source.into()),
                     });
+                let group1 = if masked {
+                    &gpu.texture_layout
+                } else {
+                    &gpu.empty_layout
+                };
                 let layouts = [
                     Some(&gpu.shadow_layout),
-                    Some(&gpu.empty_layout),
+                    Some(group1),
                     Some(&gpu.palette_layout),
                     Some(&gpu.morph_layout),
                 ];
-                let pipeline = shadow_pipeline(
-                    frame.device,
-                    &shader,
-                    &layouts[..if blended { 4 } else { 3 }],
-                    bent,
-                );
+                let count = match (skinned, morphing) {
+                    (_, true) => 4,
+                    (true, false) => 3,
+                    (false, false) => 2,
+                };
+                let pipeline =
+                    shadow_pipeline(frame.device, &shader, &layouts[..count], (skinned, masked));
                 gpu.shadow_variants.insert(key, pipeline);
             }
         }
@@ -539,54 +590,63 @@ impl Viewport for Renderer {
             pass.set_bind_group(0, &gpu.shadow_bind, &[]);
             pass.set_vertex_buffer(1, instances_buffer.slice(..));
             // Translucent meshes cast none.
-            for (geometry, _, _, bent, blended, instances) in
-                runs.iter().filter(|(_, glass, ..)| !glass)
-            {
-                let buffers = &gpu.geometries[geometry];
-                match (gpu.shadow_variants.get(&(*bent, *blended)), &gpu.palettes) {
-                    (Some(pipeline), Some((_, _, joints))) => {
+            for run in runs.iter().filter(|run| !run.glass) {
+                let buffers = &gpu.geometries[&run.geometry];
+                let Variant {
+                    skinned,
+                    morphing,
+                    masked,
+                    ..
+                } = run.variant;
+                match gpu.shadow_variants.get(&(skinned, morphing, masked)) {
+                    Some(pipeline) => {
                         pass.set_pipeline(pipeline);
-                        pass.set_bind_group(1, &gpu.empty_bind, &[]);
-                        pass.set_bind_group(2, joints, &[]);
-                        if let Some(skin) = buffers.skin.as_ref().filter(|_| *bent) {
+                        let maps = gpu.bindings.get(&run.maps).filter(|_| masked);
+                        pass.set_bind_group(
+                            1,
+                            maps.map_or(&gpu.empty_bind, |(binding, _)| binding),
+                            &[],
+                        );
+                        if let Some((_, _, joints)) =
+                            gpu.palettes.as_ref().filter(|_| skinned || morphing)
+                        {
+                            pass.set_bind_group(2, joints, &[]);
+                        }
+                        if let Some(skin) = buffers.skin.as_ref().filter(|_| skinned) {
                             pass.set_vertex_buffer(2, skin.slice(..));
                         }
-                        if let Some(morphs) = buffers.morphs.as_ref().filter(|_| *blended) {
+                        if let Some(morphs) = buffers.morphs.as_ref().filter(|_| morphing) {
                             pass.set_bind_group(3, morphs, &[]);
                         }
                     }
-                    _ => pass.set_pipeline(&gpu.shadow),
+                    None => pass.set_pipeline(&gpu.shadow),
                 }
                 pass.set_vertex_buffer(0, buffers.vertices.slice(..));
                 pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..buffers.count, 0, instances.clone());
+                pass.draw_indexed(0..buffers.count, 0, run.instances.clone());
             }
             drop(pass);
             gpu.shadow_drawn = casting;
         }
 
-        for (_, _, maps, bent, blended, _) in &runs {
-            let variant = (*maps != [0; MAPS], *bent, lit, *blended);
-            if variant == (false, false, false, false) || gpu.variants.contains_key(&variant) {
+        for run in &runs {
+            let variant = run.variant;
+            if variant == Variant::default() || gpu.variants.contains_key(&variant) {
                 continue;
             }
             let shader = frame
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("3D textured, skinned, environment-lit or morphing"),
+                    label: Some("3D mesh variant"),
                     source: wgpu::ShaderSource::Wgsl(
-                        antialiased(
-                            shader_source(variant.0, variant.1, variant.2, variant.3),
-                            gpu.samples,
-                        )
-                        .into(),
+                        antialiased(shader_source(variant), gpu.samples).into(),
                     ),
                 });
             let group0 = match &gpu.environment_layout {
-                Some((layout, _)) if variant.2 => layout,
+                Some((layout, _)) if variant.lit => layout,
                 _ => &gpu.layout,
             };
-            let group1 = if variant.0 {
+            let group1 = if variant.textured {
                 &gpu.texture_layout
             } else {
                 &gpu.empty_layout
@@ -597,7 +657,7 @@ impl Viewport for Renderer {
                 Some(&gpu.palette_layout),
                 Some(&gpu.morph_layout),
             ];
-            let count = match (variant.1, variant.3) {
+            let count = match (variant.skinned, variant.morphing) {
                 (_, true) => 4,
                 (true, false) => 3,
                 (false, false) => 2,
@@ -607,7 +667,7 @@ impl Viewport for Renderer {
                 (gpu.format, gpu.samples),
                 &shader,
                 &layouts[..count],
-                variant.1,
+                variant,
             );
             gpu.variants.insert(variant, pipelines);
         }
@@ -664,20 +724,18 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, frame_bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
-        for (geometry, glass, texture, bent, blended, instances) in runs {
-            let buffers = &gpu.geometries[&geometry];
-            let maps = gpu.bindings.get(&texture).map(|(binding, _)| binding);
-            let skin = buffers.skin.as_ref().filter(|_| bent);
-            let morphs = buffers.morphs.as_ref().filter(|_| blended);
-            let palette = gpu.palettes.as_ref().filter(|_| bent || blended);
-            match gpu.variants.get(&(
-                maps.is_some(),
-                skin.is_some() && palette.is_some(),
-                lit,
-                morphs.is_some() && palette.is_some(),
-            )) {
+        for run in runs {
+            let buffers = &gpu.geometries[&run.geometry];
+            let maps = gpu.bindings.get(&run.maps).map(|(binding, _)| binding);
+            let skin = buffers.skin.as_ref().filter(|_| run.variant.skinned);
+            let morphs = buffers.morphs.as_ref().filter(|_| run.variant.morphing);
+            let palette = gpu
+                .palettes
+                .as_ref()
+                .filter(|_| run.variant.skinned || run.variant.morphing);
+            match gpu.variants.get(&run.variant) {
                 Some(pipelines) => {
-                    pass.set_pipeline(&pipelines[usize::from(glass)]);
+                    pass.set_pipeline(&pipelines[usize::from(run.glass)]);
                     pass.set_bind_group(1, maps.unwrap_or(&gpu.empty_bind), &[]);
                     if let Some((_, _, palette)) = palette {
                         pass.set_bind_group(2, palette, &[]);
@@ -689,11 +747,11 @@ impl Viewport for Renderer {
                         pass.set_bind_group(3, morphs, &[]);
                     }
                 }
-                None => pass.set_pipeline(&gpu.plain[usize::from(glass)]),
+                None => pass.set_pipeline(&gpu.plain[usize::from(run.glass)]),
             }
             pass.set_vertex_buffer(0, buffers.vertices.slice(..));
             pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..buffers.count, 0, instances);
+            pass.draw_indexed(0..buffers.count, 0, run.instances);
         }
     }
     fn device_changed(&mut self) {
@@ -726,7 +784,7 @@ fn instance(d: &crate::world::Drawn, base: u32) -> Instance {
         normal: [
             column(x, material.metallic.clamp(0., 1.)),
             column(y, material.roughness.clamp(0.02, 1.)),
-            column(z, if material.unlit { 1. } else { 0. }),
+            column(z, surface_word(d)),
         ],
         color: material
             .color
@@ -757,6 +815,17 @@ fn morph_block(d: &crate::world::Drawn, palette: &mut Vec<[[f32; 4]; 4]>) {
             let [target, weight] = pairs.get(column).copied().unwrap_or([0.; 2]);
             [target, weight, 0., 0.]
         }));
+    }
+}
+
+/// The shader's third material word: unlit from 1 up, lit below, with the
+/// alpha cutoff as how far from there (`cutoff_of` undoes it): 1 + c, or −c.
+fn surface_word(d: &crate::world::Drawn) -> f32 {
+    let cutoff = d.surface.alpha_cutoff.map_or(0., |c| c.max(0.));
+    if d.material.unlit {
+        1. + cutoff
+    } else {
+        -cutoff
     }
 }
 
@@ -1001,7 +1070,7 @@ impl Gpu {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
             source: wgpu::ShaderSource::Wgsl(
-                antialiased(shader_source(false, false, false, false), samples).into(),
+                antialiased(shader_source(Variant::default()), samples).into(),
             ),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1084,7 +1153,13 @@ impl Gpu {
             anisotropy_clamp: 8,
             ..Default::default()
         });
-        let plain = main_pipelines(device, (format, samples), &shader, &[Some(&layout)], false);
+        let plain = main_pipelines(
+            device,
+            (format, samples),
+            &shader,
+            &[Some(&layout)],
+            Variant::default(),
+        );
         let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D shadow frame"),
             entries: &[uniform_entry],
@@ -1097,7 +1172,7 @@ impl Gpu {
                 resource: uniforms.as_entire_binding(),
             }],
         });
-        let shadow = shadow_pipeline(device, &shader, &[Some(&shadow_layout)], false);
+        let shadow = shadow_pipeline(device, &shader, &[Some(&shadow_layout)], (false, false));
         let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D nothing"),
             entries: &[],
@@ -1184,25 +1259,27 @@ const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 /// alone (its maps' bindings, samples and normal mapping), `//S ` a skinned
 /// one's (its joints), `//M ` a morphing one's (its targets), `//P ` either's
 /// (the frame's joints and weights), `//E ` an environment-lit one's (its
-/// cube and diffuse light), comments in others'.
-fn shader_source(textured: bool, skinned: bool, lit: bool, morphing: bool) -> String {
+/// cube and diffuse light), `//K ` a cut-out one's and `//N ` any other's,
+/// comments in others'. (A cut-out one is textured: its alpha comes from
+/// its base colour's.)
+fn shader_source(variant: Variant) -> String {
     let mut source = SHADER.to_owned();
-    if textured {
+    if variant.textured {
         source = source.replace("//T ", "");
     }
-    if skinned {
+    if variant.skinned {
         source = source.replace("//S ", "");
     }
-    if morphing {
+    if variant.morphing {
         source = source.replace("//M ", "");
     }
-    if skinned || morphing {
+    if variant.skinned || variant.morphing {
         source = source.replace("//P ", "");
     }
-    if lit {
+    if variant.lit {
         source = source.replace("//E ", "");
     }
-    source
+    source.replace(if variant.masked { "//K " } else { "//N " }, "")
 }
 /// `source` drawing `samples` a pixel: multisampled, its `//A ` lines
 /// (geometric specular anti-aliasing) are its own; at one sample they stay
@@ -1238,12 +1315,13 @@ fn vertex_buffers(skinned: bool) -> Vec<wgpu::VertexBufferLayout<'static>> {
     }
     buffers
 }
-/// Depth from the sun with `shader`, bound as `layouts` say.
+/// Depth from the sun with `shader`, bound as `layouts` say; `masked`, cut
+/// by its alpha in a fragment shader (depth alone needs none otherwise).
 fn shadow_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layouts: &[Option<&wgpu::BindGroupLayout>],
-    skinned: bool,
+    (skinned, masked): (bool, bool),
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("3D shadows"),
@@ -1260,7 +1338,12 @@ fn shadow_pipeline(
             compilation_options: Default::default(),
             buffers: &vertex_buffers(skinned),
         },
-        fragment: None,
+        fragment: masked.then(|| wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("shadow_fragment"),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
         // Both faces: a plane or an open mesh casts from either side.
         primitive: Default::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -1288,9 +1371,9 @@ fn main_pipelines(
     (format, samples): (wgpu::TextureFormat, u32),
     shader: &wgpu::ShaderModule,
     layouts: &[Option<&wgpu::BindGroupLayout>],
-    skinned: bool,
+    variant: Variant,
 ) -> [wgpu::RenderPipeline; 2] {
-    let buffers = vertex_buffers(skinned);
+    let buffers = vertex_buffers(variant.skinned);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("3D"),
         bind_group_layouts: layouts,
@@ -1321,7 +1404,7 @@ fn main_pipelines(
                 })],
             }),
             primitive: wgpu::PrimitiveState {
-                cull_mode: (!translucent).then_some(wgpu::Face::Back),
+                cull_mode: (!translucent && !variant.two_sided).then_some(wgpu::Face::Back),
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -1614,7 +1697,9 @@ struct Out {
 //P     @location(11) emissive: vec4<f32>,
 //S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
 //M     @builtin(vertex_index) index: u32,
-) -> @builtin(position) vec4<f32> {
+//K     @location(2) uv: vec2<f32>, @location(9) n2: vec4<f32>,
+//N ) -> @builtin(position) vec4<f32> {
+//K ) -> ShadowOut {
     var model = mat4x4(m0, m1, m2, m3);
     var at = position;
 //P     var joints_from = u32(emissive.w);
@@ -1622,8 +1707,23 @@ struct Out {
 //M     at = morphed.position;
 //M     joints_from = morphed.joints;
 //S     model = skinned(joints_from, joints, weights);
-    return frame.shadow * model * vec4(at, 1.0);
+//N     return frame.shadow * model * vec4(at, 1.0);
+//K     return ShadowOut(frame.shadow * model * vec4(at, 1.0), uv, n2.w);
 }
+//K struct ShadowOut {
+//K     @builtin(position) position: vec4<f32>,
+//K     @location(0) uv: vec2<f32>,
+//K     @location(1) word: f32,
+//K }
+//K // A surface's alpha cutoff from its third material word (`surface_word`).
+//K fn cutoff_of(word: f32) -> f32 {
+//K     return select(-word, word - 1.0, word > 0.5);
+//K }
+//K @fragment fn shadow_fragment(in: ShadowOut) {
+//K     if textureSample(base_texture, map_sampler, in.uv).a < cutoff_of(in.word) {
+//K         discard;
+//K     }
+//K }
 
 const PI: f32 = 3.14159265;
 
@@ -1773,6 +1873,9 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 //A let turning_x = dpdx(facing);
 //A let turning_y = dpdy(facing);
 //A widening = min(0.3 * (dot(turning_x, turning_x) + dot(turning_y, turning_y)), 0.18);
+//K     if texel.a < cutoff_of(in.material.z) {
+//K         discard;
+//K     }
     let base = in.color.rgb * texel.rgb;
     var lit: vec3<f32>;
     if in.material.z > 0.5 {
@@ -1839,13 +1942,20 @@ mod tests {
 
     #[test]
     fn an_untextured_shader_binds_no_texture_an_unskinned_no_joints_and_an_unlit_no_cube() {
-        let (plain, textured, skinned, lit, morphing) = (
-            shader_source(false, false, false, false),
-            shader_source(true, false, false, false),
-            shader_source(false, true, false, false),
-            shader_source(false, false, true, false),
-            shader_source(false, false, false, true),
-        );
+        let source = |change: fn(&mut Variant)| {
+            let mut variant = Variant::default();
+            change(&mut variant);
+            shader_source(variant)
+        };
+        let plain = source(|_| {});
+        let textured = source(|v| v.textured = true);
+        let skinned = source(|v| v.skinned = true);
+        let lit = source(|v| v.lit = true);
+        let morphing = source(|v| v.morphing = true);
+        let masked = source(|v| {
+            v.textured = true;
+            v.masked = true;
+        });
         // In the plain shader every line naming a map, the joints or the
         // environment's cube is a comment.
         for line in plain.lines().filter(|l| {
@@ -1866,11 +1976,15 @@ mod tests {
         assert!(morphing.contains("var<storage, read> morphs"));
         assert!(morphing.contains("var<storage, read> palette"));
         assert!(!morphing.contains("//M") && morphing.contains("//S"));
+        assert!(masked.contains("discard;") && masked.contains("-> ShadowOut"));
+        for line in plain.lines().filter(|l| l.contains("discard")) {
+            assert!(line.trim_start().starts_with("//"), "{line}");
+        }
     }
 
     #[test]
     fn specular_anti_aliasing_is_a_multisampled_shaders_alone() {
-        let source = shader_source(false, false, false, false);
+        let source = shader_source(Variant::default());
         let (one, four) = (antialiased(source.clone(), 1), antialiased(source, 4));
         for line in one.lines().filter(|l| l.contains("dpdx(facing)")) {
             assert!(line.trim_start().starts_with("//"), "{line}");

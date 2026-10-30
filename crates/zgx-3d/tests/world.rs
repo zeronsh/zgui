@@ -993,3 +993,126 @@ fn a_morphing_mesh_casts_its_shadow_where_it_is_blended() {
     );
     assert!(open > shaded + 40, "shadow {shaded}, open floor {open}");
 }
+
+#[test]
+fn a_double_sided_mesh_shows_from_behind() {
+    // A square seen from its back: culled, and shown once double-sided, its
+    // back lit as its front is.
+    let (world, id) = one(facing_square(), Material::rgb(0xffffff).with(0., 1.));
+    world.add_light(Light::Hemisphere {
+        sky: [1., 1., 1.],
+        ground: [1., 1., 1.],
+        intensity: 1.,
+    });
+    world.set_camera(Camera::looking_at([0., 0., -3.], [0., 0., 0.]));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert_eq!(window.pixel(50, 50), [0, 128, 0, 255], "its back culled");
+    let revision = world.revision();
+    world.set_double_sided(id, false);
+    assert_eq!(world.revision(), revision, "the same: no frame");
+    world.set_double_sided(id, true);
+    window.draw();
+    let shown = window.pixel(50, 50);
+    assert!(
+        shown[0] > 100 && shown[2] > 100,
+        "its back drawn: {shown:?}"
+    );
+}
+
+/// A square, its left half see-through, its right half opaque.
+fn half_clear_square() -> (World, ObjectId) {
+    let (world, id) = {
+        let mut white = Material::rgb(0xffffff);
+        white.unlit = true;
+        one(facing_square(), white)
+    };
+    let pixels = vec![255, 255, 255, 0, 255, 255, 255, 255];
+    world.set_texture(id, Some(Texture::from_rgba8(2, 1, pixels).unwrap()));
+    (world, id)
+}
+
+#[test]
+fn an_alpha_cutoff_cuts_a_mesh_out_by_its_texture() {
+    let (world, id) = half_clear_square();
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert!(window.pixel(30, 50)[0] > 240, "whole without a cutoff");
+    world.set_alpha_cutoff(id, Some(0.5));
+    window.draw();
+    assert_eq!(window.pixel(30, 50), [0, 128, 0, 255], "cut out");
+    assert!(window.pixel(70, 50)[0] > 240, "opaque where it's over");
+    world.set_alpha_cutoff(id, None);
+    window.draw();
+    assert!(window.pixel(30, 50)[0] > 240, "whole again");
+}
+
+#[test]
+fn an_alpha_cutoff_with_no_texture_draws_it_whole() {
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(facing_square(), white);
+    world.set_alpha_cutoff(id, Some(0.5));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert!(window.pixel(50, 50)[0] > 240);
+}
+
+#[test]
+fn a_cut_out_mesh_casts_a_cut_out_shadow() {
+    // A flat square over a floor, under a sun straight above, its left half
+    // see-through: light passes there and falls short of the right half.
+    let vertex = |x: f32, z: f32, u: f32| Vertex {
+        position: [x, 0., z],
+        normal: [0., 1., 0.],
+        uv: [u, 0.5],
+    };
+    let flat = Geometry::new(
+        vec![
+            vertex(-1., 1., 0.),
+            vertex(1., 1., 1.),
+            vertex(1., -1., 1.),
+            vertex(-1., -1., 0.),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .unwrap();
+    let world = World::new();
+    world.set_shadows(true);
+    world.add_light(Light::Directional {
+        direction: vec3(0., -1., -0.0001),
+        color: [1., 1., 1.],
+        intensity: 3.,
+    });
+    let caster = world.add(Object::mesh(flat, Material::rgb(0xffffff)));
+    world.set_transform(caster, Transform::at([0., 1., 0.]));
+    let pixels = vec![255, 255, 255, 0, 255, 255, 255, 255];
+    world.set_texture(caster, Some(Texture::from_rgba8(2, 1, pixels).unwrap()));
+    world.set_alpha_cutoff(caster, Some(0.5));
+    world.add(Object::mesh(
+        Geometry::plane(8., 8.),
+        Material::rgb(0xffffff).with(0., 1.),
+    ));
+    // From the front, under the caster's height, onto the floor beneath it.
+    world.set_camera(Camera::looking_at([0., 0.6, 4.], [0., 0., 0.]));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let clear = seen_at(&world, vec3(-0.5, 0., 0.5));
+    let shaded = seen_at(&world, vec3(0.5, 0., 0.5));
+    let (lit, dark) = (
+        window.pixel(clear.0, clear.1)[0],
+        window.pixel(shaded.0, shaded.1)[0],
+    );
+    assert!(
+        lit > dark + 30,
+        "under the clear half {lit}, the solid half {dark}"
+    );
+}

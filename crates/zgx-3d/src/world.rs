@@ -275,6 +275,9 @@ pub(crate) struct Inner {
     /// Objects' morph weights (`World::set_morph_weights`), by index, with
     /// the generation they were set for.
     morph_weights: std::collections::HashMap<u32, (u32, Vec<f32>)>,
+    /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
+    /// index, with the generation they were set for: most have none.
+    surfaces: std::collections::HashMap<u32, (u32, Surface)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -296,6 +299,15 @@ pub enum ToneMapping {
     Linear,
 }
 
+/// How a mesh's faces show, beyond its material.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Surface {
+    /// Its back faces draw as well.
+    pub(crate) double_sided: bool,
+    /// Where its base colour's alpha is under this, it isn't there.
+    pub(crate) alpha_cutoff: Option<f32>,
+}
+
 /// What a frame draws: each visible mesh with its world matrix.
 pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
@@ -309,6 +321,7 @@ pub(crate) struct Drawn<'a> {
     /// A morphing mesh's targets at any weight: `[target, weight]`s. `None`
     /// at rest (it draws as any mesh).
     pub(crate) morph: Option<Vec<[f32; 2]>>,
+    pub(crate) surface: Surface,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -347,10 +360,21 @@ impl Inner {
                     },
                     palette,
                     morph,
+                    surface: self.surface(index, generation),
                 });
             }
         }
         out
+    }
+    /// Object `index`'s surface (no lookup in a world with none set).
+    fn surface(&self, index: usize, generation: u32) -> Surface {
+        if self.surfaces.is_empty() {
+            return Surface::default();
+        }
+        self.surfaces
+            .get(&(index as u32))
+            .filter(|(set_for, _)| *set_for == generation)
+            .map_or(Surface::default(), |(_, surface)| *surface)
     }
     /// Object `index`'s targets at any weight, as `[target, weight]`s, if
     /// it is a morphing geometry away from its rest.
@@ -535,6 +559,7 @@ impl World {
             textures: Default::default(),
             skins: Default::default(),
             morph_weights: Default::default(),
+            surfaces: Default::default(),
             revision: 0,
         }));
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
@@ -574,6 +599,7 @@ impl World {
                 inner.textures.retain(|(index, _), _| *index != id.index);
                 inner.skins.remove(&id.index);
                 inner.morph_weights.remove(&id.index);
+                inner.surfaces.remove(&id.index);
                 true
             }
             _ => false,
@@ -723,6 +749,38 @@ impl World {
     /// shadows are on.
     pub fn set_shadows(&self, on: bool) {
         self.change(|inner| std::mem::replace(&mut inner.shadows, on) != on);
+    }
+    /// Whether object `id`'s back faces draw too, lit as their other side
+    /// is (a leaf, a sheet, an open shell). Off by default: a closed shape
+    /// needs them no more than its inside shows.
+    pub fn set_double_sided(&self, id: ObjectId, on: bool) {
+        self.change_surface(id, |surface| surface.double_sided = on);
+    }
+    /// Cut object `id` out by its base colour texture's alpha: where that
+    /// is under `cutoff` (0 to 1) nothing draws, not even in its shadow, and
+    /// elsewhere it's opaque (leaves, hair, a fence). `None` (the default)
+    /// doesn't. Needs a base colour texture (`World::set_texture`): without
+    /// one it has no alpha to cut by, and draws whole.
+    pub fn set_alpha_cutoff(&self, id: ObjectId, cutoff: Option<f32>) {
+        let cutoff = cutoff.filter(|c| c.is_finite());
+        self.change_surface(id, |surface| surface.alpha_cutoff = cutoff);
+    }
+    fn change_surface(&self, id: ObjectId, f: impl FnOnce(&mut Surface)) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let entry = inner
+                .surfaces
+                .entry(id.index)
+                .or_insert((id.generation, Surface::default()));
+            if entry.0 != id.generation {
+                *entry = (id.generation, Surface::default());
+            }
+            let before = entry.1;
+            f(&mut entry.1);
+            entry.1 != before
+        });
     }
     /// How much of each morph target object `id`'s geometry blends in
     /// (`Geometry::with_morph_targets`), by target: 0 none, 1 all of it,

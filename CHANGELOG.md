@@ -10,6 +10,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Added
 
+- **Double-sided and cut-out meshes in 3D scenes**: `World::set_double_sided(id, true)` draws a mesh's back faces too, and `World::set_alpha_cutoff(id, Some(0.5))` cuts it out by its base colour texture's alpha, in its shadow as well (leaves, hair, fences). glTF models bring theirs (`doubleSided`, `alphaMode: MASK` and `alphaCutoff`). A `BLEND` material whose alpha is only in its texture is now translucent, where it drew solid. A mesh using neither binds nothing new.
 - **Grid tracks of any size** (zgx, zgx-script): `cols` and `rows` take a list as CSS's `grid-template-columns` writes it, besides a number of equal tracks: `cols = "220 1fr auto"`, `minmax()`, `fit-content()`, `repeat()`, and `cols = "repeat(auto-fill, minmax(240, 1fr))"`, which reflows cards with the window and runs no script. In Rust, `.grid_template_columns(tracks)` and `.grid_template_rows(tracks)` with `zgx::grid_tracks::GridTracks`. What CSS rejects is an error saying why ([grid tracks](docs/reference/properties.md#grid-tracks)).
 
 - **Morph targets in 3D scenes**: `Geometry::with_morph_targets(vec![MorphTarget::new(positions).with_normals(normals)])` gives a mesh shapes to blend toward, and `World::set_morph_weights(id, &weights)` (or `set_morph_weight`, one target) how much of each, on the GPU, before any skin; its shadow and picking follow. glTF models bring their targets (positions and normals), their mesh's or node's weights, and clips moving the weights, so `ui.model { animation = … }` plays them. A target in a sparse accessor isn't read yet: that mesh shows unmorphed. A scene without targets, or with every weight 0, binds nothing new.
@@ -46,6 +47,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- **A glTF file requiring Draco or meshopt compression says so**: its geometry can't be read yet, and it loaded as an empty model with no error.
 - **A capture of a window's frame shows its loops and caret** (zgx-gpu; macOS). `zgx inspect` captures and `Ui::snapshot` read the frame Metal drew, so what Core Animation plays over it (a baked loop, the blinking caret) was missing: an agent saw a page with its spinner gone. They now draw it in, at its current frame.
 - **A small looping animation no longer keeps a window drawing** (zgx-gpu, zgx-script; macOS). A spinner or pulsing dot declared with `anime.animate { loop = true, frameRate = … }` on `opacity` or `shaderTime` drew a frame each tick, and any drawn frame keeps about 176 MB of Metal driver memory for 8–13 s on M5 Macs, so one spinner held it for as long as it spun. Such a loop is now drawn once into a small sheet and played by Core Animation: no frames, no wakes. A gallery page with a spinner went from ~340 to ~170 MiB, and app + WindowServer CPU fell 1.7–1.9 points at 60 and 120 Hz. Nothing changes in an app: a loop that a layer couldn't show exactly (cut by a clip or a fade's band, painted over, under a layer, in a popup, large, or watched by a script) draws as it did, and in a `trace` build `zgx inspect switch baked_loops off` turns it off.
 
