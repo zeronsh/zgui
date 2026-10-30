@@ -98,6 +98,11 @@ SCENES = [
     ('script-layout', 'zgx-script', 'script_layout_bench', {}),
     ('list-state', 'zgx-script', 'list_state_bench', {}),
     ('style', 'zgx', 'style_bench', {}),
+    # 3D frames' CPU work, drawn by wgpu's no-op backend (no driver, no JIT):
+    # textured meshes alone, what a feature costs those not using it, then
+    # those among skinned, morphing, cut-out and placed ones.
+    ('3d-textured', 'zgx-3d', 'world_bench', {'SCENE': 'textured', 'MESHES': '2000', 'FRAMES': '30'}),
+    ('3d-mixed', 'zgx-3d', 'world_bench', {'SCENE': 'mixed', 'MESHES': '2000', 'FRAMES': '30'}),
     ('widgets', 'zgx', 'widget_bench', {}),
     # The example apps' common interactions (`support/apps.rs`), small and
     # undrawn but for their canvases' CPU work, run by list_state_bench (no
@@ -128,7 +133,9 @@ SCENES = [
 # app-code's drift: main against itself now counts it the same): app-chat's
 # test waits for its fake server's timer thread, a handoff between threads
 # that real time decides.
-SPREAD = {'app-chat': 0.2}
+SPREAD = {'app-chat': 0.2, '3d-textured': 0.06, '3d-mixed': 0.08}
+# Built alone: see `build`.
+ALONE = 'zgx-3d'
 
 # A Luau scene's count follows where the heap places things (the value
 # cache and Luau's tables hash by address, its collector marks in their
@@ -220,14 +227,20 @@ def touch(checkout):
 def build(checkout, target, into):
     touch(checkout)
     scenes = [s for s in SCENES if has_example(checkout, s[1], s[2])]
-    command = ['cargo', 'build', '--release', '--locked', '--quiet']
-    for package in dict.fromkeys(s[1] for s in scenes):
-        command += ['-p', package_in(checkout, package)]
-        for example in dict.fromkeys(s[2] for s in scenes if s[1] == package):
-            command += ['--example', example]
     env = dict(os.environ, CARGO_TARGET_DIR=str(target), CARGO_INCREMENTAL='0',
                CARGO_PROFILE_RELEASE_DEBUG='0')
-    subprocess.run(command, cwd=checkout, env=env, check=True)
+    # Cargo turns a feature on for everything one build selects, and
+    # zgx-3d's bench takes wgpu's no-op backend: built apart, the other
+    # benches link the wgpu they always did.
+    for part in ([s for s in scenes if s[1] != ALONE], [s for s in scenes if s[1] == ALONE]):
+        if not part:
+            continue
+        command = ['cargo', 'build', '--release', '--locked', '--quiet']
+        for package in dict.fromkeys(s[1] for s in part):
+            command += ['-p', package_in(checkout, package)]
+            for example in dict.fromkeys(s[2] for s in part if s[1] == package):
+                command += ['--example', example]
+        subprocess.run(command, cwd=checkout, env=env, check=True)
     # One target directory serves both sides (their dependencies are
     # shared): keep this side's binaries before the other overwrites them.
     into.mkdir(parents=True, exist_ok=True)

@@ -401,6 +401,10 @@ impl World {
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
         Self { inner, view }
     }
+    /// What draws it, to draw it outside a view.
+    pub fn viewport(&self) -> impl zgx_gpu::viewport::Viewport + use<> {
+        crate::render::Renderer::new(Rc::downgrade(&self.inner))
+    }
     /// The GPU view drawing it: show it with `zgx::compose::gpu_view`.
     pub fn view(&self) -> &zgx::gpu_view::GpuView {
         &self.view

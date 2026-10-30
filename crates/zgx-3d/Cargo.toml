@@ -23,6 +23,7 @@ gltf = ["dep:serde_json", "zgx-gpu/png", "zgx-gpu/jpeg"]
 
 [dev-dependencies]
 zgx-desktop = { path = "../zgx-desktop", default-features = false }
+wgpu = { version = "29.0.4", default-features = false, features = ["noop"] }
 
 [[example]]
 name = "model"
