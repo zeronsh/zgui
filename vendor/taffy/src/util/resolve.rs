@@ -33,7 +33,7 @@ impl MaybeResolve<Option<f32>, Option<f32>> for LengthPercentage {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => context.map(|dim| dim * self.0.value()),
             #[cfg(feature = "calc")]
-            _ if self.0.is_calc() => context.map(|dim| calc(self.0.calc_value(), dim)),
+            _ if self.0.is_calc() => context.map(|dim| self.0.resolved_calc(dim, calc)),
             _ => unreachable!(),
         }
     }
@@ -48,7 +48,7 @@ impl MaybeResolve<Option<f32>, Option<f32>> for LengthPercentageAuto {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => context.map(|dim| dim * self.0.value()),
             #[cfg(feature = "calc")]
-            _ if self.0.is_calc() => context.map(|dim| calc(self.0.calc_value(), dim)),
+            _ if self.0.is_calc() => context.map(|dim| self.0.resolved_calc(dim, calc)),
             _ => unreachable!(),
         }
     }
@@ -64,7 +64,7 @@ impl MaybeResolve<Option<f32>, Option<f32>> for Dimension {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
             CompactLength::PERCENT_TAG => context.map(|dim| dim * self.0.value()),
             #[cfg(feature = "calc")]
-            _ if self.0.is_calc() => context.map(|dim| calc(self.0.calc_value(), dim)),
+            _ if self.0.is_calc() => context.map(|dim| self.0.resolved_calc(dim, calc)),
             _ => unreachable!(),
         }
     }
