@@ -170,9 +170,9 @@ def main():
                     return list(picture.convert("RGB").getpixel((8, 248)))
             result["under Greybird, the background"] = background("light")
             # The same spot as primary_selection_smoke's double click.
-            xdo("mousemove", "--window", window, 110, 42, "click", 1)
-            time.sleep(.7)
-            xdo("click", 1)
+            # One xdotool for both presses: two take as long to start as a
+            # loaded runner likes, past the 1000 ms this needs them within.
+            xdo("mousemove", "--window", window, 110, 42, "click", 1, "sleep", .7, "click", 1)
 
             def primary():
                 read = subprocess.run(["xclip", "-o", "-selection", "primary"], env=env,
