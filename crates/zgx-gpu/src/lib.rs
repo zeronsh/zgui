@@ -3531,6 +3531,8 @@ pub struct GpuRenderer {
     image_drawn: FxHashMap<u64, u64>,
     /// An image waited for its pixels this frame (`take_images_awaited`).
     images_awaited: bool,
+    /// An image was uploaded (`take_images_uploaded`).
+    images_uploaded: bool,
     /// Frames drawn, for `image_drawn`.
     image_frame: u64,
     /// GPU views' textures, by view (`viewport`): none until one shows.
@@ -4149,6 +4151,7 @@ impl GpuRenderer {
             images: FxHashMap::default(),
             image_drawn: FxHashMap::default(),
             images_awaited: false,
+            images_uploaded: false,
             image_frame: 0,
             views: None,
             #[cfg(target_os = "macos")]
@@ -9960,6 +9963,11 @@ impl GpuRenderer {
         stats.image_uploads += 1;
         Ok(true)
     }
+    /// Whether an image was uploaded since last asked: the host gives
+    /// pixels back once uploads have settled (`zgx::image::release_decoded`).
+    pub fn take_images_uploaded(&mut self) -> bool {
+        std::mem::take(&mut self.images_uploaded)
+    }
     /// Whether an image waited for its pixels, decoded again off the main
     /// thread, last frame (`zgx::image::set_decoded_wake` wakes the host to
     /// draw it again whole). Taken.
@@ -10054,6 +10062,7 @@ impl GpuRenderer {
         self.images.insert(image.id(), (bind, bytes, Some(texture)));
         self.image_drawn.insert(image.id(), self.image_frame);
         image.uploaded();
+        self.images_uploaded = true;
         Ok(())
     }
     /// Write premultiplied RGBA texels to `(x, y, width, height)` of a

@@ -92,6 +92,9 @@ fn more_photos_than_the_budget_in_one_frame_fail() {
     assert!(error.to_string().contains("64 MiB"), "{error}");
 }
 
+// The decoded-pixels ledger is the process's: tests of kept images take turns.
+static LEDGER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A test file: its pixels are its one byte, everywhere.
 fn redecode(bytes: &[u8]) -> Result<Arc<[u8]>, String> {
     Ok(Arc::from(vec![bytes[0]; 640 * 480 * 4]))
@@ -116,6 +119,7 @@ fn kept_photo(i: u32) -> Arc<ImageData> {
 /// renderer (its own device) uploads them from their files.
 #[test]
 fn kept_photos_give_their_pixels_back_and_draw_again() {
+    let _turn = LEDGER.lock().unwrap_or_else(|p| p.into_inner());
     zgx::image::set_decoded_budget(8 * 640 * 480 * 4);
     let mut scene = Scene::new(800., 600.);
     let column = scene.append(
@@ -161,4 +165,25 @@ fn kept_photos_give_their_pixels_back_and_draw_again() {
     let stats = other.render(&scene, &whole).unwrap();
     assert!(stats.image_uploads >= 1 || !other.take_images_awaited());
     zgx::image::set_decoded_budget(usize::MAX);
+}
+
+/// Pixels given back once images have settled: the next frame draws them
+/// from their textures, decoding nothing.
+#[test]
+fn released_kept_photos_draw_from_their_textures() {
+    let _turn = LEDGER.lock().unwrap_or_else(|p| p.into_inner());
+    zgx::image::set_decoded_budget(usize::MAX);
+    let mut scene = Scene::new(640., 480.);
+    let photo = kept_photo(77);
+    scene.append(scene.root(), NodeKind::Image(photo.clone()), photo_style());
+    let mut gpu = GpuRenderer::new(640, 480).unwrap();
+    let damage = scene.flush().damage;
+    gpu.render(&scene, &damage).unwrap();
+    let before = gpu.readback().unwrap();
+    assert!(zgx::image::release_decoded() >= 640 * 480 * 4);
+    let whole = [Rect::new(0., 0., 640., 480.)];
+    let stats = gpu.render(&scene, &whole).unwrap();
+    assert!(!gpu.take_images_awaited(), "drawn from its texture");
+    assert_eq!(stats.image_uploads, 0);
+    assert!(gpu.readback().unwrap() == before, "the same picture");
 }

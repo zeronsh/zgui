@@ -1,7 +1,7 @@
 //! Immutable decoded straight-alpha RGBA8 images shared between scene nodes.
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) fn next_identity() -> Result<u64, &'static str> {
@@ -46,7 +46,7 @@ pub struct ImageData {
     /// The file it was decoded from, kept so its pixels can go once a
     /// renderer has them and come back (`ImageData::kept`); `pixels` is
     /// then empty and the pixels are the file's.
-    kept: Option<Arc<Kept>>,
+    kept: Option<KeptFile>,
 }
 impl ImageData {
     /// A `width` by `height` image from RGBA8 `pixels`; fails unless both are
@@ -175,7 +175,9 @@ impl ImageData {
     ) -> Result<Self, &'static str> {
         let mut image = Self::new(width, height, pixels)?;
         let pixels = std::mem::replace(&mut image.pixels, Arc::from(&[][..]));
-        image.kept = Some(Kept::new(pixels, encoded, decode));
+        image.kept = Some(KeptFile(std::mem::ManuallyDrop::new(Kept::new(
+            pixels, encoded, decode,
+        ))));
         Ok(image)
     }
     /// Share decoded pixels and GPU upload identity with a different paint
@@ -300,10 +302,21 @@ pub fn set_decoded_budget(bytes: usize) {
 pub fn set_decoded_wake(wake: impl Fn() + Send + Sync + 'static) {
     *WAKE.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(wake));
 }
+/// Gives back now the pixels of every image keeping its file, whatever the
+/// budget: those renderers have and those none has drawn, for an app whose
+/// images have settled. Pinned ones (`ImageData::pixels`) stay; one drawn
+/// without a texture decodes again off the main thread. Answers the bytes
+/// given back.
+pub fn release_decoded() -> usize {
+    let mut ledger = ledger();
+    let before = decoded_bytes();
+    give_back(&mut ledger, 0, None, true);
+    before - decoded_bytes()
+}
 /// The decoded pixels images keeping their files hold now (for tests and
 /// measurements).
 pub fn decoded_bytes() -> usize {
-    ledger().held
+    HELD.load(Ordering::Relaxed)
 }
 
 const BUDGET: usize = 256 * 1024 * 1024;
@@ -311,21 +324,55 @@ const BUDGET: usize = 256 * 1024 * 1024;
 type Wake = Arc<dyn Fn() + Send + Sync>;
 static WAKE: std::sync::Mutex<Option<Wake>> = std::sync::Mutex::new(None);
 
+/// The decoded pixels images keeping their files hold. Not in the ledger:
+/// dropping an image must take no lock, or nothing holding one (a style's
+/// background, on every hot path) drops without paths for unwinding.
+static HELD: AtomicUsize = AtomicUsize::new(0);
+
 struct Ledger {
     budget: usize,
-    held: usize,
-    /// Images renderers have, which may give their pixels back.
-    resident: Vec<std::sync::Weak<Kept>>,
+    /// Images keeping their files, which may give their pixels back.
+    kept: Vec<std::sync::Weak<Kept>>,
     clock: u64,
 }
 static LEDGER: std::sync::Mutex<Ledger> = std::sync::Mutex::new(Ledger {
     budget: BUDGET,
-    held: 0,
-    resident: Vec::new(),
+    kept: Vec::new(),
     clock: 0,
 });
 fn ledger() -> std::sync::MutexGuard<'static, Ledger> {
     LEDGER.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// An image's share of its `Kept`. Its drop can't unwind, and says so: every
+/// style holding an image (a box's background) drops one, and an `Arc<Kept>`
+/// dropped directly gave each of those drops paths for unwinding, on nodes
+/// with no image at all (heavy +0.08%, animate +0.14%).
+#[derive(Debug)]
+struct KeptFile(std::mem::ManuallyDrop<Arc<Kept>>);
+impl Clone for KeptFile {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+impl std::ops::Deref for KeptFile {
+    type Target = Arc<Kept>;
+    fn deref(&self) -> &Arc<Kept> {
+        &self.0
+    }
+}
+impl Drop for KeptFile {
+    #[inline]
+    fn drop(&mut self) {
+        // `extern "C"`: callers know nothing unwinds out of it.
+        extern "C" fn release(kept: *const Kept) {
+            // SAFETY: from `Arc::into_raw` below, taken once.
+            drop(unsafe { Arc::from_raw(kept) });
+        }
+        // SAFETY: not used again: this is its drop.
+        let kept = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
+        release(Arc::into_raw(kept));
+    }
 }
 
 /// An image's kept file and the pixels decoded from it, while held.
@@ -345,8 +392,8 @@ pub(crate) struct Kept {
 impl Kept {
     fn new(pixels: Arc<[u8]>, encoded: Arc<[u8]>, decode: Decode) -> Arc<Self> {
         let len = pixels.len();
-        ledger().held += len;
-        Arc::new(Self {
+        HELD.fetch_add(len, Ordering::Relaxed);
+        let kept = Arc::new(Self {
             encoded,
             decode,
             len,
@@ -354,7 +401,14 @@ impl Kept {
             pinned: std::sync::OnceLock::new(),
             drawn: AtomicU64::new(0),
             decoding: std::sync::atomic::AtomicBool::new(false),
-        })
+        });
+        let mut ledger = ledger();
+        if ledger.kept.len() == ledger.kept.capacity() {
+            ledger.kept.retain(|kept| kept.strong_count() > 0);
+        }
+        ledger.kept.push(Arc::downgrade(&kept));
+        drop(ledger);
+        kept
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Arc<[u8]>>> {
         self.held.lock().unwrap_or_else(|p| p.into_inner())
@@ -377,7 +431,7 @@ impl Kept {
         let mut held = self.lock();
         if held.is_none() {
             *held = Some(pixels);
-            ledger().held += self.len;
+            HELD.fetch_add(self.len, Ordering::Relaxed);
         }
     }
     fn held_or_request(self: &Arc<Self>) -> Option<Arc<[u8]>> {
@@ -407,29 +461,36 @@ impl Kept {
         let mut ledger = ledger();
         ledger.clock += 1;
         let now = ledger.clock;
-        let first = self.drawn.swap(now, Ordering::Relaxed) == 0;
-        if first {
-            ledger.resident.push(Arc::downgrade(self));
-        }
-        if ledger.held <= ledger.budget {
-            return;
-        }
+        self.drawn.store(now, Ordering::Relaxed);
+        let budget = ledger.budget;
         // Past the budget: those renderers have give their pixels back,
         // least recently drawn first, not this one.
-        ledger.resident.retain(|kept| kept.strong_count() > 0);
-        let mut order: Vec<Arc<Kept>> =
-            ledger.resident.iter().filter_map(|k| k.upgrade()).collect();
-        order.sort_by_key(|kept| kept.drawn.load(Ordering::Relaxed));
-        for kept in order {
-            if ledger.held <= ledger.budget {
-                break;
-            }
-            if Arc::ptr_eq(&kept, self) || kept.pinned.get().is_some() {
-                continue;
-            }
-            if kept.lock().take().is_some() {
-                ledger.held -= kept.len;
-            }
+        give_back(&mut ledger, budget, Some(self), false);
+    }
+}
+
+/// Gives back pixels, least recently drawn first, until those held fit
+/// `budget`: never `except`'s or pinned ones, and those no renderer has
+/// drawn only with `undrawn` (past the budget, they wait for their upload).
+fn give_back(ledger: &mut Ledger, budget: usize, except: Option<&Arc<Kept>>, undrawn: bool) {
+    if decoded_bytes() <= budget {
+        return;
+    }
+    ledger.kept.retain(|kept| kept.strong_count() > 0);
+    let mut order: Vec<Arc<Kept>> = ledger.kept.iter().filter_map(|k| k.upgrade()).collect();
+    order.sort_by_key(|kept| kept.drawn.load(Ordering::Relaxed));
+    for kept in order {
+        if decoded_bytes() <= budget {
+            break;
+        }
+        if except.is_some_and(|except| Arc::ptr_eq(&kept, except))
+            || kept.pinned.get().is_some()
+            || (!undrawn && kept.drawn.load(Ordering::Relaxed) == 0)
+        {
+            continue;
+        }
+        if kept.lock().take().is_some() {
+            HELD.fetch_sub(kept.len, Ordering::Relaxed);
         }
     }
 }
@@ -437,7 +498,7 @@ impl Drop for Kept {
     fn drop(&mut self) {
         let held = self.held.get_mut().map(|h| h.is_some()).unwrap_or(false);
         if held {
-            ledger().held -= self.len;
+            HELD.fetch_sub(self.len, Ordering::Relaxed);
         }
     }
 }
@@ -521,6 +582,30 @@ mod kept_tests {
         set_decoded_budget(usize::MAX);
         drop((a, b, c));
         assert_eq!(decoded_bytes(), start, "dropped images hold nothing");
+    }
+
+    #[test]
+    fn released_all_but_the_pinned_go_and_past_the_budget_only_those_drawn() {
+        let _turn = TURN.lock().unwrap_or_else(|p| p.into_inner());
+        let start = decoded_bytes();
+        set_decoded_budget(usize::MAX);
+        let (drawn, pinned, unseen) = (kept(1), kept(2), kept(3));
+        drawn.uploaded();
+        assert_eq!(pinned.pixels(), &[2; 16][..]);
+        pinned.uploaded();
+        // Past the budget, one no renderer has drawn keeps its pixels for
+        // its upload.
+        set_decoded_budget(0);
+        drawn.uploaded();
+        assert!(unseen.try_pixels().is_some());
+        set_decoded_budget(usize::MAX);
+        // Released, it goes too, and comes back if it is ever drawn.
+        assert_eq!(release_decoded(), 32);
+        assert!(pinned.try_pixels().is_some());
+        assert_eq!(&*wait(&drawn), &[1; 16][..]);
+        assert_eq!(&*wait(&unseen), &[3; 16][..]);
+        drop((drawn, pinned, unseen));
+        assert_eq!(decoded_bytes(), start);
     }
 
     #[test]

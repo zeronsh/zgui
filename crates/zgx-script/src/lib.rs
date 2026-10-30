@@ -1773,6 +1773,8 @@ impl ScriptHost {
             }
         }
         self.0.assets.memory(report);
+        let held = zgx::image::decoded_bytes();
+        report.add("images", "decoded pixels held", None, Some(held));
     }
     /// How many converted values the loaded scripts' VMs keep (each with
     /// its table, until nothing else holds the value): with
