@@ -708,6 +708,66 @@ fn each_in_a_scroll_x_lays_out_across() {
     assert_eq!(first.height, plain.height);
 }
 
+/// A row of `ui.each` lays out as the same node on its own: it stretches
+/// across its parent unless the parent's `items` says otherwise.
+#[test]
+fn each_rows_stretch_as_their_parents_children_do() {
+    let mut h = Harness::inline(
+        r##"local a = ui.state("a", { "in-column" })
+        local b = ui.state("b", { "in-row" })
+        local c = ui.state("c", { "centred" })
+        local function row(n)
+            return ui.row { id = n, ui.text { "x" }, ui.div { id = `{n}-fill`, grow = 1, h = 4 } }
+        end
+        return ui.column { w = 600, h = 400,
+            ui.each(a, row),
+            ui.row { h = 100, ui.each(b, function(n) return ui.column { id = n, w = 50 } end) },
+            ui.column { items = "center", ui.each(c, function(n) return ui.column { id = n, h = 4, ui.text { "x" } } end) } }"##,
+    );
+    h.ui.prepare_frame();
+    let bounds = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.scene.borrow().bounds(node)
+    };
+    assert_eq!(bounds(&mut h, "in-column").width, 600.);
+    assert!(bounds(&mut h, "in-column-fill").width > 500.);
+    assert_eq!(bounds(&mut h, "in-row").height, 100.);
+    assert!(
+        bounds(&mut h, "centred").width < 100.,
+        "the parent's `items` holds"
+    );
+}
+
+/// In a row, a child of `each` takes the cross axis as a plain child does,
+/// whatever the row's `items` says.
+#[test]
+fn each_rows_in_a_row_take_the_cross_axis_as_a_plain_child_does() {
+    for items in [
+        "",
+        r#"items = "start","#,
+        r#"items = "center","#,
+        r#"items = "end","#,
+    ] {
+        let mut h = Harness::inline(&format!(
+            r##"local names = ui.state("names", {{ "each" }})
+            local function child(id)
+                return ui.column {{ id = id, w = 50, ui.text {{ "x" }} }}
+            end
+            return ui.column {{ w = 600, h = 400,
+                ui.row {{ h = 100, {items} child("plain") }},
+                ui.row {{ h = 100, {items} ui.each(names, child) }} }}"##
+        ));
+        h.ui.prepare_frame();
+        let bounds = |h: &mut Harness, id: &str| {
+            let node = h.find(id).unwrap();
+            h.ui.scene.borrow().bounds(node)
+        };
+        let (plain, each) = (bounds(&mut h, "plain"), bounds(&mut h, "each"));
+        assert_eq!(each.height, plain.height, "{items}");
+        assert_eq!(each.y - 100., plain.y, "{items}");
+    }
+}
+
 /// A list's row fills the list's width, whatever it holds, as a block does:
 /// fixed, variable and measured rows alike.
 #[test]

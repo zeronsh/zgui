@@ -3452,9 +3452,6 @@ fn flow(node: &Node) -> Vec<(Prop, Lit)> {
         // height, and its own length from them.
         out.insert(0, (Prop::Direction, Lit::Str("row".into())));
         out.push((Prop::AlignSelf, Lit::Str("stretch".into())));
-        if !out.iter().any(|(prop, _)| *prop == Prop::Items) {
-            out.push((Prop::Items, Lit::Str("stretch".into())));
-        }
     } else if row {
         // In a row the region takes the row's room, so its children wrap
         // and shrink against the row's width, not their own.
@@ -3464,6 +3461,11 @@ fn flow(node: &Node) -> Vec<(Prop, Lit)> {
         out.push((Prop::MinW, Lit::Len(zgx::layout::Length::Px(0.))));
     } else {
         out.push((Prop::AlignSelf, Lit::Str("stretch".into())));
+    }
+    // A column's and a row's own default: a row of `each` fills across as
+    // the same row would on its own.
+    if !out.iter().any(|(prop, _)| *prop == Prop::Items) {
+        out.push((Prop::Items, Lit::Str("stretch".into())));
     }
     out
 }
