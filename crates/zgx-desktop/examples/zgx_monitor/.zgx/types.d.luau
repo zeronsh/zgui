@@ -13131,6 +13131,15 @@ export type ListProps = {
 	-- Watched without running the script while it scrolls short of it.
 	on_end: (() -> ())?,
 	end_distance: number?,
+	-- Called as its start comes within `start_distance` points (200 unless
+	-- set) of the top of the view, once each time and again once its rows
+	-- have changed: an earlier page. Rows added above keep the rows in view
+	-- where they are (a measured list's, by key).
+	on_start: (() -> ())?,
+	start_distance: number?,
+	-- Kept saying whether it rests at its end (within a few points): a
+	-- "jump to the latest" button shows while it does not.
+	at_end: State<boolean>?,
 }
 -- Where a modal's panel sits in the window: lined up with its start,
 -- centre or end across (`x`) and down (`y`), `inset` points from the edges

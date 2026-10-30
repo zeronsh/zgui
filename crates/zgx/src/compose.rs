@@ -227,18 +227,37 @@ type Builder = Box<dyn FnOnce(&mut Context) -> View>;
 type RegionBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment)>;
 type VirtualBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment, ListOptions)>;
 /// What a virtual list is mounted with, beside its rows: its scrollbar,
-/// keyboard navigation, and what its end coming in reach calls.
+/// keyboard navigation, and what it reports of its edges.
 pub(crate) struct ListOptions {
     pub(crate) scrollbar: bool,
     pub(crate) keyboard_navigation: bool,
-    pub(crate) end: Option<EndWatch>,
+    pub(crate) edges: Option<Box<ListEdges>>,
 }
-/// `View::on_end`: what a virtual list calls as its end comes within
-/// `distance` points of the bottom of its viewport.
-pub(crate) struct EndWatch {
+/// What a virtual list reports of its edges: its end and its start coming
+/// in reach (`View::on_end`, `View::on_start`) and whether it rests at its
+/// end (`View::on_at_end`). Boxed: few lists have any.
+#[derive(Default)]
+pub(crate) struct ListEdges {
+    end: Option<EdgeWatch>,
+    start: Option<EdgeWatch>,
+    at_end: Option<Box<dyn FnMut(bool)>>,
+}
+impl ListEdges {
+    /// Whether its start is watched (`View::on_start`): rows coming in
+    /// above are then kept from moving the rows in view.
+    pub(crate) fn watches_start(&self) -> bool {
+        self.start.is_some()
+    }
+}
+/// What a virtual list calls as an edge comes within `distance` points of
+/// its viewport's.
+pub(crate) struct EdgeWatch {
     distance: f32,
     reached: Box<dyn FnMut()>,
 }
+/// How close to its end a list rests at it (`View::on_at_end`), in points:
+/// what a fractional scroll position leaves.
+const AT_END: f32 = 4.;
 /// A virtual list's region: its mount, given its options. Out of line: a
 /// list's mount is rare beside the elements `open_element` makes, which it
 /// is inlined into.
@@ -247,39 +266,81 @@ fn virtual_region(
     build: VirtualBuilder,
     scrollbar: bool,
     keyboard_navigation: bool,
-    end: Option<EndWatch>,
+    edges: Option<Box<ListEdges>>,
 ) -> RegionBuilder {
     let options = ListOptions {
         scrollbar,
         keyboard_navigation,
-        end,
+        edges,
     };
     Box::new(move |ui: &mut Ui, root, environment| build(ui, root, environment, options))
 }
-/// Call `end.reached` once each time the end of a virtual list (its content
-/// `extent`, scrolled by `offset`, in a viewport `size`) comes within
-/// `end.distance`: again only once its content has grown, so a list
-/// shorter than its viewport asks until it fills or nothing comes. Rust
-/// watches; the script runs only as it is reached.
-pub(crate) fn watch_end(
+/// Report a virtual list's edges (its content `extent`, scrolled by
+/// `offset`, in a viewport `size`): call `edges.end.reached` once each time
+/// its end comes within `edges.end.distance`, and `edges.start.reached`
+/// its start, again only once its content has changed size, so a list
+/// shorter than its viewport asks until it fills or nothing comes; and
+/// tell `edges.at_end` whether it rests at its end, as that changes. Rust
+/// watches; the script runs only as an edge is reached or left.
+pub(crate) fn watch_edges(
     ui: &mut Ui,
     root: NodeId,
     offset: Signal<f32>,
     size: Signal<(f32, f32)>,
     extent: Signal<f32>,
-    mut end: EndWatch,
+    edges: ListEdges,
 ) {
+    let ListEdges {
+        end,
+        start,
+        mut at_end,
+    } = edges;
     let runtime = ui.runtime.clone();
-    let mut reached_at: Option<u32> = None;
+    let weak = ui.downgrade();
+    // An edge reached is told after the frame's layout, the list's
+    // position settled: rows the call adds above then keep the rows in
+    // view where they are.
+    let tell = move |reached: &Rc<RefCell<Box<dyn FnMut()>>>| {
+        let (reached, runtime) = (reached.clone(), runtime.clone());
+        if let Some(ui) = weak.upgrade() {
+            ui.after_layout(Box::new(move || {
+                runtime.untracked(|| (reached.borrow_mut())());
+            }));
+        }
+    };
+    let shared = |watch: Option<EdgeWatch>| {
+        watch.map(|watch| (watch.distance, Rc::new(RefCell::new(watch.reached))))
+    };
+    let (end, start) = (shared(end), shared(start));
+    let runtime = ui.runtime.clone();
+    let (mut end_at, mut start_at): (Option<u32>, Option<u32>) = (None, None);
+    let mut was_at_end: Option<bool> = None;
     let effect = ui.runtime.effect(move || {
         let (offset, (_, height), extent) = (offset.get(), size.get(), extent.get());
         if height <= 0. {
             // Not laid out yet.
             return;
         }
-        if extent - offset - height <= end.distance && reached_at != Some(extent.to_bits()) {
-            reached_at = Some(extent.to_bits());
-            runtime.untracked(|| (end.reached)());
+        let to_end = extent - offset - height;
+        if let Some(at_end) = &mut at_end {
+            let now = to_end <= AT_END;
+            if was_at_end.replace(now) != Some(now) {
+                runtime.untracked(|| at_end(now));
+            }
+        }
+        if let Some((distance, reached)) = &end
+            && to_end <= *distance
+            && end_at != Some(extent.to_bits())
+        {
+            end_at = Some(extent.to_bits());
+            tell(reached);
+        }
+        if let Some((distance, reached)) = &start
+            && offset <= *distance
+            && start_at != Some(extent.to_bits())
+        {
+            start_at = Some(extent.to_bits());
+            tell(reached);
         }
     });
     ui.retain(root, effect);
@@ -423,7 +484,8 @@ pub(crate) struct Rare {
     follow_end: Option<bool>,
     animation: Option<animation::Animated>,
     keyboard_navigation: Option<bool>,
-    end: Option<EndWatch>,
+    /// `View::on_end`, `on_start`, `at_end`: a virtual list's edges.
+    edges: Option<Box<ListEdges>>,
     /// `View::active_descendant`: the id of the item it is on.
     active_descendant: Option<Box<dyn Fn() -> Option<String>>>,
     dismiss_backdrop: Option<bool>,
@@ -488,8 +550,8 @@ impl Rare {
         if self.portal.is_some() {
             inner.portal = self.portal;
         }
-        if self.end.is_some() {
-            inner.end = self.end;
+        if self.edges.is_some() {
+            inner.edges = self.edges;
         }
         if self.active_descendant.is_some() {
             inner.active_descendant = self.active_descendant;
@@ -783,11 +845,34 @@ impl View {
     /// call adds nothing. Watched in Rust: nothing runs while it scrolls
     /// short of it. For a virtual list.
     pub fn on_end(mut self, distance: f32, reached: impl FnMut() + 'static) -> Self {
-        self.rare_mut().end = Some(EndWatch {
+        self.edges_mut().end = Some(EdgeWatch {
             distance: distance.max(0.),
             reached: Box::new(reached),
         });
         self
+    }
+    /// Call `reached` as a virtual list's start comes within `distance`
+    /// points of the top of its viewport (a history's earlier page): once
+    /// each time, and again once its content has changed size. Rows the
+    /// call adds above keep the rows in view where they are, a measured
+    /// list's by key (`measured_virtual_list`, `measured_rows`). Watched in
+    /// Rust, as `on_end` is. For a virtual list.
+    pub fn on_start(mut self, distance: f32, reached: impl FnMut() + 'static) -> Self {
+        self.edges_mut().start = Some(EdgeWatch {
+            distance: distance.max(0.),
+            reached: Box::new(reached),
+        });
+        self
+    }
+    /// Tell `changed` whether a virtual list rests at its end (within a
+    /// few points of it), once laid out and then as that changes: a "jump
+    /// to the latest" button shows while it does not. For a virtual list.
+    pub fn on_at_end(mut self, changed: impl FnMut(bool) + 'static) -> Self {
+        self.edges_mut().at_end = Some(Box::new(changed));
+        self
+    }
+    fn edges_mut(&mut self) -> &mut ListEdges {
+        self.rare_mut().edges.get_or_insert_default()
     }
     /// Enable bounded keyboard row navigation on a virtual list.
     pub fn keyboard_navigation(mut self, enabled: bool) -> Self {
@@ -2416,13 +2501,20 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let ListOptions {
                 scrollbar,
                 keyboard_navigation,
-                end,
+                edges,
             } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
             let size = ui.observe_content_size(root);
             let extent = ui.signal(0.0_f32);
-            if let Some(end) = end {
-                watch_end(ui, root, offset.clone(), size.clone(), extent.clone(), end);
+            if let Some(edges) = edges {
+                watch_edges(
+                    ui,
+                    root,
+                    offset.clone(),
+                    size.clone(),
+                    extent.clone(),
+                    *edges,
+                );
             }
             // Clip rows to the allocated content box, keeping root padding clear.
             let viewport = ui.container(root, Layout::Overlay, Default::default());
@@ -4005,7 +4097,7 @@ fn open_element(
                 build,
                 scrollbar,
                 keyboard_navigation,
-                rare.as_deref_mut().and_then(|r| r.end.take()),
+                rare.as_deref_mut().and_then(|r| r.edges.take()),
             ));
             let root = ui.container(parent, Layout::Overlay, scroll_default_size(false));
             ui.semantics

@@ -1,5 +1,7 @@
 //! Scrolling and virtual lists. One test binary for the area (see AGENTS.md):
 //! a test file goes in the group for its area, listed here.
+#[path = "../composition_list_edges.rs"]
+mod composition_list_edges;
 #[path = "../composition_list_end.rs"]
 mod composition_list_end;
 #[path = "../composition_measured_list.rs"]

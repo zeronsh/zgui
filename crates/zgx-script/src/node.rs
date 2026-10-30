@@ -785,7 +785,7 @@ impl Events {
 }
 
 /// What few lists set (`Kind::List`'s `rare`).
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct ListRare {
     /// Rows that stick to the top while their section scrolls by (with
     /// `heights`): their indices, from 1, in order.
@@ -798,6 +798,12 @@ pub(crate) struct ListRare {
     pub(crate) row_text: Option<Function>,
     /// `on_end` (with `end_distance`): what its end coming in reach calls.
     pub(crate) end: Option<ListEnd>,
+    /// `on_start` and `start_distance` (200 points unless set): what its
+    /// start coming in reach calls. Taken as `fill` walks the table.
+    pub(crate) start: Option<Function>,
+    pub(crate) start_distance: Option<f32>,
+    /// `at_end = state`: kept saying whether it rests at its end.
+    pub(crate) at_end: Option<Signal<Value>>,
 }
 
 /// `ui.list`'s `on_end`, called as its end comes within `distance` points.
@@ -2684,6 +2690,9 @@ const LATE_FIELDS: &[&str] = &[
     "end_distance",
     "active_descendant",
     "at_caret",
+    "on_start",
+    "start_distance",
+    "at_end",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
@@ -2717,6 +2726,19 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
             if let Kind::Input { rare, .. } = &mut node.kind {
                 let active = source(lua, Ty::Str, name, value)?;
                 rare.get_or_insert_default().active_descendant = Some(active);
+            }
+        }
+        "on_start" | "start_distance" | "at_end" => {
+            if let Kind::List { rare, .. } = &mut node.kind {
+                let rare = rare.get_or_insert_default();
+                match name {
+                    "on_start" => rare.start = Some(lua.unpack(value)?),
+                    "start_distance" => {
+                        let distance: f32 = lua.unpack(value)?;
+                        rare.start_distance = distance.is_finite().then_some(distance);
+                    }
+                    _ => rare.at_end = Some(expect_state(&value, "`at_end`")?),
+                }
             }
         }
         "at_caret" => {
@@ -4380,6 +4402,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     sticky_top,
                     row_text,
                     end,
+                    ..ListRare::default()
                 })
             });
             node_ud(

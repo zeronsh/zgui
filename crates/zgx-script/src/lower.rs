@@ -2361,8 +2361,8 @@ fn kind_view(
             if *scrollbar {
                 list = list.scrollbar(true);
             }
-            if let Some(end) = rare.as_ref().and_then(|rare| rare.end.as_ref()) {
-                list = list_end(list, end, vm);
+            if let Some(rare) = rare {
+                list = list_edges(list, rare, vm);
             }
             list
         }
@@ -5300,17 +5300,32 @@ fn canvas_options(
     view
 }
 
-/// A list's `on_end`: watched in Rust, the script called as it is
-/// reached. Out of line, so `lower`'s match stays as it was for every other
-/// element.
+/// A list's edges (`on_end`, `on_start`, `at_end`): watched in Rust, the
+/// script called as one is reached or left. Out of line, so `lower`'s match
+/// stays as it was for every other element.
 #[inline(never)]
-fn list_end(list: View, end: &crate::node::ListEnd, vm: &Rc<Vm>) -> View {
-    let (on_end, vm) = (end.on_end.clone(), vm.clone());
-    list.on_end(end.distance, move || {
-        if let Err(e) = vm.call::<()>(&on_end, ()) {
-            vm.report(e);
+fn list_edges(mut list: View, rare: &crate::node::ListRare, vm: &Rc<Vm>) -> View {
+    let call = |f: &mlua::Function| {
+        let (f, vm) = (f.clone(), vm.clone());
+        move || {
+            if let Err(e) = vm.call::<()>(&f, ()) {
+                vm.report(e);
+            }
         }
-    })
+    };
+    if let Some(end) = &rare.end {
+        list = list.on_end(end.distance, call(&end.on_end));
+    }
+    if let Some(start) = &rare.start {
+        list = list.on_start(rare.start_distance.unwrap_or(200.), call(start));
+    }
+    if let Some(at_end) = &rare.at_end {
+        let at_end = at_end.clone();
+        list = list.on_at_end(move |now| {
+            at_end.set(Value::Bool(now));
+        });
+    }
+    list
 }
 
 /// A `ui.list` (kept out of `build`, which recurses: its locals would
