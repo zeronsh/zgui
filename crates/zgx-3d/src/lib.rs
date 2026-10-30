@@ -50,7 +50,7 @@ pub use geometry::{Geometry, Vertex};
 #[cfg(feature = "gltf")]
 pub use gltf::{Model, ModelError};
 pub use math::{Mat4, Quat, Transform, Vec3, vec3};
-pub use orbit::Orbit;
+pub use orbit::{Answer, Orbit, OrbitControls};
 pub use pick::Hit;
 pub use texture::{Map, Texture};
 pub use world::{

@@ -456,3 +456,38 @@ fn tone_mapping_and_exposure_are_checked() {
     h.frame();
     assert!(frame_id(&mut h, "scene").is_some());
 }
+
+#[test]
+fn an_orbit_turns_by_keyboard_focused_and_a_flick_coasts_to_a_stop() {
+    use zgx::input::{InputEvent, Key, Modifiers};
+    let mut h = Harness::inline(PICKED);
+    h.frames(3);
+    let still = frame_id(&mut h, "scene");
+    // A click on nothing focuses it and moves nothing.
+    press(&mut h, "scene", (5., 5.), 0.);
+    h.frames(3);
+    assert_eq!(frame_id(&mut h, "scene"), still, "a click turns nothing");
+    h.ui.dispatch(InputEvent::KeyDown {
+        key: Key::ArrowRight,
+        modifiers: Modifiers::default(),
+        repeat: false,
+    });
+    h.frames(2);
+    let turned = frame_id(&mut h, "scene");
+    assert_ne!(turned, still, "the arrow turned it");
+    // A flick: frames after it's let go, from Rust, then none (the press
+    // itself hovers the box: its handler runs then, not as it coasts).
+    press(&mut h, "scene", (100., 100.), 40.);
+    let calls = h.calls();
+    let mut frames = std::collections::HashSet::new();
+    for _ in 0..10 {
+        h.frame();
+        frames.insert(frame_id(&mut h, "scene"));
+    }
+    assert!(frames.len() > 5, "coasting: {} frames", frames.len());
+    assert_eq!(h.calls(), calls, "no script ran as it coasted");
+    h.frames(300);
+    let settled = frame_id(&mut h, "scene");
+    h.frames(10);
+    assert_eq!(frame_id(&mut h, "scene"), settled, "still once stopped");
+}

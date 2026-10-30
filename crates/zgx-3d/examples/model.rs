@@ -1,13 +1,14 @@
 //! A glTF model in a zgx window: a `.glb`, or a `.gltf` and the files beside
 //! it, under a sun (casting shadows) in the built-in studio's light,
 //! playing its first animation if it has one. Drag to turn the camera about
-//! it, scroll or pinch to move in and out.
+//! it (right-drag to pan), scroll or pinch to move in and out; the arrow
+//! keys turn it too, Home puts it back (`OrbitControls`).
 //! Run: cargo run --release -p zgx-3d --features gltf --example model -- FILE
 //!
 //! `--environment=FILE.hdr` lights it with a Radiance image instead,
 //! `--no-environment` with a plain sky; `--smoke-test` shows it a moment
 //! and quits.
-use std::{cell::Cell, path::Path, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 use zgx::{compose::prelude::*, input::InputEvent, scene::Color};
 use zgx_3d::*;
 use zgx_desktop::{Application, WindowOptions};
@@ -112,45 +113,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                 }
             }
-            let orbit = Rc::new(Cell::new(Orbit {
+            let controls = Rc::new(RefCell::new(OrbitControls::new(Orbit {
                 target: vec3(0., size.y * scale * 0.5, 0.),
                 azimuth: 0.5,
                 elevation: 0.3,
                 distance: 4.,
                 ..Orbit::default()
-            }));
-            world.set_camera(orbit.get().camera(world.camera()));
-            let dragging = Rc::new(Cell::new(None::<(f32, f32)>));
+            })));
+            world.set_camera(controls.borrow().orbit.camera(world.camera()));
+            // A flick coasts on, a frame at a time, while it coasts.
+            let (flicked, mut heard) = zgx::task::latest::<()>();
+            {
+                let (world, controls, frames) =
+                    (world.clone(), controls.clone(), cx.frames.clone());
+                cx.tasks.spawn(async move {
+                    while heard.recv().await.is_some() {
+                        let mut last = frames.next().await.time;
+                        loop {
+                            let frame = frames.next().await;
+                            let seconds = frame.time.saturating_duration_since(last).as_secs_f32();
+                            last = frame.time;
+                            let mut controls = controls.borrow_mut();
+                            if !controls.coast(seconds) {
+                                break;
+                            }
+                            world.set_camera(controls.orbit.camera(world.camera()));
+                        }
+                    }
+                });
+            }
             cx.render(
                 gpu_view("A model", world.view())
                     .w_full()
                     .h_full()
                     .bg(Color(16, 20, 27, 255))
+                    .focusable(true)
                     .on_event({
-                        let (world, orbit) = (world.clone(), orbit.clone());
+                        let world = world.clone();
                         move |event| {
-                            let mut moved = orbit.get();
-                            match event.event {
-                                InputEvent::PointerDown { x, y, .. } => dragging.set(Some((x, y))),
-                                InputEvent::PointerMove { x, y } => {
-                                    let Some((fx, fy)) = dragging.get() else {
-                                        return;
-                                    };
-                                    dragging.set(Some((x, y)));
-                                    moved.drag(x - fx, y - fy);
-                                }
-                                InputEvent::PointerUp { .. } | InputEvent::PointerCancel => {
-                                    dragging.set(None)
-                                }
-                                InputEvent::Scroll { delta_y, .. } => {
-                                    moved.zoom((delta_y * 0.004).exp())
-                                }
-                                InputEvent::Pinch { delta, .. } => moved.zoom(1. + delta),
-                                _ => return,
+                            let modifiers = match &event.event {
+                                InputEvent::KeyDown { modifiers, .. } => *modifiers,
+                                _ => event.pointer_modifiers(),
+                            };
+                            let mut controls = controls.borrow_mut();
+                            let answer =
+                                controls.handle(&event.event, modifiers, std::time::Instant::now());
+                            if answer.moved {
+                                world.set_camera(controls.orbit.camera(world.camera()));
                             }
-                            if moved != orbit.get() {
-                                orbit.set(moved);
-                                world.set_camera(moved.camera(world.camera()));
+                            if answer.taken {
+                                event.prevent_default();
+                            }
+                            if answer.coasting {
+                                flicked.send(());
                             }
                         }
                     }),

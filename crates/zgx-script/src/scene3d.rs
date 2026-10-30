@@ -106,6 +106,7 @@ pub(crate) struct OrbitSpec {
     /// Degrees a second it turns on its own.
     auto_rotate: Option<Num>,
     zoom: bool,
+    pan: bool,
 }
 /// What `ui.scene3d` shows (`Kind::Scene3d`).
 pub(crate) struct Scene3dSpec {
@@ -490,14 +491,16 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         mlua::Value::Boolean(true) => Some(OrbitSpec {
             auto_rotate: None,
             zoom: true,
+            pan: true,
         }),
         mlua::Value::Table(orbit) => Some(OrbitSpec {
             auto_rotate: opt_num(&orbit, "auto_rotate")?,
             zoom: orbit.get::<Option<bool>>("zoom")?.unwrap_or(true),
+            pan: orbit.get::<Option<bool>>("pan")?.unwrap_or(true),
         }),
         other => {
             return Err(wrong(format_args!(
-                "ui.scene3d `orbit` must be true or {{ auto_rotate, zoom }}, not {}",
+                "ui.scene3d `orbit` must be true or {{ auto_rotate, zoom, pan }}, not {}",
                 other.type_name()
             )));
         }
@@ -893,6 +896,24 @@ pub(crate) fn lower(
         });
         (state, orbit_spec)
     });
+    // Orbiting, the script's target moves the orbit's as it changes (a pan
+    // stays until it does); else the camera reads it.
+    let target = match (&orbit, target) {
+        (Some((state, _)), Some(target)) => {
+            let (state, vm) = (state.clone(), vm.clone());
+            follow(
+                cx,
+                Box::new(move || {
+                    let at = target.get(&vm);
+                    if vm.runtime.untracked(|| state.get().target) != at {
+                        state.update(|o| o.target = at);
+                    }
+                }),
+            );
+            None
+        }
+        (_, target) => target,
+    };
     {
         let (world, vm) = (world.clone(), vm.clone());
         let orbit_state = orbit.as_ref().map(|(state, _)| state.clone());
@@ -905,11 +926,7 @@ pub(crate) fn lower(
                 }
                 match &orbit_state {
                     Some(orbit) => {
-                        let mut orbit = orbit.get();
-                        if let Some(target) = &target {
-                            orbit.target = target.get(&vm);
-                        }
-                        camera = orbit.camera(camera);
+                        camera = orbit.get().camera(camera);
                     }
                     None => {
                         let (at, looking) = place(&position, &target, &vm);
@@ -929,7 +946,18 @@ pub(crate) fn lower(
         cx.tasks().spawn(async move {
             let mut last = frames.next().await.time;
             loop {
-                let degrees = vm.runtime.untracked(|| rate.get(&vm));
+                // Turning on its own is motion the reader asked to keep
+                // from: still while reduced motion is on.
+                let reduced = vm.runtime.untracked(|| {
+                    zgx::theme::Themes::of(&vm.runtime)
+                        .system_preferences()
+                        .reduced_motion
+                });
+                let degrees = if reduced {
+                    0.
+                } else {
+                    vm.runtime.untracked(|| rate.get(&vm))
+                };
                 if degrees == 0. {
                     // Not turning: look again in a while, no frame asked.
                     zgx::timer::sleep(std::time::Duration::from_millis(250)).await;
@@ -947,30 +975,66 @@ pub(crate) fn lower(
     cx.retain(world.clone());
     let mut view = gpu_view(spec.label.clone(), world.view());
     if let Some((orbit, spec)) = orbit {
-        let dragging = Rc::new(std::cell::Cell::new(None::<(f32, f32)>));
-        let zoom = spec.zoom;
-        view = view.on_event(move |event| {
-            use zgx::input::InputEvent;
+        // Its controls (zgx_3d::OrbitControls): dragged, panned, zoomed,
+        // keyed when focused, coasting after a flick unless reduced motion
+        // is on. Coasting steps a frame at a time in Rust, and only while
+        // it coasts: a still scene asks for no frame.
+        let mut start = zgx_3d::OrbitControls::new(vm.runtime.untracked(|| orbit.get()));
+        start.zoom = spec.zoom;
+        start.pan = spec.pan;
+        let controls = Rc::new(std::cell::RefCell::new(start));
+        {
+            let (controls, runtime) = (controls.clone(), vm.runtime.clone());
+            follow(
+                cx,
+                Box::new(move || {
+                    let reduced = zgx::theme::Themes::of(&runtime)
+                        .system_preferences()
+                        .reduced_motion;
+                    controls.borrow_mut().inertia = !reduced;
+                }),
+            );
+        }
+        let (flicked, mut heard) = zgx::task::latest::<()>();
+        {
+            let (controls, orbit, frames) = (controls.clone(), orbit.clone(), cx.frames());
+            cx.tasks().spawn(async move {
+                while heard.recv().await.is_some() {
+                    let mut last = frames.next().await.time;
+                    loop {
+                        let frame = frames.next().await;
+                        let seconds = frame.time.saturating_duration_since(last).as_secs_f32();
+                        last = frame.time;
+                        let mut controls = controls.borrow_mut();
+                        if !controls.coast(seconds) {
+                            break;
+                        }
+                        orbit.set(controls.orbit);
+                    }
+                }
+            });
+        }
+        view = view.focusable(true).on_event(move |event| {
             if event.phase == zgx::input::EventPhase::Capture {
                 return;
             }
-            match event.event {
-                InputEvent::PointerDown { x, y, .. } => dragging.set(Some((x, y))),
-                InputEvent::PointerMove { x, y } => {
-                    if let Some((from_x, from_y)) = dragging.get() {
-                        dragging.set(Some((x, y)));
-                        orbit.update(|o| o.drag(x - from_x, y - from_y));
-                    }
-                }
-                InputEvent::PointerUp { .. } | InputEvent::PointerCancel => dragging.set(None),
-                InputEvent::Scroll { delta_y, .. } if zoom => {
-                    orbit.update(|o| o.zoom((delta_y * 0.004).exp()));
-                    event.prevent_default();
-                }
-                InputEvent::Pinch { delta, .. } if zoom => {
-                    orbit.update(|o| o.zoom(1. + delta));
-                }
-                _ => {}
+            let modifiers = match &event.event {
+                zgx::input::InputEvent::KeyDown { modifiers, .. } => *modifiers,
+                _ => event.pointer_modifiers(),
+            };
+            let mut controls = controls.borrow_mut();
+            // Where it is now, as the camera's effect last set it (a target
+            // the script moves included).
+            controls.orbit = orbit.with_untracked(|o| *o);
+            let answer = controls.handle(&event.event, modifiers, std::time::Instant::now());
+            if answer.moved {
+                orbit.set(controls.orbit);
+            }
+            if answer.taken {
+                event.prevent_default();
+            }
+            if answer.coasting {
+                flicked.send(());
             }
         });
     }

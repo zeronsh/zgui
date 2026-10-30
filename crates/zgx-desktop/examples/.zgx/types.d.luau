@@ -5218,6 +5218,9 @@ export type Orbit3D = {
 	auto_rotate: Reactive<number>?,
 	-- Whether scrolling and pinching move it in and out (default true).
 	zoom: boolean?,
+	-- Whether dragging with the secondary or middle button, or with Shift,
+	-- moves what it looks at (default true).
+	pan: boolean?,
 }
 export type Environment3D = {
 	-- "studio" (built in, the default) or a Radiance .hdr file
@@ -5561,8 +5564,10 @@ export type Scene3DProps = {
 	-- Its accessible name.
 	label: string?,
 	camera: Camera3D?,
-	-- Dragging turns the camera about its target, scrolling and pinching
-	-- move it in and out.
+	-- Dragging turns the camera about its target (coasting on after a flick
+	-- unless reduced motion is on), right-dragging or Shift-dragging pans,
+	-- scrolling and pinching move it in and out; focused, the arrow keys
+	-- turn it (pan with Shift), + and - zoom, Home puts it back.
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
