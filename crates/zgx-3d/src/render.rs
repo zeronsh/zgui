@@ -1047,36 +1047,48 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
     uniforms
 }
 
+/// The box holding the box `(low, high)` after `matrix`, which has no
+/// perspective: what its eight corners would give, each axis's least and
+/// greatest added up.
+fn box_through(matrix: &Mat4, (low, high): (Vec3, Vec3)) -> (Vec3, Vec3) {
+    let c = &matrix.columns;
+    let (mut from, mut to) = ([c[3][0], c[3][1], c[3][2]], [c[3][0], c[3][1], c[3][2]]);
+    for (column, (l, h)) in c
+        .iter()
+        .zip([(low.x, high.x), (low.y, high.y), (low.z, high.z)])
+    {
+        for row in 0..3 {
+            let (a, b) = (column[row] * l, column[row] * h);
+            from[row] += a.min(b);
+            to[row] += a.max(b);
+        }
+    }
+    (Vec3::from(from), Vec3::from(to))
+}
+
 /// The sun going `direction` as it sees the opaque meshes of `all`: an
 /// orthographic view holding them all, onto the shadow map, and how wide a
 /// map texel is in the scene. `None` with nothing to cast a shadow.
 fn sun_view(all: &[crate::world::Drawn], direction: Vec3) -> Option<(Mat4, f32)> {
-    // A skinned mesh's box placed by each of its joints: about where its
-    // pose can take it.
-    fn corners<'a>(d: &'a crate::world::Drawn) -> impl Iterator<Item = Vec3> + 'a {
-        let (low, high) = match &d.morph {
+    // A mesh's box, and what places it. A skinned mesh's is placed by each
+    // of its joints: about where its pose can take it.
+    fn placed<'a>(d: &'a crate::world::Drawn) -> ((Vec3, Vec3), &'a [Mat4]) {
+        let bounds = match &d.morph {
             Some(active) => d.geometry.morphed_bounds(active),
             None => d.geometry.bounds(),
         };
-        let matrices = d
-            .palette
-            .as_deref()
-            .unwrap_or(std::slice::from_ref(&d.matrix));
-        matrices.iter().flat_map(move |matrix| {
-            (0..8).map(move |i| {
-                matrix.project(crate::vec3(
-                    if i & 1 == 0 { low.x } else { high.x },
-                    if i & 2 == 0 { low.y } else { high.y },
-                    if i & 4 == 0 { low.z } else { high.z },
-                ))
-            })
-        })
+        let matrices = d.palette.as_deref();
+        (bounds, matrices.unwrap_or(std::slice::from_ref(&d.matrix)))
     }
     let opaque = || all.iter().filter(|d| d.material.color[3] >= 1.);
     let (mut low, mut high) = (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3]));
-    for p in opaque().flat_map(corners) {
-        low = low.min(p);
-        high = high.max(p);
+    for d in opaque() {
+        let (bounds, matrices) = placed(d);
+        for matrix in matrices {
+            let (from, to) = box_through(matrix, bounds);
+            low = low.min(from);
+            high = high.max(to);
+        }
     }
     let direction = direction.normalized();
     if !(low.is_finite() && high.is_finite()) || direction == Vec3::ZERO {
@@ -1086,10 +1098,13 @@ fn sun_view(all: &[crate::world::Drawn], direction: Vec3) -> Option<(Mat4, f32)>
     let radius = ((high - low).length() * 0.5).max(1e-3);
     let view = Mat4::look_at(centre - direction * (radius * 2.), centre, Vec3::Y);
     let (mut near, mut far) = (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3]));
-    for p in opaque().flat_map(corners) {
-        let p = view.project(p);
-        near = near.min(p);
-        far = far.max(p);
+    for d in opaque() {
+        let (bounds, matrices) = placed(d);
+        for matrix in matrices {
+            let (from, to) = box_through(&(view * *matrix), bounds);
+            near = near.min(from);
+            far = far.max(to);
+        }
     }
     // A texel's margin about them, so the filter's edge falls outside.
     let margin = (far.x - near.x).max(far.y - near.y) / SHADOW_SIZE as f32 * 2.;
@@ -2119,6 +2134,31 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 mod tests {
     use super::*;
     use crate::{Camera, World, math::vec3};
+
+    #[test]
+    fn a_box_through_a_matrix_is_what_its_corners_give() {
+        let (low, high) = (crate::vec3(-1., 0.5, -2.), crate::vec3(3., 2., 0.25));
+        let turned = crate::Quat::from_euler(0.7, -1.2, 2.1);
+        let matrix =
+            Mat4::from_transform(crate::vec3(4., -3., 0.5), turned, crate::vec3(2., -1., 0.5));
+        let view = Mat4::look_at(crate::vec3(3., 9., -6.), Vec3::ZERO, Vec3::Y);
+        for matrix in [Mat4::IDENTITY, matrix, view * matrix] {
+            let (mut from, mut to) = (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3]));
+            for i in 0..8 {
+                let p = matrix.project(crate::vec3(
+                    if i & 1 == 0 { low.x } else { high.x },
+                    if i & 2 == 0 { low.y } else { high.y },
+                    if i & 4 == 0 { low.z } else { high.z },
+                ));
+                from = from.min(p);
+                to = to.max(p);
+            }
+            let (a, b) = box_through(&matrix, (low, high));
+            for (got, want) in [(a, from), (b, to)] {
+                assert!((got - want).length() < 1e-4, "{got:?} {want:?}");
+            }
+        }
+    }
 
     #[test]
     fn an_untextured_shader_binds_no_texture_an_unskinned_no_joints_and_an_unlit_no_cube() {
