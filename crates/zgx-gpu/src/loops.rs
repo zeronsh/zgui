@@ -50,6 +50,95 @@ pub(crate) struct LoopSheet {
     /// fraction only once they hold still, not through a slide.
     seen: Rect,
 }
+/// What a layer shows over the window's frame: read back with it, so a
+/// capture of the frame shows what the window does (`ShownFrame::read`).
+pub(crate) enum OverFrame {
+    /// A loop's sheet, its corner at this pixel of the frame.
+    Loop {
+        buffer: Rc<Buffer>,
+        at: (i32, i32),
+        cell: (u32, u32),
+        columns: u32,
+        starts: Vec<u32>,
+        frames: u32,
+        fps: f32,
+        started: std::time::Instant,
+        opacity: f32,
+    },
+    /// The caret: this box of pixels, premultiplied BGRA.
+    Caret {
+        rect: (i32, i32, i32, i32),
+        color: [u8; 4],
+    },
+}
+impl OverFrame {
+    /// Draws itself over `bytes`, `size` pixels of the frame from `origin`,
+    /// premultiplied BGRA.
+    pub(crate) fn draw(&self, bytes: &mut [u8], origin: (i32, i32), size: (i32, i32)) {
+        let (width, height) = size;
+        let mut over = |x: i32, y: i32, source: [u8; 4], opacity: u32| {
+            let (x, y) = (x - origin.0, y - origin.1);
+            if x < 0 || y < 0 || x >= width || y >= height {
+                return;
+            }
+            let at = (y * width + x) as usize * 4;
+            let keep = 255 - source[3] as u32 * opacity / 255;
+            for channel in 0..4 {
+                bytes[at + channel] = (source[channel] as u32 * opacity / 255
+                    + bytes[at + channel] as u32 * keep / 255)
+                    .min(255) as u8;
+            }
+        };
+        match self {
+            Self::Caret { rect, color } => {
+                for y in rect.1..rect.1 + rect.3 {
+                    for x in rect.0..rect.0 + rect.2 {
+                        over(x, y, *color, 255);
+                    }
+                }
+            }
+            Self::Loop {
+                buffer,
+                at,
+                cell,
+                columns,
+                starts,
+                frames,
+                fps,
+                started,
+                opacity,
+            } => {
+                // The frame it shows now, on the loop's clock.
+                let frame = (started.elapsed().as_secs_f64() * *fps as f64) as u64 % *frames as u64;
+                let index = starts.partition_point(|start| *start as u64 <= frame) - 1;
+                let (left, top) = (
+                    (index as u32 % columns * cell.0) as usize,
+                    (index as u32 / columns * cell.1) as usize,
+                );
+                let surface = objc2_core_foundation::CFRetained::as_ptr(&buffer.surface)
+                    .as_ptr()
+                    .cast::<std::ffi::c_void>()
+                    .cast_const();
+                let opacity = (*opacity * 255.).round() as u32;
+                // SAFETY: a live surface (held) of four bytes a pixel, and
+                // no longer drawn into: its frames were waited for in `shown`.
+                unsafe {
+                    crate::iosurface::with_pixels(surface, |pixels, _, _, stride| {
+                        for y in 0..cell.1 as usize {
+                            let row = &pixels[(top + y) * stride + left * 4..];
+                            for x in 0..cell.0 as usize {
+                                let source =
+                                    [row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]];
+                                over(at.0 + x as i32, at.1 + y as i32, source, opacity);
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
 impl LoopSheet {
     fn key(&self) -> u64 {
         self.node.number() as u64
@@ -100,6 +189,57 @@ impl LoopSheet {
 }
 
 impl GpuRenderer {
+    /// What layers show over the window's frames now (`OverFrame`). Empty,
+    /// and nothing made, for a window with neither.
+    pub(crate) fn over_frames(&self) -> Vec<OverFrame> {
+        let scale = self.scale;
+        let mut over: Vec<OverFrame> = self
+            .loop_sheets
+            .iter()
+            .map(|sheet| OverFrame::Loop {
+                buffer: sheet.buffer.clone(),
+                at: (
+                    (sheet.frame.0 * scale).round() as i32,
+                    (sheet.frame.1 * scale).round() as i32,
+                ),
+                cell: sheet.cell,
+                columns: sheet.columns,
+                starts: sheet.starts.clone(),
+                frames: sheet.baked.frames.len() as u32,
+                fps: sheet.baked.fps,
+                started: sheet.baked.started,
+                opacity: sheet.opacity,
+            })
+            .collect();
+        if let Some(caret) = self
+            .layer_present
+            .as_ref()
+            .and_then(|present| present.caret)
+            .filter(|caret| caret.shown)
+        {
+            let (x, y, width, height) = caret.rect;
+            let scale = scale as f64;
+            let [r, g, b, a] = caret.color;
+            let byte = |value: f64| (value * a * 255.).round() as u8;
+            over.push(OverFrame::Caret {
+                rect: (
+                    (x * scale).round() as i32,
+                    (y * scale).round() as i32,
+                    (width * scale).round() as i32,
+                    (height * scale).round() as i32,
+                ),
+                color: [byte(b), byte(g), byte(r), (a * 255.).round() as u8],
+            });
+        }
+        over
+    }
+    /// Test hook: the frame shown, without what layers show over it.
+    #[doc(hidden)]
+    pub fn debug_bare_pixels(&self) -> Option<(u32, u32, Vec<u8>)> {
+        let mut frame = self.shown_frame()?;
+        frame.over.clear();
+        frame.read(0, 0, u32::MAX, u32::MAX)
+    }
     /// Test hook: the surface of each loop's sheet.
     #[doc(hidden)]
     pub fn debug_loop_sheets(&self) -> Vec<u32> {

@@ -11183,6 +11183,7 @@ impl GpuRenderer {
                 .drawable
                 .then(|| self.metal_inflight.borrow().clone())
                 .flatten(),
+            over: self.over_frames(),
         })
     }
     /// How long the GPU took to run the frame last presented, when it was
@@ -11798,6 +11799,8 @@ pub struct ShownFrame {
     /// The frame's work, if it may still run: a drawable's frame is not
     /// waited for as it presents (`render_direct`), so reading waits.
     pending: Option<metal_frame::CommandBuffer>,
+    /// What layers show over it: a read shows what the window does.
+    pub(crate) over: Vec<loops::OverFrame>,
 }
 #[cfg(target_os = "macos")]
 impl ShownFrame {
@@ -11821,7 +11824,7 @@ impl ShownFrame {
             .cast_const();
         // SAFETY: a live surface (held), BGRA. It was shown, and its frame's
         // work is complete (waited for above, or before it was shown).
-        unsafe {
+        let read = unsafe {
             iosurface::with_pixels(surface, |bytes, full_w, full_h, stride| {
                 let (x, y) = (x as usize, y as usize);
                 let w = (width as usize).min(full_w.saturating_sub(x));
@@ -11835,7 +11838,12 @@ impl ShownFrame {
                 })
             })
             .flatten()
+        };
+        let (w, h, mut pixels) = read?;
+        for over in &self.over {
+            over.draw(&mut pixels, (x as i32, y as i32), (w as i32, h as i32));
         }
+        Some((w, h, pixels))
     }
 }
 /// `rect` less `cut`, as up to four rectangles pushed to `out`.

@@ -42,6 +42,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- **A capture of a window's frame shows its loops and caret** (zgx-gpu; macOS). `zgx inspect` captures and `Ui::snapshot` read the frame Metal drew, so what Core Animation plays over it (a baked loop, the blinking caret) was missing: an agent saw a page with its spinner gone. They now draw it in, at its current frame.
 - **A small looping animation no longer keeps a window drawing** (zgx-gpu, zgx-script; macOS). A spinner or pulsing dot declared with `anime.animate { loop = true, frameRate = … }` on `opacity` or `shaderTime` drew a frame each tick, and any drawn frame keeps about 176 MB of Metal driver memory for 8–13 s on M5 Macs, so one spinner held it for as long as it spun. Such a loop is now drawn once into a small sheet and played by Core Animation: no frames, no wakes. A gallery page with a spinner went from ~340 to ~170 MiB, and app + WindowServer CPU fell 1.7–1.9 points at 60 and 120 Hz. Nothing changes in an app: a loop that a layer couldn't show exactly (cut by a clip or a fade's band, painted over, under a layer, in a popup, large, or watched by a script) draws as it did, and in a `trace` build `zgx inspect switch baked_loops off` turns it off.
 
 - **Pages of flex containers peak lower** (zgx): each container on the advanced layout path gets a layout tree the size of its children rather than taffy's 16 slots, about 4 MB less at the peak on a 21-page gallery, 0.48 → 0.12 MB allocated per page switch at that site.

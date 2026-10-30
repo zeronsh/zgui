@@ -7,7 +7,7 @@ a real window of zgx-run.
 A Luau app shows a shader ring and a pulsing dot, both `anime.animate` loops
 at 30 fps. The app must present no frame while they play (`ZGX_PRESENT_LOG`),
 spend almost no CPU, and still animate: captures over two seconds differ, at
-the loops alone. Its footprint then falls past the driver's hold (the Metal
+the loops alone, and a linear ramp's frames show in order. Its footprint then falls past the driver's hold (the Metal
 driver keeps about 176 MB for a command queue some 8 s after it last ran, M5). `ZGX_PROBE_DIFFERENT=1` is
 for a machine without that hold (the M1): it skips the footprint check.
 
@@ -28,6 +28,8 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+# The ramp's middle, in pixels of a window capture at 2x (title bar included).
+RAMP_X, RAMP_Y = 120, 374
 APP = """
 local RING = ui.shader([[
 fn fill(input:FillInput)->vec4<f32> {
@@ -48,6 +50,13 @@ return ui.column {
         end,
     },
     ui.div {
+        id = "ramp", w = 40, h = 40, shrink = 0, bg = "#ffffff",
+        on_mount = function(el)
+            anime.animate(el, { opacity = { 1, 0.1 }, duration = 4000, ease = "linear",
+                loop = true, frameRate = 30 })
+        end,
+    },
+    ui.div {
         id = "dot", w = 12, h = 12, shrink = 0, rounded = 6, bg = "#30d060",
         on_mount = function(el)
             anime.animate(el, { opacity = { 1, 0.5 }, duration = 200, ease = "steps(6)",
@@ -56,6 +65,16 @@ return ui.column {
     },
 }
 """
+
+
+def pixel_level(png):
+    """The red level at the ramp's middle in a capture (`sips` reads no pixels:
+    a 1-pixel crop as raw BMP does)."""
+    crop = png.with_suffix('.bmp')
+    subprocess.run(['sips', '-s', 'format', 'bmp', '-c', '1', '1', '--cropOffset', str(RAMP_Y), str(RAMP_X),
+                    str(png), '--out', str(crop)], capture_output=True, check=True)
+    data = crop.read_bytes()
+    return data[int.from_bytes(data[10:14], 'little') + 2]
 
 
 def main():
@@ -102,6 +121,20 @@ def main():
                 diff = json.loads(subprocess.run([str(pixels), 'diff', str(a), str(b)], capture_output=True, text=True).stdout)
                 changed += diff.get('differing', 0) > 0
             print(f'presents while playing {drawn}; captures that changed {changed}/4; CPU time {cpu_before} -> {cpu()}')
+            # The ramp's sheet has many rows, read in order: a linear fade
+            # shows as steady steps, one wrap at most. (A still can't show
+            # rows played out of order; only the sequence can.)
+            ramp = []
+            for at in range(12):
+                shot = stage / f'ramp{at}.png'
+                subprocess.run([str(pixels), 'capture', str(app.pid), str(shot)], capture_output=True, check=True)
+                ramp.append(pixel_level(shot))
+                time.sleep(0.25)
+            print('ramp levels', ramp)
+            steps = [b - a for a, b in zip(ramp, ramp[1:])]
+            rises = [s for s in steps if s > 3]
+            if len(rises) > 1:
+                sys.exit(f'FAIL: the loop plays out of order: {steps}')
             if drawn > 0:
                 sys.exit('FAIL: the app presented frames while its loops played')
             if changed < 2:

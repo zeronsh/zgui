@@ -85,7 +85,7 @@ impl Window {
     }
     /// The frame's pixel at (`x`, `y`) points, red and blue.
     fn pixel(&mut self, x: usize, y: usize) -> (u8, u8) {
-        let (width, _, pixels) = self.gpu.shown_pixels().expect("a surface shown");
+        let (width, _, pixels) = self.gpu.debug_bare_pixels().expect("a surface shown");
         let at = (y * 2 * width as usize + x * 2) * 4;
         (pixels[at + 2], pixels[at])
     }
@@ -108,6 +108,36 @@ fn a_loop_leaves_the_frames_and_nothing_presents_while_it_plays() {
         window.show();
     }
     assert_eq!(window.gpu.debug_metal_frames(), drawn);
+}
+
+#[cfg(target_os = "macos")]
+fn a_read_of_the_frame_shows_the_loop_as_the_window_does() {
+    let mut window = Window::plain(40., 40.);
+    // Not in the frame itself; in what reads it, red over the blue.
+    assert_eq!(window.pixel(50, 50), (0, 255));
+    let (width, _, pixels) = window.gpu.shown_pixels().unwrap();
+    let at = (100 * width as usize + 100) * 4;
+    assert!(pixels[at + 2] > 120, "red {}", pixels[at + 2]);
+    // Outside its box, the frame as it was.
+    let beside = (100 * width as usize + 160) * 4;
+    assert_eq!((pixels[beside + 2], pixels[beside]), (0, 255));
+    // A region read from its middle finds it there too.
+    let frame = window.gpu.shown_frame().unwrap();
+    let (_, _, part) = frame.read(100, 100, 4, 4).unwrap();
+    assert!(part[2] > 120, "red {}", part[2]);
+
+    // The caret, shown or not.
+    let caret = |shown| zgx_gpu::Caret {
+        rect: (10., 10., 2., 20.),
+        color: [0., 1., 0., 1.],
+        shown,
+    };
+    window.gpu.set_caret(Some(caret(true)));
+    let (width, _, pixels) = window.gpu.shown_pixels().unwrap();
+    assert_eq!(pixels[(30 * width as usize + 22) * 4 + 1], 255, "the caret");
+    window.gpu.set_caret(Some(caret(false)));
+    let (width, _, pixels) = window.gpu.shown_pixels().unwrap();
+    assert_eq!(pixels[(30 * width as usize + 22) * 4 + 1], 0, "hidden");
 }
 
 #[cfg(target_os = "macos")]
@@ -271,6 +301,7 @@ fn main() {
     #[cfg(target_os = "macos")]
     {
         a_loop_leaves_the_frames_and_nothing_presents_while_it_plays();
+        a_read_of_the_frame_shows_the_loop_as_the_window_does();
         what_a_layer_would_show_wrongly_stays_in_the_frames();
         a_new_look_or_scale_draws_the_sheet_again();
         a_sheet_goes_with_its_node_and_its_loop();
