@@ -20,11 +20,20 @@ fn tools(name: &str, with_run: bool) -> PathBuf {
 }
 fn zgx(dir: &std::path::Path, args: &[&str]) -> (Option<i32>, String) {
     // No zgx-run on PATH: only the one beside counts.
-    let out = Command::new(dir.join("zgx"))
-        .args(args)
-        .env("PATH", dir.join("empty"))
-        .output()
-        .unwrap();
+    // Just copied: a test forking meanwhile holds the copy open for writing
+    // until it execs, and running it then fails, for a moment.
+    let out = loop {
+        let run = Command::new(dir.join("zgx"))
+            .args(args)
+            .env("PATH", dir.join("empty"))
+            .output();
+        match run {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            run => break run.unwrap(),
+        }
+    };
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
