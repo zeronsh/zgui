@@ -388,6 +388,14 @@ impl Inner {
         }
         out
     }
+    /// Whether any object has a skin or morph weights.
+    pub(crate) fn posing(&self) -> bool {
+        !(self.skins.is_empty() && self.morph_weights.is_empty())
+    }
+    /// Whether any object is double-sided or cut out.
+    pub(crate) fn has_surfaces(&self) -> bool {
+        !self.surfaces.is_empty()
+    }
     /// Object `index`'s textures.
     fn maps(
         &self,

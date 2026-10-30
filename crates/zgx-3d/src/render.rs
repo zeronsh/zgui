@@ -290,8 +290,9 @@ impl Viewport for Renderer {
         // Skinned meshes' joint matrices, one after another; each mesh's
         // instance says where its own start.
         let skinning = gpu.skinning;
-        let skinned = |d: &crate::world::Drawn| skinning && d.palette.is_some();
-        let morphing = |d: &crate::world::Drawn| skinning && d.morph.is_some();
+        let posing = skinning && world.posing();
+        let skinned = |d: &crate::world::Drawn| posing && d.palette.is_some();
+        let morphing = |d: &crate::world::Drawn| posing && d.morph.is_some();
         let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
         let instances: Vec<Instance> = drawn
             .iter()
@@ -359,7 +360,7 @@ impl Viewport for Renderer {
         // What they draw with, kept and marked used. (Meshes sharing it are
         // mostly neighbours by now.)
         let mut last = None;
-        for (d, &((_, set), _)) in drawn.iter().zip(&order) {
+        for (d, ((_, set), _)) in drawn.iter().zip(&order) {
             if last == Some((d.geometry.id(), set)) {
                 continue;
             }
@@ -449,11 +450,12 @@ impl Viewport for Renderer {
         }
         // Each set of maps bound once, against stand-ins where a map is
         // missing. (Meshes sharing one are mostly neighbours by now.)
-        let mut last = [0; MAPS];
-        for (d, &((_, key), _)) in drawn.iter().zip(&order) {
-            if std::mem::replace(&mut last, key) == key || key == [0; MAPS] {
+        let mut last = &[0; MAPS];
+        for (d, ((_, key), _)) in drawn.iter().zip(&order) {
+            if std::mem::replace(&mut last, key) == key || *key == [0; MAPS] {
                 continue;
             }
+            let key = *key;
             let stand_ins = gpu.stand_ins.get_or_insert_with(|| {
                 let flat = |rgba: [u8; 4], srgb| {
                     let texture = crate::Texture::from_rgba8(1, 1, rgba.to_vec()).unwrap();
@@ -531,6 +533,9 @@ impl Viewport for Renderer {
             masked: d.surface.alpha_cutoff.is_some() && d.maps[0].is_some(),
             placed: placed(d),
         };
+        // Of one geometry and maps, a world without poses or surfaces has
+        // one variant.
+        let one_variant = !posing && !world.has_surfaces();
         let mut runs: Vec<Run> = Vec::new();
         let mut start = 0;
         while start < drawn.len() {
@@ -549,7 +554,7 @@ impl Viewport for Renderer {
                         d.geometry.id() == geometry
                             && translucent(d) == glass
                             && *set == maps
-                            && variant_of(d) == variant
+                            && (one_variant || variant_of(d) == variant)
                     })
                     .count();
             runs.push(Run {
