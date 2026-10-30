@@ -2247,6 +2247,10 @@ fn contents_style(mut own: Style, lead: &Style) -> Style {
     own.absolute = lead.absolute;
     own.width = lead.width;
     own.height = lead.height;
+    // A default size stays a default: a scroll view in a `switch` stretches
+    // as it does on its own.
+    own.intrinsic_width = lead.intrinsic_width;
+    own.intrinsic_height = lead.intrinsic_height;
     own.width_percent = lead.width_percent;
     own.height_percent = lead.height_percent;
     own.min_width = lead.min_width;

@@ -1488,6 +1488,107 @@ fn a_following_list_follows_its_first_rows_and_after_being_cleared() {
     }
 }
 
+/// A scroll view or list in a `show`, `switch` or `presence` stretches as it
+/// does on its own: their box lays out as the view they hold.
+#[test]
+fn every_scroll_kind_stretches_in_every_dynamic_region() {
+    let mut h = Harness::inline(
+        r##"local page = ui.state("page", "a")
+        local yes = ui.state("yes", true)
+        local kinds = {
+            scroll_x = function(id) return ui.scroll_x { id = id, ui.column { w = 900, h = 40 } } end,
+            scroll = function(id) return ui.scroll { id = id, ui.column { h = 40 } } end,
+            list = function(id) return ui.list { id = id, count = 1, height = 20,
+                row = function() return ui.text { "x" } end } end,
+            variable = function(id) return ui.list { id = id, heights = { 20 },
+                row = function() return ui.text { "x" } end } end,
+        }
+        local out = {}
+        for kind, make in kinds do
+            table.insert(out, make("plain-" .. kind))
+            table.insert(out, ui.show(yes, make("show-" .. kind)))
+            table.insert(out, ui.switch(page, { a = make("switch-" .. kind) }))
+            table.insert(out, ui.presence(page, function() return make("presence-" .. kind) end))
+        end
+        return ui.column { w = 600, h = 3000, table.unpack(out) }"##,
+    );
+    h.ui.prepare_frame();
+    for kind in ["scroll_x", "scroll", "list", "variable"] {
+        for region in ["plain", "show", "switch", "presence"] {
+            let id = format!("{region}-{kind}");
+            let node = h.find(&id).unwrap();
+            assert_eq!(h.ui.scene.borrow().bounds(node).width, 600., "{id}");
+        }
+    }
+}
+
+/// `show`, `switch` and `presence` are no box of their own: what a node says
+/// of its size and place holds there as it does anywhere.
+#[test]
+fn a_dynamic_region_changes_nothing_about_how_a_node_lays_out() {
+    let cases = [
+        ("width percent", r#"w = "50%", h = 20"#),
+        ("height percent", r#"w = 40, h = "50%""#),
+        ("full", "w_full = true, h_full = true"),
+        ("grow", "grow = 1"),
+        ("no shrink", "w = 900, h = 20, shrink = 0"),
+        (
+            "min and max",
+            "min_w = 120, max_w = 130, min_h = 30, max_h = 40",
+        ),
+        ("aspect", "w = 100, aspect = 2"),
+        ("margin", "w = 40, h = 20, m = 7"),
+        ("basis", "basis = 80, h = 20"),
+        ("align self", r#"w = 40, h = 20, self = "end""#),
+        (
+            "absolute",
+            "absolute = true, top = 11, left = 13, w = 40, h = 20",
+        ),
+        (
+            "absolute insets",
+            "absolute = true, top = 5, bottom = 7, left = 9, right = 11",
+        ),
+        (
+            "relative",
+            "relative = true, top = 11, left = 13, w = 40, h = 20",
+        ),
+    ];
+    for row in [false, true] {
+        for (name, props) in cases {
+            let container = if row { "ui.row" } else { "ui.column" };
+            let mut h = Harness::inline(&format!(
+                r##"local yes = ui.state("yes", true)
+                local page = ui.state("page", "a")
+                local function make(id)
+                    return ui.column {{ id = id, {props} }}
+                end
+                local function box(child)
+                    return {container} {{ w = 300, h = 200, relative = true, child,
+                        ui.column {{ w = 10, h = 10 }} }}
+                end
+                return ui.column {{
+                    box(make("plain")),
+                    box(ui.show(yes, make("show"))),
+                    box(ui.switch(page, {{ a = make("switch") }})),
+                    box(ui.presence(page, function() return make("presence") end)),
+                }}"##
+            ));
+            h.ui.prepare_frame();
+            assert_eq!(h.host.error().get(), None, "{name}");
+            let at = |h: &mut Harness, id: &str, index: f32| {
+                let node = h.find(id).unwrap();
+                let b = h.ui.scene.borrow().transformed_bounds(node);
+                (b.x, b.y - 200. * index, b.width, b.height)
+            };
+            let plain = at(&mut h, "plain", 0.);
+            for (index, region) in ["show", "switch", "presence"].into_iter().enumerate() {
+                let inside = at(&mut h, region, index as f32 + 1.);
+                assert_eq!(inside, plain, "{name} in a {region}, row {row}");
+            }
+        }
+    }
+}
+
 #[test]
 fn sticky_rows_hold_the_top_until_the_next_arrives() {
     // Sections of a 30-point header and three 10-point rows, 60 points each.
