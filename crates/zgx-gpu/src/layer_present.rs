@@ -1340,7 +1340,13 @@ impl Layer {
             // its showing 16 ms against 24.5 (M5 Max), 25 against 33 (M1 Max),
             // 10 MiB less, the window server's CPU alike (2026-10-27). Out of
             // phase, on the CVDisplayLink, two had cost it 3-4 points.
-            layer.setMaximumDrawableCount(2);
+            // Scratch (not for merge): `ZGX_DRAWABLE_POOL=3` for a pool of
+            // three (60 Hz frames, off the display link's phase).
+            let pool = match std::env::var("ZGX_DRAWABLE_POOL").as_deref() {
+                Ok("3") => 3,
+                _ => 2,
+            };
+            layer.setMaximumDrawableCount(pool);
             // sRGB, as the tiles' surfaces are tagged.
             // SAFETY: CoreGraphics' constant CFString, read only.
             if let Some(space) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })) {
