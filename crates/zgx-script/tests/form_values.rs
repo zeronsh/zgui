@@ -141,6 +141,122 @@ fn a_controlled_fields_first_text_is_no_step_of_undo() {
 }
 
 #[test]
+fn a_value_the_app_sets_is_no_step_of_undo() {
+    for bound in [
+        r#"value = function() return docs:get()[open:get()] end,
+           on_change = function(text) docs:set_key({ open:peek() }, text) end,"#,
+        r#"value = shown,"#,
+    ] {
+        let mut h = Harness::inline(&format!(
+            r#"local docs = ui.state("docs", {{ a = "first", b = "second" }})
+            local open = ui.state("open", "a")
+            local shown = ui.state("shown", "first")
+            ui.effect(function() shown:set(docs:peek()[open:get()]) end)
+            ui.command {{ id = "other", title = "o", run = function() open:set("b") end }}
+            return ui.column {{
+                ui.textarea {{ id = "note", label = "Note", {bound} }},
+                ui.text {{ id = "shown", function() return if {controlled} then docs:get()[open:get()] else shown:get() end }},
+                ui.text {{ id = "a", function() return docs:get().a end }},
+            }}"#,
+            controlled = bound.contains("on_change"),
+        ));
+        assert_eq!(h.error(), None);
+        h.type_text("note", "!");
+        // Long enough for the state-bound field not to take it as an answer.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        assert!(h.host.run_command("other"));
+        h.frames(2);
+        assert_eq!(h.text("shown"), "second");
+        h.keys("cmd+z");
+        h.frames(2);
+        assert_eq!(
+            h.text("shown"),
+            "second",
+            "the old document isn't undone into it"
+        );
+        h.keys("cmd+shift+z");
+        h.frames(2);
+        assert_eq!(h.text("shown"), "second");
+        h.type_text("note", "?");
+        h.frames(2);
+        assert_eq!(h.text("shown"), "second?");
+        h.keys("cmd+z");
+        h.frames(2);
+        assert_eq!(h.text("shown"), "second", "its own edit still undoes");
+    }
+}
+
+#[test]
+fn a_controlled_fields_answer_keeps_its_history() {
+    let mut h = Harness::inline(
+        r#"local note = ui.state("note", "ab")
+        local typed = ""
+        ui.command { id = "late", title = "l", run = function() note:set(string.upper(typed)) end }
+        return ui.column {
+            ui.textarea {
+                id = "same",
+                label = "Same frame",
+                value = function() return note:get() end,
+                on_change = function(text) note:set(string.upper(text)) end,
+            },
+            ui.textarea {
+                id = "late",
+                label = "Late",
+                value = function() return note:get() end,
+                on_change = function(text) typed = text end,
+            },
+            ui.text { id = "note", "{note}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    // Normalised in the same frame.
+    h.type_text("same", "c");
+    assert_eq!(h.text("note"), "ABC");
+    h.keys("cmd+z");
+    h.frames(2);
+    assert_eq!(h.text("note"), "AB", "undo reaches the edit");
+
+    // Normalised later, by an answer that takes its time.
+    h.type_text("late", "d");
+    h.frames(3);
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    assert!(h.host.run_command("late"));
+    h.frames(2);
+    assert_eq!(h.text("note"), "ABD");
+    h.keys("cmd+z");
+    h.frames(2);
+    assert!(h.host.run_command("late"));
+    h.frames(2);
+    assert_eq!(h.text("note"), "AB", "its history survived the late answer");
+}
+
+#[test]
+fn a_bound_fields_answer_keeps_its_history() {
+    let mut h = Harness::inline(
+        r#"local note = ui.state("note", "ab")
+        ui.effect(function()
+            local text = note:get()
+            if text ~= string.upper(text) then note:set(string.upper(text)) end
+        end)
+        return ui.column {
+            ui.textarea { id = "note", label = "Note", value = note },
+            ui.text { id = "shown", "{note}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.type_text("note", "c");
+    h.frames(2);
+    assert_eq!(h.text("shown"), "ABC");
+    h.keys("cmd+z");
+    h.frames(2);
+    let editor = h.ui.focused_editor().expect("still focused");
+    assert!(
+        editor.editor.borrow_mut().undo(),
+        "typing keeps undo through a trim or a format"
+    );
+}
+
+#[test]
 fn a_controlled_checkbox_shows_its_function_and_asks_on_change() {
     let mut h = Harness::inline(CONTROLLED);
     assert_eq!(h.error(), None);
