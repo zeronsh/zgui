@@ -432,6 +432,7 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   search [query] [--next] [--prev] [--all] [--close]
                        find in page: count, current, the first matches
   zoom [in|out|reset|150%]               the window's zoom and its viewport
+  memory [--human]                       what the app holds, a line each, as JSON
   sleep <ms>           raw <json>
   help                 what the app answers
   mcp                  serve these as MCP tools on stdio, for agents
@@ -444,6 +445,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
     use zgx_script::{Value, inspect_client};
     let mut app: Option<u32> = None;
     let mut json = false;
+    let mut human = false;
     let mut words: Vec<String> = Vec::new();
     let mut flags: Vec<(String, Option<String>)> = Vec::new();
     // Where `snapshot` copies its picture, or `record stop` writes its tape.
@@ -459,6 +461,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
                 }
             },
             "--json" => json = true,
+            "--human" => human = true,
             "-h" | "--help" => {
                 println!("{INSPECT_USAGE}");
                 return ExitCode::SUCCESS;
@@ -628,7 +631,10 @@ fn inspect(args: Vec<String>) -> ExitCode {
             eprintln!("zgx inspect: {out}: {error}");
             return ExitCode::FAILURE;
         }
-        if !json {
+        if cmd == "memory" && !json && !human {
+            // For agents first: its lines, as JSON. `--human` for the table.
+            println!("{}", data.cloned().unwrap_or_default().to_json());
+        } else if !json {
             let text = parsed
                 .field("text")
                 .map(Value::to_string)
@@ -696,6 +702,12 @@ const TOOLS: &[Tool] = &[
             ("close", "boolean", false),
         ],
         "Find in page, as Cmd/Ctrl+F: case and accents ignored, all text including fields and virtual lists' unmounted rows. Answers the count, the current match and the first n (5; all with all): where each is (@node, or a list's row), its range, the text around it, its box if shown. next/prev step the current match in the window.",
+    ),
+    (
+        "zgx_memory",
+        "memory",
+        &[],
+        "What the app holds, by what holds it, one line each: the process's footprint and its allocator, each Luau VM's heap, decoded pictures shown and cached, text caches, the glyph atlas, GPU textures, layers and buffers, scene nodes and the frame log. Compare two answers to see which line grew.",
     ),
     (
         "zgx_zoom",

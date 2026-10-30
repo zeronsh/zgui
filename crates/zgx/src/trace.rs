@@ -106,6 +106,34 @@ thread_local! {
     static LOG: RefCell<Log> = RefCell::default();
 }
 
+/// The frame log's lines of a memory report: its frames, and the names of
+/// the effects it can tell apart.
+pub fn memory(report: &mut crate::memory::Report) {
+    LOG.with_borrow(|log| {
+        let frame = |f: &Frame| {
+            size_of::<Frame>()
+                + f.writes.capacity() * size_of::<(usize, u32)>()
+                + f.runs.capacity() * size_of::<Run>()
+                + f.phases.capacity() * size_of::<(&'static str, u64, f32)>()
+                + f.notes.capacity() * size_of::<Rc<str>>()
+        };
+        let frames: usize = log.frames.iter().map(frame).sum();
+        report.add(
+            "devtools",
+            "frame log",
+            Some(log.frames.len()),
+            Some(frames),
+        );
+        let names = log.names.values().map(|name| name.len() + 16).sum();
+        report.add(
+            "devtools",
+            "effect names",
+            Some(log.names.len()),
+            Some(names),
+        );
+    });
+}
+
 /// Name effect `effect` for traces (`@12 binding`, `app.luau:30 effect`).
 pub fn name(effect: u64, name: impl Into<Rc<str>>) {
     if enabled() {

@@ -515,6 +515,40 @@ fn frames_read_since_a_mark_with_the_runs_asked_for_the_gpu_and_the_engines_note
 }
 
 #[test]
+fn memory_says_what_holds_it_a_line_each() {
+    let (app, session) = app();
+    let answer = ask(&app, &session, r#"{"cmd":"memory"}"#);
+    let table = text(&answer);
+    assert!(table.contains("scene nodes mounted"), "{table}");
+    let line = |area: &str, name: &str| {
+        answer
+            .field("data")
+            .unwrap()
+            .list()
+            .iter()
+            .find(|l| {
+                l.field("area").map(Value::to_string).as_deref() == Some(area)
+                    && l.field("name")
+                        .is_some_and(|n| n.to_string().starts_with(name))
+            })
+            .unwrap_or_else(|| panic!("no {area} {name}: {}", answer.to_json()))
+            .clone()
+    };
+    let number = |line: Value, field: &str| line.field(field).and_then(Value::as_f64).unwrap();
+    assert_eq!(
+        number(line("scene", "nodes mounted"), "n") as usize,
+        app.ui.scene.borrow().len()
+    );
+    assert!(number(line("scene", "slots"), "bytes") > 0.);
+    assert!(number(line("luau", "app"), "bytes") > 100_000.);
+    // Nothing shown, nothing cached.
+    assert_eq!(number(line("images", "decoded shown"), "n"), 0.);
+    assert_eq!(number(line("images", "decoded cached"), "bytes"), 0.);
+    // Frames kept for `frames`, here where devtools are.
+    line("devtools", "frame log");
+}
+
+#[test]
 fn switches_are_listed_and_switched_by_name() {
     let (app, session) = app();
     let listed = text(&ask(&app, &session, r#"{"cmd":"switch"}"#));

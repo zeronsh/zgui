@@ -101,6 +101,41 @@ fn save_png(image: &zgx::image::ImageData) -> Result<std::path::PathBuf, String>
     Ok(path)
 }
 
+/// A memory report as a table, and as a list of lines: `area`, `name`, and
+/// `n` (entries) and `bytes` where the line can tell.
+fn memory_answer(report: &zgx::memory::Report) -> (String, Value) {
+    let named = |line: &zgx::memory::Line| format!("{} {}", line.area, line.name);
+    let width = report
+        .lines
+        .iter()
+        .map(|l| named(l).len())
+        .max()
+        .unwrap_or(0);
+    let mut text = String::new();
+    for line in &report.lines {
+        let entries = line.entries.map_or(String::new(), |n| n.to_string());
+        let bytes = line.bytes.map_or(String::new(), |bytes| {
+            format!("{:.1} MB", bytes as f64 / (1024. * 1024.))
+        });
+        let name = named(line);
+        text.push_str(&format!("{name:width$}  {entries:>8}  {bytes:>10}\n"));
+    }
+    let lines = report.lines.iter().map(|line| {
+        let mut fields = vec![
+            ("area", Value::from(line.area)),
+            ("name", Value::from(line.name.as_str())),
+        ];
+        if let Some(entries) = line.entries {
+            fields.push(("n", Value::Num(entries as f64)));
+        }
+        if let Some(bytes) = line.bytes {
+            fields.push(("bytes", Value::Num(bytes as f64)));
+        }
+        Value::record(fields)
+    });
+    (text, Value::List(lines.collect::<Vec<_>>().into()))
+}
+
 /// The window is hidden, minimized or covered: what devtools say of it.
 const NOT_PRESENTING: &str = "the window isn't presenting (hidden, minimized or covered): it \
      draws no frames, and input waits for it until it shows";
@@ -362,6 +397,7 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   switch  [name] [on]                            list fast paths, or switch one on or off, to compare
   search  [query] [next] [prev] [all] [n=5] [close]  find in page: the count, the current match, the first n
   zoom    [to: in|out|reset|1.5|150%]            the window's zoom (Cmd/Ctrl +, -, 0) and its viewport in points
+  memory                                         what the app holds, by what holds it: a line each
   wait    target [text] [gone] [timeout_ms=3000] until it shows (the text), or is gone
   sleep   ms                                     let the app run
 targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b (inside)";
@@ -934,6 +970,20 @@ impl Session {
                         }))
                     }
                 };
+            }
+            "memory" => {
+                let session = self.clone();
+                return Reply::Later(Box::pin(async move {
+                    let mut report = zgx::memory::from_host().await;
+                    let Some(ui) = session.0.ui.upgrade() else {
+                        return failed("the window has closed");
+                    };
+                    ui.scene.borrow().memory(&mut report);
+                    zgx::trace::memory(&mut report);
+                    session.0.host.memory(&mut report);
+                    let (text, data) = memory_answer(&report);
+                    ok(text, data)
+                }));
             }
             "sleep" => {
                 let ms = number("ms").unwrap_or(100.).clamp(0., 60_000.);

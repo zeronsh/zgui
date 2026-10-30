@@ -899,6 +899,7 @@ impl Application {
         winit::platform::macos::EventLoopBuilderExtMacOS::with_default_menu(&mut event_loop, false);
         let event_loop = event_loop.build()?;
         zgx::profile::mark("event loop");
+        zgx::memory::set_hosted();
         let proxy = event_loop.create_proxy();
         let native_events = if let Some(id) = &self.application_id {
             let wake = proxy.clone();
@@ -3810,7 +3811,7 @@ impl Host {
                     frame.time = now + self.frame_interval;
                     self.deliver_frame(frame);
                     if self.tasks.has_ready() {
-                        self.tasks.tick();
+                        self.tick_tasks();
                     }
                 }
                 self.draw()?;
@@ -4698,6 +4699,24 @@ impl Host {
             }
         }
     }
+    /// Runs the tasks that are ready; one may have asked for the window's
+    /// lines of a memory report (`zgx inspect memory`).
+    fn tick_tasks(&mut self) {
+        self.tasks.tick();
+        if zgx::memory::asked() {
+            self.answer_memory();
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn answer_memory(&self) {
+        let mut report = zgx::memory::Report::default();
+        crate::memory::process(&mut report);
+        if let Some(renderer) = &self.renderer {
+            renderer.memory(&mut report);
+        }
+        zgx::memory::answer(report);
+    }
     fn update(&mut self) -> Result<bool, Box<dyn Error>> {
         // Native views' reports (navigation, script replies), and keyboard
         // focus they took or gave back, at this safe point.
@@ -4831,7 +4850,7 @@ impl Host {
             self.tasks.spawn(task);
         }
         if self.tasks.has_ready() {
-            self.tasks.tick();
+            self.tick_tasks();
         }
         #[cfg(any(windows, target_os = "linux"))]
         if let Some(caption) = &mut self.caption {

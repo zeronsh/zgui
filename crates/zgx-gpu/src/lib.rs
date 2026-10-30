@@ -4168,6 +4168,61 @@ impl GpuRenderer {
         #[cfg(not(target_os = "macos"))]
         None
     }
+    /// The renderer's lines of a memory report: text it has prepared and
+    /// rasterized, and what it keeps on the GPU.
+    pub fn memory(&self, report: &mut zgx::memory::Report) {
+        let stats = self.debug_cache_stats();
+        let (lines, measures) = self.text_cache.borrow().bytes();
+        let runs = &self.fonts.borrow().shape_run_cache;
+        report.add(
+            "text",
+            "shaped nodes",
+            Some(stats.shaped_nodes),
+            Some(stats.shaped_bytes),
+        );
+        report.add("text", "prepared lines", None, Some(lines));
+        report.add("text", "measures", None, Some(measures));
+        report.add("text", "shaped runs", Some(runs.len()), Some(runs.bytes()));
+        let images: usize = (self.swash.image_cache.values().flatten())
+            .map(|image| image.data.capacity())
+            .sum();
+        report.add(
+            "text",
+            "rasterized glyphs",
+            Some(stats.swash_images),
+            Some(images),
+        );
+        report.add("text", "glyph outlines", Some(stats.swash_outlines), None);
+        report.add(
+            "gpu",
+            "glyph atlas",
+            Some(stats.atlas_entries),
+            Some(stats.atlas_bytes),
+        );
+        report.add(
+            "gpu",
+            "image textures",
+            Some(stats.image_textures),
+            Some(stats.image_bytes),
+        );
+        report.add(
+            "gpu",
+            "layers",
+            Some(stats.layer_textures),
+            Some(stats.layer_bytes),
+        );
+        report.add("gpu", "canvases", None, Some(stats.canvas_raster_bytes));
+        report.add("gpu", "svgs", None, Some(stats.svg_raster_bytes));
+        report.add(
+            "gpu",
+            "vertex buffers",
+            Some(stats.vertex_buffers),
+            Some(stats.vertex_buffer_bytes),
+        );
+        if let Some(bytes) = self.debug_device_allocated_bytes() {
+            report.add("gpu", "device allocated", None, Some(bytes as usize));
+        }
+    }
     /// What its caches hold now.
     pub fn debug_cache_stats(&self) -> DebugCacheStats {
         let vertex_buffers = self.mapped.as_ref().map_or(1, |ring| ring.borrow().len());

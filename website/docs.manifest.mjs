@@ -156,6 +156,8 @@ export const sets = [
         description: 'One selector syntax for every command and for Rust tests: #id, "name", role:, @n, >>, row n, [n].' },
       { slug: 'reading', src: 'docs/agents/inspect.md', title: 'Reading', sections: ['Reading'], unwrap: true,
         description: 'tree, node, find, state, errors, lint, frames and snapshot: what is on screen and why.' },
+      { slug: 'memory', src: 'docs/agents/inspect.md', title: 'What it holds', sections: ['What it holds'], unwrap: true,
+        description: 'zgx inspect memory: what a running app holds, a line for each holder.' },
       { slug: 'acting', src: 'docs/agents/inspect.md', title: 'Acting', sections: ['Acting'], unwrap: true,
         description: 'click, type, key, scroll, command, set, wait and sleep.' },
       { slug: 'gestures', src: 'docs/agents/inspect.md', title: 'Record and replay gestures', sections: ['Gestures'], unwrap: true,

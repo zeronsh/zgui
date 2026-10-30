@@ -90,6 +90,28 @@ A module's states are named `module.luau::name`; give the name alone when only o
 
 A hidden, minimized or covered window draws no frames (macOS stops a covered window's refreshes): `frames` says so first, and a `replay` is refused rather than answering "0 frames", since its events would only wait for the window. Keep the window in front and uncovered while measuring.
 
+## What it holds
+
+```sh
+zgx inspect memory                    # JSON: a line for each holder
+zgx inspect memory --human            # a table
+```
+
+What the running app holds, measured when asked, with nothing to build or switch on: compare two answers and the line that grew says what to look at. A line is `{"area","name","n","bytes"}`, with `n` (entries) and `bytes` where the holder can tell:
+
+| Area | Lines |
+| --- | --- |
+| `process` | `footprint` (macOS, what Activity Monitor shows), `resident` (Linux) or `private` (Windows) |
+| `heap` | mimalloc's memory committed, at its peak and in use (the gap is what it keeps for later); or the system allocator's in use and free |
+| `gpu` | the glyph atlas, image textures, layers, canvases, SVGs, vertex buffers, and the device's allocations where wgpu counts them |
+| `text` | shaped nodes, prepared lines, measures, shaped runs, rasterized glyphs and outlines |
+| `scene` | nodes mounted, nodes removed and not yet freed, slots |
+| `devtools` | the frame log and the effect names it keeps (`--inspect` only) |
+| `luau` | each VM's heap, as it stands (no collection) |
+| `images` | decoded pictures and SVGs a node shows, and those cached for when one does again |
+
+The areas overlap: `heap` holds `text`, `scene`, `luau` and `images`, and much of `gpu` is in the `process` line only. An area's lines add up; areas don't.
+
 ## Acting
 
 ```sh

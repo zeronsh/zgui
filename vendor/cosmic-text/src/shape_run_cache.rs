@@ -125,6 +125,14 @@ impl ShapeRunCache {
         })
     }
 
+    /// zgx patch: the bytes of the glyphs it holds.
+    pub fn bytes(&self) -> usize {
+        self.cache
+            .values()
+            .map(|(_, glyphs)| glyphs.capacity() * core::mem::size_of::<ShapeGlyph>())
+            .sum()
+    }
+
     /// zgx patch: how many runs it holds.
     pub fn len(&self) -> usize {
         self.cache.len()

@@ -1755,6 +1755,16 @@ impl ScriptHost {
                 .sum()
         })
     }
+    /// The scripts' lines of a memory report: each VM's heap as it stands
+    /// (no collection), and the pictures they show and keep.
+    pub fn memory(&self, report: &mut zgx::memory::Report) {
+        if let Some(loaded) = self.0.current.borrow().clone() {
+            for vm in &loaded._vms {
+                report.add("luau", vm.name.clone(), None, Some(vm.lua.used_memory()));
+            }
+        }
+        self.0.assets.memory(report);
+    }
     /// How many converted values the loaded scripts' VMs keep (each with
     /// its table, until nothing else holds the value): with
     /// `script_memory`, what tells data the scripts hold from data the

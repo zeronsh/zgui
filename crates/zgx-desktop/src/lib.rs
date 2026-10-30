@@ -198,3 +198,4 @@ pub use zgx_gpu::{viewport, wgpu};
 
 mod file_drop;
 mod gpu_stats;
+mod memory;

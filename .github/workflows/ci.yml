@@ -167,6 +167,7 @@ jobs:
         run: |
           fixtures=$(python3 scripts/linux_smokes.py --fixtures)
           cargo build -p zgx-desktop $fixtures --locked
+          cargo build -p zgx-run --locked
           cargo test -p zgx-desktop --lib --no-run --locked
       # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each
       # owns its display or compositor, so they run side by side, eight at

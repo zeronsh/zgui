@@ -86,6 +86,7 @@ pub mod animation;
 pub mod layout;
 
 pub mod image_cache;
+pub mod memory;
 
 pub mod decoration;
 

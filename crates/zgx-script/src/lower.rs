@@ -181,6 +181,40 @@ impl Assets {
     pub(crate) fn trim(&self) {
         self.sweep(0);
     }
+    /// The cache's lines of a memory report: pictures a node shows, and
+    /// those kept within the budget for when one does again.
+    fn memory_of<T>(
+        cached: &HashMap<String, Cached<T>>,
+        kind: &str,
+        report: &mut zgx::memory::Report,
+    ) {
+        let (mut shown, mut shown_bytes, mut kept, mut kept_bytes) = (0, 0, 0, 0);
+        for picture in cached.values() {
+            if Arc::strong_count(&picture.value) > 1 {
+                shown += 1;
+                shown_bytes += picture.bytes;
+            } else {
+                kept += 1;
+                kept_bytes += picture.bytes;
+            }
+        }
+        report.add(
+            "images",
+            format!("{kind} shown"),
+            Some(shown),
+            Some(shown_bytes),
+        );
+        report.add(
+            "images",
+            format!("{kind} cached"),
+            Some(kept),
+            Some(kept_bytes),
+        );
+    }
+    pub(crate) fn memory(&self, report: &mut zgx::memory::Report) {
+        Self::memory_of(&self.images.borrow(), "decoded", report);
+        Self::memory_of(&self.svgs.borrow(), "svg", report);
+    }
     /// Keeps what a node shows (held elsewhere too), and of the rest the
     /// most recently shown while they fit `budget`; drops the others.
     /// Run as nodes unmount and as the host goes idle, never per frame.

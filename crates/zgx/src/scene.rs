@@ -3045,6 +3045,14 @@ impl Scene {
     pub fn len(&self) -> usize {
         self.slots.len() - self.free.len() - self.dead
     }
+    /// The scene's lines of a memory report: nodes mounted, those removed
+    /// and not yet freed (`free_dead`), and the slots they all take.
+    pub fn memory(&self, report: &mut crate::memory::Report) {
+        report.add("scene", "nodes mounted", Some(self.len()), None);
+        report.add("scene", "nodes dying", Some(self.dead), None);
+        let slots = self.slots.capacity() * size_of::<Slot>();
+        report.add("scene", "slots", Some(self.slots.len()), Some(slots));
+    }
     /// The ids of the nodes in the scene, in slot order.
     fn ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.slots.iter().enumerate().filter_map(|(index, slot)| {
