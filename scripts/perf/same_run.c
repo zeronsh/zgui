@@ -26,6 +26,10 @@
 //   many times as the scheduling made (micro-vscroll-variable-luau's count
 //   swung 139.9-141.5 M). Here such a wait lasts, in real time, as long
 //   from now as it asked of this clock.
+// - CLOCK_PROCESS_CPUTIME_ID: the micro benches time their batches by it,
+//   sort what they read and print it, and formatting a float costs what its
+//   digits do (one binary's micro-state moved 7,000 instructions, 0.01%, in
+//   `flt2dec`). Here each read is `STEP` on from the last.
 // - getrandom: std's RandomState seeds every HashMap from it, and a map's
 //   probes and growth move with the seed. Here it gives the same bytes.
 //
@@ -52,7 +56,7 @@ static long raw(long n, long a, long b, long c, long d, long e, long f) {
 
 #define STEP 25000ULL
 
-static unsigned long long now;
+static unsigned long long now, cpu;
 static int real_clock;
 static unsigned long clock_reads, random_calls, futex_waits;
 
@@ -71,6 +75,12 @@ __attribute__((constructor)) static void init(void) {
 }
 
 int clock_gettime(clockid_t clock, struct timespec *tp) {
+    if (clock == CLOCK_PROCESS_CPUTIME_ID && !real_clock) {
+        unsigned long long ns = __atomic_add_fetch(&cpu, STEP, __ATOMIC_SEQ_CST);
+        tp->tv_sec = (time_t)(ns / 1000000000ULL);
+        tp->tv_nsec = (long)(ns % 1000000000ULL);
+        return 0;
+    }
     if (clock != CLOCK_MONOTONIC || real_clock)
         return (int)raw(SYS_clock_gettime, clock, (long)tp, 0, 0, 0, 0);
     __atomic_fetch_add(&clock_reads, 1, __ATOMIC_RELAXED);
