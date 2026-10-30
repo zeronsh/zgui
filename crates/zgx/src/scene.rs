@@ -1819,6 +1819,8 @@ struct ColdMaps {
     raised: NodeMap<i32>,
     /// Nodes that stick in their scroll view (`set_sticky`).
     sticky: NodeMap<Sticky>,
+    /// Sizes worked out from the containing block (`set_size_calcs`).
+    size_calcs: NodeMap<std::sync::Arc<crate::size_calc::SizeCalcs>>,
 }
 /// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
 #[derive(Clone, Copy)]
@@ -6022,6 +6024,7 @@ impl Scene {
                 || cold.raised.contains_key(&id)
                 || cold.stacked.contains_key(&id)
                 || cold.sticky.contains_key(&id)
+                || cold.size_calcs.contains_key(&id)
         });
         self.set_special(id, COLD, cold);
     }
@@ -6090,6 +6093,45 @@ impl Scene {
             self.restack(parent);
         }
         self.invalidate(id, COMPOSITE);
+    }
+    /// Work what `sizes` sets of `id`'s size out from its containing block,
+    /// over its style's. Such a node has layout options, which a parent lays
+    /// it out with taffy for: the parent works these out for taffy from its
+    /// children's percentage bases (`rebase`), and measures it at the result.
+    pub(crate) fn set_size_calcs(
+        &mut self,
+        id: NodeId,
+        sizes: Option<&std::sync::Arc<crate::size_calc::SizeCalcs>>,
+    ) {
+        let held = self.cold.as_ref().and_then(|cold| cold.size_calcs.get(&id));
+        if held == sizes {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match sizes {
+            Some(sizes) => {
+                maps.size_calcs.insert(id, sizes.clone());
+            }
+            None => {
+                maps.size_calcs.remove(&id);
+            }
+        }
+        self.sync_cold(id);
+        // What layout mapped from it is out of date.
+        let node = self.node_mut(id);
+        node.style_writes = node.style_writes.wrapping_add(1);
+        self.invalidate_layout(id);
+    }
+    /// The sizes `set_size_calcs` gave `id`.
+    pub(super) fn size_calcs(&self, id: NodeId) -> Option<&crate::size_calc::SizeCalcs> {
+        let cold = self.cold.as_ref()?;
+        cold.size_calcs.get(&id).map(|sizes| &**sizes)
+    }
+    /// Whether any node has sizes `set_size_calcs` gave it.
+    pub(super) fn any_size_calcs(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.size_calcs.is_empty())
     }
     /// Move each sticky node to where its scroll view's position puts it,
     /// now that layout has placed everything. After the content's own
@@ -6186,6 +6228,7 @@ impl Scene {
             maps.raised.remove(&id);
             maps.stacked.remove(&id);
             maps.sticky.remove(&id);
+            maps.size_calcs.remove(&id);
         }
     }
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.

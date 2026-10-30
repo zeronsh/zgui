@@ -49,6 +49,8 @@ mod scene3d_off;
 mod script_crashes;
 #[path = "../selection.rs"]
 mod selection;
+#[path = "../size_calc.rs"]
+mod size_calc;
 #[path = "../stack.rs"]
 mod stack;
 #[path = "../sticky.rs"]

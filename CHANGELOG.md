@@ -18,6 +18,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Added
 
+- **Size math** (zgx, zgx-script): `w`, `h` and their limits take `calc(100% - 24px)`, `min(…)`, `max(…)` and `clamp(…)` (`.w_calc("…".parse()?)` in Rust), worked out from the containing block as CSS's are, with no `on_resize` writing state.
 - **A `ui.list` row taller than `height` is a layout warning** (zgx): it ran over the next row silently.
 - **Spans follow state, and take any font** (zgx-script): a span's `color`, `bg`, `text_size`, `weight`, `bold`, `italic`, `underline`, `strike` and `font` take a state or a function, as its text does, so a run restyles without rebuilding its paragraph's node or losing a selection in it, and `font` takes what `ui.text`'s does ([text](docs/reference/text.md)).
 - **Sticky elements in scroll views** (zgx, zgx-script): `.sticky_top(n)` and `sticky_top = n` hold an element `n` below the top of the `ui.scroll` around it as it scrolls past, inside its parent, as CSS's `position: sticky` with `top`: section headers, with no script running as it scrolls. Vertical scroll views only.

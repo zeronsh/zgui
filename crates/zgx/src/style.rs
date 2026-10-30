@@ -735,6 +735,8 @@ pub(crate) struct ColdStyles {
     pub(crate) sticky_top: Option<f32>,
     /// `Styled::object_position`.
     pub(crate) object_position: Option<(f32, f32)>,
+    /// `Styled::w_calc` and the like.
+    pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
 }
 /// How an image sits in its box: `Styled::object_fit` and `object_position`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -749,6 +751,14 @@ impl Default for ImagePlacement {
             position: (0.5, 0.5),
         }
     }
+}
+/// What of `styles`' size is worked out from its containing block.
+fn size_calcs(styles: &mut Styles) -> &mut crate::size_calc::SizeCalcs {
+    // A parent lays out what has options with taffy, the only layout that
+    // reads these: a value that changes nothing, to say so.
+    styles.layout_options_mut().reverse.get_or_insert(false);
+    let cold = styles.rare_mut().cold.get_or_insert_default();
+    std::sync::Arc::make_mut(cold.size_calcs.get_or_insert_default())
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
@@ -890,6 +900,12 @@ impl RareStyles {
             let mine = self.cold.get_or_insert_default();
             if theirs.shader_uniforms.is_some() {
                 mine.shader_uniforms = theirs.shader_uniforms;
+            }
+            if let Some(sizes) = &theirs.size_calcs {
+                match &mut mine.size_calcs {
+                    Some(mine) => std::sync::Arc::make_mut(mine).merge(sizes),
+                    None => mine.size_calcs = Some(sizes.clone()),
+                }
             }
             if theirs.layer_uniforms.is_some() {
                 mine.layer_uniforms = theirs.layer_uniforms;
@@ -1460,6 +1476,45 @@ pub trait Styled: Sized {
     fn sticky_top(mut self, top: f32) -> Self {
         let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
         cold.sticky_top = Some(top);
+        self
+    }
+    /// Its width from its containing block's (CSS's `calc()`, `min()`,
+    /// `max()` and `clamp()`): `"calc(100% - 24px)".parse()`.
+    fn w_calc(mut self, width: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        self.styles_mut().fields_mut(bit::WIDTH).width = Opt32::none();
+        self.styles_mut()
+            .fields_mut(bit::WIDTH_PERCENT)
+            .width_percent = Opt32::none();
+        size_calcs(self.styles_mut()).width = Some(width.into());
+        self
+    }
+    /// Its height from its containing block's, as `w_calc`.
+    fn h_calc(mut self, height: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        self.styles_mut().fields_mut(bit::HEIGHT).height = Opt32::none();
+        self.styles_mut()
+            .fields_mut(bit::HEIGHT_PERCENT)
+            .height_percent = Opt32::none();
+        size_calcs(self.styles_mut()).height = Some(height.into());
+        self
+    }
+    /// Its smallest width from its containing block's, as `w_calc`.
+    fn min_w_calc(mut self, width: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).min_width = Some(width.into());
+        self
+    }
+    /// Its largest width from its containing block's, as `w_calc`.
+    fn max_w_calc(mut self, width: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).max_width = Some(width.into());
+        self
+    }
+    /// Its smallest height from its containing block's, as `w_calc`.
+    fn min_h_calc(mut self, height: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).min_height = Some(height.into());
+        self
+    }
+    /// Its largest height from its containing block's, as `w_calc`.
+    fn max_h_calc(mut self, height: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).max_height = Some(height.into());
         self
     }
     /// A grid's columns of any size (CSS `grid-template-columns`), over
