@@ -101,6 +101,48 @@ fn clean_scripts_pass_and_misspelled_properties_fail() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Unknown members of the globals are errors: nothing in their declarations
+/// may turn them to `never` (a function intersected with a table, as
+/// `ui.window` was), which would quiet every lookup on them.
+#[test]
+fn an_unknown_member_of_ui_or_anime_or_ui_window_fails() {
+    if !installed() {
+        return;
+    }
+    for (name, code) in [
+        ("ui", "print(ui.untrack)\nreturn ui.text { \"hi\" }\n"),
+        ("anime", "print(anime.nope)\nreturn ui.text { \"hi\" }\n"),
+        (
+            "window",
+            "print(ui.window.nope)\nreturn ui.text { \"hi\" }\n",
+        ),
+    ] {
+        let dir = scripts(&format!("unknown-{name}"), &[("app.luau", code)]);
+        let out = zgx().arg("check").arg(&dir).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(!out.status.success(), "{name}: {text}");
+        assert!(text.contains("not found"), "{name}: {text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// `ui.window` still takes its options, and reads its fields.
+#[test]
+fn ui_window_is_called_and_read() {
+    if !installed() {
+        return;
+    }
+    let code = "local open = ui.state(\"open\", false)\n\
+        ui.window { id = \"settings\", title = \"Settings\", width = 300, open = open, ui.text { \"hi\" } }\n\
+        local tall = ui.window.size:get().height > 400\n\
+        return ui.text { tostring(tall) }\n";
+    let dir = scripts("window-api", &[("app.luau", code)]);
+    let out = zgx().arg("check").arg(&dir).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn without_luau_lsp_it_says_how_to_install_it() {
     let dir = scripts("missing", &[("app.luau", "return ui.text { \"hi\" }\n")]);

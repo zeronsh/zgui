@@ -1287,20 +1287,20 @@ export type CommandOptions = {
 -- settings window), open while `open` is true; closing it sets `open` false.
 -- Its node is its content. It shares the app's state.
 export type WindowOptions = {
-	id: string,
+	read id: string,
 	-- Defaults to the id.
-	title: string?,
+	read title: string?,
 	-- Points; 480 by 360 by default.
-	width: number?,
-	height: number?,
-	open: State<boolean>,
+	read width: number?,
+	read height: number?,
+	read open: State<boolean>,
 	-- Its frame saved under this name as it moves and resizes, and reopened
 	-- where it was left (macOS).
-	frame_autosave: string?,
+	read frame_autosave: string?,
 	-- AppKit's window tabs (macOS): as the user's setting says, always, or
 	-- never (a window with tabs of its own).
-	tabbing: ("automatic" | "preferred" | "disallowed")?,
-	[number]: Node,
+	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	read [number]: Node,
 }
 
 -- A rect in points, from the window's top left.
@@ -1316,21 +1316,24 @@ export type WindowRect = { x: number, y: number, width: number, height: number }
 -- browser's page zoom (1 at 100%; Cmd/Ctrl +, - and 0 change it, and
 -- setting it zooms the window, within 0.25 to 5); `zoomable` false turns
 -- the keys off.
-export type WindowApi = ((opts: WindowOptions) -> ()) & {
-	titlebar_area: State<WindowRect?>,
-	controls: State<WindowRect?>,
-	zoom: State<number>,
-	zoomable: State<boolean>,
+-- An extern type: a function and a table can't intersect, so that would be
+-- `never`, and `ui`, holding one, would stop reporting its unknown members.
+declare extern type WindowApi with
+	titlebar_area: State<WindowRect?>
+	controls: State<WindowRect?>
+	zoom: State<number>
+	zoomable: State<boolean>
 	-- Whether the window is the active one (keys go to it), and whether it
 	-- shows (not hidden, minimized or covered): what arrives while either
 	-- is false is worth a notification or a badge.
-	active: State<boolean>,
-	shown: State<boolean>,
+	active: State<boolean>
+	shown: State<boolean>
 	-- The window's size in points, read-only and followed: for decisions
 	-- layout can't make (a sidebar collapsing to icons below a width).
 	-- Sizes themselves are layout's: percentages, `grow`, `max_w`.
-	size: State<{ width: number, height: number }>,
-}
+	size: State<{ width: number, height: number }>
+	function __call(self, opts: WindowOptions): ()
+end
 
 ---------------------------------------------------------------------------
 -- Properties.
