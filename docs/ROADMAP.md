@@ -70,6 +70,8 @@ Platform-specific behavior is not considered validated merely because it compile
 0.1.x stays additive (cargo-semver-checks clean). Changes that need a break wait
 here, to land together:
 
+- [ ] Deprecate `Styled::blur`: it is the backdrop blur, where Luau's `blur` is
+  the content blur. `backdrop_blur` and `filter_blur` say which.
 - [ ] Named keys outside `Key`'s vocabulary. The desktop host drops every
   winit `NamedKey` outside Tab, Enter, Space, Escape, the editing and
   navigation keys, Insert, ContextMenu and F1–F35: media (play/pause, next,

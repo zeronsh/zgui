@@ -639,6 +639,7 @@ runtime:
 
 ## Limitations
 
+- **A covered window goes on drawing.** winit reports no `Occluded` on Windows, so zgx can't tell: a covered window animating draws at its full rate, where on macOS and X11 it stops. `ZGX_RENDER_WHEN_COVERED=1` makes no difference here (measured on WING-PC, a window fully covered: 51 frames in 2 s without it, 50 with it, 55 shown).
 - Cancelling a file-picker or prompt future invalidates result delivery but
   does not dismiss its native dialog. A pending native dialog can retain its
   parent until dismissed. Backend failures can appear as cancellation.

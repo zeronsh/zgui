@@ -1010,7 +1010,8 @@ impl Default for Application {
 /// `ZGX_RENDER_WHEN_COVERED=1`: a covered window goes on drawing, for test
 /// sessions: input and hot reloads don't stall, and automated UI and memory
 /// tests needn't have the screen to themselves. Never by default: a window
-/// nobody can see does no work.
+/// nobody can see does no work. No effect on Windows, where winit reports no
+/// `Occluded` and a covered window goes on drawing with or without it.
 static RENDER_WHEN_COVERED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
     zgx::env::var_os("ZGX_RENDER_WHEN_COVERED").is_some_and(|v| !v.is_empty() && v != "0")
 });

@@ -2169,11 +2169,18 @@ pub trait Styled: Sized {
     /// Backdrop blur (CSS `backdrop-filter: blur()`): what lies behind the
     /// node, within its bounds, blurs by this sigma in logical pixels, as
     /// frosted glass; the node's own content stays sharp. For blurring the
-    /// node's content itself, see `filter_blur`.
+    /// node's content itself, see `filter_blur`. The clearer name is
+    /// `backdrop_blur`: Luau's `blur` is the content blur, and `backdrop_blur`
+    /// this one.
     fn blur(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Blur);
         self.styles_mut().fields_mut(bit::BLUR).overflow_mut().blur = Some(value).into();
         self
+    }
+    /// Backdrop blur (CSS `backdrop-filter: blur()`), by its clear name: what
+    /// lies behind blurs, not the node (`filter_blur`). `blur` is this too.
+    fn backdrop_blur(self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
+        self.blur(value)
     }
     /// Content blur (CSS `filter: blur()`): the node and its subtree blur by
     /// this sigma in logical pixels, spreading past its bounds, under its
@@ -2984,6 +2991,12 @@ pub const fn rgba(value: u32) -> Color {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn backdrop_blur_is_blur_by_its_clear_name() {
+        assert!(Styles::new().backdrop_blur(4.) == Styles::new().blur(4.));
+        assert!(Styles::new().backdrop_blur(4.) != Styles::new().filter_blur(4.));
+    }
+
     use super::*;
 
     /// A style setting none of the properties few set (`Overflow`) holds

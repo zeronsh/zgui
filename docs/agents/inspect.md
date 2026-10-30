@@ -88,7 +88,7 @@ A tree line is `@n #id role "name or text" ="value" x,y wxh` and flags (`focused
 
 A module's states are named `module.luau::name`; give the name alone when only one module has it.
 
-A hidden, minimized or covered window draws no frames (macOS stops a covered window's refreshes): `frames` says so first, and a `replay` is refused rather than answering "0 frames", since its events would only wait for the window. Keep the window in front and uncovered while measuring. For a test session that shouldn't need the screen to itself, `ZGX_RENDER_WHEN_COVERED=1` in the app's environment keeps a covered window drawing, so input and hot reloads don't stall; it isn't for measuring what a person sees, and it's never on by default, since a window nobody can see does no work.
+A hidden, minimized or covered window draws no frames (macOS stops a covered window's refreshes): `frames` says so first, and a `replay` is refused rather than answering "0 frames", since its events would only wait for the window. Keep the window in front and uncovered while measuring. For a test session that shouldn't need the screen to itself, `ZGX_RENDER_WHEN_COVERED=1` in the app's environment keeps a covered window drawing, so input and hot reloads don't stall; it isn't for measuring what a person sees, and it's never on by default, since a window nobody can see does no work. On Windows it changes nothing: the system isn't asked, so a covered window draws anyway ([Limitations](../windows.md#limitations)).
 
 ## What it holds
 
