@@ -4280,7 +4280,11 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "split",
         lua.create_function(|lua, table: Table| {
-            let size = expect_state(&table.get("size")?, "ui.split's `size`")?;
+            // Without one, a state of its own: the divider still drags.
+            let size = match table.get::<mlua::Value>("size")? {
+                mlua::Value::Nil => env(lua)?.runtime.signal(Value::Num(280.)),
+                size => expect_state(&size, "ui.split's `size`")?,
+            };
             let number = |key: &str, default: f32| -> mlua::Result<f32> {
                 Ok(table.get::<Option<f32>>(key)?.unwrap_or(default))
             };

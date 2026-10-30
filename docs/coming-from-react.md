@@ -34,7 +34,7 @@ Every example on this page runs, and type checks in strict mode, as part of zgx-
 | `useWebSocket` (react-use-websocket), `reconnecting-websocket` | `ui.socket(url, { json = true, on_message = fn })`: `status` a state, `send` queued until open, reconnect with backoff built in |
 | `await new Promise(r => setTimeout(r, ms))` | `ui.sleep(ms):await()` in a `ui.task` |
 | controlled inputs | `ui.input { value = state }`, or `value = function` with `on_change` |
-| React Hook Form | `ui.form { fields, validate, submit }` with `field = form.fields.name` on a control |
+| `<form onSubmit>`, React Hook Form | `ui.form { fields, validate, submit }` with `field = form.fields.name` on a control: Enter in a field submits, as in a `<form>`; a lone `ui.input` hears it in `on_key` |
 | portals and modals | `ui.modal { open = state, … }`, `ui.popover`, `ui.menu`: panels over everything, still in your tree |
 | error boundaries | a script error shows a banner and the rest keeps running; `ui.try(f)` catches one with its message |
 | `className`, CSS | properties on the node: `px = 12, rounded = 8, bg = "$surface.raised", hover = { bg = "$hover" }` |

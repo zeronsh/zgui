@@ -272,7 +272,24 @@ pub(crate) fn unknown_tokens(files: &[File]) -> Vec<Diagnostic> {
             .min_by_key(|(d, c)| (*d, c.len()));
         match best {
             Some((d, c)) if d <= (name.len() / 3).max(2) => format!(": did you mean ${c}?"),
-            _ => String::new(),
+            _ => {
+                // Nothing close: what the group it reaches for holds.
+                let group = name.split('.').next().unwrap_or(name);
+                let prefix = format!("{group}.");
+                let mut near: Vec<&str> = standard
+                    .keys()
+                    .copied()
+                    .chain(names.declared.keys().map(String::as_str))
+                    .filter(|c| c.starts_with(&prefix))
+                    .collect();
+                near.sort_unstable();
+                near.dedup();
+                near.truncate(8);
+                match near.as_slice() {
+                    [] => String::new(),
+                    near => format!(": there is ${}", near.join(", $")),
+                }
+            }
         }
     };
     let mut found = Vec::new();
@@ -603,6 +620,16 @@ fn field_of(t: &[Token], at: usize) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_token_with_nothing_close_names_its_group() {
+        let found = lint(&[(
+            "app.luau",
+            "return ui.text { \"x\", color = \"$text.muted\" }\n",
+        )]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("$text.secondary"), "{found:?}");
+    }
 
     fn lint(files: &[(&str, &str)]) -> Vec<String> {
         let tokenized: Vec<(PathBuf, Vec<Token>)> = files

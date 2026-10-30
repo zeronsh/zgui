@@ -57,7 +57,7 @@ return ui.split {
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `size` | `State<number>` | required | the first pane's width (height, `vertical`) in points, both ways: the divider writes it as it drags, and a `ui.persist` keeps the layout across launches |
+| `size` | `State<number>` | a state of its own, at 280 | the first pane's width (height, `vertical`) in points, both ways: the divider writes it as it drags, and a `ui.persist` keeps the layout across launches |
 | `vertical` | `boolean` | `false` | one pane over the other |
 | `second` | `boolean` | `false` | `size` is the second pane's (an inspector at the right), and the first fills the rest |
 | `min`, `max` | `number` | `0`, none | the first pane's bounds |

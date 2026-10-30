@@ -2979,6 +2979,20 @@ fn a_keyed_measured_list_keeps_heights_with_their_rows() {
     assert!(after <= built + 2, "{built} → {after} builds");
 }
 
+/// A split needs no `size` of the script's.
+#[test]
+fn a_split_takes_a_size_of_its_own() {
+    let mut h = Harness::inline(
+        r##"return ui.split { w = 600, h = 200,
+            ui.column { id = "a", ui.text { "a" } },
+            ui.column { id = "b", ui.text { "b" } } }"##,
+    );
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    let a = h.find("a").unwrap();
+    assert_eq!(h.ui.scene.borrow().bounds(a).width, 280.);
+}
+
 #[test]
 fn measured_and_heights_do_not_go_together() {
     let error = zgx_script::ScriptHost::inline(

@@ -12792,7 +12792,7 @@ export type SplitProps = {
 	label: Label?,
 	-- The first pane's size in points, both ways: the divider writes it as
 	-- it drags (a `ui.persist` keeps it across launches).
-	size: State<number>,
+	size: State<number>?,
 	-- One pane over the other, instead of side by side.
 	vertical: boolean?,
 	-- `size` is the second pane's (an inspector at the right), and the
