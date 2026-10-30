@@ -527,6 +527,45 @@ pub fn click_at(ui: &mut Ui, bounds: Rect) {
     ui.dispatch(InputEvent::PointerDown { x, y, button });
     ui.dispatch(InputEvent::PointerUp { x, y, button });
 }
+/// A box's middle.
+pub fn middle(bounds: Rect) -> (f32, f32) {
+    (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.)
+}
+/// Move the pointer to `(x, y)`: what is there hovers, what was left stops.
+pub fn hover_at(ui: &mut Ui, (x, y): (f32, f32)) {
+    ui.dispatch(InputEvent::PointerMove { x, y });
+}
+/// Move to `(x, y)` and click the context button there.
+pub fn right_click_at(ui: &mut Ui, (x, y): (f32, f32)) {
+    let button = PointerButton::Secondary;
+    ui.dispatch(InputEvent::PointerMove { x, y });
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.dispatch(InputEvent::PointerUp { x, y, button });
+}
+/// Drag with the primary button from one point to another: pressed there,
+/// moved past the drag threshold, on to `to` in steps, as a hand moves
+/// (what lies between sees the drag pass), and released.
+pub fn drag_between(ui: &mut Ui, from: (f32, f32), to: (f32, f32)) {
+    /// Moves on the way, past the first.
+    const STEPS: u16 = 8;
+    let (x, y) = from;
+    let button = PointerButton::Primary;
+    ui.dispatch(InputEvent::PointerMove { x, y });
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.dispatch(InputEvent::PointerMove {
+        x: x + 16.,
+        y: y + 8.,
+    });
+    for step in 1..=STEPS {
+        let part = f32::from(step) / f32::from(STEPS);
+        ui.dispatch(InputEvent::PointerMove {
+            x: x + (to.0 - x) * part,
+            y: y + (to.1 - y) * part,
+        });
+    }
+    let (x, y) = to;
+    ui.dispatch(InputEvent::PointerUp { x, y, button });
+}
 /// Click `node`, then type `text` into what has focus.
 pub fn type_into(ui: &mut Ui, node: NodeId, text: &str) {
     let bounds = ui.scene.borrow().bounds(node);

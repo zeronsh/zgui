@@ -381,6 +381,9 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   state   [name] [full]                          named states and their values
   set     name value                             set a named state (value is JSON)
   click   target                                 press and release at its middle
+  hover   target|x,y                             move the pointer there, as a hand does
+  right-click target|x,y                         click the context button there (a context menu opens)
+  drag    target|x,y to                          drag with the primary button; `to` is a target or x,y
   type    target text                            click it, then type text
   key     keys                                   e.g. \"Enter\", \"cmd+k\", \"alt+ArrowDown\"
   scroll  target dy                              scroll the viewport under it
@@ -449,6 +452,17 @@ impl Session {
         let target = |ui: &Ui| -> Result<zgx::scene::NodeId, String> {
             let target = text("target").ok_or("this command takes a `target`")?;
             driver::find(ui, &self.0.handle, &target)
+        };
+        // Where a field says: a target's middle, or `x,y` in window points.
+        let point_of = |ui: &Ui, name: &str| -> Result<(f32, f32), String> {
+            let said = text(name).ok_or_else(|| format!("this command takes a `{name}`"))?;
+            if let Some((x, y)) = said.split_once(',')
+                && let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse())
+            {
+                return Ok((x, y));
+            }
+            let node = driver::find(ui, &self.0.handle, &said)?;
+            Ok(driver::middle(ui.scene.borrow().bounds(node)))
         };
         let answer = match cmd.as_str() {
             "help" => Ok((HELP.to_string(), Value::Nil)),
@@ -612,6 +626,28 @@ impl Session {
                 driver::click_at(&mut ui, b);
                 (format!("clicked @{}", driver::number(node)), Value::Nil)
             }),
+            "hover" => point_of(&ui, "target").map(|at| {
+                driver::hover_at(&mut ui, at);
+                (format!("pointer at {:.0},{:.0}", at.0, at.1), Value::Nil)
+            }),
+            "right-click" => point_of(&ui, "target").map(|at| {
+                driver::right_click_at(&mut ui, at);
+                (
+                    format!("right-clicked at {:.0},{:.0}", at.0, at.1),
+                    Value::Nil,
+                )
+            }),
+            "drag" => (|| {
+                let (from, to) = (point_of(&ui, "target")?, point_of(&ui, "to")?);
+                driver::drag_between(&mut ui, from, to);
+                Ok((
+                    format!(
+                        "dragged {:.0},{:.0} to {:.0},{:.0}",
+                        from.0, from.1, to.0, to.1
+                    ),
+                    Value::Nil,
+                ))
+            })(),
             "type" => (|| {
                 let node = target(&ui)?;
                 let typed = text("text").ok_or("type takes a `text`")?;

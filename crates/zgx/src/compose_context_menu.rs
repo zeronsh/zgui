@@ -64,6 +64,7 @@ impl Open {
         if let (Some(node), Some(mut ui)) = (self.node.take(), self.ui.upgrade())
             && ui.scene.borrow().contains(node)
         {
+            ui.remove_portal(node);
             ui.remove(node);
         }
     }
@@ -166,6 +167,8 @@ pub(crate) fn mount(
         };
         let root = ui.root();
         let mounted = crate::compose::mount(&mut ui, root, view, environment.clone());
+        // Mounted at the root, it is its element's: devtools find it there.
+        ui.add_portal(node, mounted);
         current.node.set(Some(mounted));
     });
     ui.retain(node, binding);

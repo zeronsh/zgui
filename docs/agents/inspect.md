@@ -116,6 +116,10 @@ The areas overlap: `heap` holds `text`, `scene`, `luau` and `images`, and much o
 
 ```sh
 zgx inspect click '"Send"'
+zgx inspect hover '#row'                               # the pointer there: what shows on hover
+zgx inspect right-click '#row'                         # its context menu opens; its items are nodes to click
+zgx inspect drag '#card' '#done'                       # from one to another
+zgx inspect drag '#slider' 340,120                     # or to a point, window points
 zgx inspect type '#composer' 'Write me a function'     # clicks it, then types
 zgx inspect key Enter                                  # Escape, Tab, cmd+k, alt+ArrowDown, shift+Tab, F5…
 zgx inspect scroll '#transcript' 400                   # points; down is positive
@@ -126,6 +130,8 @@ zgx inspect wait '#reply' --text 'words'               # until its text holds th
 zgx inspect wait '#spinner' --gone
 zgx inspect sleep 500                                  # let the app run
 ```
+
+`hover`, `right-click` and `drag` take a target, whose middle they use, or `x,y` in window points. `drag` presses, moves past the drag threshold and on in steps, as a hand does, so what lies between sees it pass (`on_drag_over`), then releases. Everything happens within the window: a drag can't leave it, so `on_drag_outside` and other apps' drops need a real one.
 
 `cmd` is Command on macOS and Control elsewhere, as commands' keys are. A key goes where focus is: `type` or `click` an input first. After an action the interface is laid out again before the next command reads it, so `click` then `tree` shows the result; for what takes time (a fetch, a streamed reply, an animation), `wait` on what it will show rather than sleeping.
 

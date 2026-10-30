@@ -420,6 +420,7 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   node <target>        find <target>
   state [name] [--full]                  set <name> <json>
   click <target>       type <target> <text>      key <keys>
+  hover <target|x,y>   right-click <target|x,y>  drag <from> <to|x,y>
   scroll <target> <dy> command <id>
   errors               lint
   frames [n] [--runs N] [--all] [--since MARK|FRAME] [--keep N]
@@ -533,6 +534,10 @@ fn inspect(args: Vec<String>) -> ExitCode {
         "type" => {
             put("target", arg(1));
             put("text", arg(2));
+        }
+        "drag" => {
+            put("target", arg(1));
+            put("to", arg(2));
         }
         "scroll" => {
             put("target", arg(1));
@@ -732,6 +737,24 @@ const TOOLS: &[Tool] = &[
         "click",
         &[("target", "string", true)],
         "Click a node.",
+    ),
+    (
+        "zgx_hover",
+        "hover",
+        &[("target", "string", true)],
+        "Move the pointer to a node's middle or to \"x,y\" in window points, for what shows on hover: a tooltip, a row's actions.",
+    ),
+    (
+        "zgx_right_click",
+        "right-click",
+        &[("target", "string", true)],
+        "Click the context button on a node or at \"x,y\": its context menu opens, and its items are nodes to click.",
+    ),
+    (
+        "zgx_drag",
+        "drag",
+        &[("target", "string", true), ("to", "string", true)],
+        "Drag with the primary button from a node (its middle) or \"x,y\" to a node or \"x,y\", in steps as a hand moves.",
     ),
     (
         "zgx_type",
