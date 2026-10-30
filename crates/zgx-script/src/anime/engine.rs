@@ -13,7 +13,7 @@ use crate::{Vm, element::Element};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    future::poll_fn,
+    future::{Future, poll_fn},
     rc::{Rc, Weak},
     task::{Poll, Waker},
     time::Instant,
@@ -389,14 +389,17 @@ impl Clip {
 
     /// Advances by `dt` ms of engine time and renders.
     fn advance(self: &Rc<Self>, dt: f64, engine: &Engine) {
-        {
+        let first = {
             let mut s = self.state.borrow_mut();
             if !s.advanced && s.provisional {
                 s.built = false;
                 s.provisional = false;
             }
-            s.advanced = true;
-        }
+            !std::mem::replace(&mut s.advanced, true)
+        };
+        // A clip's first frame moves it a frame at most, however long the
+        // engine waited before it (a long frame, a slowed engine).
+        let dt = if first { dt.min(FIRST_STEP) } else { dt };
         self.ensure_built();
         let (speed, frame_rate, total) = {
             let t = self.timing.borrow();
@@ -901,6 +904,8 @@ impl Notify {
 
 /// How often an engine whose loops all sit unseen looks again (Hz).
 const UNSEEN_RATE: f64 = 4.;
+/// The most a clip's first frame advances it (ms): one 60 Hz frame.
+const FIRST_STEP: f64 = 1000. / 60.;
 
 pub(crate) struct Engine {
     pub runtime: Runtime,
@@ -993,6 +998,9 @@ impl Engine {
             clips.push(clip.clone());
         }
         drop(clips);
+        // Something may now be seen: the engine looks every frame again
+        // (the next tick says whether it still need not).
+        self.unseen.set(false);
         self.wake.notify();
     }
     pub fn wake(&self) {
@@ -1127,6 +1135,30 @@ impl Engine {
                     (a, b) => a.or(b),
                 };
                 let frame = match rate {
+                    // Only unseen loops play: a clip starting ends the wait,
+                    // and runs from the next frame.
+                    Some(hz) if self.unseen.get() => {
+                        let mut next = std::pin::pin!(frames.next().max_rate(hz));
+                        let woke = poll_fn(|cx| {
+                            if let Poll::Ready(frame) = next.as_mut().poll(cx) {
+                                return Poll::Ready(Some(frame));
+                            }
+                            if self.wake.pending.replace(false) {
+                                return Poll::Ready(None);
+                            }
+                            *self.wake.waker.borrow_mut() = Some(cx.waker().clone());
+                            Poll::Pending
+                        })
+                        .await;
+                        match woke {
+                            Some(frame) => frame,
+                            None => {
+                                // Nothing advanced meanwhile: no time to make up.
+                                last = None;
+                                continue;
+                            }
+                        }
+                    }
                     Some(hz) => frames.next().max_rate(hz).await,
                     None => frames.next().await,
                 };

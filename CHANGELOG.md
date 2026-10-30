@@ -26,6 +26,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- **An app left alone gives memory back** (zgx-desktop, zgx-script): as the window goes idle (1.5 s after its last frame), a script host collects its scripts' garbage, drops the decoded pictures no node shows (kept, up to `ScriptHost::image_cache`'s budget, while the app is in use), and the allocator returns what was freed (`mi_collect` with the `mimalloc` feature, `malloc_zone_pressure_relief` on macOS, `malloc_trim` on Linux). Zeron's gallery, 200 pages browsed and left 15 s: 237–265 MB → 207–209 MB. `ScriptHost::collect_garbage` collects now; `zgx::idle::on_idle` registers what else a host should give back.
+- **An animation started while only unseen loops played starts on the next frame** (zgx-script): the engine, then looking a few times a second, started it up to 250 ms late and in one jump (a sidebar's width animating 286 → 542 in one frame). A clip's first frame now advances it one frame at most.
 - macOS: with zgx-desktop's `mimalloc` feature, the program's heap shows in vmmap, footprint and Activity Monitor as "Memory Tag 240", not "IOAccelerator". mimalloc's default tag, 100, is the one macOS names IOAccelerator, so an app's heap read as GPU memory: in one app 107 MB of "IOAccelerator" was its heap. `MIMALLOC_OS_TAG` still overrides it.
 - **An input bound to a state calls `on_commit`** (zgx-script): `ui.input { value = draft, on_commit = add }` heard nothing on Enter, as only a controlled input (`value = function`) told it. It now hears the text on Enter, and on leaving the input changed since it was focused, as a controlled input does.
 

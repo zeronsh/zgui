@@ -1044,6 +1044,8 @@ struct Inner {
     lint: Signal<Option<String>>,
     /// The theme file error shown, if any (cleared when the file reads).
     theme_error: RefCell<Option<String>>,
+    /// Collects the VMs' garbage as the host goes idle (`zgx::idle`).
+    idle: RefCell<Option<zgx::idle::IdleTrim>>,
 }
 
 /// A wake-up for one waiting task: `notify` before or during the wait ends it.
@@ -1183,10 +1185,12 @@ impl ScriptHost {
             type_errors: runtime.signal(None),
             lint: runtime.signal(None),
             theme_error: RefCell::default(),
+            idle: RefCell::default(),
         }));
         host.0
             .assets
             .connect(host.0.timers.clone(), host.0.fetcher.clone());
+        host.trim_when_idle();
         host
     }
     /// The scripts compiled into the app (`include_bundle!`), starting at
@@ -1251,7 +1255,20 @@ impl ScriptHost {
         let mut inner = Rc::try_unwrap(self.0)
             .unwrap_or_else(|_| panic!("configure a ScriptHost before cloning it"));
         f(&mut inner);
-        Self(Rc::new(inner))
+        let host = Self(Rc::new(inner));
+        // The host is a new `Rc`: what goes idle with it follows it.
+        host.trim_when_idle();
+        host
+    }
+    /// Gives back what it can as its host goes idle (`zgx::idle`).
+    fn trim_when_idle(&self) {
+        let weak = Rc::downgrade(&self.0);
+        let trim = zgx::idle::on_idle(&self.0.runtime, move || {
+            if let Some(inner) = weak.upgrade() {
+                trim_idle(&inner);
+            }
+        });
+        *self.0.idle.borrow_mut() = Some(trim);
     }
     /// Loads every `.luau` file in `dir` as a plugin.
     pub fn plugins(self, dir: impl Into<PathBuf>) -> Self {
@@ -1293,8 +1310,9 @@ impl ScriptHost {
     /// How many bytes of decoded images and SVGs that no node shows the
     /// host keeps, the most recently shown first, so a reload or a page
     /// shown again is instant (48 MiB by default). What a mounted node
-    /// shows is always kept; the rest go as nodes showing pictures unmount.
-    /// The host's own images (`ScriptHost::image`) are not counted.
+    /// shows is always kept; the rest go as nodes showing pictures unmount,
+    /// and all of them once the window goes idle (`zgx::idle`). The host's
+    /// own images (`ScriptHost::image`) are not counted.
     pub fn image_cache(self, bytes: usize) -> Self {
         self.0.assets.set_budget(bytes);
         self
@@ -1685,6 +1703,21 @@ impl ScriptHost {
     pub fn script_calls(&self) -> u64 {
         self.0.warnings.calls.get()
     }
+    /// Collects the loaded scripts' garbage now, a full cycle in each VM.
+    /// The host does it as its window goes idle (`zgx::idle`): Luau's
+    /// collector runs only as scripts allocate and counts only its heap, so
+    /// a node a script let go of (a small userdata holding a large node)
+    /// would otherwise stay until the scripts next ran a while.
+    pub fn collect_garbage(&self) {
+        collect_garbage(&self.0);
+    }
+    /// Bytes the loaded scripts' VMs hold now, garbage included (for tests:
+    /// what a collection frees).
+    #[doc(hidden)]
+    pub fn script_heap(&self) -> usize {
+        let loaded = self.0.current.borrow().clone();
+        loaded.map_or(0, |l| l._vms.iter().map(|vm| vm.lua.used_memory()).sum())
+    }
     /// Bytes the loaded scripts' VMs hold after a full collection (each is
     /// capped at `Limits::memory` or `Limits::plugin_memory`): what a test reads over many updates to
     /// check that nothing keeps what it no longer needs.
@@ -1694,7 +1727,7 @@ impl ScriptHost {
             l._vms
                 .iter()
                 .map(|vm| {
-                    let _ = vm.lua.gc_collect();
+                    collect_fully(&vm.lua);
                     vm.lua.used_memory()
                 })
                 .sum()
@@ -2871,6 +2904,36 @@ async fn wake(
         Poll::Pending
     })
     .await
+}
+
+/// Everything `inner`'s loaded VMs can free, freed: two full collections in
+/// each, as one leaves what a userdata's finalizer held (a node's or an
+/// element's, and the closures and values only they reached) for the next.
+fn collect_garbage(inner: &Inner) {
+    let loaded = inner.current.borrow().clone();
+    for vm in loaded.iter().flat_map(|loaded| loaded._vms.iter()) {
+        collect_fully(&vm.lua);
+    }
+}
+/// Full collections until one frees nothing more: a collection finalizes
+/// the garbage's userdata, and what only they held goes in the next.
+fn collect_fully(lua: &mlua::Lua) {
+    let mut held = lua.used_memory();
+    for _ in 0..4 {
+        let _ = lua.gc_collect();
+        let now = lua.used_memory();
+        if now >= held {
+            break;
+        }
+        held = now;
+    }
+}
+/// What the host gives back as it goes idle: its scripts' garbage, then the
+/// pictures no node shows (the image cache keeps up to its budget of them
+/// while the app is in use, so a page shown again is instant).
+fn trim_idle(inner: &Inner) {
+    collect_garbage(inner);
+    inner.assets.trim();
 }
 
 #[cfg(test)]

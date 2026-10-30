@@ -17,6 +17,8 @@ mod failures;
 mod file_drop;
 #[path = "../i18n_script.rs"]
 mod i18n_script;
+#[path = "../idle_gc.rs"]
+mod idle_gc;
 #[path = "../image_cache.rs"]
 mod image_cache;
 #[path = "../layout_gaps.rs"]

@@ -111,3 +111,27 @@ return ui.column {
     assert_eq!(h.host.image_cache_stats().1, 10 * 16, "down to the budget");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn going_idle_keeps_only_the_pictures_shown() {
+    let dir = std::env::temp_dir().join(format!("zgx-image-idle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 1..=40 {
+        std::fs::write(dir.join(format!("img{i}.png")), PNG).unwrap();
+    }
+    let app = dir.join("app.luau");
+    std::fs::write(&app, APP).unwrap();
+    let mut h = Harness::new(move |runtime| ScriptHost::new(runtime, app));
+    h.frames(1);
+    h.click("recent");
+    h.frames(1);
+    // In use, the budget keeps the pictures the first page showed too.
+    assert_eq!(h.host.image_cache_stats().0, 40, "kept within the budget");
+    zgx::idle::trim(&h.ui.runtime);
+    assert_eq!(
+        h.host.image_cache_stats().0,
+        10,
+        "idle, only the ten shown stay"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

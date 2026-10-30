@@ -30,6 +30,7 @@ pub mod timer;
 
 pub mod env;
 pub mod frame;
+pub mod idle;
 pub mod profile;
 pub mod switches;
 #[cfg(feature = "trace")]

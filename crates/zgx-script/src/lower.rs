@@ -93,7 +93,7 @@ impl Drop for Sweep {
         if let Some(assets) = self.0.upgrade()
             && assets.held.get() > assets.budget.get()
         {
-            assets.sweep();
+            assets.sweep(assets.budget.get());
         }
     }
 }
@@ -175,12 +175,18 @@ impl Assets {
         let count = self.images.borrow().len() + self.svgs.borrow().len();
         (count, self.held.get(), self.decoded.get())
     }
+    /// Keeps only what a node shows: the host goes idle, and a page shown
+    /// again decodes its pictures again rather than every picture shown
+    /// lately staying in memory while nothing happens.
+    pub(crate) fn trim(&self) {
+        self.sweep(0);
+    }
     /// Keeps what a node shows (held elsewhere too), and of the rest the
-    /// most recently shown while they fit the budget; drops the others.
-    /// Run as nodes unmount, never per frame.
+    /// most recently shown while they fit `budget`; drops the others.
+    /// Run as nodes unmount and as the host goes idle, never per frame.
     #[cold]
     #[inline(never)]
-    fn sweep(&self) {
+    fn sweep(&self, budget: usize) {
         let (Ok(mut images), Ok(mut svgs)) =
             (self.images.try_borrow_mut(), self.svgs.try_borrow_mut())
         else {
@@ -200,7 +206,7 @@ impl Assets {
         idle.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
         let (mut kept, mut freed) = (0, 0);
         for (_, bytes, image, src) in idle {
-            if kept + bytes <= self.budget.get() {
+            if kept + bytes <= budget {
                 kept += bytes;
                 continue;
             }

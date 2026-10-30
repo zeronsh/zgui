@@ -139,6 +139,10 @@ struct Inner {
     flushing: Cell<bool>,
     /// One value per type that belongs to this runtime (`Runtime::extension`).
     extensions: RefCell<Vec<(TypeId, Rc<dyn Any>)>>,
+    /// What runs as a host of this runtime goes idle (`idle::on_idle`). A
+    /// field, not an extension: `extension` scans in order, and an entry
+    /// ahead of `Themes` would tax every theme read.
+    idle: RefCell<Vec<std::rc::Weak<dyn Fn()>>>,
 }
 
 /// The effect running for as long as it lives: whatever ran before runs
@@ -672,6 +676,10 @@ impl Runtime {
     /// How many effects are alive (not stopped).
     pub fn effect_count(&self) -> usize {
         self.inner.effects.borrow().len() - self.inner.stopped.get()
+    }
+    /// What `idle::on_idle` registered.
+    pub(crate) fn idle_trims(&self) -> &RefCell<Vec<std::rc::Weak<dyn Fn()>>> {
+        &self.inner.idle
     }
     /// The runtime's one value of type `T`, made by `init` the first time
     /// it is asked for, so that independent parts of an application (its

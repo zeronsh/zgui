@@ -4814,6 +4814,9 @@ impl Host {
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
             self.trim_at = None;
+            // Garbage scripts made (`zgx::idle`), first: what it frees,
+            // the trims below give back.
+            zgx::idle::trim(&self.context.ui.runtime);
             if let Some(renderer) = &mut self.renderer {
                 renderer.trim();
             }
@@ -6917,8 +6920,33 @@ fn check_damage(
 
 /// Return freed heap pages to the system. glibc keeps what it frees mapped,
 /// including a software rasterizer's shader compilation, so an idle window
-/// holds its peak. Elsewhere the allocator already returns them.
+/// holds its peak; macOS's malloc and mimalloc keep freed pages for reuse
+/// too, which an idle window's footprint would count.
 fn release_freed_heap() {
+    // mimalloc (the `mimalloc` feature): what the program freed, in every
+    // thread's heap it can reach, goes back to the system.
+    #[cfg(feature = "mimalloc")]
+    {
+        unsafe extern "C" {
+            fn mi_collect(force: bool);
+        }
+        // SAFETY: mimalloc's collection only releases memory it has freed.
+        unsafe {
+            mi_collect(true);
+        }
+    }
+    // macOS's malloc, which the system's libraries use whichever allocator
+    // the program has: freed pages go back (a null zone is every zone).
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: it only releases memory the zones have freed.
+        unsafe {
+            malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+        }
+    }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         unsafe extern "C" {

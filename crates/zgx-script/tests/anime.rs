@@ -1161,6 +1161,50 @@ fn a_loop_no_one_can_see_waits_until_it_shows() {
 }
 
 #[test]
+fn an_animation_started_beside_unseen_loops_starts_on_the_next_frame() {
+    // Every playing clip an unseen loop, the engine looks a few times a
+    // second; a clip started then started up to 250 ms late, and its first
+    // frame took all of that: a 260 ms tween landed nearly done (a
+    // sidebar's width 286 → 542 in one frame).
+    let mut h = Harness::inline(
+        r##"local open = ui.state("open", true)
+        local width = ui.state("width", 286)
+        ui.command { id = "grow", run = function() anime.animate(width, { value = 542, duration = 260, ease = "linear" }) end }
+        return ui.column {
+            ui.button { id = "b", w = 20, h = 20, on_click = function() open:set(not open:peek()) end, "b" },
+            ui.text { id = "w", "{width}" },
+            ui.modal { open = open, w = 100, h = 100,
+                ui.div { id = "spin", w = 10, h = 10,
+                    on_mount = function(el)
+                        anime.animate(el, { x = { 0, 100 }, duration = 1000, loop = true })
+                    end } } }"##,
+    );
+    h.frame();
+    h.run_ms(100.);
+    h.click("b");
+    h.frame();
+    h.run_ms(300.);
+    assert_eq!(
+        h.clock.demanded_rate(120.),
+        Some(4.),
+        "only unseen loops play"
+    );
+    assert!(h.host.run_command("grow"));
+    let mut width = 286.;
+    for _ in 0..20 {
+        h.frame();
+        width = h.text("w").parse::<f64>().unwrap();
+        if width != 286. {
+            break;
+        }
+    }
+    assert!(
+        width > 286. && width < 286. + 256. * 0.25,
+        "its first frame is a frame's step, not 250 ms of it: {width}"
+    );
+}
+
+#[test]
 fn a_loop_in_a_popup_past_the_window_runs_on() {
     // A popover opened near the window's bottom right, where the host shows
     // it in a window of its own: its panel hangs past this one's edges.
