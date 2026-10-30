@@ -3175,6 +3175,40 @@ fn a_controlled_input_keeps_its_typing_and_shows_changes_from_elsewhere() {
 }
 
 #[test]
+fn an_input_bound_to_a_state_commits_on_enter_and_on_leaving_it_changed() {
+    let mut h = Harness::inline(
+        r##"local draft = ui.state("draft", "")
+        local committed = ui.state("committed", "")
+        local commits = ui.state("commits", 0)
+        return ui.column {
+            ui.input { id = "field", w = 200, value = draft,
+                on_commit = function(t) committed:set(t); commits:add(1) end },
+            ui.text { id = "committed", "{committed}" },
+            ui.text { id = "commits", "{commits}" },
+            ui.button { id = "other", w = 40, h = 20, "o" },
+        }"##,
+    );
+    h.type_text("field", "ada");
+    h.frames(1);
+    assert_eq!(h.text("commits"), "0", "typing doesn't commit");
+    h.key(zgx::input::Key::Enter);
+    h.frames(1);
+    assert_eq!(h.text("committed"), "ada");
+    assert_eq!(h.text("commits"), "1");
+    // Left unchanged since Enter: nothing more.
+    h.click("other");
+    h.frames(1);
+    assert_eq!(h.text("commits"), "1");
+    // Left changed: told once more.
+    h.type_text("field", "!");
+    h.click("other");
+    h.frames(1);
+    assert_eq!(h.text("committed"), "ada!");
+    assert_eq!(h.text("commits"), "2");
+    assert_eq!(h.error(), None);
+}
+
+#[test]
 fn a_list_of_data_builds_rows_from_items_and_runs_only_the_row_that_changed() {
     let mut h = Harness::inline(
         r##"local messages = ui.state("messages", {

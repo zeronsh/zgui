@@ -1151,6 +1151,47 @@ fn controlled_input(
     (text, listener)
 }
 
+/// `on_commit(text)` for an input bound to a state (`value = state`): on
+/// Enter, and on leaving it changed since it was focused, as a controlled
+/// input's.
+#[cold]
+#[inline(never)]
+fn state_commit(
+    value: Signal<Value>,
+    commit: Handler,
+    vm: &Rc<Vm>,
+    low: &Rc<Lowering>,
+) -> impl FnMut(&mut zgx::input::EventContext) + 'static {
+    let (vm, actions) = (vm.clone(), low.actions.clone());
+    // What it held as it was focused, or last committed.
+    let mut since: Option<Value> = None;
+    move |cx: &mut zgx::input::EventContext| {
+        if cx.phase == EventPhase::Capture || cx.target != cx.current_target {
+            return;
+        }
+        match &cx.event {
+            InputEvent::Focus => since = Some(value.with_untracked(Clone::clone)),
+            InputEvent::KeyDown {
+                key: zgx::input::Key::Enter,
+                modifiers,
+                ..
+            } if !modifiers.shift => {
+                let now = value.with_untracked(Clone::clone);
+                let text = now.to_string();
+                since = Some(now);
+                run(&commit, &vm, &actions, text);
+            }
+            InputEvent::Blur => {
+                let now = value.with_untracked(Clone::clone);
+                if since.take().is_some_and(|was| was != now) {
+                    run(&commit, &vm, &actions, now.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A modifier's names in key text (`cmd+shift+s`), and how it shows: its
 /// glyph on macOS, its word elsewhere. In macOS's order (⌃⌥⇧⌘).
 const MODIFIERS: [(&[&str], &str, &str); 5] = [
@@ -1973,27 +2014,33 @@ fn kind_view(
                 };
             // What `find` searches: the state the text is in.
             let searched = match value {
-                crate::node::InputValue::State(state) => Some(state.clone()),
+                crate::node::InputValue::State { value, .. } => Some(value.clone()),
                 crate::node::InputValue::Shown { .. } => None,
             };
+            let mut committing = None;
             let (value, controlled): (zgx::widgets::EditorValue, _) = match value {
                 // A long document is shared with the editor, never copied
                 // on its way in or out.
-                crate::node::InputValue::State(value) => (
-                    bridge(
-                        need(&mut cx),
-                        value,
-                        |v| match v {
-                            Value::Text(t) => TextValue::Long(t.clone()),
-                            Value::Str(s) => TextValue::from(&**s),
-                            v => TextValue::Flat(v.to_string()),
-                        },
-                        |t| match t {
-                            TextValue::Flat(s) => Value::Str(s.into()),
-                            TextValue::Long(t) => Value::Text(t),
-                        },
-                    )
-                    .into(),
+                crate::node::InputValue::State { value, commit } => (
+                    {
+                        if let Some(commit) = commit {
+                            committing = Some(state_commit(value.clone(), commit.clone(), vm, low));
+                        }
+                        bridge(
+                            need(&mut cx),
+                            value,
+                            |v| match v {
+                                Value::Text(t) => TextValue::Long(t.clone()),
+                                Value::Str(s) => TextValue::from(&**s),
+                                v => TextValue::Flat(v.to_string()),
+                            },
+                            |t| match t {
+                                TextValue::Flat(s) => Value::Str(s.into()),
+                                TextValue::Long(t) => Value::Text(t),
+                            },
+                        )
+                        .into()
+                    },
                     None,
                 ),
                 crate::node::InputValue::Shown {
@@ -2066,6 +2113,9 @@ fn kind_view(
             }
             if let Some(control) = controlled {
                 view = view.on_event(control);
+            }
+            if let Some(commit) = committing {
+                view = view.on_event(commit);
             }
             if *input_mode != zgx::text_edit::InputMode::Text {
                 view = view.input_mode(*input_mode);

@@ -2572,7 +2572,12 @@ pub(crate) struct MenuItemOptions {
 /// `on_commit`; focused, the input keeps what is being typed.
 #[derive(Clone)]
 pub(crate) enum InputValue {
-    State(Signal<Value>),
+    /// A state, both ways, and its `on_commit(text)` (Enter, or leaving it
+    /// changed).
+    State {
+        value: Signal<Value>,
+        commit: Option<Handler>,
+    },
     /// What it shows, and its `on_change(text)` (each edit) and
     /// `on_commit(text)` (Enter, or leaving it changed).
     Shown {
@@ -4074,8 +4079,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             commit: handler_of("on_commit")?,
                         }
                     }
-                    v => InputValue::State(writable_state_of(&v).ok_or_else(
-                        || match read_only_key(&v) {
+                    v => InputValue::State {
+                        value: writable_state_of(&v).ok_or_else(|| match read_only_key(&v) {
                             Some(key) => mlua::Error::runtime(format!(
                                 "`value` is written as it is typed, and shared state `{key}` is \
                                  read only to plugins: give a function with on_change instead"
@@ -4085,8 +4090,12 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                                  on_change or on_commit (the input shows it, and says what was \
                                  typed)",
                             ),
+                        })?,
+                        commit: match table.get::<mlua::Value>("on_commit")? {
+                            mlua::Value::Nil => None,
+                            h => Some(handler(h)?),
                         },
-                    )?),
+                    },
                 };
                 let optional = |key: &str, ty: Ty| -> mlua::Result<Option<Source>> {
                     match table.get::<mlua::Value>(key)? {

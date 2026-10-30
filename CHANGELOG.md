@@ -18,6 +18,10 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - **A popover can anchor to an editor's caret, and an editor can name its active descendant** (zgx, zgx-script): `ui.popover { at_caret = true, anchor = ui.textarea { … } }` (`View::at_caret`) places a popover at the caret of the field in its anchor, as a mention's or a slash command's suggestions are. It follows the caret as text is typed, a line wraps, the field scrolls and an input method composes. It takes no focus, so the field's keys move through the suggestions, and `active_descendant = id` (`View::active_descendant`, HTML's `aria-activedescendant`) tells assistive technology the one it is on ([overlays](docs/reference/overlays.md#suggestions-at-the-caret)).
 - **Lists report reaching their start and resting at their end, and keep their place when rows are added above** (zgx, zgx-script): `ui.list { on_start = fn, start_distance = 200 }` (`View::on_start`) is called as the list's start comes in reach, as `on_end` is at its end, and `at_end = state` (`View::on_at_end`) follows whether it rests at its end. A list with `on_start` given rows above the ones in view (`measured_rows`, or `ui.list` with `measured` and `key`) finds the row it showed by its key and keeps it where it was, rather than letting the new rows push it down; other lists track nothing for it ([scrolling](docs/reference/scrolling.md)).
 
+### Fixed
+
+- **An input bound to a state calls `on_commit`** (zgx-script): `ui.input { value = draft, on_commit = add }` heard nothing on Enter, as only a controlled input (`value = function`) told it. It now hears the text on Enter, and on leaving the input changed since it was focused, as a controlled input does.
+
 ## 0.1.6 (2026-10-29)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.5 is an addition, and zgx-desktop and zgx-gpu 0.1.5 build against this zgx). zgx-gpu and zgx-desktop now need `zgx-cosmic-text` 0.19.3, published with it. One behaviour changes, below with what to check: Windows input methods go through the Text Services Framework by default.
