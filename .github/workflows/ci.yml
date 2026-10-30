@@ -96,6 +96,9 @@ jobs:
           msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
           rustup toolchain install "$msrv" --profile minimal --no-self-update
           cargo "+$msrv" check -p zgx-components -p zgx-desktop -p zgx-script --no-default-features --locked
+      # Lints too: code only a default feature uses (the component
+      # library's) is left out with it, not left unused.
+      - run: cargo clippy -p zgx-script --no-default-features --all-targets --locked -- -D warnings
       # zgx-script's best-practice lint over every example script.
       - name: Script lint
         run: cargo run -q -p zgx-script --bin zgx --locked -- lint crates/zgx-script/examples crates/zgx-desktop/examples

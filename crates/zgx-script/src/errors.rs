@@ -145,7 +145,10 @@ impl UserData for UiError {
 
 /// Text an API takes from a script (a toast's title and body): a string,
 /// a number, or an error's message, so `body = err` shows what failed.
+/// The component library's (`components`).
+#[cfg(feature = "components")]
 pub(crate) struct Text(pub(crate) String);
+#[cfg(feature = "components")]
 impl mlua::FromLua for Text {
     fn from_lua(value: mlua::Value, lua: &Lua) -> mlua::Result<Self> {
         match &value {
