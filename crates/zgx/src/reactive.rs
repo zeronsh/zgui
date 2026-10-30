@@ -143,6 +143,8 @@ struct Inner {
     /// field, not an extension: `extension` scans in order, and an entry
     /// ahead of `Themes` would tax every theme read.
     idle: RefCell<Vec<std::rc::Weak<dyn Fn()>>>,
+    #[allow(dead_code)]
+    probe_pad: [u64; 3],
 }
 
 /// The effect running for as long as it lives: whatever ran before runs
