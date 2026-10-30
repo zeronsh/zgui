@@ -3,6 +3,8 @@
 // Each file loads its own `common` (a Harness of its own, which files
 // add methods to), as it did as a binary of its own.
 #![allow(clippy::duplicate_mod)]
+#[path = "../app_plugins.rs"]
+mod app_plugins;
 #[path = "../check.rs"]
 mod check;
 #[path = "../diagnostics.rs"]

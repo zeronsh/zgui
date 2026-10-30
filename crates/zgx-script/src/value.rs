@@ -2463,6 +2463,9 @@ fn list_of<'a>(value: &'a Value, method: &str) -> mlua::Result<&'a [Value]> {
 pub struct Store {
     runtime: Runtime,
     signals: RefCell<HashMap<String, Signal<Value>>>,
+    /// Keys a plugin's default made (`shared`), which the app's own default
+    /// replaces.
+    provisional: RefCell<std::collections::HashSet<String>>,
 }
 impl Store {
     /// An empty store on `runtime`.
@@ -2470,6 +2473,28 @@ impl Store {
         Self {
             runtime: runtime.clone(),
             signals: RefCell::default(),
+            provisional: RefCell::default(),
+        }
+    }
+    /// Shared state `key` (`ui.shared`), as [`Store::state`], except that a
+    /// plugin's default gives way to the app's: plugins load before the app,
+    /// so without a host's value (`ScriptHost::shared`) the app's own
+    /// default is what shows, as a Luau app run by `zgx run` declares it.
+    pub(crate) fn shared(&self, key: &str, initial: Value, plugin: bool) -> Signal<Value> {
+        let existing = self.signals.borrow().get(key).cloned();
+        match existing {
+            Some(signal) => {
+                if !plugin && self.provisional.borrow_mut().remove(key) {
+                    signal.set(initial);
+                }
+                signal
+            }
+            None => {
+                if plugin {
+                    self.provisional.borrow_mut().insert(key.to_owned());
+                }
+                self.state(key, initial)
+            }
         }
     }
     /// The existing state for `key`, or new state starting at `initial`.

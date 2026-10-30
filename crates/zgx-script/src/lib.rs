@@ -24,8 +24,10 @@
 //!
 //! The `ui` and `anime` libraries are documented in `docs/scripting.md`.
 #![warn(missing_docs)]
+mod actions;
 mod anim;
 mod anime;
+pub mod app_config;
 pub mod app_types;
 mod bundle;
 mod calls;
@@ -2754,6 +2756,10 @@ impl ScriptHost {
         lazy.ui(&["form"], form::install);
         lazy.ui(&["router"], router::install);
         lazy.ui(&["async", "optimistic"], handlers::install);
+        let app_actions = self.0.actions.clone();
+        lazy.ui(&["actions"], move |lua, ui| {
+            actions::install(lua, ui, app_actions, !plugin)
+        });
         lazy.ui(&["contribute", "filter", "override"], node::install_plugins);
         // `ui.selector(text)`: a plugin's target by role or name
         // (`'role:button "Save"'`), the text itself at run time; its type

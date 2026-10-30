@@ -16948,6 +16948,11 @@ declare ui: {
 	-- click, a toast's Undo): it may await, its tasks are cancelled as what
 	-- made it goes, and what it raises uncaught is reported once.
 	async: <A...>(f: (A...) -> ()) -> (A...) -> (),
+	-- Actions the app's script defines, called as a Rust host's are
+	-- (`ui.invoke(name, arg)`, `ui.action(name, arg)`), by the app and by
+	-- the plugins it exposes them to (zgx.json's `expose.actions`). A plugin
+	-- defines none.
+	actions: (actions: { [string]: (arg: any) -> () }) -> (),
 	-- Where the app is, as React Router keeps it: named routes with
 	-- `:params`, history, the platform's back and forward input, and deep
 	-- links by `scheme`.

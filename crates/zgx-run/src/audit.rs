@@ -67,7 +67,7 @@ const PRESSES: usize = 60;
 /// dialogs answer as cancelled and the inspector recording where elements
 /// were built.
 fn start(script: &Path) -> Result<(TestApp, zgx::inspect::Inspector), String> {
-    let (config, packages) = crate::AppConfig::read(script)?;
+    let (config, app_host) = crate::AppConfig::read(script)?;
     let inspector = zgx::inspect::Inspector::new();
     // Recording (its layout warnings, not its overlay): nodes keep where
     // they were built and their `#id`s.
@@ -76,13 +76,7 @@ fn start(script: &Path) -> Result<(TestApp, zgx::inspect::Inspector), String> {
     let given = (inspector.clone(), desktop.clone());
     let script = script.to_path_buf();
     let mut app = TestApp::wrapped(
-        move |runtime| {
-            let mut host = ScriptHost::new(runtime, script);
-            for (name, dir) in packages {
-                host = host.package(name, dir);
-            }
-            host
-        },
+        move |runtime| app_host.apply(ScriptHost::new(runtime, script)),
         move |view| {
             let (inspector, desktop) = given;
             provide(

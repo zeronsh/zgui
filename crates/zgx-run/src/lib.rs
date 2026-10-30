@@ -135,11 +135,10 @@ impl AppConfig {
     pub fn for_script(script: &Path) -> Result<Self, String> {
         Self::read(script).map(|(config, _)| config)
     }
-    /// As [`for_script`](Self::for_script), with its `"packages"`: module
-    /// folders outside the script's directory it may require
-    /// (`{ "kit": "../shared/kit" }`, from the config's directory), for
-    /// `ScriptHost::package`.
-    fn read(script: &Path) -> Result<(Self, Vec<(String, PathBuf)>), String> {
+    /// As [`for_script`](Self::for_script), with what it gives the script's
+    /// host (`zgx_script::app_config`): its packages, what it exposes to
+    /// plugins, and its plugins.
+    fn read(script: &Path) -> Result<(Self, zgx_script::app_config::AppHost), String> {
         let dir = script.parent().unwrap_or(Path::new("."));
         let name = dir
             .canonicalize()
@@ -164,7 +163,7 @@ impl AppConfig {
             path = old;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
-            return Ok((config, Vec::new()));
+            return Ok((config, Default::default()));
         };
         let fail = |e: String| format!("{}: {e}", path.display());
         let json: serde_json::Value =
@@ -201,9 +200,9 @@ impl AppConfig {
                 "glass",
                 "app_id",
                 "application_id",
-                "packages",
             ]
             .contains(&key.as_str())
+                && !zgx_script::app_config::KEYS.contains(&key.as_str())
             {
                 return Err(fail(format!("unknown key `{key}`")));
             }
@@ -238,29 +237,8 @@ impl AppConfig {
             config.app_id = id;
         }
         config.application_id = string("application_id")?;
-        let mut packages = Vec::new();
-        if let Some(listed) = object.get("packages") {
-            let listed = listed
-                .as_object()
-                .ok_or_else(|| fail("`packages` is not an object of names and folders".into()))?;
-            for (name, folder) in listed {
-                let folder = folder
-                    .as_str()
-                    .ok_or_else(|| fail(format!("package `{name}` is not a folder's path")))?;
-                let folder = dir.join(folder);
-                if name.is_empty() || name.contains('/') {
-                    return Err(fail(format!("package `{name}`: a name, without a `/`")));
-                }
-                if !folder.is_dir() {
-                    return Err(fail(format!(
-                        "package `{name}`: {} is not a folder",
-                        folder.display()
-                    )));
-                }
-                packages.push((name.clone(), folder));
-            }
-        }
-        Ok((config, packages))
+        let app = zgx_script::app_config::from_object(dir, object).map_err(fail)?;
+        Ok((config, app))
     }
 }
 
@@ -327,7 +305,7 @@ pub fn run_hosting(
     if !script.is_file() {
         return Err(format!("{}: no such script", script.display()).into());
     }
-    let (config, packages) = AppConfig::read(&script)?;
+    let (config, app_host) = AppConfig::read(&script)?;
     let options = WindowOptions {
         title: config.title.clone(),
         width: config.width,
@@ -371,10 +349,8 @@ pub fn run_hosting(
             });
     }
     app.run(move |cx| {
-        let host = packages.iter().fold(
-            ScriptHost::new(&cx.ui.runtime, script.clone()),
-            |host, (name, folder)| host.package(name, folder),
-        );
+        // Its packages, what it exposes to plugins, and its plugins.
+        let host = app_host.apply(ScriptHost::new(&cx.ui.runtime, script.clone()));
         let host = host.app_id(&config.app_id).args(args.clone());
         // The launch's files, and what the system opened meanwhile:
         // they wait for the script's `ui.on_open`.
@@ -606,8 +582,8 @@ mod tests {
             r#"{ "packages": { "kit": "./kit" } }"#,
         )
         .unwrap();
-        let (_, packages) = AppConfig::read(&script).unwrap();
-        assert_eq!(packages, [("kit".to_string(), dir.join("./kit"))]);
+        let (_, app) = AppConfig::read(&script).unwrap();
+        assert_eq!(app.packages, [("kit".to_string(), dir.join("./kit"))]);
         std::fs::write(
             dir.join("zgx.json"),
             r#"{ "packages": { "kit": "./none" } }"#,

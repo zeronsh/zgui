@@ -5108,10 +5108,9 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (key, initial): (String, Value)| {
             let env = env(lua)?;
             env.permits(&env.exposed_shared, &key, "ui.shared")?;
-            let state = State::new(env.shared.state(&key, initial));
-            if matches!(*env.grants, crate::Grants::Only(_))
-                && env.read_only_shared.borrow().contains(&key)
-            {
+            let plugin = matches!(*env.grants, crate::Grants::Only(_));
+            let state = State::new(env.shared.shared(&key, initial, plugin));
+            if plugin && env.read_only_shared.borrow().contains(&key) {
                 let read = crate::value::ReadState(state, key.as_str().into());
                 return lua.create_userdata(read);
             }

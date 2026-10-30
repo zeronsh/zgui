@@ -227,6 +227,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "router",
     "async",
     "optimistic",
+    "actions",
     "open_files",
     "save_file",
     "notify",

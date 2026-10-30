@@ -148,7 +148,11 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
         "mount",
         lua.create_function(move |_, path: Option<String>| {
             let path = dir.join(path.as_deref().unwrap_or("app.luau"));
-            let app = TestApp::try_new(|runtime| ScriptHost::new(runtime, &path))
+            // Its packages, what it exposes to plugins and its plugins, as
+            // `zgx run` gives them.
+            let host = crate::app_config::read(&dir)
+                .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
+            let app = TestApp::try_new(|runtime| host.apply(ScriptHost::new(runtime, &path)))
                 .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
             // The window's size, as `zgx run` opens it.
             let (width, height) = window_size(&dir);
