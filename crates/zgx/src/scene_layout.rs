@@ -28,8 +28,11 @@ struct Mapped {
     stacked: bool,
 }
 impl AdvancedLayoutCache {
-    fn new() -> Self {
-        let mut tree = t::TaffyTree::new();
+    /// For a container of `children`: its root and them. Taffy's own default
+    /// (16 slots in each of its maps) would give every small flex container
+    /// a tree of its own at about 10 KB, what a page of them peaks on.
+    fn new(children: usize) -> Self {
+        let mut tree = t::TaffyTree::with_capacity(children + 1);
         tree.disable_rounding();
         let root = tree
             .new_leaf(t::Style::default())
@@ -564,11 +567,10 @@ impl Scene {
         if root_options.display == Some(ViewDisplay::None) {
             return self.measure_hidden(id, constraints);
         }
-        let mut cache = self
-            .node_mut(id)
-            .advanced_layout
-            .take()
-            .unwrap_or_else(|| Box::new(AdvancedLayoutCache::new()));
+        let mut cache = self.node_mut(id).advanced_layout.take().unwrap_or_else(|| {
+            let children = self.children_raw(self.node(id)).len();
+            Box::new(AdvancedLayoutCache::new(children))
+        });
         let mut ids = self.children_raw(self.node(id)).clone();
         // Those whose containing block is further up are placed by it.
         if self.relative_count > 0 {

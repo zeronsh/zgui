@@ -34,6 +34,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- **Pages of flex containers peak lower** (zgx): each container on the advanced layout path gets a layout tree the size of its children rather than taffy's 16 slots, about 4 MB less at the peak on a 21-page gallery, 0.48 → 0.12 MB allocated per page switch at that site.
 - **`zgx check` reports unknown members of `ui`** (zgx-script): `ui.window`'s type was a function intersected with a table, which Luau reads as `never`, and that quieted every lookup on `ui`: a misspelled `ui.nope` passed strict mode and failed as `attempt to call a nil value` when it ran.
 - **A list being shrunk no longer flips its height for ever** (zgx): a size within a 1024th of a point of the last one told is rounding, not movement, and isn't told. Sums at a column's scale could land on neighbouring floats, a reader of the size dirtied layout, and it landed on the other: layout never settled. It took a list in a tight column (a zoomed sidebar) with a fractional neighbour (a fold animating).
 - **A reload frees the script it replaces** (zgx-script): an `anime` animation, timeline, draggable or scroll link held a strong handle to the script's own Luau state from inside it, so the state never closed and each hot reload leaked all of it. On a gallery with 15 MB of script heap, 100 reloads took the heap from 54 MB to 2.7 GB; now they stay between 60 and 95 MB, every old state closed.
