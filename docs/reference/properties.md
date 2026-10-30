@@ -173,6 +173,7 @@ return ui.div {
 | `fade_sides` | `Sides` | | each edge: `{ top, right, bottom, left }`. A fade inside another fade is faded by both (the nearest two apply) |
 | `layer` | `boolean` | `false` | paint the subtree into its own layer |
 | `fit` | `"fill" \| "contain" \| "cover" \| "none" \| "scale_down"` | `"fill"` | how an image fills its box |
+| `object_position` | `{ x, y }` | `{ 0.5, 0.5 }` | where an image lies in its box where it doesn't fill it (CSS's `object-position`): fractions of the room to spare, so `{ 0.5, 0 }` keeps a portrait's top as `fit = "cover"` crops it. For `ui.image`; a `bg_image` stays centred until 0.2 |
 | `tint` | `Color` | | recolors an SVG (a state or function re-tints it) |
 | `dither` | `number` | | draws an image dithered in dots this many points square (see [Images and canvas](media.md)) |
 | `cursor` | `Cursor` | `"default"` | `"pointer"`, `"text"`, `"vertical_text"`, `"crosshair"`, `"move"`, `"grab"`, `"grabbing"`, `"not_allowed"`, `"wait"`, `"progress"`, `"help"`, `"context_menu"`, `"copy"`, `"alias"`, `"no_drop"`, `"all_scroll"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"zoom_in"`, `"zoom_out"`; CSS's spellings (`"nwse-resize"`) too. Unstated, a link shows `"pointer"` and a text field `"text"`; buttons, checkboxes, menu items and sliders keep the arrow, as Chrome's and AppKit's do |

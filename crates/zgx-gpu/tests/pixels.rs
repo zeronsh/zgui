@@ -6061,3 +6061,47 @@ fn underlines_draw_in_each_line_style() {
         assert!(high - low >= 2, "scale {scale}: it moves: {low} to {high}");
     }
 }
+
+/// `object_position` places what `cover` crops: a portrait's top, its middle
+/// (the default) or its bottom shows, and a `none` picture its corner.
+#[test]
+fn object_position_says_what_a_crop_keeps() {
+    use std::sync::Arc;
+    use zgx::{compose::prelude::*, image::ImageData, widgets::Ui};
+    let _gpu_fixture = gpu_fixture();
+    // A portrait in thirds: red, green, blue, top to bottom.
+    let (red, green, blue) = ([230, 30, 40, 255], [30, 210, 60, 255], [30, 70, 220, 255]);
+    let pixels: Vec<u8> = (0..60)
+        .flat_map(|y| {
+            let band = [red, green, blue][y / 20];
+            (0..20).flat_map(move |_| band)
+        })
+        .collect();
+    let source = Arc::new(ImageData::new(20, 60, pixels).unwrap());
+    let shown = |view: fn(View) -> View| {
+        let (mut gpu, mut ui) = (GpuRenderer::new(100, 100).unwrap(), Ui::new(100., 100.));
+        let bitmap = source.clone();
+        ui.mount(view(
+            image_signal("Portrait", move || bitmap.clone()).size(60., 60.),
+        ));
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        move |x: usize, y: usize| -> [u8; 4] {
+            pixels[(y * 100 + x) * 4..][..4].try_into().unwrap()
+        }
+    };
+    let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 12);
+    // Centred, as ever: the middle band fills the middle of the box.
+    let middle = shown(|v| v.object_fit(ObjectFit::Cover));
+    assert!(near(middle(30, 30), green), "{:?}", middle(30, 30));
+    let top = shown(|v| v.object_fit(ObjectFit::Cover).object_position(0.5, 0.));
+    assert!(near(top(30, 10), red), "{:?}", top(30, 10));
+    let bottom = shown(|v| v.object_fit(ObjectFit::Cover).object_position(0.5, 1.));
+    assert!(near(bottom(30, 50), blue), "{:?}", bottom(30, 50));
+    // Uncropped: a picture smaller than its box, at its end.
+    let end = shown(|v| v.object_fit(ObjectFit::None).object_position(1., 0.));
+    assert!(near(end(50, 5), red), "{:?}", end(50, 5));
+    assert!(!near(end(5, 5), red), "nothing at the other side");
+}

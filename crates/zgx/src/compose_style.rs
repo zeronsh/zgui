@@ -732,7 +732,7 @@ pub(crate) fn mount_style_with_intrinsic(
     interactive: bool,
     intrinsic: Option<Signal<(f32, f32)>>,
     layout_target: Option<Signal<Option<NodeId>>>,
-    object_fit: Option<Signal<crate::style::ObjectFit>>,
+    object_fit: Option<Signal<crate::style::ImagePlacement>>,
     theme: Option<std::rc::Rc<crate::theme::ThemeScope>>,
 ) -> Signal<Typography> {
     let mut base = base;
@@ -1273,7 +1273,12 @@ pub(crate) fn mount_style_with_intrinsic(
                 .untracked(|| ui.set_disabled(node, is_disabled));
         }
         if let Some(output) = &object_fit {
-            output.set(resolved.overflow().object_fit.unwrap_or_default());
+            output.set(crate::style::ImagePlacement {
+                fit: resolved.overflow().object_fit.unwrap_or_default(),
+                position: (resolved.rare().cold.as_ref())
+                    .and_then(|cold| cold.object_position)
+                    .unwrap_or((0.5, 0.5)),
+            });
         }
         // Only observe inherited typography when a field is actually inherited
         // (and from then on: a later run setting every field is rare).

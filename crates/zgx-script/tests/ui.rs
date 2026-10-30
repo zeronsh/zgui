@@ -740,6 +740,16 @@ fn a_box_takes_a_radial_gradient() {
 }
 
 #[test]
+fn an_image_takes_a_position() {
+    let h = Harness::inline(
+        r##"return ui.image { id = "photo", src = ui.bitmap(2, 8, function() return 1 end),
+            w = 20, h = 20, fit = "cover", object_position = { 0.5, 0 } }"##,
+    );
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+}
+
+#[test]
 fn a_link_span_underlines_under_the_pointer() {
     use zgx::scene::NodeKind;
     let mut h = Harness::inline(

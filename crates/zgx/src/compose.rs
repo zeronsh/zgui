@@ -4470,7 +4470,7 @@ fn open_element(
         true => scroll_layout_target.clone(),
         false => rare.as_deref_mut().and_then(|r| r.layout_target.take()),
     };
-    let image_fit = is_image.then(|| ui.signal(crate::style::ObjectFit::default()));
+    let image_fit = is_image.then(|| ui.signal(crate::style::ImagePlacement::default()));
     environment.typography = mount_style_with_intrinsic(
         ui,
         root,
@@ -5563,7 +5563,7 @@ fn mount_native_surface(
     ui: &mut Ui,
     root: NodeId,
     source: Signal<Option<std::rc::Rc<crate::native_surface::NativeSurface>>>,
-    fit: Signal<crate::style::ObjectFit>,
+    fit: Signal<crate::style::ImagePlacement>,
 ) {
     use crate::scene::{Style, Transform};
     let viewport = ui.container(
@@ -5593,7 +5593,7 @@ fn mount_native_surface(
             height,
             frame.width() as f32,
             frame.height() as f32,
-            fit.get(),
+            fit.get().fit,
         );
         let mut scene = scene.borrow_mut();
         scene.set_kind(bitmap, NodeKind::NativeSurface(frame));
@@ -5746,7 +5746,7 @@ fn mount_image(
     ui: &mut Ui,
     root: NodeId,
     source: Signal<Option<std::sync::Arc<crate::image::ImageData>>>,
-    fit: Signal<crate::style::ObjectFit>,
+    fit: Signal<crate::style::ImagePlacement>,
 ) {
     use crate::scene::{Style, Transform};
     let viewport = ui.container(
@@ -5777,7 +5777,8 @@ fn mount_image(
     ui.bind(root, move || {
         let data = source.get().expect("mounted image source");
         let (width, height) = size.get();
-        let fitting = fit.get();
+        let placement = fit.get();
+        let fitting = placement.fit;
         let crop = data.transform() == crate::affine::Affine::IDENTITY
             || matches!(
                 fitting,
@@ -5816,8 +5817,8 @@ fn mount_image(
         scene.set_transform(
             bitmap,
             Transform {
-                x: (width - image_width) * 0.5,
-                y: (height - image_height) * 0.5,
+                x: (width - image_width) * placement.position.0,
+                y: (height - image_height) * placement.position.1,
             },
         );
     });

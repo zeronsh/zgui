@@ -1563,6 +1563,9 @@ export type Styles = {
 	-- `rounded` and an animated clip inset, a soft oval that opens.
 	clip_feather: number?,
 	layer: boolean?,
+	-- Where an image lies in its box, as fractions of the room to spare:
+	-- { 0.5, 0 } keeps a portrait's top under fit = "cover".
+	object_position: { number }?,
 	fit: Fit?,
 	tint: Color?,
 	-- An image drawn dithered as Zeron dithers wallpapers, in dots this many
@@ -1733,6 +1736,7 @@ export type StyleProps = {
 	clip_inset: Reactive<Sides>?,
 	clip_feather: Reactive<number>?,
 	layer: Reactive<boolean>?,
+	object_position: Reactive<{ number }>?,
 	fit: Reactive<Fit>?,
 	tint: Reactive<Color>?,
 	dither: number?,

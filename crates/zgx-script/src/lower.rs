@@ -6832,6 +6832,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         }
         (Layer, Lit::Bool(v)) => s.isolated(*v),
         (BgImage | BgFit, _) => s,
+        (ObjectPosition, Lit::Pair(x, y)) => s.object_position(*x, *y),
         (Fit, Lit::Str(v)) => s.object_fit(match &**v {
             "contain" => ObjectFit::Contain,
             "cover" => ObjectFit::Cover,

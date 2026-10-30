@@ -733,6 +733,22 @@ pub(crate) struct ColdStyles {
     pub(crate) z: Option<i32>,
     /// `Styled::sticky_top`.
     pub(crate) sticky_top: Option<f32>,
+    /// `Styled::object_position`.
+    pub(crate) object_position: Option<(f32, f32)>,
+}
+/// How an image sits in its box: `Styled::object_fit` and `object_position`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ImagePlacement {
+    pub(crate) fit: ObjectFit,
+    pub(crate) position: (f32, f32),
+}
+impl Default for ImagePlacement {
+    fn default() -> Self {
+        Self {
+            fit: ObjectFit::default(),
+            position: (0.5, 0.5),
+        }
+    }
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
@@ -877,6 +893,9 @@ impl RareStyles {
             }
             if theirs.layer_uniforms.is_some() {
                 mine.layer_uniforms = theirs.layer_uniforms;
+            }
+            if theirs.object_position.is_some() {
+                mine.object_position = theirs.object_position;
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -1734,6 +1753,17 @@ pub trait Styled: Sized {
     /// Merge `style`'s set properties over these.
     fn style(mut self, style: Styles) -> Self {
         self.styles_mut().merge(&style);
+        self
+    }
+    /// Where a picture lies in its box where it doesn't fill it, as CSS
+    /// `object-position`: fractions of the room to spare, `(0.5, 0.5)` centred
+    /// (the default), `(0.5, 0.)` keeping its top when `cover` crops a portrait.
+    fn object_position(mut self, x: f32, y: f32) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .object_position = Some((x, y));
         self
     }
     /// Set centered image fitting within its padded content box. Not inherited.

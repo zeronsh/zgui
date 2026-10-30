@@ -73,6 +73,9 @@ here, to land together:
 - [ ] `Brush` and `Background` `#[non_exhaustive]`, with radial, conic and
   repeating gradients as brushes: a canvas can't fill with `radial` until then,
   and it holds three stops as a shader's uniforms.
+- [ ] `Background::Image` with a position and a repeat (CSS's
+  `background-position` and `-repeat`): it is public and exhaustive, so a box's
+  `bg_image` stays centred and whole until then.
 - [ ] Deprecate `Styled::blur`: it is the backdrop blur, where Luau's `blur` is
   the content blur. `backdrop_blur` and `filter_blur` say which.
 - [ ] Named keys outside `Key`'s vocabulary. The desktop host drops every
