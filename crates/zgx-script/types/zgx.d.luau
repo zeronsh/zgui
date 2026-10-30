@@ -1631,6 +1631,7 @@ export type Styles = {
 	letter_spacing: Num?,
 	-- Tabular figures: every digit the same width.
 	tabular: boolean?,
+	font_features: string?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: boolean?,
@@ -1790,6 +1791,9 @@ export type StyleProps = {
 	letter_spacing: Reactive<Num>?,
 	-- Tabular figures: every digit the same width.
 	tabular: Reactive<boolean>?,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Reactive<string>?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Reactive<boolean>?,
@@ -2176,6 +2180,9 @@ export type Props = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -2505,6 +2512,7 @@ export type Props_lines = Reactive<number>?
 export type Props_line_height = Reactive<Num>?
 export type Props_letter_spacing = Reactive<Num>?
 export type Props_tabular = Reactive<boolean>?
+export type Props_font_features = Reactive<string>?
 export type Props_underline = Reactive<boolean>?
 export type Props_underline_offset = Reactive<Num>?
 export type Props_x = Reactive<number>?
@@ -2733,6 +2741,9 @@ export type ContainerProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -3080,6 +3091,9 @@ export type ScrollProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -3438,6 +3452,9 @@ export type TextProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -3784,6 +3801,9 @@ export type MarkdownViewProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -4183,6 +4203,9 @@ export type RichProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -4523,6 +4546,9 @@ export type ImageProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -4873,6 +4899,9 @@ export type SvgProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -5318,6 +5347,9 @@ export type Scene3DProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -5681,6 +5713,9 @@ export type CanvasProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -6053,6 +6088,9 @@ export type CheckboxProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -6403,6 +6441,9 @@ export type InputProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -6839,6 +6880,9 @@ export type ProgressProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -7180,6 +7224,9 @@ export type SliderProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -7536,6 +7583,9 @@ export type SegmentedProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -7888,6 +7938,9 @@ export type StepperProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -8241,6 +8294,9 @@ export type DisclosureProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -8591,6 +8647,9 @@ export type AccordionProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -8931,6 +8990,9 @@ export type SectionProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -9278,6 +9340,9 @@ export type SeparatorProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -9624,6 +9689,9 @@ export type TabsProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -9978,6 +10046,9 @@ export type TreeProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -10342,6 +10413,9 @@ export type DataGridProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -10702,6 +10776,9 @@ export type CalendarProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -11055,6 +11132,9 @@ export type DatePickerProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -11406,6 +11486,9 @@ export type TimeFieldProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -11756,6 +11839,9 @@ export type ComboboxProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -12114,6 +12200,9 @@ export type CommandPaletteProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -12460,6 +12549,9 @@ export type SelectProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -12813,6 +12905,9 @@ export type SplitProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -13171,6 +13266,9 @@ export type ListProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -13591,6 +13689,9 @@ export type LayerProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -13937,6 +14038,9 @@ export type ModalProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -14301,6 +14405,9 @@ export type PopoverProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -14675,6 +14782,9 @@ export type MenuItemProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -15020,6 +15130,9 @@ export type SubmenuProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -15372,6 +15485,9 @@ export type WebViewProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -15732,6 +15848,9 @@ export type TerminalProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -16073,6 +16192,9 @@ export type SlotProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -16458,6 +16580,9 @@ export type EachOptions = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -16814,6 +16939,9 @@ export type PresenceOptions = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,

@@ -6868,8 +6868,19 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Tabular, Lit::Bool(true)) => {
             s.font_features(zgx::text_layout::FontFeatures::new([(*b"tnum", 1)]))
         }
+        (FontFeatures, Lit::Str(v)) => s.font_features(font_features(v)),
         _ => s,
     }
+}
+
+/// `"ss01 cv02=3 liga=0"`: OpenType features, as CSS's
+/// `font-feature-settings`, a tag on or `tag=value`. What isn't a four-letter
+/// tag with a number is left out, as CSS drops a declaration it can't read.
+fn font_features(text: &str) -> zgx::text_layout::FontFeatures {
+    zgx::text_layout::FontFeatures::new(text.split_whitespace().filter_map(|setting| {
+        let (tag, value) = setting.split_once('=').unwrap_or((setting, "1"));
+        Some((tag.as_bytes().try_into().ok()?, value.parse().ok()?))
+    }))
 }
 
 /// A cursor by its name: `"nwse_resize"`, or CSS's `"nwse-resize"`.

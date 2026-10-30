@@ -46,6 +46,7 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `line_height` | `number` | the font's | points |
 | `letter_spacing` | `number` | `0` | points |
 | `tabular` | `boolean` | `false` | tabular figures (OpenType `tnum`): every digit one width, for numbers that change in place |
+| `font_features` | `string` | none | OpenType features: `"ss01 cv02=3 liga=0"` ([properties](properties.md)) |
 
 ## Rich text and spans
 

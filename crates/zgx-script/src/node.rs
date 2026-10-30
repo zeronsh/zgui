@@ -1452,7 +1452,7 @@ props! {
     "text_size" => TextSize: Num, "weight" => Weight: Num, "bold" => Bold: Bool, "italic" => Italic: Bool,
     "align" => Align: Str, "font" => Font: Str, "wrap" => Wrap: Bool, "truncate" => Truncate: Bool,
     "lines" => Lines: Num, "line_height" => LineHeight: Num, "letter_spacing" => LetterSpacing: Num,
-    "tabular" => Tabular: Bool, "underline" => Underline: Bool, "underline_offset" => UnderlineOffset: Num,
+    "tabular" => Tabular: Bool, "font_features" => FontFeatures: Str, "underline" => Underline: Bool, "underline_offset" => UnderlineOffset: Num,
     // Transforms: after layout, about `origin` (fractions of the node).
     "x" => X: Num, "y" => Y: Num,
     "scale" => Scale: Num, "scale_x" => ScaleX: Num, "scale_y" => ScaleY: Num,

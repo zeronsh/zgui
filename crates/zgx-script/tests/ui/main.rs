@@ -55,6 +55,8 @@ mod stack;
 mod sticky;
 #[path = "../sweep.rs"]
 mod sweep;
+#[path = "../text_props.rs"]
+mod text_props;
 #[path = "../theme.rs"]
 mod theme;
 #[path = "../ui.rs"]

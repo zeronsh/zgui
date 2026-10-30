@@ -1587,6 +1587,7 @@ export type Styles = {
 	letter_spacing: Num?,
 	-- Tabular figures: every digit the same width.
 	tabular: boolean?,
+	font_features: string?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: boolean?,
@@ -1746,6 +1747,9 @@ export type StyleProps = {
 	letter_spacing: Reactive<Num>?,
 	-- Tabular figures: every digit the same width.
 	tabular: Reactive<boolean>?,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Reactive<string>?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Reactive<boolean>?,
