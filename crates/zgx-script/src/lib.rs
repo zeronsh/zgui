@@ -2082,7 +2082,20 @@ impl ScriptHost {
         if self.stamps() == *self.0.stamps.borrow() && !assets {
             return themes;
         }
-        let _ = self.reload();
+        // What a reload mounts can panic, and `watch` calls this: a panic
+        // shows as a script error does, and the next save is still heard.
+        if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reload()))
+        {
+            *self.0.stamps.borrow_mut() = self.stamps();
+            let message = panic
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a panic".into());
+            self.0
+                .error
+                .set(Some(format!("The reload panicked: {message}")));
+        }
         true
     }
     /// Read again the theme files that changed; whether any did. An error
