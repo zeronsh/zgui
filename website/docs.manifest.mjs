@@ -103,6 +103,8 @@ export const sets = [
         description: 'anime.js v4’s API on a Rust engine that ticks once per display frame and sleeps at rest.' },
       { slug: 'plugins', src: 'docs/plugins.md', title: 'Plugins',
         description: 'Plugins that add to an app, filter it and replace parts of it, and what the app lets them see and do.' },
+      { slug: 'accessibility-audit', src: 'docs/accessibility-audit.md', title: 'Accessibility audit',
+        description: 'zgx audit: what a screen reader gets of an app, through what it opens, as JSON for agents and CI.' },
       { slug: 'design-systems', src: 'docs/reference/design.md', title: 'Design systems' },
       '---API reference---',
       { slug: 'reference', src: 'docs/reference/index.md', title: 'Reading the reference' },

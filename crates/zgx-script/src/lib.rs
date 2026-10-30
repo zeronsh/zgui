@@ -1592,6 +1592,25 @@ impl ScriptHost {
     pub fn run_command(&self, id: &str) -> bool {
         self.0.commands.run(id)
     }
+    /// Every route the app's routers declare (`ui.router { routes }`), as
+    /// `(name, path)` by name: where an agent or `zgx audit` can go
+    /// ([`open_route`](Self::open_route)).
+    pub fn routes(&self) -> Vec<(String, String)> {
+        let current = self.0.current.borrow().clone();
+        current
+            .and_then(|current| current._vms.first().map(|vm| router::routes(&vm.lua)))
+            .unwrap_or_default()
+    }
+    /// Open `path` (`"/thread/42"`) in the app's router with a route
+    /// matching it, as following a link would; whether one did.
+    pub fn open_route(&self, path: &str) -> bool {
+        let current = self.0.current.borrow().clone();
+        let Some(vm) = current.as_ref().and_then(|current| current._vms.first()) else {
+            return false;
+        };
+        vm.guard(vm.budget, || router::open(&vm.lua, path))
+            .unwrap_or(false)
+    }
     /// The warnings scripts have caused (a duration that reads as seconds,
     /// a saved value that is not JSON), each once, oldest first. They also
     /// go to stderr.

@@ -117,6 +117,8 @@ jobs:
       # each of which may add modules (scene3d, i18n, …). Quoted, as the
       # lines below are.
       - run: "cargo test -p zgx-script --all-features --test ui --locked -- lazy_ui::"
+      # zgx audit over the Luau examples (zgx-run's own tests need sockets).
+      - run: cargo test -p zgx-run --test audit --locked
       # Devtools tracing (zgx's `trace`, off by default; zgx-script's
       # `inspect` turns it on): what it keeps stays bounded. Quoted, as the
       # line below is.
@@ -311,6 +313,7 @@ jobs:
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload --all-targets --locked
       # The soak (an app used for a while holds what it did), on Metal.
       - run: cargo test -p zgx-script --test soak --locked
+      - run: cargo test -p zgx-run --test audit --locked
       # The watchdog's budgets and memory limits, whose timing is each OS's.
       - run: cargo test -p zgx-script --test state --locked -- script::runaway script::a_script_short_of_its_budget script::garbage_from_builtins script::copies_of_state script::a_script_keeping_nodes
       - run: cargo test --workspace --doc --locked

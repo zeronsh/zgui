@@ -9,6 +9,7 @@ use zgx::input::{Key, Modifiers};
 use zgx_desktop::{AppMenu, AppMenuEntry, Application, MenuAccelerator, WindowOptions};
 use zgx_script::{Command, ScriptHost};
 
+pub mod audit;
 #[cfg(feature = "fetch")]
 mod fetch;
 /// Give `host` the fetcher `run` gives a script (feature `fetch`, on by

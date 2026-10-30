@@ -246,10 +246,64 @@ fn made(lua: &Lua) -> mlua::Result<Function> {
     Ok(router)
 }
 
+/// The routers made, each `{ router, routes }`: what the host lists and
+/// opens (`ScriptHost::routes`, `open_route`), for agents and `zgx audit`.
+pub(crate) const ROUTERS: &str = "zgx.routers";
+
 /// Installs `ui.router`.
 pub(crate) fn install(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     ui.set(
         "router",
-        lua.create_function(|lua, spec: mlua::Value| made(lua)?.call::<Table>(spec))?,
+        lua.create_function(|lua, spec: mlua::Value| {
+            let router = made(lua)?.call::<Table>(spec.clone())?;
+            if let mlua::Value::Table(spec) = spec {
+                let routers = match lua.named_registry_value::<Table>(ROUTERS) {
+                    Ok(routers) => routers,
+                    Err(_) => {
+                        let routers = lua.create_table()?;
+                        lua.set_named_registry_value(ROUTERS, routers.clone())?;
+                        routers
+                    }
+                };
+                let entry = lua.create_table()?;
+                entry.set("router", router.clone())?;
+                entry.set("routes", spec.get::<Table>("routes")?)?;
+                routers.push(entry)?;
+            }
+            Ok(router)
+        })?,
     )
+}
+
+/// Every route `lua`'s routers declare, `(name, path)`, by name.
+pub(crate) fn routes(lua: &Lua) -> Vec<(String, String)> {
+    let Ok(routers) = lua.named_registry_value::<Table>(ROUTERS) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in routers.sequence_values::<Table>().flatten() {
+        let Ok(routes) = entry.get::<Table>("routes") else {
+            continue;
+        };
+        for (name, path) in routes.pairs::<String, String>().flatten() {
+            out.push((name, path));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Open `path` in the first of `lua`'s routers with a route matching it.
+pub(crate) fn open(lua: &Lua, path: &str) -> mlua::Result<bool> {
+    let Ok(routers) = lua.named_registry_value::<Table>(ROUTERS) else {
+        return Ok(false);
+    };
+    for entry in routers.sequence_values::<Table>().flatten() {
+        let router: Table = entry.get("router")?;
+        let open: Function = router.get("open")?;
+        if open.call::<()>(path).is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

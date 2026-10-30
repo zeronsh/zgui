@@ -109,6 +109,10 @@ A debug build lints the scripts itself after every load and reload, so a finding
 
 Some costs the engine removes instead of asking scripts to avoid them: `ui.tween`, `ui.spring`, `ui.loop`, text templates and animations of states or elements run without calling the script at all.
 
+### Assistive technology: `zgx audit`
+
+`zgx audit app/` runs the app headless and checks what a screen reader gets of its first screen and of each command, button and route it opens: unnamed controls, focus that skips or traps, alerts not announced. It prints one line of JSON (each finding's rule, `#id`, role, name, source line and the state it was found in), or a table with `--human`, and exits 1 when it finds any ([accessibility audit](accessibility-audit.md)).
+
 ## Diagnostics
 
 **Errors in the window.** When a script fails to load or reload, or a handler, computed property or effect raises, a banner over the bottom of the window shows the file and line (`app.luau:12`, in monospace), the message and as much of the traceback as fits. A failed reload keeps the previous interface running under it; the next good reload clears it, and × dismisses it. The banner is mounted only while there is an error (`View::child_when`), so without one it costs no nodes and no per-frame work. `host.error()` is the same message as a signal.

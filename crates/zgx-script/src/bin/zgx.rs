@@ -23,6 +23,7 @@ const USAGE: &str = "usage: zgx check [--nonstrict] <file-or-dir>...
        zgx lint --rules
        zgx types <dir>...
        zgx inspect [--app PID] [--json] <command> [args]   (zgx inspect help)
+       zgx audit [--human] <app.luau-or-dir>
 
 check: type checks zgx Luau scripts with luau-lsp, the bundled ui/anime
 types, the standard platform and the new type solver. Strict mode applies
@@ -35,7 +36,13 @@ line above accepts a deliberate exception. It exits 1 when it finds any;
 
 types: writes each app's own theme tokens (`ui.theme.tokens`) as Luau
 types to <dir>/.zgx/types.d.luau, for editors to complete \"$app.…\" (list
-it in luau-lsp's definition files). `zgx check` writes it too.";
+it in luau-lsp's definition files). `zgx check` writes it too.
+
+audit: what assistive technology gets of an app, headless (zgx-run
+--audit): its first screen, then each command, each of its buttons
+pressed and each route, from a fresh start. One line of JSON (each finding's
+rule, target, role, name, detail, source line and state), or a table with
+--human. It exits 1 when it finds any (docs/accessibility-audit.md).";
 
 /// `zgx types <dir>...`
 fn types(args: Vec<String>) -> ExitCode {
@@ -66,6 +73,37 @@ fn types(args: Vec<String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `zgx audit [--human] <app.luau-or-dir>`: the app's accessibility audit,
+/// run headless by `zgx-run --audit` (beside this binary, or on PATH), which
+/// has the desktop's accessibility projection this tool doesn't link.
+fn audit(args: Vec<String>) -> ExitCode {
+    if args.iter().filter(|a| !a.starts_with('-')).count() != 1
+        || args.iter().any(|a| a.starts_with('-') && a != "--human")
+    {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let beside = std::env::current_exe()
+        .ok()
+        .map(|exe| exe.with_file_name(format!("zgx-run{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|run| run.is_file());
+    let run = beside.unwrap_or_else(|| PathBuf::from("zgx-run"));
+    match std::process::Command::new(&run)
+        .arg("--audit")
+        .args(&args)
+        .status()
+    {
+        Ok(status) => ExitCode::from(status.code().unwrap_or(2).clamp(0, 255) as u8),
+        Err(error) => {
+            eprintln!(
+                "zgx audit: couldn't run {} ({error}); install zgx-run beside zgx or on PATH",
+                run.display()
+            );
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
@@ -73,6 +111,7 @@ fn main() -> ExitCode {
         Some("lint") => return lint(args.collect()),
         Some("types") => return types(args.collect()),
         Some("inspect") => return inspect(args.collect()),
+        Some("audit") => return audit(args.collect()),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
