@@ -779,6 +779,8 @@ impl Application {
         // Localized text follows the user's preferred languages.
         #[cfg(any(target_os = "macos", windows))]
         zgx::i18n::set_system_languages(crate::system_colors::preferred_languages);
+        #[cfg(feature = "mimalloc")]
+        zgx::idle::set_heap_returns_whole_runs();
         Self {
             fonts: Vec::new(),
             options: WindowOptions::default(),

@@ -2687,6 +2687,7 @@ impl ScriptHost {
         // The handle `Lua::new` returns collects all garbage when it drops,
         // a full pass over everything the script just built; a clone does
         // not, and the VM frees all it holds when the last one goes.
+        mlua::pool_pages(zgx::idle::heap_returns_whole_runs());
         let lua = Lua::new().clone();
         let limits = self.0.limits;
         let memory = if plugin {
@@ -2959,6 +2960,7 @@ fn collect_fully(lua: &mlua::Lua) {
 /// while the app is in use, so a page shown again is instant).
 fn trim_idle(inner: &Inner) {
     collect_garbage(inner);
+    mlua::release_free_pages();
     inner.assets.trim();
 }
 

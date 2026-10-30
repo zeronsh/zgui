@@ -5,7 +5,24 @@
 //! the Rust side (a node's userdata holds far more than its own bytes)
 //! would otherwise stay until the scripts next ran a while.
 use crate::reactive::Runtime;
-use std::rc::{Rc, Weak};
+use std::{
+    rc::{Rc, Weak},
+    sync::atomic::{AtomicBool, Ordering},
+};
+
+static WHOLE_RUNS: AtomicBool = AtomicBool::new(false);
+
+/// Says the program's allocator returns memory only in runs larger than a
+/// page (zgx-desktop's `mimalloc`), so that what frees a page at a time
+/// keeps its pages apart to give them back: a script host's VMs do.
+pub fn set_heap_returns_whole_runs() {
+    WHOLE_RUNS.store(true, Ordering::Relaxed);
+}
+
+/// Whether [`set_heap_returns_whole_runs`] was called.
+pub fn heap_returns_whole_runs() -> bool {
+    WHOLE_RUNS.load(Ordering::Relaxed)
+}
 
 /// Keeps a function registered with [`on_idle`]: dropped, it runs no more.
 #[must_use = "dropping it unregisters the function"]

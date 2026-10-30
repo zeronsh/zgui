@@ -100,6 +100,10 @@ zgx-desktop = { path = "../zgx-desktop" }
 zgx-workload = { path = "../../comparisons/workload" }
 
 [[test]]
+name = "luau_pages"
+path = "tests/luau_pages.rs"
+
+[[test]]
 name = "anime"
 path = "tests/anime/main.rs"
 
