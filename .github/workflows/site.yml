@@ -52,6 +52,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
+      - run: npm run check:mcp
       - name: Deploy to Cloudflare Pages
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         uses: cloudflare/wrangler-action@v3
@@ -110,6 +111,8 @@ jobs:
           for url in https://zgx-site.pages.dev/ https://zgx-site.pages.dev/performance https://zgx.zeron.sh/; do
             echo "$url: $(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url")"
           done
+          # Through a real client; a new deployment can take a moment to reach the edge.
+          npm run check:mcp -- https://zgx-site.pages.dev/api/mcp || { sleep 30; npm run check:mcp -- https://zgx-site.pages.dev/api/mcp; }
       - name: No Cloudflare secrets
         if: github.event_name != 'pull_request' && (env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == '')
         run: echo "::notice::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not set; the site was built but not deployed."

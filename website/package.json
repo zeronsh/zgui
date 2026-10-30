@@ -5,7 +5,8 @@
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
     "dev": "node scripts/sync-docs.mjs && astro dev",
-    "build": "node scripts/sync-docs.mjs && astro build && node scripts/check-links.mjs",
+    "build": "node scripts/sync-docs.mjs && astro build && node scripts/check-links.mjs && node scripts/build-mcp.mjs",
+    "check:mcp": "node scripts/check-mcp.mjs",
     "preview": "astro preview",
     "check": "node scripts/sync-docs.mjs && astro sync && tsc --noEmit"
   },
@@ -16,6 +17,7 @@
     "@astrojs/sitemap": "^3.7.4",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@modelcontextprotocol/server": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.4.2",
     "fumadocs-core": "^16.17.8",
@@ -25,9 +27,11 @@
     "react-dom": "^19.3.1",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3",
-    "takumi-js": "^2.18.1"
+    "takumi-js": "^2.18.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@playwright/test": "^1.64.1",
     "@shikijs/transformers": "^4.5.0",
     "@types/react": "^19.3.0",
@@ -44,6 +48,7 @@
     "shiki": "^4.5.0",
     "typescript": "^7.0.2",
     "unified": "^11.0.5",
-    "unist-util-visit": "^5.2.0"
+    "unist-util-visit": "^5.2.0",
+    "wrangler": "^4.156.0"
   }
 }

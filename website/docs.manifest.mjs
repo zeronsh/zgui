@@ -171,6 +171,8 @@ export const sets = [
       { slug: 'recipes', src: 'docs/agents/inspect.md', title: 'Recipes and safety', sections: ['Recipes', 'Safety and cost'],
         description: 'Common sequences, and what serving devtools costs and exposes.' },
       '---Tools---',
+      { slug: 'docs-mcp', src: 'docs/agents/docs-mcp.md', title: 'Docs over MCP',
+        description: 'List, search and read these docs from an agent: a public MCP server at zgx.zeron.sh/api/mcp.' },
       { slug: 'cli', mdx: 'devtools/cli.md' },
       { slug: 'profiling', src: 'scripts/perf/README.md', title: 'Profiling',
         description: 'ZGX_PROFILE splits a frame by phase; the perf suite compares two revisions in retired instructions.' },

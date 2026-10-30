@@ -55,7 +55,7 @@ export function llmsIndex(): string {
   const out = [
     '# zgx',
     '',
-    '> A retained-mode GUI framework in Rust for macOS, Windows and Linux, with Luau scripts that hot reload. Every page below is also Markdown at its URL plus `.md`; all of them in one file: /llms-full.txt.',
+    '> A retained-mode GUI framework in Rust for macOS, Windows and Linux, with Luau scripts that hot reload. Every page below is also Markdown at its URL plus `.md`; all of them in one file: /llms-full.txt. An MCP server lists, searches and reads them at /api/mcp.',
     '',
   ];
   for (const set of sets) {
