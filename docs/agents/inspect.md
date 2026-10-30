@@ -108,7 +108,7 @@ What the running app holds, measured when asked, with nothing to build or switch
 | `scene` | nodes mounted, nodes removed and not yet freed, slots |
 | `devtools` | the frame log and the effect names it keeps (`--inspect` only) |
 | `luau` | each VM's heap, as it stands (no collection) |
-| `images` | decoded pictures and SVGs a node shows, and those cached for when one does again |
+| `images` | decoded pictures and SVGs a node shows, and those cached for when one does again; and of the pictures keeping their files, the pixels still held (the rest went back once their textures had them) |
 
 The areas overlap: `heap` holds `text`, `scene`, `luau` and `images`, and much of `gpu` is in the `process` line only. An area's lines add up; areas don't.
 

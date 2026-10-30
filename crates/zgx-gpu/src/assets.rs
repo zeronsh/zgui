@@ -64,6 +64,25 @@ pub fn decode_image(bytes: &[u8]) -> Result<Arc<ImageData>, GpuError> {
         .map(Arc::new)
         .map_err(|e| GpuError(e.into()))
 }
+/// A PNG or JPEG decoded as `decode_image` decodes it, keeping its bytes:
+/// once a renderer has its pixels they may go, past the decoded-pixels
+/// budget (`zgx::image::set_decoded_budget`), and come back from the file
+/// (`zgx::image::ImageData::kept`). The bytes are shared, not copied.
+pub fn decode_image_kept(bytes: Arc<[u8]>) -> Result<Arc<ImageData>, GpuError> {
+    let decoded = decode_image(&bytes)?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let pixels = decoded.pixels_arc();
+    drop(decoded);
+    ImageData::kept(width, height, pixels, bytes, redecode)
+        .map(Arc::new)
+        .map_err(|e| GpuError(e.into()))
+}
+/// A kept file's pixels again (`decode_image_kept`).
+fn redecode(bytes: &[u8]) -> Result<Arc<[u8]>, String> {
+    decode_image(bytes)
+        .map(|image| image.pixels_arc())
+        .map_err(|e| e.0)
+}
 /// `pixels` pixels of `channels` bytes each (RGB, grey with alpha, grey) at
 /// the front of `buffer`, widened in place to RGBA, last first: a pixel's
 /// four bytes never reach a narrower pixel not yet read.

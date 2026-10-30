@@ -138,6 +138,10 @@ enum Event {
     /// A font was replaced (`WindowFactory::replace_font`): every window's
     /// text shapes and draws again.
     FontsReplaced,
+    /// Pixels an image keeping its file waited for were decoded again
+    /// (`zgx::image::set_decoded_wake`): windows that went without them
+    /// draw again whole.
+    ImagesDecoded,
     #[cfg(target_os = "linux")]
     NativeFiles(u64, crate::wayland_data::FileEvent),
     /// The desktop's appearance settings changed (`linux_appearance`).
@@ -903,6 +907,12 @@ impl Application {
         zgx::profile::mark("event loop");
         zgx::memory::set_hosted();
         let proxy = event_loop.create_proxy();
+        {
+            let wake = proxy.clone();
+            zgx::image::set_decoded_wake(move || {
+                let _ = wake.send_event(Event::ImagesDecoded);
+            });
+        }
         let native_events = if let Some(id) = &self.application_id {
             let wake = proxy.clone();
             let events = crate::native_events::NativeApplicationEvents::new(
@@ -1509,6 +1519,9 @@ struct Host {
     trim_at: Option<std::time::Instant>,
     /// `trim_at` is for the glyph atlas (`ATLAS_TRIM_DELAY`).
     trim_atlas: bool,
+    /// When images' decoded pixels go, `TRIM_DELAY` past the last upload,
+    /// whether or not the window keeps presenting (an animated page).
+    release_images_at: Option<std::time::Instant>,
     /// When to save the window's frame (`frame_autosave`, Linux): once its
     /// moves and resizes settle.
     frame_save_at: Option<std::time::Instant>,
@@ -1861,6 +1874,7 @@ impl Host {
             refresh_frame: false,
             trim_at: None,
             trim_atlas: false,
+            release_images_at: None,
             frame_save_at: None,
             startup_trim: StartupTrim::Pending,
             frame_timer: crate::frame_source::FrameTimer::new(std::time::Instant::now()),
@@ -2501,6 +2515,11 @@ impl Host {
                     let now = std::time::Instant::now();
                     self.trim_at = Some(now + TRIM_DELAY);
                     self.trim_atlas = false;
+                    if let Some(renderer) = &mut self.renderer
+                        && renderer.take_images_uploaded()
+                    {
+                        self.release_images_at = Some(now + TRIM_DELAY);
+                    }
                     // Startup's garbage (shader compilation, first layout)
                     // is freed once, even if the window never goes idle.
                     if self.startup_trim == StartupTrim::Pending {
@@ -4858,6 +4877,13 @@ impl Host {
             self.save_frame();
         }
         if self
+            .release_images_at
+            .is_some_and(|at| std::time::Instant::now() >= at)
+        {
+            self.release_images_at = None;
+            zgx::image::release_decoded();
+        }
+        if self
             .trim_at
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
@@ -6151,6 +6177,20 @@ impl WindowManager {
                     }
                 }
             }
+            Event::ImagesDecoded => {
+                for host in self.hosts.values_mut() {
+                    if host
+                        .renderer
+                        .as_mut()
+                        .is_some_and(|renderer| renderer.take_images_awaited())
+                    {
+                        host.force = true;
+                        if let Some(window) = &host.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+            }
             Event::FontsReplaced => {
                 for host in self.hosts.values_mut() {
                     if let Some(renderer) = &mut host.renderer {
@@ -6556,6 +6596,7 @@ impl WindowManager {
                     host.plane_retry,
                     host.touch.hold_deadline(),
                     host.trim_at,
+                    host.release_images_at,
                     host.frame_save_at,
                     host.accessibility_pacer.deadline(),
                     host.wheel_tape.borrow().deadline(),

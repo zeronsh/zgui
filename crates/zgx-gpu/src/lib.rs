@@ -3529,6 +3529,10 @@ pub struct GpuRenderer {
     /// drawn in (`image_frame`): past the textures' budget, the least
     /// recently drawn go, not drawn this frame, and come back when drawn.
     image_drawn: FxHashMap<u64, u64>,
+    /// An image waited for its pixels this frame (`take_images_awaited`).
+    images_awaited: bool,
+    /// An image was uploaded (`take_images_uploaded`).
+    images_uploaded: bool,
     /// Frames drawn, for `image_drawn`.
     image_frame: u64,
     /// GPU views' textures, by view (`viewport`): none until one shows.
@@ -4146,6 +4150,8 @@ impl GpuRenderer {
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
             image_drawn: FxHashMap::default(),
+            images_awaited: false,
+            images_uploaded: false,
             image_frame: 0,
             views: None,
             #[cfg(target_os = "macos")]
@@ -6921,8 +6927,9 @@ impl GpuRenderer {
                                         image, *fit, style, bounds, opacity, edge_fade,
                                     )
                                 {
-                                    self.ensure_image(image, &mut stats)?;
-                                    quads.push(quad);
+                                    if self.ensure_image(image, &mut stats)? {
+                                        quads.push(quad);
+                                    }
                                     canvas_image = Some(image.id());
                                 }
                                 if let Some(zgx::decoration::Background::Shader(shader)) = style
@@ -7196,7 +7203,9 @@ impl GpuRenderer {
                             continue;
                         }
                         // (A view taking its layer drew itself already.)
-                        self.ensure_image(image, &mut stats)?;
+                        if !self.ensure_image(image, &mut stats)? {
+                            continue;
+                        }
                         let transform = image.paint_transform(bounds);
                         let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
                         // An effect: its own quad, drawn with its own pipeline.
@@ -9932,27 +9941,49 @@ impl GpuRenderer {
         Ok(found.id)
     }
     /// `image`'s texture for this frame: uploaded if it has none, and
-    /// marked drawn now, so it is the last to go past the budget.
+    /// marked drawn now, so it is the last to go past the budget. False
+    /// while an image keeping its file is decoded again off the main thread
+    /// (its pixels had gone): it draws once they are back.
     fn ensure_image(
         &mut self,
         image: &zgx::image::ImageData,
         stats: &mut GpuStats,
-    ) -> Result<(), GpuError> {
+    ) -> Result<bool, GpuError> {
         if self.images.contains_key(&image.id()) {
             if let Some(drawn) = self.image_drawn.get_mut(&image.id()) {
                 *drawn = self.image_frame;
             }
-            return Ok(());
+            return Ok(true);
+        }
+        if image.keeps_file() && image.gpu_frame().is_none() && image.try_pixels().is_none() {
+            self.images_awaited = true;
+            return Ok(false);
         }
         self.upload_image(image)?;
         stats.image_uploads += 1;
-        Ok(())
+        Ok(true)
+    }
+    /// Whether an image was uploaded since last asked: the host gives
+    /// pixels back once uploads have settled (`zgx::image::release_decoded`).
+    pub fn take_images_uploaded(&mut self) -> bool {
+        std::mem::take(&mut self.images_uploaded)
+    }
+    /// Whether an image waited for its pixels, decoded again off the main
+    /// thread, last frame (`zgx::image::set_decoded_wake` wakes the host to
+    /// draw it again whole). Taken.
+    pub fn take_images_awaited(&mut self) -> bool {
+        std::mem::take(&mut self.images_awaited)
     }
     fn upload_image(&mut self, image: &zgx::image::ImageData) -> Result<(), GpuError> {
         if let Some(frame) = image.gpu_frame() {
             return self.render_view(image, frame);
         }
-        let bytes = image.pixels().len();
+        // Shared, not pinned: an image keeping its file may give them back
+        // once uploaded.
+        let Some(source) = image.try_pixels() else {
+            return Err(GpuError("an image's pixels were not ready".into()));
+        };
+        let bytes = source.len();
         let mut held = self.images.values().map(|entry| entry.1).sum::<usize>();
         if bytes + held > IMAGE_TEXTURES {
             // Images not drawn this frame give their textures back, least
@@ -9997,7 +10028,8 @@ impl GpuRenderer {
             image.height(),
             "image",
         );
-        let mut pixels = image.pixels().to_vec();
+        let mut pixels = source.to_vec();
+        drop(source);
         for pixel in pixels.as_chunks_mut::<4>().0 {
             let alpha = u16::from(pixel[3]);
             for channel in &mut pixel[..3] {
@@ -10029,6 +10061,8 @@ impl GpuRenderer {
         });
         self.images.insert(image.id(), (bind, bytes, Some(texture)));
         self.image_drawn.insert(image.id(), self.image_frame);
+        image.uploaded();
+        self.images_uploaded = true;
         Ok(())
     }
     /// Write premultiplied RGBA texels to `(x, y, width, height)` of a
