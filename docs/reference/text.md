@@ -210,6 +210,7 @@ return ui.column {
 - A widget's `label` (a tab strip's, a select's, a modal's, a menu item's) takes a message or a state too, and follows it: the name screen readers give it, and a menu item's drawn text. A plain string costs nothing more.
 - Items given as data (tab titles, tree rows) follow the locale through a computed list that reads its messages: `items = ui.computed(function() return { { id = "inbox", label = ui.t("tabs.inbox"):get() } } end)`. A select's `options` follow the same way, given as a computed (a table is read once, as it is built).
 - Plural rules and number formatting for every locale come from ICU4X with zgx-script's `i18n` feature (about 90 KB; `zgx run` has it). A host built without it still loads and shows messages, with English's plural rules (`one`, `other`) for every locale and numbers as Rust writes them: turn it on (`zgx-script = { …, features = ["i18n"] }`) to ship translations.
+- `zgx lint` checks each locale against the source (`i18n-missing`, `i18n-extra`, `i18n-args`, `i18n-parse`, and `i18n-key` for `ui.t`'s keys) and each plural for the cases its locale needs (`i18n-plural`), and a debug build shows the findings in the error layer as the script loads. With the `i18n` feature (`zgx run` has it) those cases are CLDR's: French needs `many` too (a million: `"1 000 000 de messages"`), Russian `few` and `many`, Arabic `zero`, `two`, `few` and `many`. A missing one shows `other`'s text and is reported. Without the feature, every locale's are English's two.
 
 ## Gotchas
 

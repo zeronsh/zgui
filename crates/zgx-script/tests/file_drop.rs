@@ -29,8 +29,10 @@ return ui.column {
 }
 "#;
 
-fn files() -> Vec<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("zgx-file-drop-{}", std::process::id()));
+/// Two files to drop, in a directory of `test`'s own: tests run at once,
+/// and one writing the files another is reading showed it a size of 0.
+fn files(test: &str) -> Vec<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("zgx-file-drop-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let photo = dir.join("photo.PNG");
     std::fs::write(&photo, [0u8; 12]).unwrap();
@@ -42,7 +44,7 @@ fn files() -> Vec<PathBuf> {
 #[test]
 fn files_dragged_over_and_dropped_reach_the_zone() {
     let mut h = Harness::inline(APP);
-    let paths = files();
+    let paths = files("dropped");
     h.ui.prepare_frame();
     assert_eq!(h.text("over"), "away");
     h.ui.dispatch(InputEvent::FileHover {
@@ -77,7 +79,7 @@ fn files_dragged_over_and_dropped_reach_the_zone() {
 #[test]
 fn a_drag_that_leaves_ends_the_hover() {
     let mut h = Harness::inline(APP);
-    let paths = files();
+    let paths = files("leaves");
     h.ui.prepare_frame();
     h.ui.dispatch(InputEvent::FileHover {
         x: 50.,

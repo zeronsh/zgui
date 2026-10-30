@@ -12,8 +12,11 @@ const EN: &str = r#"{
   "greeting": "Hello, {name}",
   "search": "Search"
 }"#;
+// French's plurals are `one`, `many` (a million, as "1 000 000 de
+// messages") and `other`: with zgx-script's `i18n` (ICU's rules) the lint
+// asks for all three, and a debug build shows its findings.
 const FR: &str = r#"{
-  "inbox": { "count": "{n, plural, one {# message} other {# messages}}" },
+  "inbox": { "count": "{n, plural, one {# message} many {# de messages} other {# messages}}" },
   "greeting": "Bonjour, {name}",
   "search": "Rechercher"
 }"#;

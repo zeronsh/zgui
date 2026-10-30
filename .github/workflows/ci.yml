@@ -112,11 +112,11 @@ jobs:
       # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
       # and macOS jobs test without it).
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
-      # Each `ui` module a script makes as it names it (`lazy.rs`) sets
-      # exactly the names it is made for, under every zgx-script feature,
-      # each of which may add modules (scene3d, i18n, …). Quoted, as the
-      # lines below are.
-      - run: "cargo test -p zgx-script --all-features --test ui --locked -- lazy_ui::"
+      # zgx-script's tests with all its features, as an app built by zgx-run
+      # has them (scene3d, i18n, gltf, inspect): ICU's plural rules change
+      # what the i18n lint finds, and each feature may add lazy `ui`
+      # modules (`lazy_ui::` checks each against what its maker sets).
+      - run: cargo test -p zgx-script --all-features --locked
       # zgx audit over the Luau examples (zgx-run's own tests need sockets).
       - run: cargo test -p zgx-run --test audit --locked
       # Devtools tracing (zgx's `trace`, off by default; zgx-script's
