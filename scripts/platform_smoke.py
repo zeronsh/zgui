@@ -105,6 +105,8 @@ _x11.XInternAtom.argtypes, _x11.XInternAtom.restype = [ctypes.c_void_p, ctypes.c
 _x11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(_ClientMessage)]
 _x11.XFlush.argtypes = [ctypes.c_void_p]
 _x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+_x11.XSetErrorHandler.argtypes, _x11.XSetErrorHandler.restype = [ctypes.c_void_p], ctypes.c_void_p
+_ignore_x_error = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda display, error: 0)
 
 
 def keep_awake(env, check, parent, period=.5):
@@ -192,6 +194,9 @@ def close_window(env, window):
     display = _x11.XOpenDisplay(env["DISPLAY"].encode())
     if not display:
         raise RuntimeError("no display to close the window on")
+    # A window already gone (an app's own timer ended it) is closed. libX11's
+    # default handler would end this process over the BadWindow, untraced.
+    previous = _x11.XSetErrorHandler(_ignore_x_error)
     try:
         event = _ClientMessage(type=33, send_event=1, display=display, window=int(window, 0),  # ClientMessage
                                message_type=_x11.XInternAtom(display, b"WM_PROTOCOLS", 0), format=32)
@@ -201,6 +206,7 @@ def close_window(env, window):
         _x11.XFlush(display)
     finally:
         _x11.XCloseDisplay(display)
+        _x11.XSetErrorHandler(previous)
 
 
 def wait_for_exit(app, env, output, seconds):
