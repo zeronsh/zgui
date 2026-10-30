@@ -521,6 +521,54 @@ fn a_comboboxs_items_may_be_a_plain_list() {
 }
 
 #[test]
+fn a_textarea_scrolls_to_a_line_and_says_which_is_on_top() {
+    let mut h = Harness::inline(
+        r#"local lines = {}
+        for i = 1, 200 do lines[i] = `line {i}` end
+        local text = ui.state("text", table.concat(lines, "\n"))
+        local top = ui.state("top", 0)
+        local box = ui.ref()
+        local function go(line: number, align: string?)
+            local el = box:peek()
+            if el then el:scroll_to_line(line, { align = align } :: any) end
+        end
+        ui.command { id = "start", title = "s", run = function() go(100, "start") end }
+        ui.command { id = "center", title = "c", run = function() go(100, "center") end }
+        ui.command { id = "end", title = "e", run = function() go(100, "end") end }
+        ui.command { id = "near", title = "n", run = function() go(1) end }
+        ui.command { id = "past", title = "p", run = function() go(9999, "start") end }
+        return ui.column {
+            ui.textarea { id = "note", ref = box, label = "Note", h = 230, w = 300, value = text,
+                on_top_line = function(line) top:set(line) end },
+            ui.text { id = "top", "{top}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let top = |h: &mut Harness, command: &str| {
+        assert!(h.host.run_command(command));
+        h.frames(3);
+        h.text("top").parse::<usize>().expect("a line")
+    };
+    h.frames(2);
+    assert_eq!(h.text("top"), "1");
+    let note = h.find("note").expect("the editor");
+    let caret = h.ui.editor(note).unwrap().selection();
+    let start = top(&mut h, "start");
+    assert_eq!(start, 100, "at the top");
+    let center = top(&mut h, "center");
+    assert!(center < 100, "above it now: {center}");
+    let end = top(&mut h, "end");
+    assert!(end < center, "further up: {end}");
+    assert_eq!(top(&mut h, "near"), 1);
+    assert!(top(&mut h, "past") > 190, "past the end, the end");
+    assert_eq!(
+        h.ui.editor(note).unwrap().selection(),
+        caret,
+        "the caret stays"
+    );
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")

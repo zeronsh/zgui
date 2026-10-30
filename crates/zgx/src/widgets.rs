@@ -175,8 +175,9 @@ struct EditorHint {
     /// focused or not (a search's match, chosen from its field).
     reveal: Cell<bool>,
     /// A place to scroll into view the next time it is drawn, its caret and
-    /// selection left as they are (find in page's match in a field).
-    reveal_at: Cell<Option<usize>>,
+    /// selection left as they are (find in page's match in a field), and
+    /// where in the view (`scroll_to_line`).
+    reveal_at: Cell<Option<(usize, crate::compose::RowAlign)>>,
     /// What a code editor adds (`CodeHint`), made when first used: an
     /// editor without it carries a pointer's room.
     code: std::cell::OnceCell<Box<CodeHint>>,
@@ -304,6 +305,12 @@ struct CodeHint {
     /// Where it was last drawn, and last told.
     caret_drawn: Cell<Option<Caret>>,
     caret_told: Cell<Option<Caret>>,
+    /// Told the first line in view when it changes
+    /// (`EditorHandle::on_top_line`), as `on_caret`.
+    on_top_line: RefCell<Option<TopLineListener>>,
+    top_line_listened: Cell<bool>,
+    top_line_drawn: Cell<Option<usize>>,
+    top_line_told: Cell<Option<usize>>,
 }
 impl Drop for CodeHint {
     /// A long text's last layout and its line cache hold each other.
@@ -412,6 +419,8 @@ impl EditorHint {
             .is_some_and(|lines| lines.highlighted())
     }
 }
+/// What an editor tells its first line in view (`EditorHandle::on_top_line`).
+type TopLineListener = Box<dyn FnMut(usize)>;
 /// What an editor tells where its caret is (`EditorHandle::on_caret`).
 type CaretListener = Box<dyn FnMut(Caret)>;
 /// Where an editor's caret is (`EditorHandle::on_caret`): its line and
@@ -492,7 +501,9 @@ impl EditorHandle {
     /// Scroll byte `at` into view the next time it is drawn, its caret and
     /// selection left as they are.
     pub(crate) fn reveal_offset(&self, at: usize) {
-        self.hint.reveal_at.set(Some(at));
+        self.hint
+            .reveal_at
+            .set(Some((at, crate::compose::RowAlign::Nearest)));
         self.refresh();
     }
     /// Select from `anchor` to `focus` (UTF-8 byte offsets, clamped to the
@@ -698,6 +709,22 @@ impl EditorHandle {
         *code.on_caret.borrow_mut() = Some(Box::new(told));
         code.caret_listened.set(true);
         code.caret_told.set(None);
+        self.refresh();
+    }
+    /// Call `told` with the first line in view, from 1, whenever it changes
+    /// (an outline following the text), after the editor is drawn.
+    pub fn on_top_line(&self, told: impl FnMut(usize) + 'static) {
+        let code = self.hint.code_made();
+        *code.on_top_line.borrow_mut() = Some(Box::new(told));
+        code.top_line_listened.set(true);
+        code.top_line_told.set(None);
+        self.refresh();
+    }
+    /// Scroll line `line` (from 0) to `align` of the view, its caret and
+    /// selection left as they are; past the last line, the end.
+    pub fn scroll_to_line(&self, line: usize, align: crate::compose::RowAlign) {
+        let at = self.editor.borrow().line_start(line);
+        self.hint.reveal_at.set(Some((at, align)));
         self.refresh();
     }
     /// A colour behind the caret's row (a code editor's current line).
@@ -4232,7 +4259,8 @@ impl Ui {
             let mut scroll = scroll_for_draw.borrow_mut();
             let reveal = draw_reveal_caret.replace(true) && draw_gesture.mode.get().is_none();
             // A place asked for (find's match), else the caret.
-            let (rx, ry, rh, asked) = match draw_hint.reveal_at.take() {
+            let (place, align) = draw_hint.reveal_at.take().unzip();
+            let (rx, ry, rh, asked) = match place {
                 Some(at) => {
                     let r = layout.caret_position(TextPosition {
                         byte_offset: at,
@@ -4254,6 +4282,14 @@ impl Ui {
                 }
                 if ry < scroll.1 {
                     scroll.1 = ry;
+                }
+                match align {
+                    Some(crate::compose::RowAlign::Start) => scroll.1 = ry,
+                    Some(crate::compose::RowAlign::Center) => {
+                        scroll.1 = ry - (inner_height - rh) / 2.
+                    }
+                    Some(crate::compose::RowAlign::End) => scroll.1 = ry - (inner_height - rh),
+                    _ => {}
                 }
             }
             let (tw, th) = layout.size();
@@ -4288,6 +4324,12 @@ impl Ui {
                 // One line, centred in the box (negative: pushed down).
                 (line_height - inner_height) / 2.
             };
+            if let Some(code) = draw_hint.code()
+                && code.top_line_listened.get()
+            {
+                let top = layout.hit_test(0., scroll.1 + line_height / 2.);
+                code.top_line_drawn.set(Some(e.line_of(top) + 1));
+            }
             let caret_width = draw_hint
                 .caret
                 .get()
@@ -4955,6 +4997,21 @@ impl Ui {
                         code.caret_told.set(Some(caret));
                         callback(caret);
                         let mut slot = code.on_caret.borrow_mut();
+                        if slot.is_none() {
+                            *slot = Some(callback);
+                        }
+                    }
+                    for _ in 0..4 {
+                        let line = code.top_line_drawn.get();
+                        if line.is_none() || line == code.top_line_told.get() {
+                            break;
+                        }
+                        let Some(mut callback) = code.on_top_line.borrow_mut().take() else {
+                            break;
+                        };
+                        code.top_line_told.set(line);
+                        callback(line.unwrap_or(1));
+                        let mut slot = code.on_top_line.borrow_mut();
                         if slot.is_none() {
                             *slot = Some(callback);
                         }

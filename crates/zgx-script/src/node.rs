@@ -1224,6 +1224,9 @@ pub(crate) struct CodeProps {
     /// `on_caret = function(line, column, anchor, focus)`: where the caret
     /// is, whenever it moves.
     pub on_caret: Option<Function>,
+    /// `on_top_line = function(line)`: the first line in view, whenever it
+    /// changes.
+    pub on_top_line: Option<Function>,
     /// `find = { query, case, current, limit, color, current_color }`: a
     /// search's matches marked behind the text, found where the text is
     /// held (no list of them made in the script).
@@ -2806,6 +2809,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "current_line",
     "tab",
     "on_caret",
+    "on_top_line",
     "animate",
     "size",
     "vertical",
@@ -4442,6 +4446,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         let current_line = optional("current_line", Ty::Color)?;
                         let tab = table.get::<Option<String>>("tab")?;
                         let on_caret = table.get::<Option<Function>>("on_caret")?;
+                        let on_top_line = table.get::<Option<Function>>("on_top_line")?;
                         let find = match table.get::<Option<Table>>("find")? {
                             None => None,
                             Some(find) => {
@@ -4471,6 +4476,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             || current_line.is_some()
                             || tab.is_some()
                             || on_caret.is_some()
+                            || on_top_line.is_some()
                             || find.is_some())
                         .then(|| {
                             Rc::new(CodeProps {
@@ -4480,6 +4486,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                                 current_line,
                                 tab,
                                 on_caret,
+                                on_top_line,
                                 find,
                             })
                         })

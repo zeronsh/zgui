@@ -517,6 +517,24 @@ impl TextEditor {
     pub fn load_next(&mut self) {
         self.loading = true;
     }
+    /// The line byte `at` is on, from 0.
+    pub fn line_of(&self, at: usize) -> usize {
+        match &self.text {
+            TextValue::Long(text) => text.line_of(at),
+            TextValue::Flat(text) => text[..at.min(text.len())].matches('\n').count(),
+        }
+    }
+    /// Where line `line` (from 0) starts; past the last, the text's end.
+    pub fn line_start(&self, line: usize) -> usize {
+        match &self.text {
+            TextValue::Long(text) => text.line_start(line),
+            TextValue::Flat(_) if line == 0 => 0,
+            TextValue::Flat(text) => text
+                .match_indices('\n')
+                .nth(line - 1)
+                .map_or(text.len(), |(at, _)| at + 1),
+        }
+    }
     /// Its committed text as a value to keep: a copy while short, the
     /// long one shared.
     pub fn value(&self) -> TextValue {
