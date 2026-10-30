@@ -2699,6 +2699,8 @@ impl ScriptHost {
         let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
         let interrupt = interrupt::install(&lua, deadline.clone(), memory);
         let watch = interrupt.watch();
+        #[cfg(test)]
+        tests::count_closing(&lua);
         let vm = Rc::new(Vm {
             name: name.clone(),
             lua: lua.clone(),
@@ -2965,6 +2967,53 @@ fn trim_idle(inner: &Inner) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// Scripts' states closed on this thread.
+        static CLOSED: Cell<usize> = const { Cell::new(0) };
+    }
+    /// Held in a state's registry: dropped only as the state closes.
+    struct Closing;
+    impl Drop for Closing {
+        fn drop(&mut self) {
+            CLOSED.set(CLOSED.get() + 1);
+        }
+    }
+    pub(super) fn count_closing(lua: &Lua) {
+        let closing = lua.create_any_userdata(Closing).unwrap();
+        lua.set_named_registry_value("closing", closing).unwrap();
+    }
+
+    /// A clip, a timeline, a draggable and a scroll link live in the script's
+    /// state: a strong handle in any of them would keep the state alive
+    /// after its reload, and everything in it (the app's whole heap, each
+    /// reload).
+    #[test]
+    fn a_reload_closes_the_state_it_replaces() {
+        const SCRIPT: &str = r##"
+            local clip = anime.animate("#t", { x = 100, duration = 1000, loop = true })
+            local timeline = anime.createTimeline({ defaults = { duration = 100 } })
+            timeline:add("#t", { x = 100 }):add("#k", { x = 50 })
+            local draggable = anime.createDraggable("#k", { container = "#scroller",
+                onSettle = function() end })
+            local linked = anime.animate("#t", { opacity = { 0, 1 }, duration = 100,
+                autoplay = anime.onScroll({ container = "#scroller", sync = true }) })
+            return ui.column {
+                on_click = function() return clip, timeline, draggable, linked end,
+                ui.scroll { id = "scroller", w = 100, h = 200,
+                    ui.column { h = 1500, ui.div { id = "t", w = 50, h = 50 },
+                        ui.div { id = "k", w = 20, h = 20 } } },
+            }"##;
+        let h = testing::TestApp::new(|runtime| ScriptHost::inline(runtime, "app", SCRIPT));
+        assert_eq!(h.host.error().get(), None);
+        h.frames(3);
+        let closed = CLOSED.get();
+        for reloads in 1..=5 {
+            h.host.reload().unwrap();
+            h.frames(3);
+            assert_eq!(CLOSED.get(), closed + reloads, "after {reloads} reloads");
+        }
+    }
 
     /// The CPU reading lasts through the exact one-millisecond boundary;
     /// a reversed timestamp is still fresh, as with saturating subtraction.

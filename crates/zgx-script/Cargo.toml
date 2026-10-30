@@ -126,3 +126,7 @@ path = "tests/soak.rs"
 [[test]]
 name = "bundle"
 path = "tests/bundle.rs"
+
+[[test]]
+name = "reload_memory"
+path = "tests/reload_memory.rs"

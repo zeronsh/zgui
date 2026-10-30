@@ -74,8 +74,9 @@ struct DragState {
 
 pub(crate) struct Draggable {
     engine: Rc<Engine>,
+    /// Whose state it lives in (its userdata): through this, not a handle
+    /// of its own, which would keep the state from closing.
     owner: Weak<Vm>,
-    lua: Lua,
     x: Axis,
     y: Axis,
     container: Container,
@@ -136,7 +137,7 @@ impl Draggable {
                     return unbounded;
                 };
                 let ctx = super::build::Ctx {
-                    lua: self.lua.clone(),
+                    lua: vm.lua.clone(),
                     vm,
                     engine: self.engine.clone(),
                 };
@@ -305,15 +306,18 @@ impl Draggable {
         }
         let settle = self.callbacks[SETTLE].clone().map(|f| {
             let this = Rc::downgrade(self);
-            let lua = self.lua.clone();
+            let Some(vm) = self.owner.upgrade() else {
+                return f;
+            };
             // The settle callback receives the draggable, not the clip.
-            lua.create_function(move |_, _: mlua::MultiValue| {
-                if let Some(this) = this.upgrade() {
-                    this.call(SETTLE);
-                }
-                Ok(())
-            })
-            .unwrap_or(f)
+            vm.lua
+                .create_function(move |_, _: mlua::MultiValue| {
+                    if let Some(this) = this.upgrade() {
+                        this.call(SETTLE);
+                    }
+                    Ok(())
+                })
+                .unwrap_or(f)
         });
         let clip = self.engine.tween(
             self.owner.clone(),
@@ -518,7 +522,6 @@ pub(crate) fn create(
     let draggable = Rc::new(Draggable {
         engine: engine.clone(),
         owner,
-        lua: lua.clone(),
         x,
         y,
         container,
@@ -551,7 +554,7 @@ pub(crate) fn create(
     *draggable.this.borrow_mut() = Rc::downgrade(&draggable);
     // The target may not be mounted yet: attach once it is. Until then the
     // pending attachment keeps the draggable.
-    let (this, lua2, attached) = (draggable.clone(), lua.clone(), Rc::new(Cell::new(false)));
+    let (this, attached) = (draggable.clone(), Rc::new(Cell::new(false)));
     engine.defer(Rc::new(move || {
         if attached.get() {
             return true;
@@ -560,7 +563,7 @@ pub(crate) fn create(
             return true;
         };
         let ctx = super::build::Ctx {
-            lua: lua2.clone(),
+            lua: vm.lua.clone(),
             vm,
             engine: this.engine.clone(),
         };

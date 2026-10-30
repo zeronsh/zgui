@@ -159,12 +159,15 @@ pub(crate) fn animate(
         )
     };
     let autoplay = timing.autoplay;
-    let (lua2, engine, own) = (lua.clone(), ctx.engine.clone(), params.clone());
+    // The state through the clip's owner: a clip lives in the state (its
+    // userdata), and a handle of its own there would keep it from closing.
+    let (engine, own) = (ctx.engine.clone(), params.clone());
     let builder: super::engine::Builder = Box::new(move |clip| {
         let params = &own;
+        let vm = clip.owner.upgrade().ok_or("script unloaded")?;
         let ctx = Ctx {
-            lua: lua2.clone(),
-            vm: clip.owner.upgrade().ok_or("script unloaded")?,
+            lua: vm.lua.clone(),
+            vm,
             engine: engine.clone(),
         };
         let targets = targets(&ctx, targets_value.clone())?;
@@ -196,22 +199,17 @@ pub(crate) fn animate(
         clip.start();
         clip.prime();
     }
-    link_scroll(lua, &ctx.engine, &clip, &params)?;
+    link_scroll(&ctx.engine, &clip, &params)?;
     scoped(&ctx.engine, &params, Some(&clip))?;
     Ok(ClipUd(clip))
 }
 
 /// `autoplay = anime.onScroll(…)`.
-fn link_scroll(
-    lua: &Lua,
-    engine: &Rc<Engine>,
-    clip: &Rc<Clip>,
-    params: &Table,
-) -> mlua::Result<()> {
+fn link_scroll(engine: &Rc<Engine>, clip: &Rc<Clip>, params: &Table) -> mlua::Result<()> {
     if let mlua::Value::UserData(ud) = params.raw_get::<mlua::Value>("autoplay")?
         && let Ok(scroll) = ud.borrow::<super::scroll::ScrollUd>()
     {
-        super::scroll::link(lua, engine, clip.clone(), scroll.0.clone());
+        super::scroll::link(engine, clip.clone(), scroll.0.clone());
     }
     Ok(())
 }
@@ -228,11 +226,12 @@ fn timeline(lua: &Lua, params: Option<Table>) -> mlua::Result<ClipUd> {
     };
     let timing = build::timing(&ctx, &p).map_err(rt)?;
     let autoplay = timing.autoplay;
-    let (lua2, engine) = (lua.clone(), ctx.engine.clone());
+    let engine = ctx.engine.clone();
     let builder: super::engine::Builder = Box::new(move |clip| {
+        let vm = clip.owner.upgrade().ok_or("script unloaded")?;
         let ctx = Ctx {
-            lua: lua2.clone(),
-            vm: clip.owner.upgrade().ok_or("script unloaded")?,
+            lua: vm.lua.clone(),
+            vm,
             engine: engine.clone(),
         };
         let ops = std::mem::take(&mut *clip.ops.borrow_mut());
@@ -250,7 +249,7 @@ fn timeline(lua: &Lua, params: Option<Table>) -> mlua::Result<ClipUd> {
     if autoplay {
         clip.start();
     }
-    link_scroll(lua, &ctx.engine, &clip, &params)?;
+    link_scroll(&ctx.engine, &clip, &params)?;
     Ok(ClipUd(clip))
 }
 
