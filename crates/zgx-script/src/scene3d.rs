@@ -123,6 +123,8 @@ pub(crate) struct Scene3dSpec {
     tone_mapping: zgx_3d::ToneMapping,
     /// Stops of exposure (`World::set_exposure`).
     exposure: Option<Num>,
+    /// Multisampled edges (`World::set_samples`: 4, or 1 without).
+    antialias: bool,
     objects: Vec<Rc<ObjectSpec>>,
 }
 /// Where a scene's environment comes from.
@@ -531,6 +533,16 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
             }
         },
         exposure: opt_num(&table, "exposure")?,
+        antialias: match table.get::<mlua::Value>("antialias")? {
+            mlua::Value::Nil => true,
+            mlua::Value::Boolean(on) => on,
+            other => {
+                return Err(wrong(format_args!(
+                    "ui.scene3d `antialias` is true or false, not {}",
+                    other.type_name()
+                )));
+            }
+        },
         objects: objects(&table, "ui.scene3d")?,
     };
     // Its box's own properties: the table's named keys alone but
@@ -548,6 +560,7 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
                     | b"environment"
                     | b"tone_mapping"
                     | b"exposure"
+                    | b"antialias"
             )
         {
             props.set(key, value)?;
@@ -822,6 +835,7 @@ pub(crate) fn lower(
     let theme = cx.theme();
     world.set_shadows(spec.shadows);
     world.set_tone_mapping(spec.tone_mapping);
+    world.set_samples(if spec.antialias { 4 } else { 1 });
     let mut adding = Adding {
         world: &world,
         vm,

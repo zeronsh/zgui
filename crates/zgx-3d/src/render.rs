@@ -1,9 +1,10 @@
 //! Drawing a `World`: its view's painter. A frame is one pass with depth and
-//! 4x multisampling: each geometry's meshes in one instanced draw, opaque
-//! ones first, then the translucent back to front. Pipelines and buffers are
-//! made with the first frame and kept; a geometry's buffers are uploaded
-//! once and dropped a while after the last frame drawing it. With shadows,
-//! a pass before it draws the opaque meshes' depth as the sun sees them.
+//! 4x multisampling (or 1 sample, `World::set_samples`): each geometry's
+//! meshes in one instanced draw, opaque ones first, then the translucent
+//! back to front. Pipelines and buffers are made with the first frame and
+//! kept; a geometry's buffers are uploaded once and dropped a while after
+//! the last frame drawing it. With shadows, a pass before it draws the
+//! opaque meshes' depth as the sun sees them.
 use crate::{
     math::{Mat4, Vec3},
     texture::MAPS,
@@ -15,7 +16,6 @@ use zgx_gpu::{
     wgpu,
 };
 
-const SAMPLES: u32 = 4;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Frames a geometry's buffers stay after the last that drew it.
 const KEEP_FRAMES: u64 = 240;
@@ -126,7 +126,11 @@ struct Gpu {
     stand_ins: Option<[wgpu::TextureView; MAPS]>,
     instances: Option<(wgpu::Buffer, usize)>,
     geometries: HashMap<u64, Buffers>,
-    targets: Option<((u32, u32), wgpu::TextureView, wgpu::TextureView)>,
+    /// Its size, and its multisampled colour (none drawing one sample a
+    /// pixel: the frame's target itself) and depth.
+    targets: Option<((u32, u32), Option<wgpu::TextureView>, wgpu::TextureView)>,
+    /// Samples a pixel (`World::set_samples`).
+    samples: u32,
     frame: u64,
 }
 
@@ -152,8 +156,13 @@ impl Viewport for Renderer {
             Some(srgb) => (srgb, frame.format.add_srgb_suffix(), false),
             None => (frame.target, frame.format, !frame.format.is_srgb()),
         };
-        if self.gpu.as_ref().is_none_or(|gpu| gpu.format != format) {
-            self.gpu = Some(Gpu::new(frame.device, format));
+        let samples = world.samples;
+        if self
+            .gpu
+            .as_ref()
+            .is_none_or(|gpu| gpu.format != format || gpu.samples != samples)
+        {
+            self.gpu = Some(Gpu::new(frame.device, format, samples));
         }
         let gpu = self.gpu.as_mut().unwrap();
         gpu.frame += 1;
@@ -170,7 +179,7 @@ impl Viewport for Renderer {
                             depth_or_array_layers: 1,
                         },
                         mip_level_count: 1,
-                        sample_count: SAMPLES,
+                        sample_count: samples,
                         dimension: wgpu::TextureDimension::D2,
                         format,
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -180,7 +189,7 @@ impl Viewport for Renderer {
             };
             gpu.targets = Some((
                 size,
-                texture(format, "3D colour"),
+                (samples > 1).then(|| texture(format, "3D colour")),
                 texture(DEPTH, "3D depth"),
             ));
         }
@@ -510,7 +519,8 @@ impl Viewport for Renderer {
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("3D textured, skinned or environment-lit"),
                     source: wgpu::ShaderSource::Wgsl(
-                        shader_source(variant.0, variant.1, variant.2).into(),
+                        antialiased(shader_source(variant.0, variant.1, variant.2), gpu.samples)
+                            .into(),
                     ),
                 });
             let group0 = match &gpu.environment_layout {
@@ -530,7 +540,7 @@ impl Viewport for Renderer {
             let count = if variant.1 { 3 } else { 2 };
             let pipelines = main_pipelines(
                 frame.device,
-                gpu.format,
+                (gpu.format, gpu.samples),
                 &shader,
                 &layouts[..count],
                 variant.1,
@@ -550,13 +560,25 @@ impl Viewport for Renderer {
             .encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("3D"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: colour,
-                    depth_slice: None,
-                    resolve_target: Some(target),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
-                        store: wgpu::StoreOp::Discard,
+                // Multisampled, resolved into the target; else into it.
+                color_attachments: &[Some(match colour {
+                    Some(colour) => wgpu::RenderPassColorAttachment {
+                        view: colour,
+                        depth_slice: None,
+                        resolve_target: Some(target),
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    },
+                    None => wgpu::RenderPassColorAttachment {
+                        view: target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear),
+                            store: wgpu::StoreOp::Store,
+                        },
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -880,10 +902,12 @@ impl Gpu {
             ));
         }
     }
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, samples: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
-            source: wgpu::ShaderSource::Wgsl(shader_source(false, false, false).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                antialiased(shader_source(false, false, false), samples).into(),
+            ),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("3D frame"),
@@ -965,7 +989,7 @@ impl Gpu {
             anisotropy_clamp: 8,
             ..Default::default()
         });
-        let plain = main_pipelines(device, format, &shader, &[Some(&layout)], false);
+        let plain = main_pipelines(device, (format, samples), &shader, &[Some(&layout)], false);
         let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D shadow frame"),
             entries: &[uniform_entry],
@@ -1032,6 +1056,7 @@ impl Gpu {
             instances: None,
             geometries: HashMap::new(),
             targets: None,
+            samples,
             frame: 0,
         }
     }
@@ -1062,6 +1087,16 @@ fn shader_source(textured: bool, skinned: bool, lit: bool) -> String {
         source = source.replace("//E ", "");
     }
     source
+}
+/// `source` drawing `samples` a pixel: multisampled, its `//A ` lines
+/// (geometric specular anti-aliasing) are its own; at one sample they stay
+/// comments, and cost nothing.
+fn antialiased(source: String, samples: u32) -> String {
+    if samples > 1 {
+        source.replace("//A ", "")
+    } else {
+        source
+    }
 }
 /// The vertex buffers a pipeline reads: vertices, instances, and a skinned
 /// one's joints and weights.
@@ -1131,10 +1166,10 @@ fn shadow_pipeline(
     })
 }
 /// The opaque and translucent meshes' pipelines with `shader`, bound as
-/// `layouts` say.
+/// `layouts` say, drawing into `format` at `samples` a pixel.
 fn main_pipelines(
     device: &wgpu::Device,
-    format: wgpu::TextureFormat,
+    (format, samples): (wgpu::TextureFormat, u32),
     shader: &wgpu::ShaderModule,
     layouts: &[Option<&wgpu::BindGroupLayout>],
     skinned: bool,
@@ -1181,7 +1216,7 @@ fn main_pipelines(
                 bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState {
-                count: SAMPLES,
+                count: samples,
                 ..Default::default()
             },
             multiview_mask: None,
@@ -1575,6 +1610,16 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 //T     let dpy = dpdy(in.world);
 //T     let duvx = dpdx(in.uv);
 //T     let duvy = dpdy(in.uv);
+    // How fast the surface's normal turns across the pixel, in uniform
+    // control flow: widened into its roughness below (geometric specular
+    // anti-aliasing, Tokuyoshi and Kaplanyan), so a highlight on a curve
+    // too fine for the pixels blurs instead of flickering.
+    // Multisampled pipelines' alone: one drawing a sample a pixel skips it.
+    var widening = 0.0;
+//A let facing = normalize(in.normal);
+//A let turning_x = dpdx(facing);
+//A let turning_y = dpdy(facing);
+//A widening = min(0.3 * (dot(turning_x, turning_x) + dot(turning_y, turning_y)), 0.18);
     let base = in.color.rgb * texel.rgb;
     var lit: vec3<f32>;
     if in.material.z > 0.5 {
@@ -1587,7 +1632,9 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 //T         n = bumped(n, dpx, dpy, duvx, duvy, bump);
         let v = normalize(frame.camera.xyz - in.world);
         let metallic = in.material.x * surface.b;
-        let roughness = clamp(in.material.y * surface.g, 0.02, 1.0);
+        let given = clamp(in.material.y * surface.g, 0.02, 1.0);
+        let a = given * given;
+        let roughness = sqrt(sqrt(clamp(a * a + widening, 0.0, 1.0)));
         var sun = frame.sun_color.rgb;
         if frame.params.w > 0.5 {
             sun *= sunlit(in.world, n);
@@ -1661,6 +1708,16 @@ mod tests {
         assert!(!skinned.contains("//S") && skinned.contains("//T"));
         assert!(lit.contains("@group(0) @binding(3) var environment_cube: texture_cube<f32>"));
         assert!(!lit.contains("//E") && lit.contains("//T"));
+    }
+
+    #[test]
+    fn specular_anti_aliasing_is_a_multisampled_shaders_alone() {
+        let source = shader_source(false, false, false);
+        let (one, four) = (antialiased(source.clone(), 1), antialiased(source, 4));
+        for line in one.lines().filter(|l| l.contains("dpdx(facing)")) {
+            assert!(line.trim_start().starts_with("//"), "{line}");
+        }
+        assert!(four.contains("\nlet turning_x = dpdx(facing);"));
     }
 
     #[test]

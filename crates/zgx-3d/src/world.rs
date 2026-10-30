@@ -264,6 +264,8 @@ pub(crate) struct Inner {
     pub(crate) tone_mapping: ToneMapping,
     /// Stops of exposure (`World::set_exposure`): light times 2 to it.
     pub(crate) exposure: f32,
+    /// Samples a pixel (`World::set_samples`): 4 or 1.
+    pub(crate) samples: u32,
     /// Objects' textures (`World::set_map`), by index and map, with the
     /// generation they were set for.
     textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
@@ -490,6 +492,7 @@ impl World {
             environment: None,
             tone_mapping: ToneMapping::Neutral,
             exposure: 0.,
+            samples: 4,
             textures: Default::default(),
             skins: Default::default(),
             revision: 0,
@@ -711,6 +714,17 @@ impl World {
             0.
         };
         self.change(|inner| std::mem::replace(&mut inner.exposure, stops) != stops);
+    }
+    /// Samples a pixel: 4 (the default) smooths the edges of meshes
+    /// (multisampling) and the highlights of curves finer than the pixels
+    /// (their roughness widened where the normal turns fast, about 1% of
+    /// the GPU's work), 1 draws them hard, its colour and depth targets a
+    /// quarter of the memory and the GPU's work less. Other counts take
+    /// the nearer: 2 or more 4, else 1. Changing it makes its pipelines
+    /// again with the next frame.
+    pub fn set_samples(&self, samples: u32) {
+        let samples = if samples >= 2 { 4 } else { 1 };
+        self.change(|inner| std::mem::replace(&mut inner.samples, samples) != samples);
     }
     /// Object `id`'s matrix in the world, its ancestors' applied; `None` if
     /// it is gone, hidden or under a hidden one.

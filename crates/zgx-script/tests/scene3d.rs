@@ -448,4 +448,11 @@ fn tone_mapping_and_exposure_are_checked() {
     h.frame();
     assert!(frame_id(&mut h, "scene").is_some());
     assert!(raised(r#"ui.scene3d { tone_mapping = "reinhard" }"#).contains("tone_mapping"));
+    assert!(raised(r#"ui.scene3d { antialias = 4 }"#).contains("antialias"));
+    let mut h = Harness::inline(
+        r#"return ui.scene3d { id = "scene", w = 100, h = 100, antialias = false, ui.mesh { geometry = "box" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(frame_id(&mut h, "scene").is_some());
 }

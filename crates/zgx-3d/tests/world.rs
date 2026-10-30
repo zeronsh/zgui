@@ -795,3 +795,32 @@ fn exposure_doubles_the_light_a_stop() {
     let half = shown(0.1, ToneMapping::Linear, 0.).unwrap();
     assert!(down.abs_diff(half) <= 1, "{down} against {half}");
 }
+
+#[test]
+fn four_samples_smooth_a_slanted_edge_and_one_draws_it_hard() {
+    // A white unlit square turned a little: along a row across its edge,
+    // pixels part white and part the box's green show only when sampled
+    // more than once a pixel.
+    let blended = |samples: u32| -> Option<usize> {
+        let mut white = Material::rgb(0xffffff);
+        white.unlit = true;
+        let (world, id) = one(facing_square(), white);
+        world.update(id, |o| o.transform.rotation = Quat::from_euler(0., 0., 0.3));
+        world.set_samples(samples);
+        let mut window = Window::new(&world)?;
+        window.draw();
+        let pixels = window.gpu.readback().unwrap();
+        Some(
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[0] > 20 && p[0] < 235)
+                .count(),
+        )
+    };
+    let (Some(smooth), Some(hard)) = (blended(4), blended(1)) else {
+        return;
+    };
+    assert!(smooth > 40 && hard == 0, "smooth {smooth}, hard {hard}");
+}

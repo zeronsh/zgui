@@ -5445,6 +5445,9 @@ export type Scene3DProps = {
 	tone_mapping: ("neutral" | "aces" | "linear")?,
 	-- Stops of exposure: each doubles the light (default 0).
 	exposure: Reactive<number>?,
+	-- Smooth edges, 4 samples a pixel (default true); false draws them hard
+	-- for less GPU work and memory.
+	antialias: boolean?,
 	[number]: Object3D,
 }
 export type CanvasProps = {
