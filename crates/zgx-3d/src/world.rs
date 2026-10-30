@@ -272,6 +272,9 @@ pub(crate) struct Inner {
     /// Skinned objects' skins (`World::set_skin`), by index, with the
     /// generation they were set for.
     skins: std::collections::HashMap<u32, (u32, Skin)>,
+    /// Objects' morph weights (`World::set_morph_weights`), by index, with
+    /// the generation they were set for.
+    morph_weights: std::collections::HashMap<u32, (u32, Vec<f32>)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -303,6 +306,9 @@ pub(crate) struct Drawn<'a> {
     /// times its inverse bind): its vertices are placed by these, and its
     /// `matrix` is the identity.
     pub(crate) palette: Option<Vec<Mat4>>,
+    /// A morphing mesh's targets at any weight: `[target, weight]`s. `None`
+    /// at rest (it draws as any mesh).
+    pub(crate) morph: Option<Vec<[f32; 2]>>,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -324,6 +330,7 @@ impl Inner {
             {
                 let generation = self.objects[index].generation;
                 let palette = self.palette(index, generation, geometry, &mut matrices);
+                let morph = self.morphing(index, generation, geometry);
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
@@ -339,10 +346,33 @@ impl Inner {
                         matrix
                     },
                     palette,
+                    morph,
                 });
             }
         }
         out
+    }
+    /// Object `index`'s targets at any weight, as `[target, weight]`s, if
+    /// it is a morphing geometry away from its rest.
+    pub(crate) fn morphing(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+    ) -> Option<Vec<[f32; 2]>> {
+        let targets = geometry.morphs()?.targets();
+        let (_, weights) = self
+            .morph_weights
+            .get(&(index as u32))
+            .filter(|(set_for, _)| *set_for == generation)?;
+        let active: Vec<[f32; 2]> = weights
+            .iter()
+            .take(targets)
+            .enumerate()
+            .filter(|(_, weight)| weight.is_finite() && **weight != 0.)
+            .map(|(target, &weight)| [target as f32, weight])
+            .collect();
+        (!active.is_empty()).then_some(active)
     }
     /// Object `index`'s joints' matrices, if it is a skinned geometry with a
     /// skin: a joint gone or hidden places its vertices where it was bound.
@@ -380,11 +410,20 @@ impl Inner {
             if let Some(object) = &slot.value
                 && let Some(geometry) = &object.geometry
                 && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
-                && let Some(t) = match self.palette(index, slot.generation, geometry, &mut matrices)
-                {
+                && let Some(t) = match (
+                    self.palette(index, slot.generation, geometry, &mut matrices),
+                    self.morphing(index, slot.generation, geometry),
+                ) {
+                    (None, None) => crate::pick::meet(geometry, matrix, from, to),
                     // Posed as drawn.
-                    Some(palette) => crate::pick::meet_skinned(geometry, &palette, from, to),
-                    None => crate::pick::meet(geometry, matrix, from, to),
+                    (palette, morph) => crate::pick::meet_posed(
+                        geometry,
+                        matrix,
+                        palette.as_deref(),
+                        morph.as_deref(),
+                        from,
+                        to,
+                    ),
                 }
                 && nearest.is_none_or(|(_, n)| t < n)
             {
@@ -495,6 +534,7 @@ impl World {
             samples: 4,
             textures: Default::default(),
             skins: Default::default(),
+            morph_weights: Default::default(),
             revision: 0,
         }));
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
@@ -533,6 +573,7 @@ impl World {
                 slot.generation = slot.generation.wrapping_add(1);
                 inner.textures.retain(|(index, _), _| *index != id.index);
                 inner.skins.remove(&id.index);
+                inner.morph_weights.remove(&id.index);
                 true
             }
             _ => false,
@@ -682,6 +723,48 @@ impl World {
     /// shadows are on.
     pub fn set_shadows(&self, on: bool) {
         self.change(|inner| std::mem::replace(&mut inner.shadows, on) != on);
+    }
+    /// How much of each morph target object `id`'s geometry blends in
+    /// (`Geometry::with_morph_targets`), by target: 0 none, 1 all of it,
+    /// past those further (targets without one stay at 0). A frame is drawn
+    /// if they changed.
+    pub fn set_morph_weights(&self, id: ObjectId, weights: &[f32]) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let entry = inner
+                .morph_weights
+                .entry(id.index)
+                .or_insert((id.generation, Vec::new()));
+            if entry.0 == id.generation && entry.1 == weights {
+                return false;
+            }
+            *entry = (id.generation, weights.to_vec());
+            true
+        });
+    }
+    /// Target `target`'s weight of object `id` alone.
+    pub fn set_morph_weight(&self, id: ObjectId, target: usize, weight: f32) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let entry = inner
+                .morph_weights
+                .entry(id.index)
+                .or_insert((id.generation, Vec::new()));
+            if entry.0 != id.generation {
+                *entry = (id.generation, Vec::new());
+            }
+            if entry.1.len() <= target {
+                entry.1.resize(target + 1, 0.);
+            } else if entry.1[target] == weight {
+                return false;
+            }
+            entry.1[target] = weight;
+            true
+        });
     }
     /// The light all around the scene (image-based light): reflected by
     /// every lit surface, sharp in polished metal and blurred in rough, its

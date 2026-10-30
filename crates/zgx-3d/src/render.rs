@@ -60,14 +60,16 @@ struct FrameUniforms {
 }
 
 /// What the shadow map holds: the sun's view, each opaque mesh's geometry
-/// and place, and skinned ones' joint matrices.
-type Casting = (Mat4, Vec<(u64, Mat4)>, Vec<Mat4>);
+/// and place, skinned ones' joint matrices and morphing ones' weights.
+type Casting = (Mat4, Vec<(u64, Mat4)>, Vec<Mat4>, Vec<[f32; 2]>);
 
 struct Buffers {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     /// A skinned geometry's joints and weights, a vertex's.
     skin: Option<wgpu::Buffer>,
+    /// A morphing geometry's targets' deltas, bound.
+    morphs: Option<wgpu::BindGroup>,
     count: u32,
     used: u64,
 }
@@ -76,21 +78,24 @@ struct Gpu {
     /// Opaque and translucent meshes', without textures: an untextured
     /// scene binds none (a bound texture costs Apple's driver 16 MB).
     plain: [wgpu::RenderPipeline; 2],
-    /// Textured, skinned or environment-lit meshes' (by whether each), made
-    /// with the first frame drawing one.
-    variants: HashMap<(bool, bool, bool), [wgpu::RenderPipeline; 2]>,
-    /// Skinned meshes' depth from the sun, made with the first skinned
-    /// shadow.
-    shadow_skinned: Option<wgpu::RenderPipeline>,
+    /// Textured, skinned, environment-lit or morphing meshes' (by whether
+    /// each), made with the first frame drawing one.
+    variants: HashMap<(bool, bool, bool, bool), [wgpu::RenderPipeline; 2]>,
+    /// Skinned or morphing meshes' depth from the sun (by whether each),
+    /// made with the first such shadow.
+    shadow_variants: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow_layout: wgpu::BindGroupLayout,
     /// Group 1 of a skinned untextured pipeline: nothing.
     empty_layout: wgpu::BindGroupLayout,
     empty_bind: wgpu::BindGroup,
-    /// Skinned meshes' joint matrices, all of a frame's in one buffer.
+    /// Skinned meshes' joint matrices and morphing meshes' weights, all of
+    /// a frame's in one buffer.
     palette_layout: wgpu::BindGroupLayout,
+    /// Group 3 of a morphing pipeline: its geometry's deltas.
+    morph_layout: wgpu::BindGroupLayout,
     palettes: Option<(wgpu::Buffer, usize, wgpu::BindGroup)>,
     /// Whether the device reads storage buffers in vertex shaders: without
-    /// (some GL), skinned meshes draw as bound.
+    /// (some GL), skinned and morphing meshes draw as bound.
     skinning: bool,
     uniforms: wgpu::Buffer,
     layout: wgpu::BindGroupLayout,
@@ -258,11 +263,15 @@ impl Viewport for Renderer {
         // instance says where its own start.
         let skinning = gpu.skinning;
         let skinned = |d: &crate::world::Drawn| skinning && d.palette.is_some();
+        let morphing = |d: &crate::world::Drawn| skinning && d.morph.is_some();
         let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
         let instances: Vec<Instance> = drawn
             .iter()
             .map(|d| {
                 let base = palette.len() as u32;
+                if morphing(d) {
+                    morph_block(d, &mut palette);
+                }
                 if skinned(d) {
                     palette.extend(d.palette.iter().flatten().map(|m| m.columns));
                 }
@@ -346,6 +355,24 @@ impl Viewport for Renderer {
                                 usage: wgpu::BufferUsages::VERTEX,
                             })
                     }),
+                    morphs: d.geometry.morphs().filter(|_| skinning).map(|morphs| {
+                        let buffer =
+                            frame
+                                .device
+                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some("3D morph targets"),
+                                    contents: bytemuck::cast_slice(morphs.deltas()),
+                                    usage: wgpu::BufferUsages::STORAGE,
+                                });
+                        frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("3D morph targets"),
+                            layout: &gpu.morph_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: buffer.as_entire_binding(),
+                            }],
+                        })
+                    }),
                     count: d.geometry.indices().len() as u32,
                     used: 0,
                 }
@@ -414,11 +441,12 @@ impl Viewport for Renderer {
         let mut start = 0;
         while start < drawn.len() {
             let first = drawn[start];
-            let (geometry, glass, texture, bent) = (
+            let (geometry, glass, texture, bent, blended) = (
                 first.geometry.id(),
                 translucent(first),
                 texture_of(first),
                 skinned(first),
+                morphing(first),
             );
             let end = start
                 + drawn[start..]
@@ -428,9 +456,17 @@ impl Viewport for Renderer {
                             && translucent(d) == glass
                             && texture_of(d) == texture
                             && skinned(d) == bent
+                            && morphing(d) == blended
                     })
                     .count();
-            runs.push((geometry, glass, texture, bent, start as u32..end as u32));
+            runs.push((
+                geometry,
+                glass,
+                texture,
+                bent,
+                blended,
+                start as u32..end as u32,
+            ));
             start = end;
         }
         // What the map would hold now; drawn only if it holds something else.
@@ -445,28 +481,41 @@ impl Viewport for Renderer {
                 .filter(|d| !translucent(d))
                 .flat_map(|d| d.palette.iter().flatten().copied())
                 .collect::<Vec<_>>();
-            (matrix, meshes, joints)
+            let weights = drawn
+                .iter()
+                .filter(|d| !translucent(d))
+                .flat_map(|d| d.morph.iter().flatten().copied())
+                .collect::<Vec<_>>();
+            (matrix, meshes, joints, weights)
         });
-        if casting.is_some()
-            && gpu.shadow_skinned.is_none()
-            && runs.iter().any(|(_, glass, _, bent, _)| *bent && !glass)
-        {
-            let shader = frame
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("3D skinned shadows"),
-                    source: wgpu::ShaderSource::Wgsl(shader_source(false, true, false).into()),
-                });
-            gpu.shadow_skinned = Some(shadow_pipeline(
-                frame.device,
-                &shader,
-                &[
+        if casting.is_some() {
+            for &(_, glass, _, bent, blended, _) in &runs {
+                let key = (bent, blended);
+                if glass || key == (false, false) || gpu.shadow_variants.contains_key(&key) {
+                    continue;
+                }
+                let shader = frame
+                    .device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("3D skinned or morphing shadows"),
+                        source: wgpu::ShaderSource::Wgsl(
+                            shader_source(false, bent, false, blended).into(),
+                        ),
+                    });
+                let layouts = [
                     Some(&gpu.shadow_layout),
                     Some(&gpu.empty_layout),
                     Some(&gpu.palette_layout),
-                ],
-                true,
-            ));
+                    Some(&gpu.morph_layout),
+                ];
+                let pipeline = shadow_pipeline(
+                    frame.device,
+                    &shader,
+                    &layouts[..if blended { 4 } else { 3 }],
+                    bent,
+                );
+                gpu.shadow_variants.insert(key, pipeline);
+            }
         }
         if casting.is_some()
             && casting != gpu.shadow_drawn
@@ -490,14 +539,21 @@ impl Viewport for Renderer {
             pass.set_bind_group(0, &gpu.shadow_bind, &[]);
             pass.set_vertex_buffer(1, instances_buffer.slice(..));
             // Translucent meshes cast none.
-            for (geometry, _, _, bent, instances) in runs.iter().filter(|(_, glass, ..)| !glass) {
+            for (geometry, _, _, bent, blended, instances) in
+                runs.iter().filter(|(_, glass, ..)| !glass)
+            {
                 let buffers = &gpu.geometries[geometry];
-                match (bent, &gpu.shadow_skinned, &gpu.palettes, &buffers.skin) {
-                    (true, Some(pipeline), Some((_, _, joints)), Some(skin)) => {
+                match (gpu.shadow_variants.get(&(*bent, *blended)), &gpu.palettes) {
+                    (Some(pipeline), Some((_, _, joints))) => {
                         pass.set_pipeline(pipeline);
                         pass.set_bind_group(1, &gpu.empty_bind, &[]);
                         pass.set_bind_group(2, joints, &[]);
-                        pass.set_vertex_buffer(2, skin.slice(..));
+                        if let Some(skin) = buffers.skin.as_ref().filter(|_| *bent) {
+                            pass.set_vertex_buffer(2, skin.slice(..));
+                        }
+                        if let Some(morphs) = buffers.morphs.as_ref().filter(|_| *blended) {
+                            pass.set_bind_group(3, morphs, &[]);
+                        }
                     }
                     _ => pass.set_pipeline(&gpu.shadow),
                 }
@@ -509,18 +565,21 @@ impl Viewport for Renderer {
             gpu.shadow_drawn = casting;
         }
 
-        for (_, _, maps, bent, _) in &runs {
-            let variant = (*maps != [0; MAPS], *bent, lit);
-            if variant == (false, false, false) || gpu.variants.contains_key(&variant) {
+        for (_, _, maps, bent, blended, _) in &runs {
+            let variant = (*maps != [0; MAPS], *bent, lit, *blended);
+            if variant == (false, false, false, false) || gpu.variants.contains_key(&variant) {
                 continue;
             }
             let shader = frame
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("3D textured, skinned or environment-lit"),
+                    label: Some("3D textured, skinned, environment-lit or morphing"),
                     source: wgpu::ShaderSource::Wgsl(
-                        antialiased(shader_source(variant.0, variant.1, variant.2), gpu.samples)
-                            .into(),
+                        antialiased(
+                            shader_source(variant.0, variant.1, variant.2, variant.3),
+                            gpu.samples,
+                        )
+                        .into(),
                     ),
                 });
             let group0 = match &gpu.environment_layout {
@@ -535,9 +594,14 @@ impl Viewport for Renderer {
             let layouts = [
                 Some(group0),
                 Some(group1),
-                variant.1.then_some(&gpu.palette_layout),
+                Some(&gpu.palette_layout),
+                Some(&gpu.morph_layout),
             ];
-            let count = if variant.1 { 3 } else { 2 };
+            let count = match (variant.1, variant.3) {
+                (_, true) => 4,
+                (true, false) => 3,
+                (false, false) => 2,
+            };
             let pipelines = main_pipelines(
                 frame.device,
                 (gpu.format, gpu.samples),
@@ -600,21 +664,29 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, frame_bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
-        for (geometry, glass, texture, bent, instances) in runs {
+        for (geometry, glass, texture, bent, blended, instances) in runs {
             let buffers = &gpu.geometries[&geometry];
             let maps = gpu.bindings.get(&texture).map(|(binding, _)| binding);
-            let joints = gpu
-                .palettes
-                .as_ref()
-                .zip(buffers.skin.as_ref())
-                .filter(|_| bent);
-            match gpu.variants.get(&(maps.is_some(), joints.is_some(), lit)) {
+            let skin = buffers.skin.as_ref().filter(|_| bent);
+            let morphs = buffers.morphs.as_ref().filter(|_| blended);
+            let palette = gpu.palettes.as_ref().filter(|_| bent || blended);
+            match gpu.variants.get(&(
+                maps.is_some(),
+                skin.is_some() && palette.is_some(),
+                lit,
+                morphs.is_some() && palette.is_some(),
+            )) {
                 Some(pipelines) => {
                     pass.set_pipeline(&pipelines[usize::from(glass)]);
                     pass.set_bind_group(1, maps.unwrap_or(&gpu.empty_bind), &[]);
-                    if let Some(((_, _, palette), skin)) = joints {
+                    if let Some((_, _, palette)) = palette {
                         pass.set_bind_group(2, palette, &[]);
+                    }
+                    if let Some(skin) = skin {
                         pass.set_vertex_buffer(2, skin.slice(..));
+                    }
+                    if let Some(morphs) = morphs {
+                        pass.set_bind_group(3, morphs, &[]);
                     }
                 }
                 None => pass.set_pipeline(&gpu.plain[usize::from(glass)]),
@@ -665,6 +737,26 @@ fn instance(d: &crate::world::Drawn, base: u32) -> Instance {
             material.emissive[2],
             base as f32,
         ],
+    }
+}
+
+/// `d`'s morph weights into the frame's `palette`: a matrix saying how many
+/// are active and how many targets it has, then matrices of `[target,
+/// weight]`s, one a column (the shader's `morph`). Joints follow.
+fn morph_block(d: &crate::world::Drawn, palette: &mut Vec<[[f32; 4]; 4]>) {
+    let active = d.morph.as_deref().unwrap_or_default();
+    let targets = d.geometry.morphs().map_or(0, |m| m.targets());
+    palette.push([
+        [active.len() as f32, targets as f32, 0., 0.],
+        [0.; 4],
+        [0.; 4],
+        [0.; 4],
+    ]);
+    for pairs in active.chunks(4) {
+        palette.push(std::array::from_fn(|column| {
+            let [target, weight] = pairs.get(column).copied().unwrap_or([0.; 2]);
+            [target, weight, 0., 0.]
+        }));
     }
 }
 
@@ -781,7 +873,10 @@ fn sun_view(all: &[crate::world::Drawn], direction: Vec3) -> Option<(Mat4, f32)>
     // A skinned mesh's box placed by each of its joints: about where its
     // pose can take it.
     fn corners<'a>(d: &'a crate::world::Drawn) -> impl Iterator<Item = Vec3> + 'a {
-        let (low, high) = d.geometry.bounds();
+        let (low, high) = match &d.morph {
+            Some(active) => d.geometry.morphed_bounds(active),
+            None => d.geometry.bounds(),
+        };
         let matrices = d
             .palette
             .as_deref()
@@ -906,7 +1001,7 @@ impl Gpu {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
             source: wgpu::ShaderSource::Wgsl(
-                antialiased(shader_source(false, false, false), samples).into(),
+                antialiased(shader_source(false, false, false, false), samples).into(),
             ),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1025,14 +1120,28 @@ impl Gpu {
                 count: None,
             }],
         });
+        let morph_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("3D morph targets"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
         Self {
             format,
             plain,
             variants: HashMap::new(),
+            morph_layout,
             environment_layout: None,
             environment: None,
             environment_bind: None,
-            shadow_skinned: None,
+            shadow_variants: HashMap::new(),
             shadow_layout,
             empty_layout,
             empty_bind,
@@ -1073,15 +1182,22 @@ const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 /// The shader, sampling textures or not, skinning or not, lit by an
 /// environment or not: its lines marked `//T ` are a textured pipeline's
 /// alone (its maps' bindings, samples and normal mapping), `//S ` a skinned
-/// one's (its joints), `//E ` an environment-lit one's (its cube and
-/// diffuse light), comments in others'.
-fn shader_source(textured: bool, skinned: bool, lit: bool) -> String {
+/// one's (its joints), `//M ` a morphing one's (its targets), `//P ` either's
+/// (the frame's joints and weights), `//E ` an environment-lit one's (its
+/// cube and diffuse light), comments in others'.
+fn shader_source(textured: bool, skinned: bool, lit: bool, morphing: bool) -> String {
     let mut source = SHADER.to_owned();
     if textured {
         source = source.replace("//T ", "");
     }
     if skinned {
         source = source.replace("//S ", "");
+    }
+    if morphing {
+        source = source.replace("//M ", "");
+    }
+    if skinned || morphing {
+        source = source.replace("//P ", "");
     }
     if lit {
         source = source.replace("//E ", "");
@@ -1429,7 +1545,29 @@ struct Frame {
 //T @group(1) @binding(3) var emission_texture: texture_2d<f32>;
 //T @group(1) @binding(4) var occlusion_texture: texture_2d<f32>;
 //T @group(1) @binding(5) var map_sampler: sampler;
-//S @group(2) @binding(0) var<storage, read> palette: array<mat4x4<f32>>;
+//P @group(2) @binding(0) var<storage, read> palette: array<mat4x4<f32>>;
+//M @group(3) @binding(0) var<storage, read> morphs: array<vec4<f32>>;
+//M struct Morphed {
+//M     position: vec3<f32>,
+//M     normal: vec3<f32>,
+//M     joints: u32,
+//M }
+//M // A vertex blended by the mesh's weights (from `base`: how many, how many
+//M // targets, then `[target, weight]`s, four a matrix), and where its
+//M // joints' matrices start.
+//M fn morph(base: u32, vertex: u32, position: vec3<f32>, normal: vec3<f32>) -> Morphed {
+//M     let head = palette[base][0];
+//M     let blending = u32(head.x);
+//M     let targets = u32(head.y);
+//M     var out = Morphed(position, normal, base + 1u + (blending + 3u) / 4u);
+//M     for (var i = 0u; i < blending; i++) {
+//M         let pair = palette[base + 1u + i / 4u][i % 4u];
+//M         let at = (vertex * targets + u32(pair.x)) * 2u;
+//M         out.position += morphs[at].xyz * pair.y;
+//M         out.normal += morphs[at + 1u].xyz * pair.y;
+//M     }
+//M     return out;
+//M }
 //S // A vertex's place from its joints' matrices (from `base`), weighted.
 //S fn skinned(base: u32, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
 //S     return palette[base + joints.x] * weights.x + palette[base + joints.y] * weights.y
@@ -1452,24 +1590,39 @@ struct Out {
     @location(7) n0: vec4<f32>, @location(8) n1: vec4<f32>, @location(9) n2: vec4<f32>,
     @location(10) color: vec4<f32>, @location(11) emissive: vec4<f32>,
 //S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
+//M     @builtin(vertex_index) index: u32,
 ) -> Out {
     var model = mat4x4(m0, m1, m2, m3);
     var normals = mat3x3(n0.xyz, n1.xyz, n2.xyz);
-//S     model = skinned(u32(emissive.w), joints, weights);
+    var at = position;
+    var facing = normal;
+    var joints_from = u32(emissive.w);
+//M     let morphed = morph(joints_from, index, position, normal);
+//M     at = morphed.position;
+//M     facing = morphed.normal;
+//M     joints_from = morphed.joints;
+//S     model = skinned(joints_from, joints, weights);
 //S     normals = mat3x3(model[0].xyz, model[1].xyz, model[2].xyz);
-    let world = model * vec4(position, 1.0);
-    let n = normals * normal;
+    let world = model * vec4(at, 1.0);
+    let n = normals * facing;
     return Out(frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv);
 }
 
 @vertex fn shadow_vertex(
     @location(0) position: vec3<f32>,
     @location(3) m0: vec4<f32>, @location(4) m1: vec4<f32>, @location(5) m2: vec4<f32>, @location(6) m3: vec4<f32>,
-//S     @location(11) emissive: vec4<f32>, @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
+//P     @location(11) emissive: vec4<f32>,
+//S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
+//M     @builtin(vertex_index) index: u32,
 ) -> @builtin(position) vec4<f32> {
     var model = mat4x4(m0, m1, m2, m3);
-//S     model = skinned(u32(emissive.w), joints, weights);
-    return frame.shadow * model * vec4(position, 1.0);
+    var at = position;
+//P     var joints_from = u32(emissive.w);
+//M     let morphed = morph(joints_from, index, position, vec3(0.0));
+//M     at = morphed.position;
+//M     joints_from = morphed.joints;
+//S     model = skinned(joints_from, joints, weights);
+    return frame.shadow * model * vec4(at, 1.0);
 }
 
 const PI: f32 = 3.14159265;
@@ -1686,11 +1839,12 @@ mod tests {
 
     #[test]
     fn an_untextured_shader_binds_no_texture_an_unskinned_no_joints_and_an_unlit_no_cube() {
-        let (plain, textured, skinned, lit) = (
-            shader_source(false, false, false),
-            shader_source(true, false, false),
-            shader_source(false, true, false),
-            shader_source(false, false, true),
+        let (plain, textured, skinned, lit, morphing) = (
+            shader_source(false, false, false, false),
+            shader_source(true, false, false, false),
+            shader_source(false, true, false, false),
+            shader_source(false, false, true, false),
+            shader_source(false, false, false, true),
         );
         // In the plain shader every line naming a map, the joints or the
         // environment's cube is a comment.
@@ -1699,6 +1853,7 @@ mod tests {
                 || l.contains("@group(1)")
                 || l.contains("palette")
                 || l.contains("environment_cube")
+                || l.contains("morphs")
         }) {
             assert!(line.trim_start().starts_with("//"), "{line}");
         }
@@ -1708,11 +1863,14 @@ mod tests {
         assert!(!skinned.contains("//S") && skinned.contains("//T"));
         assert!(lit.contains("@group(0) @binding(3) var environment_cube: texture_cube<f32>"));
         assert!(!lit.contains("//E") && lit.contains("//T"));
+        assert!(morphing.contains("var<storage, read> morphs"));
+        assert!(morphing.contains("var<storage, read> palette"));
+        assert!(!morphing.contains("//M") && morphing.contains("//S"));
     }
 
     #[test]
     fn specular_anti_aliasing_is_a_multisampled_shaders_alone() {
-        let source = shader_source(false, false, false);
+        let source = shader_source(false, false, false, false);
         let (one, four) = (antialiased(source.clone(), 1), antialiased(source, 4));
         for line in one.lines().filter(|l| l.contains("dpdx(facing)")) {
             assert!(line.trim_start().starts_with("//"), "{line}");

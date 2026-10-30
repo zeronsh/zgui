@@ -11,10 +11,13 @@
 //! base colour, metal and roughness, normal, emission and occlusion
 //! textures (PNG or JPEG, in the file, inline or beside it), and its
 //! animations' translations, rotations and scales (`Model::clips`,
-//! `Placed::pose`), and skins moving its meshes by their joints. Not yet:
-//! morph targets, sparse accessors, points and lines (skipped).
+//! `Placed::pose`), skins moving its meshes by their joints, and morph
+//! targets (positions and normals; its weights, and clips moving them). Not
+//! yet: sparse accessors (a morph target in one is skipped), points and
+//! lines (skipped).
 use crate::{
-    Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
+    Geometry, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex,
+    World, vec3,
 };
 use serde_json::Value;
 
@@ -47,6 +50,8 @@ struct Node {
     meshes: Vec<(Geometry, Material, Maps)>,
     /// The skin moving its skinned meshes, by index.
     skin: Option<usize>,
+    /// Its meshes' morph weights: its own, else its mesh's.
+    weights: Vec<f32>,
 }
 /// A skin: its joints (nodes) and each one's inverse bind matrix.
 #[derive(Clone, Debug)]
@@ -138,11 +143,24 @@ impl Model {
                         .ok_or_else(|| ModelError(format!("no mesh {m}")))?,
                     None => Vec::new(),
                 };
+                let weights = node.get("weights").or_else(|| {
+                    let mesh = node.get("mesh").and_then(Value::as_u64)?;
+                    list(&doc, "meshes").get(mesh as usize)?.get("weights")
+                });
                 Ok(Node {
                     transform: transform(node),
                     children,
                     meshes,
                     skin: node.get("skin").and_then(Value::as_u64).map(|s| s as usize),
+                    weights: weights
+                        .and_then(Value::as_array)
+                        .map(|w| {
+                            w.iter()
+                                .filter_map(Value::as_f64)
+                                .map(|w| w as f32)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 })
             })
             .collect::<Result<Vec<_>, ModelError>>()?;
@@ -254,6 +272,7 @@ impl World {
     pub fn place_model(&self, model: &Model) -> crate::Placed {
         let root = self.add(Object::group());
         let mut nodes = vec![None; model.nodes.len()];
+        let mut meshes = vec![Vec::new(); model.nodes.len()];
         // Skinned meshes, given their skins once every joint is placed.
         let mut skinned = Vec::new();
         let mut stack: Vec<(usize, ObjectId, usize)> =
@@ -275,6 +294,10 @@ impl World {
                 if let Some(skin) = node.skin.and_then(|s| model.skins.get(s)) {
                     skinned.push((mesh, skin));
                 }
+                if geometry.morphs().is_some() && !node.weights.is_empty() {
+                    self.set_morph_weights(mesh, &node.weights);
+                }
+                meshes[index].push(mesh);
             }
             stack.extend(node.children.iter().rev().map(|&c| (c, id, depth + 1)));
         }
@@ -287,7 +310,11 @@ impl World {
                 self.set_skin(mesh, Some(skin));
             }
         }
-        crate::Placed { root, nodes }
+        crate::Placed {
+            root,
+            nodes,
+            meshes,
+        }
     }
 }
 
@@ -474,7 +501,7 @@ struct Reader<'a> {
 }
 impl Reader<'_> {
     /// An animation's channels moving nodes (of `nodes`): translations,
-    /// rotations and scales; morph target weights are skipped.
+    /// rotations, scales and morph target weights (a channel a target).
     fn clip(&self, animation: &Value, nodes: usize) -> Result<crate::Clip, ModelError> {
         use crate::animation::{Channel, Interpolation, Path};
         let samplers = list(animation, "samplers");
@@ -486,9 +513,10 @@ impl Reader<'_> {
                 .and_then(Value::as_u64)
                 .map(|n| n as usize);
             let path = match target.and_then(|t| t.get("path")).and_then(Value::as_str) {
-                Some("translation") => Path::Translation,
-                Some("rotation") => Path::Rotation,
-                Some("scale") => Path::Scale,
+                Some("translation") => Some(Path::Translation),
+                Some("rotation") => Some(Path::Rotation),
+                Some("scale") => Some(Path::Scale),
+                Some("weights") => None,
                 _ => continue,
             };
             let Some(node) = node.filter(|&n| n < nodes) else {
@@ -514,18 +542,29 @@ impl Reader<'_> {
                     .ok_or_else(|| ModelError(format!("an animation sampler without its {key}")))
             };
             let times = self.floats(accessor("input")?, 1)?;
-            let width = if path == Path::Rotation { 4 } else { 3 };
-            let flat = self.floats(accessor("output")?, width)?;
-            let values: Vec<[f32; 4]> = flat
-                .chunks_exact(width)
-                .map(|v| [v[0], v[1], v[2], if width == 4 { v[3] } else { 0. }])
-                .collect();
             let per = if interpolation == Interpolation::Cubic {
                 3
             } else {
                 1
             };
-            if times.is_empty() || values.len() != times.len() * per {
+            let width = match path {
+                Some(Path::Rotation) => 4,
+                Some(_) => 3,
+                None => 1,
+            };
+            let flat = self.floats(accessor("output")?, width)?;
+            let values: Vec<[f32; 4]> = match path {
+                Some(_) => flat
+                    .chunks_exact(width)
+                    .map(|v| [v[0], v[1], v[2], if width == 4 { v[3] } else { 0. }])
+                    .collect(),
+                None => Vec::new(),
+            };
+            let keys = times.len() * per;
+            if times.is_empty()
+                || (path.is_some() && values.len() != keys)
+                || (path.is_none() && (flat.is_empty() || !flat.len().is_multiple_of(keys)))
+            {
                 return error("an animation sampler's keys and values don't match");
             }
             // Falling, or not numbers (NaN), times can't be keys.
@@ -538,6 +577,23 @@ impl Reader<'_> {
             if !times.windows(2).all(rising) {
                 return error("an animation sampler's times don't rise");
             }
+            let Some(path) = path else {
+                // Weights: each key holds every target's. A channel a
+                // target, each sampled as any other.
+                let targets = flat.len() / keys;
+                for target in 0..targets {
+                    channels.push(Channel {
+                        node,
+                        path: Path::Weight(target),
+                        interpolation,
+                        times: times.clone(),
+                        values: (0..keys)
+                            .map(|key| [flat[key * targets + target], 0., 0., 0.])
+                            .collect(),
+                    });
+                }
+                continue;
+            };
             channels.push(Channel {
                 node,
                 path,
@@ -665,9 +721,35 @@ impl Reader<'_> {
                         .map_err(|e| ModelError(e.into()))?;
                 }
             }
+            // Its morph targets, all or none (one that can't be read, as a
+            // sparse accessor, leaves the mesh as it is).
+            let targets: Option<Vec<MorphTarget>> = list(primitive, "targets")
+                .iter()
+                .map(|target| self.morph_target(target, count))
+                .collect();
+            if let Some(targets) = targets.filter(|t| !t.is_empty()) {
+                geometry = geometry
+                    .with_morph_targets(targets)
+                    .map_err(|e| ModelError(e.into()))?;
+            }
             out.push((geometry, material, maps));
         }
         Ok(out)
+    }
+    /// A primitive's morph target for its `count` vertices, or `None` if it
+    /// can't be read.
+    fn morph_target(&self, target: &Value, count: usize) -> Option<MorphTarget> {
+        let read = |name: &str| -> Option<Vec<[f32; 3]>> {
+            let Some(index) = target.get(name).and_then(Value::as_u64) else {
+                return Some(Vec::new());
+            };
+            let flat = self.floats(index as usize, 3).ok()?;
+            (flat.len() == count * 3).then(|| flat.as_chunks::<3>().0.to_vec())
+        };
+        let (mut positions, normals) = (read("POSITION")?, read("NORMAL")?);
+        // A target moving normals alone moves no vertex.
+        positions.resize(count, [0.; 3]);
+        Some(MorphTarget::new(positions).with_normals(normals))
     }
     /// Accessor `index`'s view, its bytes from its start, its element's
     /// stride and size, and its count and component type.
@@ -1155,6 +1237,99 @@ mod tests {
             doc["skins"] = json!([{ "joints": [4] }]);
         });
         assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_err());
+    }
+
+    /// `square`'s document and buffer with one morph target moving it 2
+    /// along x, bound to its primitive.
+    fn morphing_square(nodes: Value, extra: impl FnOnce(&mut Value)) -> (Value, Vec<u8>) {
+        let (mut doc, mut bin) = square(nodes, |_| {});
+        let at = bin.len();
+        bin.extend(bytemuck::cast_slice(&[[2_f32, 0., 0.]; 4]));
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        doc["bufferViews"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 48 }));
+        doc["accessors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC3" }));
+        doc["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 2 }]);
+        extra(&mut doc);
+        (doc, bin)
+    }
+
+    #[test]
+    fn a_morph_target_comes_with_its_weights() {
+        let picked_at = |doc: &Value, bin: &[u8]| {
+            let model = Model::from_bytes(&glb_of(doc, bin)).unwrap();
+            let world = World::new();
+            world.add_model(&model);
+            world.set_camera(crate::Camera::looking_at([2., 0., 3.], [2., 0., 0.]));
+            world.pick((50., 50.), (100., 100.)).is_some()
+        };
+        // At rest the square is about the origin, out of a view of x = 2.
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0 }]), |_| {});
+        assert!(!picked_at(&doc, &bin));
+        // The mesh's weights, and a node's in their place.
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0 }]), |doc| {
+            doc["meshes"][0]["weights"] = json!([1.0]);
+        });
+        assert!(picked_at(&doc, &bin));
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0, "weights": [0.0] }]), |doc| {
+            doc["meshes"][0]["weights"] = json!([1.0]);
+        });
+        assert!(!picked_at(&doc, &bin));
+    }
+
+    #[test]
+    fn a_clip_moves_morph_weights() {
+        // Its one target's weight, from 0 to 1 over a second.
+        let (mut doc, mut bin) = morphing_square(json!([{ "mesh": 0 }]), |_| {});
+        let at = bin.len();
+        bin.extend(bytemuck::cast_slice(&[0_f32, 1., 0., 1.]));
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 8 }));
+        views.push(json!({ "buffer": 0, "byteOffset": at + 8, "byteLength": 8 }));
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        for view in [3, 4] {
+            accessors.push(
+                json!({ "bufferView": view, "componentType": 5126, "count": 2, "type": "SCALAR" }),
+            );
+        }
+        doc["animations"] = json!([{
+            "name": "grow",
+            "samplers": [{ "input": 3, "output": 4 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "weights" } }],
+        }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let clip = model.clip("grow").expect("the clip");
+        assert_eq!(clip.duration(), 1.);
+        let world = World::new();
+        let placed = world.place_model(&model);
+        world.set_camera(crate::Camera::looking_at([2., 0., 3.], [2., 0., 0.]));
+        placed.pose(&world, clip, 0.);
+        assert!(world.pick((50., 50.), (100., 100.)).is_none(), "at rest");
+        placed.pose(&world, clip, 1.);
+        assert!(world.pick((50., 50.), (100., 100.)).is_some(), "at full");
+        let revision = world.revision();
+        placed.pose(&world, clip, 1.);
+        assert_eq!(
+            world.revision(),
+            revision,
+            "posed the same: nothing to draw"
+        );
+    }
+
+    #[test]
+    fn a_sparse_morph_target_leaves_the_mesh_as_it_is() {
+        // Not read yet: the model still loads, unmorphed.
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0 }]), |doc| {
+            doc["accessors"][2]["sparse"] = json!({ "count": 0 });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        assert!(model.nodes[0].meshes[0].0.morphs().is_none());
     }
 
     #[test]

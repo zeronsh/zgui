@@ -28,6 +28,8 @@ pub(crate) enum Path {
     Translation,
     Rotation,
     Scale,
+    /// A morph target's weight (a channel a target: `sample`'s first value).
+    Weight(usize),
 }
 /// How a channel goes between its keys (glTF's).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -137,6 +139,8 @@ pub struct Placed {
     pub root: ObjectId,
     /// By node index; `None` for a node its scene doesn't show.
     pub(crate) nodes: Vec<Option<ObjectId>>,
+    /// Each node's meshes, by node index.
+    pub(crate) meshes: Vec<Vec<ObjectId>>,
 }
 impl Placed {
     /// Pose `clip` at `seconds` into it (held at its ends: loop by taking
@@ -148,12 +152,20 @@ impl Placed {
                 continue;
             };
             let [x, y, z, w] = channel.sample(seconds);
+            if let Path::Weight(target) = channel.path {
+                // Its meshes share the node's weights.
+                for &mesh in self.meshes.get(channel.node).into_iter().flatten() {
+                    world.set_morph_weight(mesh, target, x);
+                }
+                continue;
+            }
             world.update(*id, |object| {
                 let transform: &mut Transform = &mut object.transform;
                 match channel.path {
                     Path::Translation => transform.position = vec3(x, y, z),
                     Path::Rotation => transform.rotation = Quat { x, y, z, w },
                     Path::Scale => transform.scale = Vec3::from([x, y, z]),
+                    Path::Weight(_) => {}
                 }
             });
         }

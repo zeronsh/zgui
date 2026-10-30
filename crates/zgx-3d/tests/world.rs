@@ -824,3 +824,172 @@ fn four_samples_smooth_a_slanted_edge_and_one_draws_it_hard() {
     };
     assert!(smooth > 40 && hard == 0, "smooth {smooth}, hard {hard}");
 }
+
+/// A square facing the camera with one morph target moving it `by` along x.
+fn morphing_square(by: f32) -> Geometry {
+    facing_square()
+        .with_morph_targets(vec![MorphTarget::new(vec![[by, 0., 0.]; 4])])
+        .unwrap()
+}
+
+#[test]
+fn a_morph_target_moves_a_mesh_by_its_weight_drawn_and_picked() {
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(morphing_square(1.6), white);
+    let middle = (50., 50.);
+    assert!(
+        world.pick(middle, (SIZE, SIZE)).is_some(),
+        "at rest, as made"
+    );
+    // At full weight it's at 0.6 to 2.6, clear of the middle.
+    world.set_morph_weights(id, &[1.]);
+    let moved = seen_at(&world, vec3(1., 0., 0.));
+    let hit = world.pick((moved.0 as f32, moved.1 as f32), (SIZE, SIZE));
+    assert_eq!(hit.map(|h| h.object), Some(id), "picked where it's blended");
+    assert_eq!(world.pick(middle, (SIZE, SIZE)), None, "not where it was");
+    let revision = world.revision();
+    world.set_morph_weights(id, &[1.]);
+    assert_eq!(world.revision(), revision, "the same weights: no frame");
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert_eq!(
+        window.pixel(50, 50),
+        [0, 128, 0, 255],
+        "gone from the middle"
+    );
+    let shown = window.pixel(moved.0, moved.1);
+    assert!(shown[0] > 240, "drawn where it's blended: {shown:?}");
+    // Half way: -0.2 to 1.8, so the middle again and not the far left.
+    world.set_morph_weight(id, 0, 0.5);
+    window.draw();
+    assert!(window.pixel(50, 50)[0] > 240, "half way, over the middle");
+    let left = seen_at(&world, vec3(-0.7, 0., 0.));
+    assert_eq!(window.pixel(left.0, left.1), [0, 128, 0, 255]);
+    // Back to rest: as made, through the plain pipeline.
+    world.set_morph_weights(id, &[0.]);
+    window.draw();
+    assert!(window.pixel(left.0, left.1)[0] > 240, "at rest again");
+}
+
+#[test]
+fn a_morph_target_turns_normals_as_well() {
+    // A square lit from its right: turning its normals that way lights it.
+    let turned = facing_square()
+        .with_morph_targets(vec![MorphTarget::new(vec![[0.; 3]; 4]).with_normals(vec![
+            [
+                3., 0., 0.
+            ];
+            4
+        ])])
+        .unwrap();
+    let shown = |weight: f32| -> Option<u8> {
+        let (world, id) = one(turned.clone(), Material::rgb(0xffffff).with(0., 1.));
+        world.add_light(Light::Directional {
+            direction: vec3(-1., 0., 0.),
+            color: [1., 1., 1.],
+            intensity: 3.,
+        });
+        world.set_morph_weights(id, &[weight]);
+        let mut window = Window::new(&world)?;
+        window.draw();
+        Some(window.pixel(50, 50)[0])
+    };
+    let (Some(rest), Some(lit)) = (shown(0.), shown(1.)) else {
+        return;
+    };
+    assert!(lit > rest + 80, "at rest {rest}, turned {lit}");
+}
+
+#[test]
+fn a_morph_and_a_skin_move_a_mesh_together() {
+    // Blended 1.6 along x, and moved up 1 by its joint: both show, joints
+    // read past the weights in the frame's buffer.
+    let square = morphing_square(1.6)
+        .with_skin(vec![[0; 4]; 4], vec![[1., 0., 0., 0.]; 4])
+        .unwrap();
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(square, white);
+    let joint = world.add(Object::group());
+    world.set_skin(
+        id,
+        Some(Skin::new(vec![joint], vec![Mat4::IDENTITY]).unwrap()),
+    );
+    world.set_transform(joint, Transform::at([0., 1., 0.]));
+    world.set_morph_weights(id, &[1.]);
+    let there = seen_at(&world, vec3(1., 1., 0.));
+    let hit = world.pick((there.0 as f32, there.1 as f32), (SIZE, SIZE));
+    assert_eq!(hit.map(|h| h.object), Some(id), "picked in its pose");
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert!(window.pixel(there.0, there.1)[0] > 240, "drawn in its pose");
+    let unmoved = seen_at(&world, vec3(1., -0.5, 0.));
+    assert_eq!(window.pixel(unmoved.0, unmoved.1), [0, 128, 0, 255]);
+}
+
+#[test]
+fn a_morph_target_has_an_entry_a_vertex() {
+    let too_few = MorphTarget::new(vec![[0.; 3]; 3]);
+    assert!(facing_square().with_morph_targets(vec![too_few]).is_err());
+    let bad_normals = MorphTarget::new(vec![[0.; 3]; 4]).with_normals(vec![[0.; 3]; 2]);
+    assert!(
+        facing_square()
+            .with_morph_targets(vec![bad_normals])
+            .is_err()
+    );
+}
+
+#[test]
+fn a_morphing_mesh_casts_its_shadow_where_it_is_blended() {
+    // A small flat square 1 over a floor, under a sun slanting toward -x:
+    // its shadow falls 1 to the -x side of it. Blended 1 along +x, the
+    // shadow is under the origin, and not at -1, where it was at rest.
+    let vertex = |x: f32, z: f32| Vertex {
+        position: [x, 0., z],
+        normal: [0., 1., 0.],
+        uv: [0., 0.],
+    };
+    let flat = Geometry::new(
+        vec![
+            vertex(-0.3, 0.3),
+            vertex(0.3, 0.3),
+            vertex(0.3, -0.3),
+            vertex(-0.3, -0.3),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .unwrap()
+    .with_morph_targets(vec![MorphTarget::new(vec![[1., 0., 0.]; 4])])
+    .unwrap();
+    let world = World::new();
+    world.set_shadows(true);
+    world.add_light(Light::Directional {
+        direction: vec3(-1., -1., 0.),
+        color: [1., 1., 1.],
+        intensity: 3.,
+    });
+    let caster = world.add(Object::mesh(flat, Material::rgb(0xffffff)));
+    world.set_transform(caster, Transform::at([0., 1., 0.]));
+    world.add(Object::mesh(
+        Geometry::plane(6., 6.),
+        Material::rgb(0xffffff).with(0., 1.),
+    ));
+    world.set_camera(Camera::looking_at([0., 6., 0.01], [0., 0., 0.]));
+    world.set_morph_weights(caster, &[1.]);
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let shaded = seen_at(&world, vec3(0., 0., 0.));
+    let open = seen_at(&world, vec3(-1., 0., 0.));
+    let (shaded, open) = (
+        window.pixel(shaded.0, shaded.1)[0],
+        window.pixel(open.0, open.1)[0],
+    );
+    assert!(open > shaded + 40, "shadow {shaded}, open floor {open}");
+}

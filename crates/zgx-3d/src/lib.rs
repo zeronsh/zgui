@@ -50,7 +50,7 @@ mod world;
 #[cfg(feature = "gltf")]
 pub use animation::{Clip, Placed};
 pub use environment::Environment;
-pub use geometry::{Geometry, Vertex};
+pub use geometry::{Geometry, MorphTarget, Vertex};
 #[cfg(feature = "gltf")]
 pub use gltf::{Model, ModelError};
 pub use math::{Mat4, Quat, Transform, Vec3, vec3};

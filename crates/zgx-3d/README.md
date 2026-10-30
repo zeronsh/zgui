@@ -27,6 +27,10 @@ What a world takes beyond meshes and lights, each costing nothing until used:
 - **Skins**: `Geometry::with_skin(joints, weights)` and
   `World::set_skin(id, Some(skin))` bend a mesh by its joints on the GPU, its
   shadow and picking following the pose; glTF models bring theirs.
+- **Morph targets**: `Geometry::with_morph_targets(targets)` and
+  `World::set_morph_weights(id, weights)` blend a mesh toward other shapes on
+  the GPU, its shadow and picking following; glTF models bring theirs, and
+  their clips move the weights.
 - **Picking**: `World::pick(point, size)` gives the mesh a point of the view
   shows, where on it and how far (`Hit`), from the meshes' triangles on the
   CPU.

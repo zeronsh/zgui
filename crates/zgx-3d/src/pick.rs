@@ -58,32 +58,51 @@ pub(crate) fn meet(geometry: &Geometry, matrix: Mat4, from: Vec3, to: Vec3) -> O
     nearest
 }
 
-/// `meet` for a skinned geometry posed by `palette` (its joints' matrices):
-/// its vertices skinned here, as the renderer skins them, the segment met
-/// in the world.
-pub(crate) fn meet_skinned(
+/// `meet` for a geometry in a pose: blended by `morph` and skinned by
+/// `palette` (its joints' matrices) here, as the renderer does it, the
+/// segment met in the world. Unskinned, `matrix` places it.
+pub(crate) fn meet_posed(
     geometry: &Geometry,
-    palette: &[Mat4],
+    matrix: Mat4,
+    palette: Option<&[Mat4]>,
+    morph: Option<&[[f32; 2]]>,
     from: Vec3,
     to: Vec3,
 ) -> Option<f32> {
-    let skin = geometry.skin()?;
     let along = to - from;
+    let skin = geometry.skin().filter(|_| palette.is_some());
+    let morphs = geometry.morphs().filter(|_| morph.is_some());
     let posed: Vec<Vec3> = geometry
         .vertices()
         .iter()
-        .zip(skin)
-        .map(|(vertex, influence)| {
-            let p = Vec3::from(vertex.position);
-            influence
-                .joints
-                .iter()
-                .zip(influence.weights)
-                .filter(|(_, w)| *w > 0.)
-                .fold(Vec3::ZERO, |sum, (&joint, weight)| {
-                    let matrix = palette.get(usize::from(joint)).copied().unwrap_or_default();
-                    sum + matrix.project(p) * weight
-                })
+        .enumerate()
+        .map(|(index, vertex)| {
+            // Blended, then moved by its joints, or else its object.
+            let mut p = Vec3::from(vertex.position);
+            if let Some(morphs) = morphs {
+                for &[target, weight] in morph.unwrap_or_default() {
+                    let [x, y, z, _] = morphs.deltas()[morphs.at(index, target as usize)];
+                    p = p + Vec3::from([x, y, z]) * weight;
+                }
+            }
+            match skin {
+                Some(skin) => {
+                    let influence = &skin[index];
+                    influence
+                        .joints
+                        .iter()
+                        .zip(influence.weights)
+                        .filter(|(_, w)| *w > 0.)
+                        .fold(Vec3::ZERO, |sum, (&joint, weight)| {
+                            let matrix = palette
+                                .and_then(|palette| palette.get(usize::from(joint)))
+                                .copied()
+                                .unwrap_or_default();
+                            sum + matrix.project(p) * weight
+                        })
+                }
+                None => matrix.project(p),
+            }
         })
         .collect();
     let (low, high) = posed.iter().fold(

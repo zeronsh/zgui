@@ -26,6 +26,53 @@ struct Data {
     /// Each vertex's joints and their weights, if it is skinned
     /// (`with_skin`).
     skin: Option<Arc<SkinWeights>>,
+    /// Its shapes to blend toward, if it has any (`with_morph_targets`).
+    morphs: Option<Arc<Morphs>>,
+}
+/// A shape a geometry can blend toward (`Geometry::with_morph_targets`):
+/// how far each vertex moves at full weight, and how its normal turns.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MorphTarget {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+}
+impl MorphTarget {
+    /// One moving each vertex by its entry of `positions`.
+    pub fn new(positions: Vec<[f32; 3]>) -> Self {
+        Self {
+            positions,
+            normals: Vec::new(),
+        }
+    }
+    /// It turning each vertex's normal by its entry of `normals`, added to
+    /// the normal at full weight (normals stay as they are without).
+    pub fn with_normals(mut self, normals: Vec<[f32; 3]>) -> Self {
+        self.normals = normals;
+        self
+    }
+}
+/// A geometry's morph targets as a renderer reads them.
+pub(crate) struct Morphs {
+    targets: usize,
+    /// Vertex by vertex, each target's position delta then normal delta.
+    deltas: Vec<[f32; 4]>,
+    /// Each target's least and greatest position delta.
+    reach: Vec<(Vec3, Vec3)>,
+}
+impl Morphs {
+    /// How many targets it has.
+    pub(crate) fn targets(&self) -> usize {
+        self.targets
+    }
+    /// Every delta, for the GPU (`at` says where one is).
+    pub(crate) fn deltas(&self) -> &[[f32; 4]] {
+        &self.deltas
+    }
+    /// Where `target`'s position delta for `vertex` is in `deltas`; its
+    /// normal delta is the next.
+    pub(crate) fn at(&self, vertex: usize, target: usize) -> usize {
+        (vertex * self.targets + target) * 2
+    }
 }
 /// A skinned geometry's joints (indices into its object's `Skin`) and their
 /// weights, a vertex's four each.
@@ -83,6 +130,7 @@ impl Geometry {
                 (Vec3::ZERO, Vec3::ZERO)
             },
             skin: None,
+            morphs: None,
         })))
     }
     /// It skinned: each vertex moved by up to four joints of its object's
@@ -115,14 +163,80 @@ impl Geometry {
             })
             .collect();
         let mut made = Self::new(self.0.vertices.clone(), self.0.indices.clone())?;
-        Arc::get_mut(&mut made.0)
-            .expect("a geometry just made")
-            .skin = Some(Arc::new(influences));
+        let data = Arc::get_mut(&mut made.0).expect("a geometry just made");
+        data.skin = Some(Arc::new(influences));
+        data.morphs = self.0.morphs.clone();
+        Ok(made)
+    }
+    /// It with shapes to blend toward: an object's weights
+    /// (`World::set_morph_weights`) add that much of each target's movement
+    /// to its vertices, on the GPU, before any skin moves them. A new
+    /// geometry. Fails unless every target has an entry a vertex (normals
+    /// are optional).
+    pub fn with_morph_targets(self, targets: Vec<MorphTarget>) -> Result<Self, &'static str> {
+        let vertices = self.0.vertices.len();
+        if targets.iter().any(|t| {
+            t.positions.len() != vertices || !(t.normals.is_empty() || t.normals.len() == vertices)
+        }) {
+            return Err("a morph target has positions, and any normals, for every vertex");
+        }
+        let finite = |v: [f32; 3]| v.map(|n| if n.is_finite() { n } else { 0. });
+        let mut deltas = Vec::with_capacity(vertices * targets.len() * 2);
+        for vertex in 0..vertices {
+            for target in &targets {
+                let [x, y, z] = finite(target.positions[vertex]);
+                let [a, b, c] = target.normals.get(vertex).copied().map_or([0.; 3], finite);
+                deltas.push([x, y, z, 0.]);
+                deltas.push([a, b, c, 0.]);
+            }
+        }
+        let reach = targets
+            .iter()
+            .map(|target| {
+                target
+                    .positions
+                    .iter()
+                    .fold((Vec3::ZERO, Vec3::ZERO), |(low, high), &p| {
+                        let p = Vec3::from(finite(p));
+                        (low.min(p), high.max(p))
+                    })
+            })
+            .collect();
+        let mut made = Self::new(self.0.vertices.clone(), self.0.indices.clone())?;
+        let data = Arc::get_mut(&mut made.0).expect("a geometry just made");
+        data.skin = self.0.skin.clone();
+        data.morphs = (!targets.is_empty()).then(|| {
+            Arc::new(Morphs {
+                targets: targets.len(),
+                deltas,
+                reach,
+            })
+        });
         Ok(made)
     }
     /// Its vertices' joints and weights, if it is skinned.
     pub(crate) fn skin(&self) -> Option<&[Influence]> {
         self.0.skin.as_deref().map(Vec::as_slice)
+    }
+    /// Its morph targets, if it has any.
+    pub(crate) fn morphs(&self) -> Option<&Morphs> {
+        self.0.morphs.as_deref()
+    }
+    /// The box holding it blended by `active` (`[target, weight]`s).
+    pub(crate) fn morphed_bounds(&self, active: &[[f32; 2]]) -> (Vec3, Vec3) {
+        let (mut low, mut high) = self.0.bounds;
+        if let Some(morphs) = self.morphs() {
+            for &[target, weight] in active {
+                let Some(&(least, most)) = morphs.reach.get(target as usize) else {
+                    continue;
+                };
+                // A negative weight moves the other way.
+                let (a, b) = (least * weight, most * weight);
+                low = low + a.min(b);
+                high = high + a.max(b);
+            }
+        }
+        (low, high)
     }
     /// Stable for its lifetime: renderers cache its buffers by it.
     pub fn id(&self) -> u64 {
