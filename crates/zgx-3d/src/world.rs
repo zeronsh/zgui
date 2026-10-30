@@ -258,6 +258,8 @@ pub(crate) struct Inner {
     pub(crate) background: Option<[f32; 4]>,
     /// Whether the sun casts shadows (`World::set_shadows`).
     pub(crate) shadows: bool,
+    /// The light around it (`World::set_environment`).
+    pub(crate) environment: Option<crate::Environment>,
     /// Objects' textures (`World::set_map`), by index and map, with the
     /// generation they were set for.
     textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
@@ -463,6 +465,7 @@ impl World {
             camera: Camera::default(),
             background: None,
             shadows: false,
+            environment: None,
             textures: Default::default(),
             skins: Default::default(),
             revision: 0,
@@ -652,6 +655,20 @@ impl World {
     /// shadows are on.
     pub fn set_shadows(&self, on: bool) {
         self.change(|inner| std::mem::replace(&mut inner.shadows, on) != on);
+    }
+    /// The light all around the scene (image-based light): reflected by
+    /// every lit surface, sharp in polished metal and blurred in rough, its
+    /// diffuse part lighting surfaces by how they face it. It takes the
+    /// place of hemisphere lights; suns and point lights still add theirs.
+    /// `None` (the default) has none: the scene costs what it did. Its cube
+    /// (128 texels a side, five levels, 0.5 MB) is uploaded with the first
+    /// frame drawing it.
+    pub fn set_environment(&self, environment: Option<crate::Environment>) {
+        self.change(|inner| {
+            let changed = inner.environment != environment;
+            inner.environment = environment;
+            changed
+        });
     }
     /// Object `id`'s matrix in the world, its ancestors' applied; `None` if
     /// it is gone, hidden or under a hidden one.

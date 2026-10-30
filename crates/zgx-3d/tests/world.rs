@@ -655,3 +655,93 @@ fn a_skinned_mesh_follows_its_joint_drawn_and_picked() {
     window.draw();
     assert!(window.pixel(50, 50)[0] > 240);
 }
+
+/// An environment, 64 by 32 texels equirectangular, of `light(direction)`.
+fn environment_of(light: impl Fn(Vec3) -> f32) -> Environment {
+    let (w, h) = (64, 32);
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            // The direction through the texel's centre: its centre column
+            // faces −z, its top row up.
+            let lon = ((x as f32 + 0.5) / w as f32 - 0.5) * 2. * PI;
+            let lat = (y as f32 + 0.5) / h as f32 * PI;
+            let d = vec3(lat.sin() * lon.sin(), lat.cos(), -lat.sin() * lon.cos());
+            rgb.extend([light(d); 3]);
+        }
+    }
+    Environment::from_equirect(w as u32, h as u32, &rgb).unwrap()
+}
+
+#[test]
+fn an_environment_lights_a_surface_by_how_it_faces_it() {
+    // Light from +x alone: a rough white sphere is lit on its right, dark
+    // on its left; turned half round, the other way.
+    let bright_right = environment_of(|d| if d.x > 0. { 1. } else { 0. });
+    let sides = |environment: Option<Environment>| -> Option<(u8, u8)> {
+        let (world, _) = one(
+            Geometry::sphere(1., 48),
+            Material::rgb(0xffffff).with(0., 1.),
+        );
+        world.set_environment(environment);
+        let mut window = Window::new(&world)?;
+        window.draw();
+        Some((window.pixel(25, 50)[0], window.pixel(75, 50)[0]))
+    };
+    let Some((left, right)) = sides(Some(bright_right.clone())) else {
+        return;
+    };
+    assert!(right > left + 60, "left {left}, right {right}");
+    let (left, right) = sides(Some(bright_right.rotated(PI))).unwrap();
+    assert!(left > right + 60, "turned: left {left}, right {right}");
+    // None: no light at all.
+    assert_eq!(sides(None).unwrap(), (0, 0));
+}
+
+#[test]
+fn a_mirror_reflects_its_environment_the_right_way_up_and_round() {
+    // Behind the camera, bright above and brightest above to the right: a
+    // polished metal square facing the camera shows its top right brightest,
+    // its bottom dark.
+    let environment = environment_of(|d| match (d.y > 0., d.x > 0.) {
+        (true, true) => 4.,
+        (true, false) => 0.3,
+        _ => 0.,
+    });
+    let (world, _) = one(facing_square(), Material::rgb(0xffffff).with(1., 0.));
+    world.set_environment(Some(environment));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let (top_left, top_right) = (window.pixel(38, 38)[0], window.pixel(62, 38)[0]);
+    let bottom = window.pixel(62, 62)[0];
+    assert!(
+        top_right > top_left + 30 && top_left > bottom + 30,
+        "top left {top_left}, top right {top_right}, bottom {bottom}"
+    );
+}
+
+#[test]
+fn the_studio_lights_a_model_with_no_lights_of_its_own() {
+    let (world, _) = one(
+        Geometry::sphere(1., 48),
+        Material::rgb(0x808080).with(0., 0.5),
+    );
+    world.set_environment(Some(Environment::studio()));
+    let revision = world.revision();
+    world.set_environment(Some(Environment::studio()));
+    assert_eq!(world.revision(), revision, "the same light: no change");
+    world.set_environment(Some(Environment::studio().intensity(2.)));
+    assert_eq!(world.revision(), revision + 1);
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let [r, g, b, _] = window.pixel(50, 50);
+    assert!(
+        r > 60 && r.abs_diff(g) <= 6 && r.abs_diff(b) <= 8,
+        "{:?}",
+        [r, g, b]
+    );
+}

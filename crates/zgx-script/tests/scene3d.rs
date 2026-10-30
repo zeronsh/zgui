@@ -243,6 +243,33 @@ fn shadows_are_asked_for_with_true() {
     assert!(raised(r#"ui.scene3d { shadows = 1 }"#).contains("shadows"));
 }
 
+#[test]
+fn an_environment_is_named_given_or_turned_off() {
+    for environment in [
+        r#""studio""#,
+        r#""none""#,
+        r#"{ intensity = 1.5, rotation = 90 }"#,
+        r#"{ src = "studio", intensity = function() return 2 end }"#,
+    ] {
+        let mut h = Harness::inline(&format!(
+            r#"return ui.scene3d {{ id = "scene", w = 100, h = 100, environment = {environment},
+                ui.mesh {{ geometry = "sphere", material = {{ metallic = 1, roughness = 0.2 }} }} }}"#
+        ));
+        assert_eq!(h.error(), None, "{environment}");
+        h.frame();
+        assert!(frame_id(&mut h, "scene").is_some(), "{environment}");
+    }
+    assert!(raised(r#"ui.scene3d { environment = 3 }"#).contains("environment"));
+    // A file that isn't there is an error the script sees.
+    let h = Harness::inline(
+        r#"return ui.scene3d { id = "scene", w = 100, h = 100, environment = "no such sky.hdr",
+            ui.mesh { geometry = "box" } }"#,
+    );
+    h.frame();
+    let error = h.error().unwrap_or_default();
+    assert!(error.contains("no such sky.hdr"), "{error}");
+}
+
 /// A `.glb` of a unit square facing +z, as glTF writes one, with a clip
 /// ("slide") moving it from 0 to 4 along x over 4 seconds.
 #[cfg(feature = "gltf")]

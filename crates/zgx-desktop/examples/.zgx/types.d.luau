@@ -5219,6 +5219,15 @@ export type Orbit3D = {
 	-- Whether scrolling and pinching move it in and out (default true).
 	zoom: boolean?,
 }
+export type Environment3D = {
+	-- "studio" (built in, the default) or a Radiance .hdr file
+	-- (equirectangular), from the script's directory.
+	src: string?,
+	-- How bright its light is (default 1).
+	intensity: Reactive<number>?,
+	-- Degrees it is turned about the vertical.
+	rotation: Reactive<number>?,
+}
 export type Scene3DProps = {
 	-- Size and position.
 	w: Props_w,
@@ -5559,6 +5568,10 @@ export type Scene3DProps = {
 	background: Reactive<Color>?,
 	-- The sun (the first directional light) casts shadows from opaque meshes.
 	shadows: boolean?,
+	-- The light all around (image-based): reflected by every lit surface,
+	-- sharp in polished metal, blurred in rough. Unsaid, a scene showing a
+	-- ui.model has the studio, others none.
+	environment: ("studio" | "none" | string | Environment3D)?,
 	[number]: Object3D,
 }
 export type CanvasProps = {

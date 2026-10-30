@@ -32,6 +32,12 @@ What a world takes beyond meshes and lights, each costing nothing until used:
   CPU.
 - **Shadows**: `World::set_shadows(true)` has the sun (the first directional
   light) cast soft shadows from opaque meshes, into a 2048 by 2048 depth map.
+- **Image-based light**: `World::set_environment(Some(Environment::studio()))`
+  lights every surface from all around, its reflections sharp in polished
+  metal and blurred in rough. `Environment::decode_hdr` takes a Radiance
+  `.hdr` image instead, `from_equirect` and `from_cube` linear RGB; each is
+  prefiltered once on the CPU (a 128-texel cube at five roughnesses, nine
+  spherical harmonics for its diffuse light).
 
 In Luau, `ui.scene3d`, `ui.mesh`, `ui.group` and `ui.model` show them
 ([3D scenes](../../docs/reference/3d.md)).

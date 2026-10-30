@@ -117,7 +117,25 @@ pub(crate) struct Scene3dSpec {
     background: Option<ColorSpec>,
     /// The sun casts shadows (`World::set_shadows`).
     shadows: bool,
+    /// The light around it (`World::set_environment`); `None` unsaid.
+    environment: Option<EnvironmentSpec>,
     objects: Vec<Rc<ObjectSpec>>,
+}
+/// Where a scene's environment comes from.
+pub(crate) enum EnvironmentSource {
+    None,
+    /// `zgx_3d::Environment::studio`, built in.
+    Studio,
+    /// A Radiance `.hdr` file, from the script's directory.
+    File(String),
+}
+/// `environment = "studio" | "none" | "file.hdr" | { src, intensity,
+/// rotation }`.
+pub(crate) struct EnvironmentSpec {
+    source: EnvironmentSource,
+    intensity: Option<Num>,
+    /// Degrees about the vertical.
+    rotation: Option<Num>,
 }
 
 /// A script's mistake, said: made in one place, out of the way of what
@@ -497,6 +515,7 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
                 )));
             }
         },
+        environment: environment(&table)?,
         objects: objects(&table, "ui.scene3d")?,
     };
     // Its box's own properties: the table's named keys alone but
@@ -507,7 +526,7 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         if let mlua::Value::String(name) = &key
             && !matches!(
                 &*name.as_bytes(),
-                b"camera" | b"orbit" | b"background" | b"shadows"
+                b"camera" | b"orbit" | b"background" | b"shadows" | b"environment"
             )
         {
             props.set(key, value)?;
@@ -521,6 +540,38 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
             Some(&props),
         )?,
     )
+}
+
+/// A scene's `environment`, if it says one.
+fn environment(table: &Table) -> mlua::Result<Option<EnvironmentSpec>> {
+    let source = |name: String| match name.as_str() {
+        "studio" => EnvironmentSource::Studio,
+        "none" => EnvironmentSource::None,
+        _ => EnvironmentSource::File(name),
+    };
+    Ok(match table.get::<mlua::Value>("environment")? {
+        mlua::Value::Nil => None,
+        mlua::Value::String(name) => Some(EnvironmentSpec {
+            source: source(name.to_str()?.to_owned()),
+            intensity: None,
+            rotation: None,
+        }),
+        mlua::Value::Table(environment) => Some(EnvironmentSpec {
+            source: source(
+                environment
+                    .get::<Option<String>>("src")?
+                    .unwrap_or_else(|| "studio".into()),
+            ),
+            intensity: opt_num(&environment, "intensity")?,
+            rotation: opt_num(&environment, "rotation")?,
+        }),
+        other => {
+            return Err(wrong(format_args!(
+                "ui.scene3d `environment` is \"studio\", \"none\", a .hdr file or {{ src, intensity, rotation }}, not {}",
+                other.type_name()
+            )));
+        }
+    })
 }
 
 /// A number as it is now, read where it changes.
@@ -760,6 +811,7 @@ pub(crate) fn lower(
         add(&mut adding, object, None, cx);
     }
     let handled = adding.handled;
+    light_around(&world, spec, vm, assets, cx);
     // The background, and the camera (orbiting, if asked: dragged, scrolled
     // and turning on its own).
     if let Some(background) = &spec.background {
@@ -1126,6 +1178,134 @@ fn add(adding: &mut Adding, spec: &Rc<ObjectSpec>, parent: Option<ObjectId>, cx:
             }
         }
     }
+}
+
+/// Whether any of `objects` (or in their groups) is a model.
+fn shows_a_model(objects: &[Rc<ObjectSpec>]) -> bool {
+    objects.iter().any(|object| match &object.shape {
+        Shape::Model(_) => true,
+        Shape::Group(children) => shows_a_model(children),
+        _ => false,
+    })
+}
+
+/// Environments read from files so far, by path, with when the file was
+/// changed (as models are).
+type EnvironmentCache = std::collections::HashMap<
+    std::path::PathBuf,
+    (Option<std::time::SystemTime>, zgx_3d::Environment),
+>;
+thread_local! {
+    static ENVIRONMENTS: std::cell::RefCell<EnvironmentCache> = Default::default();
+}
+/// Environments kept read at most: past it, the cache starts again.
+const ENVIRONMENTS_KEPT: usize = 8;
+
+/// `spec`'s environment on `world`: the studio, or a `.hdr` file, made off
+/// the main thread (decoding and prefiltering) and set once made, its
+/// intensity and rotation followed. Unsaid, a scene showing a model gets
+/// the studio, others none.
+fn light_around(
+    world: &World,
+    spec: &Scene3dSpec,
+    vm: &Rc<Vm>,
+    assets: &Rc<crate::lower::Assets>,
+    cx: &mut Context,
+) {
+    let studio = EnvironmentSpec {
+        source: EnvironmentSource::Studio,
+        intensity: None,
+        rotation: None,
+    };
+    let environment = match &spec.environment {
+        Some(environment) => environment,
+        None if shows_a_model(&spec.objects) => &studio,
+        None => return,
+    };
+    let made: Signal<Option<zgx_3d::Environment>> = cx.state(None);
+    match &environment.source {
+        EnvironmentSource::None => return,
+        EnvironmentSource::Studio => {
+            let (tell, mut heard) = zgx::task::latest::<zgx_3d::Environment>();
+            std::thread::spawn(move || tell.send(zgx_3d::Environment::studio()));
+            let made = made.clone();
+            cx.tasks().spawn(async move {
+                if let Some(environment) = heard.recv().await {
+                    made.set(Some(environment));
+                }
+            });
+        }
+        EnvironmentSource::File(src) => {
+            let report = {
+                let (vm, src) = (Rc::downgrade(vm), src.clone());
+                move |error: String| {
+                    if let Some(vm) = vm.upgrade() {
+                        vm.report(mlua::Error::runtime(format!(
+                            "ui.scene3d environment {src}: {error}"
+                        )));
+                    }
+                }
+            };
+            let path = match crate::lower::resolve_path(vm, src) {
+                Ok(path) => path,
+                Err(error) => return report(error.to_string()),
+            };
+            let changed = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let kept = ENVIRONMENTS.with(|kept| {
+                kept.borrow()
+                    .get(&path)
+                    .filter(|(at, _)| changed.is_some() && *at == changed)
+                    .map(|(_, environment)| environment.clone())
+            });
+            if let Some(environment) = kept {
+                made.set(Some(environment));
+            } else {
+                let bytes = match assets.read(src, &path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => return report(error.to_string()),
+                };
+                let (tell, mut heard) = zgx::task::latest::<Result<zgx_3d::Environment, String>>();
+                std::thread::spawn(move || {
+                    tell.send(zgx_3d::Environment::decode_hdr(&bytes).map_err(str::to_owned));
+                });
+                let made = made.clone();
+                cx.tasks().spawn(async move {
+                    match heard.recv().await {
+                        Some(Ok(environment)) => {
+                            ENVIRONMENTS.with(|kept| {
+                                let mut kept = kept.borrow_mut();
+                                if kept.len() >= ENVIRONMENTS_KEPT {
+                                    kept.clear();
+                                }
+                                kept.insert(path, (changed, environment.clone()));
+                            });
+                            made.set(Some(environment));
+                        }
+                        Some(Err(error)) => report(error),
+                        None => {}
+                    }
+                });
+            }
+        }
+    }
+    let intensity = environment.intensity.as_ref().map(|n| Live::of(n, cx));
+    let rotation = environment.rotation.as_ref().map(|n| Live::of(n, cx));
+    let (world, vm) = (world.clone(), vm.clone());
+    follow(
+        cx,
+        Box::new(move || {
+            let Some(environment) = made.get() else {
+                return;
+            };
+            let intensity = intensity.as_ref().map_or(1., |n| n.get(&vm));
+            let degrees = rotation.as_ref().map_or(0., |n| n.get(&vm));
+            world.set_environment(Some(
+                environment
+                    .intensity(intensity)
+                    .rotated(degrees.to_radians()),
+            ));
+        }),
+    );
 }
 
 /// Models read so far, by path, with when the file was changed: a reload

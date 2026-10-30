@@ -32,6 +32,7 @@
 
 #[cfg(feature = "gltf")]
 mod animation;
+mod environment;
 mod geometry;
 #[cfg(feature = "gltf")]
 mod gltf;
@@ -44,6 +45,7 @@ mod world;
 
 #[cfg(feature = "gltf")]
 pub use animation::{Clip, Placed};
+pub use environment::Environment;
 pub use geometry::{Geometry, Vertex};
 #[cfg(feature = "gltf")]
 pub use gltf::{Model, ModelError};

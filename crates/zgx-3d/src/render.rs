@@ -50,6 +50,11 @@ struct FrameUniforms {
     shadow: [[f32; 4]; 4],
     /// A shadow map texel's size in the scene, and in the map (1 / side).
     shadow_texel: [f32; 4],
+    /// The environment's intensity, its rotation's cosine and sine, and its
+    /// cube's last level (zeros without one).
+    environment: [f32; 4],
+    /// Its diffuse light (`Prefiltered::irradiance`), a coefficient a row.
+    irradiance: [[f32; 4]; 9],
 }
 
 /// What the shadow map holds: the sun's view, each opaque mesh's geometry
@@ -69,9 +74,9 @@ struct Gpu {
     /// Opaque and translucent meshes', without textures: an untextured
     /// scene binds none (a bound texture costs Apple's driver 16 MB).
     plain: [wgpu::RenderPipeline; 2],
-    /// Textured or skinned meshes' (by whether each), made with the first
-    /// frame drawing one.
-    variants: HashMap<(bool, bool), [wgpu::RenderPipeline; 2]>,
+    /// Textured, skinned or environment-lit meshes' (by whether each), made
+    /// with the first frame drawing one.
+    variants: HashMap<(bool, bool, bool), [wgpu::RenderPipeline; 2]>,
     /// Skinned meshes' depth from the sun, made with the first skinned
     /// shadow.
     shadow_skinned: Option<wgpu::RenderPipeline>,
@@ -99,6 +104,12 @@ struct Gpu {
     /// What the shadow map holds: the sun's view and each opaque mesh's
     /// geometry and place. A frame where only the camera moved keeps it.
     shadow_drawn: Option<Casting>,
+    /// The frame's binding with the environment's cube, made with the first
+    /// frame lit by one: its layout and sampler, the cube by environment
+    /// id, and the binding (made again as the shadow map or cube changes).
+    environment_layout: Option<(wgpu::BindGroupLayout, wgpu::Sampler)>,
+    environment: Option<(u64, wgpu::TextureView)>,
+    environment_bind: Option<wgpu::BindGroup>,
     /// Textures by id, with the frame that last drew each.
     texture_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
@@ -192,6 +203,11 @@ impl Viewport for Renderer {
             uniforms.params[3] = 1.;
         }
         gpu.shadows(frame.device, world.shadows);
+        let lit = world.environment.as_ref();
+        if let Some(environment) = lit {
+            gpu.environment(frame.device, frame.queue, environment);
+        }
+        let lit = lit.is_some();
         frame
             .queue
             .write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -428,7 +444,7 @@ impl Viewport for Renderer {
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("3D skinned shadows"),
-                    source: wgpu::ShaderSource::Wgsl(shader_source(false, true).into()),
+                    source: wgpu::ShaderSource::Wgsl(shader_source(false, true, false).into()),
                 });
             gpu.shadow_skinned = Some(shadow_pipeline(
                 frame.device,
@@ -483,23 +499,29 @@ impl Viewport for Renderer {
         }
 
         for (_, _, maps, bent, _) in &runs {
-            let variant = (*maps != [0; MAPS], *bent);
-            if variant == (false, false) || gpu.variants.contains_key(&variant) {
+            let variant = (*maps != [0; MAPS], *bent, lit);
+            if variant == (false, false, false) || gpu.variants.contains_key(&variant) {
                 continue;
             }
             let shader = frame
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("3D textured or skinned"),
-                    source: wgpu::ShaderSource::Wgsl(shader_source(variant.0, variant.1).into()),
+                    label: Some("3D textured, skinned or environment-lit"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        shader_source(variant.0, variant.1, variant.2).into(),
+                    ),
                 });
+            let group0 = match &gpu.environment_layout {
+                Some((layout, _)) if variant.2 => layout,
+                _ => &gpu.layout,
+            };
             let group1 = if variant.0 {
                 &gpu.texture_layout
             } else {
                 &gpu.empty_layout
             };
             let layouts = [
-                Some(&gpu.layout),
+                Some(group0),
                 Some(group1),
                 variant.1.then_some(&gpu.palette_layout),
             ];
@@ -548,7 +570,11 @@ impl Viewport for Renderer {
         let Some((instances_buffer, _)) = &gpu.instances else {
             return;
         };
-        pass.set_bind_group(0, &gpu.bind, &[]);
+        let frame_bind = match &gpu.environment_bind {
+            Some(bind) if lit => bind,
+            _ => &gpu.bind,
+        };
+        pass.set_bind_group(0, frame_bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
         for (geometry, glass, texture, bent, instances) in runs {
             let buffers = &gpu.geometries[&geometry];
@@ -558,7 +584,7 @@ impl Viewport for Renderer {
                 .as_ref()
                 .zip(buffers.skin.as_ref())
                 .filter(|_| bent);
-            match gpu.variants.get(&(maps.is_some(), joints.is_some())) {
+            match gpu.variants.get(&(maps.is_some(), joints.is_some(), lit)) {
                 Some(pipelines) => {
                     pass.set_pipeline(&pipelines[usize::from(glass)]);
                     pass.set_bind_group(1, maps.unwrap_or(&gpu.empty_bind), &[]);
@@ -635,7 +661,25 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
         params: [0., if encode { 1. } else { 0. }, 1., 0.],
         shadow: Mat4::IDENTITY.columns,
         shadow_texel: [0.; 4],
+        environment: [0.; 4],
+        irradiance: [[0.; 4]; 9],
     };
+    if let Some(environment) = &world.environment {
+        let (sin, cos) = environment.rotation.sin_cos();
+        uniforms.environment = [
+            environment.intensity,
+            cos,
+            sin,
+            (crate::environment::LEVELS - 1) as f32,
+        ];
+        for (row, k) in uniforms
+            .irradiance
+            .iter_mut()
+            .zip(&environment.data.irradiance)
+        {
+            *row = [k[0], k[1], k[2], 0.];
+        }
+    }
     // The point lights nearest the camera's target, nearest first, past the
     // four a frame shades with (ties in the order they were added).
     let target = world.camera.target;
@@ -764,12 +808,69 @@ impl Gpu {
         self.shadow_map = on.then(|| depth_map(device, SHADOW_SIZE, "3D shadow map"));
         self.shadow_drawn = None;
         let map = self.shadow_map.as_ref().unwrap_or(&self.stand_in);
-        self.bind = frame_binding(device, &self.layout, &self.uniforms, map, &self.sampler);
+        self.bind = frame_binding(
+            device,
+            &self.layout,
+            &self.uniforms,
+            map,
+            &self.sampler,
+            None,
+        );
+        self.environment_bind = None;
+    }
+    /// The environment `environment`'s cube uploaded (once each) and the
+    /// frame's binding with it.
+    fn environment(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        environment: &crate::Environment,
+    ) {
+        let data = &environment.data;
+        if self
+            .environment
+            .as_ref()
+            .is_none_or(|(id, _)| *id != data.id)
+        {
+            let levels: Vec<&[u8]> = data
+                .levels
+                .iter()
+                .map(|level| bytemuck::cast_slice(level.as_slice()))
+                .collect();
+            let cube = zgx_gpu::viewport::cube_with_levels(
+                device,
+                queue,
+                crate::environment::SIDE,
+                &levels,
+                "3D environment",
+            );
+            let view = cube.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
+            });
+            self.environment = Some((data.id, view));
+            self.environment_bind = None;
+        }
+        let (layout, sampler) = self
+            .environment_layout
+            .get_or_insert_with(|| environment_layout(device));
+        if self.environment_bind.is_none() {
+            let map = self.shadow_map.as_ref().unwrap_or(&self.stand_in);
+            let cube = self.environment.as_ref().map(|(_, view)| (view, &*sampler));
+            self.environment_bind = Some(frame_binding(
+                device,
+                layout,
+                &self.uniforms,
+                map,
+                &self.sampler,
+                cube,
+            ));
+        }
     }
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
-            source: wgpu::ShaderSource::Wgsl(shader_source(false, false).into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source(false, false, false).into()),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("3D frame"),
@@ -817,7 +918,7 @@ impl Gpu {
             ..Default::default()
         });
         let stand_in = depth_map(device, 1, "3D shadow stand-in");
-        let bind = frame_binding(device, &layout, &uniforms, &stand_in, &sampler);
+        let bind = frame_binding(device, &layout, &uniforms, &stand_in, &sampler, None);
         let map_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -891,6 +992,9 @@ impl Gpu {
             format,
             plain,
             variants: HashMap::new(),
+            environment_layout: None,
+            environment: None,
+            environment_bind: None,
             shadow_skinned: None,
             shadow_layout,
             empty_layout,
@@ -928,17 +1032,21 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array!
 ];
 const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![12 => Uint16x4, 13 => Float32x4];
-/// The shader, sampling textures or not, skinning or not: its lines marked
-/// `//T ` are a textured pipeline's alone (its maps' bindings, samples and
-/// normal mapping), `//S ` a skinned one's (its joints), comments in
-/// others'.
-fn shader_source(textured: bool, skinned: bool) -> String {
+/// The shader, sampling textures or not, skinning or not, lit by an
+/// environment or not: its lines marked `//T ` are a textured pipeline's
+/// alone (its maps' bindings, samples and normal mapping), `//S ` a skinned
+/// one's (its joints), `//E ` an environment-lit one's (its cube and
+/// diffuse light), comments in others'.
+fn shader_source(textured: bool, skinned: bool, lit: bool) -> String {
     let mut source = SHADER.to_owned();
     if textured {
         source = source.replace("//T ", "");
     }
     if skinned {
         source = source.replace("//S ", "");
+    }
+    if lit {
+        source = source.replace("//E ", "");
     }
     source
 }
@@ -1143,32 +1251,104 @@ fn depth_map(device: &wgpu::Device, side: u32, label: &str) -> wgpu::TextureView
         })
         .create_view(&Default::default())
 }
-/// The main pass's frame: the uniforms, and the shadow map (or stand-in).
+/// The main pass's frame: the uniforms, the shadow map (or stand-in), and
+/// an environment-lit frame's cube and its sampler.
 fn frame_binding(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     uniforms: &wgpu::Buffer,
     map: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
+    cube: Option<(&wgpu::TextureView, &wgpu::Sampler)>,
 ) -> wgpu::BindGroup {
+    let mut entries = vec![
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniforms.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 1,
+            resource: wgpu::BindingResource::TextureView(map),
+        },
+        wgpu::BindGroupEntry {
+            binding: 2,
+            resource: wgpu::BindingResource::Sampler(sampler),
+        },
+    ];
+    if let Some((view, cube_sampler)) = cube {
+        entries.push(wgpu::BindGroupEntry {
+            binding: 3,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        entries.push(wgpu::BindGroupEntry {
+            binding: 4,
+            resource: wgpu::BindingResource::Sampler(cube_sampler),
+        });
+    }
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("3D frame"),
         layout,
+        entries: &entries,
+    })
+}
+/// An environment-lit frame's layout (the frame's, then the cube and its
+/// trilinear sampler) and that sampler.
+fn environment_layout(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::Sampler) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("3D frame, environment-lit"),
         entries: &[
-            wgpu::BindGroupEntry {
+            wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                resource: uniforms.as_entire_binding(),
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             },
-            wgpu::BindGroupEntry {
+            wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(map),
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             },
-            wgpu::BindGroupEntry {
+            wgpu::BindGroupLayoutEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
             },
         ],
-    })
+    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("3D environment"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        ..Default::default()
+    });
+    (layout, sampler)
 }
 
 /// Metallic-roughness shading (GGX, Smith, Schlick) under a sun, up to four
@@ -1186,10 +1366,14 @@ struct Frame {
     params: vec4<f32>,
     shadow: mat4x4<f32>,
     shadow_texel: vec4<f32>,
+    environment: vec4<f32>,
+    irradiance: array<vec4<f32>, 9>,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+//E @group(0) @binding(3) var environment_cube: texture_cube<f32>;
+//E @group(0) @binding(4) var environment_sampler: sampler;
 //T @group(1) @binding(0) var base_texture: texture_2d<f32>;
 //T @group(1) @binding(1) var metal_rough_texture: texture_2d<f32>;
 //T @group(1) @binding(2) var normal_texture: texture_2d<f32>;
@@ -1297,6 +1481,28 @@ fn neutral(color: vec3<f32>) -> vec3<f32> {
     let g = 1.0 - 1.0 / (desaturation * (peak - new_peak) + 1.0);
     return mix(c, vec3(new_peak), g);
 }
+//E // Where the environment's light along `d` comes from: the room turned
+//E // by its rotation about the vertical.
+//E fn turned(d: vec3<f32>) -> vec3<f32> {
+//E     let c = frame.environment.y;
+//E     let s = frame.environment.z;
+//E     return vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+//E }
+//E // Its diffuse light over π facing `n` (nine spherical harmonics).
+//E fn irradiance(n: vec3<f32>) -> vec3<f32> {
+//E     let k = frame.irradiance;
+//E     return k[0].rgb + k[1].rgb * n.y + k[2].rgb * n.z + k[3].rgb * n.x
+//E         + k[4].rgb * (n.x * n.y) + k[5].rgb * (n.y * n.z) + k[6].rgb * (3.0 * n.z * n.z - 1.0)
+//E         + k[7].rgb * (n.x * n.z) + k[8].rgb * (n.x * n.x - n.y * n.y);
+//E }
+//E // The split sum's second factor, the specular's scale and bias by
+//E // angle and roughness: Karis's fit to its table (no texture).
+//E fn reflectance(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
+//E     let r = roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+//E     let a004 = min(r.x * r.x, exp2(-9.28 * n_v)) * r.x + r.y;
+//E     let ab = vec2(-1.04, 1.04) * a004 + r.zw;
+//E     return f0 * ab.x + ab.y;
+//E }
 fn encode(c: vec3<f32>) -> vec3<f32> {
     let low = c * 12.92;
     let high = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
@@ -1370,8 +1576,15 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
         let n_v = max(dot(n, v), 0.0);
         let rough = roughness * roughness;
         let fresnel = f0 + (max(vec3(1.0 - rough), f0) - f0) * pow(1.0 - n_v, 5.0);
-        lit += ambient * base * (1.0 - metallic) * (1.0 - fresnel) * occlusion;
-        lit += reflected * fresnel * (1.0 - 0.5 * rough) * occlusion;
+        var surround = ambient * base * (1.0 - metallic) * (1.0 - fresnel);
+        surround += reflected * fresnel * (1.0 - 0.5 * rough);
+        // Lit by an environment instead: its diffuse light, and its light
+        // along the reflection blurred as rough as the surface (the cube's
+        // level) times the split sum's factor.
+//E     let along = textureSampleLevel(environment_cube, environment_sampler, turned(r), roughness * frame.environment.w).rgb;
+//E     surround = irradiance(turned(n)) * base * (1.0 - metallic) * (1.0 - fresnel);
+//E     surround = (surround + along * reflectance(f0, roughness, n_v)) * frame.environment.x;
+        lit += surround * occlusion;
         lit += in.emissive * glow;
         lit = neutral(lit * frame.params.z);
     }
@@ -1391,24 +1604,29 @@ mod tests {
     use crate::{Camera, World, math::vec3};
 
     #[test]
-    fn an_untextured_shader_binds_no_texture_and_an_unskinned_no_joints() {
-        let (plain, textured, skinned) = (
-            shader_source(false, false),
-            shader_source(true, false),
-            shader_source(false, true),
+    fn an_untextured_shader_binds_no_texture_an_unskinned_no_joints_and_an_unlit_no_cube() {
+        let (plain, textured, skinned, lit) = (
+            shader_source(false, false, false),
+            shader_source(true, false, false),
+            shader_source(false, true, false),
+            shader_source(false, false, true),
         );
-        // In the plain shader every line naming a map or the joints is a
-        // comment.
-        for line in plain
-            .lines()
-            .filter(|l| l.contains("_texture") || l.contains("@group(1)") || l.contains("palette"))
-        {
+        // In the plain shader every line naming a map, the joints or the
+        // environment's cube is a comment.
+        for line in plain.lines().filter(|l| {
+            l.contains("_texture")
+                || l.contains("@group(1)")
+                || l.contains("palette")
+                || l.contains("environment_cube")
+        }) {
             assert!(line.trim_start().starts_with("//"), "{line}");
         }
         assert!(textured.contains("@group(1) @binding(2) var normal_texture"));
         assert!(!textured.contains("//T") && textured.contains("//S"));
         assert!(skinned.contains("var<storage, read> palette"));
         assert!(!skinned.contains("//S") && skinned.contains("//T"));
+        assert!(lit.contains("@group(0) @binding(3) var environment_cube: texture_cube<f32>"));
+        assert!(!lit.contains("//E") && lit.contains("//T"));
     }
 
     #[test]

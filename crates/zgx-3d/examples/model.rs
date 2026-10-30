@@ -1,10 +1,12 @@
 //! A glTF model in a zgx window: a `.glb`, or a `.gltf` and the files beside
-//! it, under a sun (casting shadows) and a sky, playing its first
-//! animation if it has one. Drag to turn the camera about it, scroll or
-//! pinch to move in and out.
+//! it, under a sun (casting shadows) in the built-in studio's light,
+//! playing its first animation if it has one. Drag to turn the camera about
+//! it, scroll or pinch to move in and out.
 //! Run: cargo run --release -p zgx-3d --features gltf --example model -- FILE
 //!
-//! `--smoke-test` shows it a moment and quits.
+//! `--environment=FILE.hdr` lights it with a Radiance image instead,
+//! `--no-environment` with a plain sky; `--smoke-test` shows it a moment
+//! and quits.
 use std::{cell::Cell, path::Path, rc::Rc};
 use zgx::{compose::prelude::*, input::InputEvent, scene::Color};
 use zgx_3d::*;
@@ -17,6 +19,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .find(|arg| !arg.starts_with("--"))
         .ok_or("usage: model FILE.glb|FILE.gltf [--smoke-test]")?;
     let path = Path::new(&path).to_path_buf();
+    let environment = match std::env::args().find_map(|a| {
+        a.strip_prefix("--environment=")
+            .map(str::to_owned)
+            .or_else(|| (a == "--no-environment").then(String::new))
+    }) {
+        Some(file) if file.is_empty() => None,
+        found => {
+            let started = std::time::Instant::now();
+            let environment = match found {
+                Some(file) => Environment::decode_hdr(&std::fs::read(&file)?)?,
+                None => Environment::studio(),
+            };
+            eprintln!(
+                "environment made in {:.1} ms",
+                started.elapsed().as_secs_f64() * 1e3
+            );
+            Some(environment)
+        }
+    };
     let started = std::time::Instant::now();
     let bytes = std::fs::read(&path)?;
     let folder = path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -81,11 +102,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 color: [1., 0.97, 0.92],
                 intensity: 2.5,
             });
-            world.add_light(Light::Hemisphere {
-                sky: [0.35, 0.45, 0.6],
-                ground: [0.12, 0.1, 0.08],
-                intensity: 0.8,
-            });
+            match environment.clone() {
+                Some(environment) => world.set_environment(Some(environment)),
+                None => {
+                    world.add_light(Light::Hemisphere {
+                        sky: [0.35, 0.45, 0.6],
+                        ground: [0.12, 0.1, 0.08],
+                        intensity: 0.8,
+                    });
+                }
+            }
             let orbit = Rc::new(Cell::new(Orbit {
                 target: vec3(0., size.y * scale * 0.5, 0.),
                 azimuth: 0.5,
