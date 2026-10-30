@@ -909,6 +909,19 @@ impl View {
         self.rare_mut().portal.get_or_insert_default().placement = Some(placement);
         self
     }
+    /// Hear a person's paste into this editor before it goes in, from a
+    /// key, a menu or a middle click, as HTML's `paste` event does: handed
+    /// the clipboard's text (none where it holds no text, as with an
+    /// image), and true takes the paste, so nothing goes in. For a composer
+    /// that makes a pasted picture or a long text an attachment. It may
+    /// read the clipboard. Only editor roots accept this.
+    pub fn on_paste(self, hook: impl Fn(Option<&str>) -> bool + 'static) -> Self {
+        self.on_mount(move |handle| {
+            if let Some(ui) = handle.ui.upgrade() {
+                ui.set_paste_hook(handle.node, Rc::new(hook));
+            }
+        })
+    }
     /// The item this view is on while focus stays in it (`aria-activedescendant`):
     /// the id of a node, as `id()` names it, or `None`. An editor driving a
     /// list of suggestions (a mention's, `View::at_caret`) keeps focus and
@@ -4185,6 +4198,7 @@ fn open_element(
                 return Some(crate::editor_menu::context_menu(
                     editor.clone(),
                     environment.services.get(),
+                    ui.downgrade(),
                 ));
             }
             (rare.as_deref().and_then(|r| r.selectable) == Some(true))

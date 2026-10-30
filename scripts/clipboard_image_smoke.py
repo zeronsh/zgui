@@ -7,7 +7,10 @@ the clipboard_image example's Paste and Copy, clicked.
   half transparent, pastes at its size with its pixels, alpha straight
   (the example prints their FNV-1a digest);
 - Copy offers its 64 by 48 gradient as `image/png`, which the other
-  client reads back pixel for pixel, its transparent column included."""
+  client reads back pixel for pixel, its transparent column included;
+- on X11, Control+V in its field reaches `View::on_paste`: with no text on
+  the clipboard (the image), and with text, the hook reading the clipboard
+  itself as it hears the paste."""
 import argparse
 import io
 import json
@@ -27,7 +30,7 @@ from platform_smoke import release_mounts, stop, wait_for_wm  # noqa: E402
 from wayland_pointer import VirtualPointer  # noqa: E402
 
 # The example's buttons, in its window's points.
-PASTE, COPY = (80, 51), (210, 51)
+PASTE, COPY, FIELD = (80, 51), (210, 51), (340, 51)
 
 
 def digest(pixels):
@@ -87,7 +90,7 @@ def main():
                 raise AssertionError(f"timed out waiting for {what}: {json.dumps(checks, indent=2)}")
             time.sleep(.05)
 
-    def session(name, env, offer, read, click):
+    def session(name, env, offer, read, click, paste_key=None):
         """`offer(bytes)` puts the PNG on the clipboard as another client,
         `read()` reads its `image/png` back (or None), `click(x, y)`
         presses in the example's window."""
@@ -107,6 +110,18 @@ def main():
         checks[f"{name} read back"] = [image.size, image.getpixel((0, 0)), image.getpixel((20, 10))]
         checks[f"{name}: the copy reaches another client pixel for pixel"] = (
             line == copied and image.size == (64, 48) and image.tobytes() == gradient().tobytes())
+        if paste_key:
+            heard = lambda: re.findall(r"^HEARD .*$", log.read_text(), re.M)
+            click(*FIELD)
+            paste_key(None)
+            checks[f"{name}: a paste with no text is heard"] = until(
+                f"{name}: a paste with no text", heard)[-1] == "HEARD text=None read=None"
+            paste_key("take this")
+            until(f"{name}: a paste of text", lambda: len(heard()) > 1)
+            checks[f"{name}: a paste of text is heard, and the hook can read the clipboard"] = (
+                heard()[-1] == 'HEARD text=Some("take this") read=Some("take this")')
+            checks[f"{name} heard"] = heard()
+            checks[f"{name}: the app outlived both"] = app.poll() is None
         stop(app)
 
     try:
@@ -151,7 +166,15 @@ def main():
                                    env=x11, check=True)
                 time.sleep(.3)
 
-            session("x11", x11, x11_offer, x11_read, x11_click)
+            def x11_paste(text):
+                if text is not None:
+                    offer = subprocess.Popen(["xclip", "-selection", "clipboard", "-i"], env=x11, stdin=subprocess.PIPE,
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    offer.communicate(text.encode())
+                    time.sleep(.3)
+                subprocess.run(["xdotool", "key", "ctrl+v"], env=x11, check=True)
+
+            session("x11", x11, x11_offer, x11_read, x11_click, x11_paste)
 
             # Wayland: the window at the output's top left.
             sway_env = dict(base, WLR_BACKENDS="headless", WLR_RENDERER="pixman", WLR_LIBINPUT_NO_DEVICES="1")

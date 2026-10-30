@@ -4073,3 +4073,66 @@ fn a_progress_bar_takes_a_number_or_a_function() {
     assert_eq!(h.host.error().get(), None);
     assert!(h.find("number").is_some() && h.find("function").is_some());
 }
+
+#[test]
+fn a_paste_is_heard_first_and_may_be_taken() {
+    let mut h = Harness::inline(
+        r##"local heard = ui.state("heard", "")
+        local text = ui.state("text", "")
+        local box = ui.ref()
+        return ui.column {
+            ui.textarea { id = "box", ref = box, value = text, w = 200, h = 60, on_paste = function(e)
+                heard:set(e.text or "no text")
+                return e.text == nil or #e.text > 8
+            end },
+            ui.textarea { id = "plain", value = ui.state("other", ""), w = 200, h = 60 },
+            ui.textarea { id = "locked", value = ui.state("kept", "x"), w = 200, h = 60, read_only = true,
+                on_paste = function() heard:set("locked") return true end },
+            ui.text { id = "heard", "{heard}" },
+            ui.text { id = "shown", "{text}" },
+            ui.button { id = "swap", w = 20, h = 20, on_click = function()
+                box:get():replace_selection("from a script")
+            end },
+        }"##,
+    );
+    h.frames(1);
+    let editor = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.editor(node).unwrap()
+    };
+    let paste = |h: &mut Harness, id: &str, text: Option<&str>| {
+        let editor = editor(h, id);
+        h.ui.paste_into(&editor, text);
+        h.frames(1);
+    };
+    // Not taken: it goes in as ever.
+    paste(&mut h, "box", Some("short"));
+    assert_eq!(h.text("heard"), "short");
+    assert_eq!(h.text("shown"), "short");
+    // Taken: nothing goes in.
+    paste(&mut h, "box", Some("a long text, an attachment"));
+    assert_eq!(h.text("heard"), "a long text, an attachment");
+    assert_eq!(h.text("shown"), "short");
+    // No text (an image): heard, and nothing to put in.
+    paste(&mut h, "box", None);
+    assert_eq!(h.text("heard"), "no text");
+    assert_eq!(h.text("shown"), "short");
+    // An editor without it pastes as it did; a read-only one hears nothing.
+    paste(&mut h, "plain", Some("in"));
+    assert_eq!(
+        editor(&mut h, "plain").editor.borrow().text().to_string(),
+        "in"
+    );
+    paste(&mut h, "locked", Some("no"));
+    assert_eq!(h.text("heard"), "no text");
+    // A script's own edit isn't a person's paste.
+    h.click("swap");
+    h.frames(1);
+    assert_eq!(h.text("heard"), "no text");
+    assert!(
+        h.text("shown").contains("from a script"),
+        "{}",
+        h.text("shown")
+    );
+    assert_eq!(h.error(), None);
+}

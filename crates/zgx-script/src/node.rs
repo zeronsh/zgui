@@ -830,6 +830,8 @@ pub(crate) struct InputRare {
     /// `active_descendant = id` (or a state or function of one): the
     /// suggestion it is on, for assistive technology, focus kept here.
     pub(crate) active_descendant: Option<Source>,
+    /// `on_paste`: hears a person's paste first (`View::on_paste`).
+    pub(crate) on_paste: Option<Function>,
     /// `overscroll = "contain"`: a wheel over it stays with it.
     pub(crate) contain: bool,
     /// `read_only = true` (or a state or function of one): selectable and
@@ -2725,6 +2727,7 @@ const LATE_FIELDS: &[&str] = &[
     "on_start",
     "start_distance",
     "at_end",
+    "on_paste",
     "overscroll",
     "read_only",
 ];
@@ -2732,7 +2735,7 @@ const LATE_FIELDS: &[&str] = &[
 /// A key no style property names, taken where it lies once the walk finds
 /// it, so no style key compares against it: an input's caret (few set it,
 /// read only from those that do), whether plugins may target the node
-/// (`hook`, `private`), an input's `active_descendant` and `read_only`, a
+/// (`hook`, `private`), an input's `on_paste` and `active_descendant` and `read_only`, a
 /// popover's `at_caret`; `inputmode` is read by `ui.input` itself, `on_end` and
 /// `end_distance` by `ui.list`. Any other key is unknown.
 #[cold]
@@ -2760,6 +2763,11 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
             if let Kind::Input { rare, .. } = &mut node.kind {
                 let active = source(lua, Ty::Str, name, value)?;
                 rare.get_or_insert_default().active_descendant = Some(active);
+            }
+        }
+        "on_paste" => {
+            if let Kind::Input { rare, .. } = &mut node.kind {
+                rare.get_or_insert_default().on_paste = Some(lua.unpack(value)?);
             }
         }
         "read_only" => {

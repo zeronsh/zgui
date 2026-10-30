@@ -815,6 +815,10 @@ impl EditorHandle {
         self.refresh();
     }
 }
+/// What `View::on_paste` gives an editor: handed what the person pasted
+/// (none where the clipboard holds no text: an image, say), true if it took
+/// the paste.
+pub(crate) type PasteHook = Rc<dyn Fn(Option<&str>) -> bool>;
 /// The layout and notification passes a frame takes to settle.
 const LAYOUT_PASSES: usize = 64;
 /// How much of a point a size may differ by and be the same (`resized`).
@@ -1164,6 +1168,8 @@ pub(crate) struct UiStorage {
     /// A large subtree was removed since the last frame was prepared.
     removed: Cell<bool>,
     editors: RefCell<crate::scene::NodeMap<EditorHandle>>,
+    /// What takes a person's paste, for the few editors asked to (`View::on_paste`).
+    paste_hooks: RefCell<crate::scene::NodeMap<PasteHook>>,
     editor_layout: RefCell<Option<EditorLayoutEntry>>,
     editor_layout_revision: Cell<Option<u64>>,
     bounds_geometry_revision: Cell<Option<u64>>,
@@ -1430,6 +1436,7 @@ impl Ui {
             dying: RefCell::default(),
             removed: Cell::new(false),
             editors: RefCell::default(),
+            paste_hooks: RefCell::default(),
             editor_layout: RefCell::new(None),
             editor_layout_revision: Cell::new(None),
             bounds_geometry_revision: Cell::new(None),
@@ -2785,6 +2792,42 @@ impl Ui {
         self.storage.bounds_geometry_revision.set(None);
         signal
     }
+    #[cold]
+    #[inline(never)]
+    fn take_paste_hooks(&self, ids: &[NodeId]) -> Vec<PasteHook> {
+        let mut hooks = self.storage.paste_hooks.borrow_mut();
+        ids.iter().filter_map(|id| hooks.remove(id)).collect()
+    }
+    /// `hook` hears pastes into editor `node` (only an editor: a hook goes
+    /// as its editor does).
+    pub(crate) fn set_paste_hook(&self, node: NodeId, hook: PasteHook) {
+        debug_assert!(self.is_editor(node), "on_paste is for editors");
+        if self.is_editor(node) {
+            self.storage.paste_hooks.borrow_mut().insert(node, hook);
+        }
+    }
+    /// Whether `node` has `View::on_paste`: it may want a paste with no
+    /// text in it.
+    pub(crate) fn takes_paste(&self, node: NodeId) -> bool {
+        self.storage.paste_hooks.borrow().contains_key(&node)
+    }
+    /// The person pasted into `editor` (a key, a menu, a middle click):
+    /// its `View::on_paste` hears first, and unless it takes the paste,
+    /// `text` goes in. A read-only editor takes none. Hosts call this with
+    /// no text where the clipboard holds something else (an image), and
+    /// nothing borrowed that the hook may use: it may read the clipboard.
+    pub fn paste_into(&self, editor: &EditorHandle, text: Option<&str>) {
+        if editor.is_read_only() {
+            return;
+        }
+        let hook = self.storage.paste_hooks.borrow().get(&editor.node).cloned();
+        if hook.is_some_and(|hook| hook(text)) {
+            return;
+        }
+        if let Some(text) = text {
+            editor.paste(text);
+        }
+    }
     /// Prepare allocated control geometry before rendering a frame or dispatching input.
     /// Native hosts call this automatically. Headless hosts should call it before `Scene::flush`.
     pub fn prepare_frame(&self) {
@@ -3579,6 +3622,8 @@ impl Ui {
             let mut storage = self.storage.editors.borrow_mut();
             ids.iter().filter_map(|id| storage.remove(id)).collect()
         };
+        // A hook can hold a whole script: it goes with its editor.
+        let paste_hooks = (!editors.is_empty()).then(|| self.take_paste_hooks(&ids));
         // Detach geometry before listener captures or cached layouts can run
         // user destructors. Reentrant removal of this owner (or an ancestor)
         // then observes an already removed subtree instead of stale node IDs.
@@ -3604,6 +3649,7 @@ impl Ui {
         self.shrink_storage();
         drop(owned);
         drop(editors);
+        drop(paste_hooks);
         if refocus.is_some() && self.input.focused().is_none() {
             self.storage.refocus.set(refocus);
         }
@@ -3644,6 +3690,11 @@ impl Ui {
             let mut storage = self.storage.editors.borrow_mut();
             storage.extract_if(|id, _| !scene.contains(*id)).collect()
         };
+        let paste_hooks: Vec<_> = {
+            let scene = self.scene.borrow();
+            let mut storage = self.storage.paste_hooks.borrow_mut();
+            storage.extract_if(|id, _| !scene.contains(*id)).collect()
+        };
         self.semantics.borrow_mut().bury(&ids);
         self.input.forget_removed(&self.scene);
         self.storage.dying.borrow_mut().extend(ids);
@@ -3652,6 +3703,7 @@ impl Ui {
         drop(cached_layout);
         drop(resources);
         drop(editors);
+        drop(paste_hooks);
         if refocus.is_some() && self.input.focused().is_none() {
             self.storage.refocus.set(refocus);
         }
@@ -6863,6 +6915,43 @@ mod bounds_observer_tests {
             ui.try_prepare_frame().unwrap();
         }
         assert!(seen.get().0 > base + 0.0009, "{:?}", seen.get());
+    }
+
+    /// A hook can hold a script's whole VM: it goes with its editor.
+    #[test]
+    fn a_paste_hook_goes_with_its_editor() {
+        let mut ui = Ui::new(400., 200.);
+        let held = Rc::new(());
+        let editor_under = |ui: &mut Ui, parent: NodeId, held: &Rc<()>| {
+            let value = ui.signal(String::new());
+            let node = ui.text_input(parent, "Field", value, 100., false).node;
+            let kept = held.clone();
+            ui.set_paste_hook(
+                node,
+                Rc::new(move |_| {
+                    let _ = &kept;
+                    true
+                }),
+            );
+            node
+        };
+        let root = ui.root();
+        let node = editor_under(&mut ui, root, &held);
+        assert!(ui.takes_paste(node));
+        assert_eq!(Rc::strong_count(&held), 2);
+        ui.remove(node);
+        ui.prepare_frame();
+        assert_eq!(Rc::strong_count(&held), 1);
+        assert!(!ui.takes_paste(node));
+        // Nor does a large removal, which frees its nodes over later frames.
+        let parent = ui.container(ui.root(), Layout::Overlay, fixed(100., 40.));
+        editor_under(&mut ui, parent, &held);
+        for _ in 0..=RECLAIM_NOW {
+            ui.container(parent, Layout::Overlay, fixed(1., 1.));
+        }
+        assert_eq!(Rc::strong_count(&held), 2);
+        ui.remove(parent);
+        assert_eq!(Rc::strong_count(&held), 1);
     }
 
     #[test]

@@ -99,6 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             };
+            let note = cx.ui.signal(String::new());
             let shown = pasted.clone();
             let blank = Arc::new(ImageData::new(1, 1, vec![0; 4]).expect("a valid image"));
             cx.render(
@@ -119,6 +120,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .child(button().child("Copy image").on_click({
                                 let (tasks, copy) = (cx.tasks.clone(), copy.clone());
                                 move || tasks.spawn(copy())
+                            }))
+                            // What hears a paste may read the clipboard
+                            // itself; text starting "take" is taken.
+                            .child(text_input("Note", note).w(120.).on_paste({
+                                let platform = platform.clone();
+                                move |text| {
+                                    let read = platform
+                                        .borrow()
+                                        .as_ref()
+                                        .and_then(|p| p.0.clipboard_text());
+                                    println!("HEARD text={text:?} read={read:?}");
+                                    text.is_none_or(|text| text.starts_with("take"))
+                                }
                             })),
                     )
                     .child(text_signal(move || status.get()))

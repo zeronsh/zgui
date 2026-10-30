@@ -2229,6 +2229,9 @@ fn kind_view(
             if let Some(active) = active {
                 view = active_descendant(view, active, vm);
             }
+            if let Some(hook) = rare.as_deref().and_then(|rare| rare.on_paste.clone()) {
+                view = on_paste(view, hook, vm);
+            }
             if rare.as_deref().is_some_and(|rare| rare.contain) {
                 view = view.overscroll_contain();
             }
@@ -7179,6 +7182,25 @@ fn cached_hex_matches_every_parsed_value_in_a_sequence() {
 
 /// An input's `active_descendant`: the id it names, followed.
 #[inline(never)]
+/// `on_paste`: handed `{ text }`, a truthy return takes the paste.
+fn on_paste(view: View, hook: mlua::Function, vm: &Rc<Vm>) -> View {
+    let vm = vm.clone();
+    view.on_paste(move |text| {
+        let event = vm.lua.create_table().and_then(|event| {
+            event.set("text", text)?;
+            Ok(event)
+        });
+        match event.and_then(|event| vm.call::<mlua::Value>(&hook, event)) {
+            Ok(mlua::Value::Nil | mlua::Value::Boolean(false)) => false,
+            Ok(_) => true,
+            Err(error) => {
+                vm.report(error);
+                false
+            }
+        }
+    })
+}
+
 fn active_descendant(view: View, active: &Source, vm: &Rc<Vm>) -> View {
     let (active, vm) = (resolve_owned(active), vm.clone());
     view.active_descendant(move || match resolve(&active, Ty::Str, None, &vm) {

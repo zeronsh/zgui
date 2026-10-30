@@ -2702,7 +2702,7 @@ impl Host {
                 .ui
                 .input
                 .focus(&self.context.ui.scene, Some(node));
-            editor.paste(&text);
+            self.context.ui.paste_into(&editor, Some(&text));
         }
     }
     /// ⌃⌘D: the selection's definition over it (Look Up), as AppKit's
@@ -2801,15 +2801,20 @@ impl Host {
         if !["c", "x", "v"].iter().any(|v| k.eq_ignore_ascii_case(v)) {
             return false;
         }
+        if k.eq_ignore_ascii_case("v") {
+            let text = match self.clipboard.borrow_mut().as_mut() {
+                Some(clipboard) => clipboard.get_text().ok(),
+                None => return true,
+            };
+            // With the clipboard let go: what hears the paste may read it.
+            self.context.ui.paste_into(&editor, text.as_deref());
+            return true;
+        }
         let mut clipboard = self.clipboard.borrow_mut();
         let Some(clipboard) = clipboard.as_mut() else {
             return true;
         };
-        if k.eq_ignore_ascii_case("v") {
-            if let Ok(t) = clipboard.get_text() {
-                editor.paste(&t);
-            }
-        } else {
+        {
             let text = editor.copy();
             if !text.is_empty() && clipboard.set_text(text).is_ok() && k.eq_ignore_ascii_case("x") {
                 editor.cut();

@@ -1,12 +1,17 @@
 //! An editor's context menu, as a browser's text fields have one: Cut, Copy,
 //! Paste and Select All, each disabled where it would do nothing (nothing
 //! selected, a read-only or password field, an empty clipboard).
-use crate::{compose::menu_item, platform::PlatformService, widgets::EditorHandle};
+use crate::{
+    compose::menu_item,
+    platform::PlatformService,
+    widgets::{EditorHandle, WeakUi},
+};
 use std::rc::Rc;
 
 pub(crate) fn context_menu(
     editor: EditorHandle,
     platform: Option<Rc<PlatformService>>,
+    ui: WeakUi,
 ) -> crate::compose_context_menu::ContextMenuBuilder {
     Box::new(move |_| {
         // A password field's text never leaves it: `copy` gives nothing.
@@ -16,10 +21,12 @@ pub(crate) fn context_menu(
             .as_ref()
             .and_then(|platform| platform.0.clipboard_text())
             .filter(|text| !text.is_empty());
+        // An editor hearing pastes may want one with no text in it (an image).
+        let takes = ui.upgrade().is_some_and(|ui| ui.takes_paste(editor.node));
         let (cut, copy, paste, all) = (
             (editor.clone(), platform.clone()),
             (editor.clone(), platform.clone()),
-            editor.clone(),
+            (editor.clone(), ui.clone()),
             editor.clone(),
         );
         // On a misspelled word: the checker's guesses first, as AppKit's
@@ -66,10 +73,11 @@ pub(crate) fn context_menu(
                 }),
             menu_item("Paste")
                 .id("editor-paste")
-                .disabled(!editable || clipboard.is_none())
+                .disabled(!editable || (clipboard.is_none() && !takes))
                 .on_click(move || {
-                    if let Some(text) = &clipboard {
-                        paste.paste(text);
+                    let (editor, ui) = &paste;
+                    if let Some(ui) = ui.upgrade() {
+                        ui.paste_into(editor, clipboard.as_deref());
                     }
                 }),
             menu_item("Select All")
