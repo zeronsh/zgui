@@ -97,6 +97,10 @@ wgpu-hal = { version = "29.0.4", default-features = false, features = ["validati
 # Tests of a format need its feature.
 # On the main thread, as layer presentation runs (`fn main`).
 [[test]]
+name = "baked_loops"
+harness = false
+
+[[test]]
 name = "layer_frames"
 harness = false
 

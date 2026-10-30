@@ -1170,6 +1170,18 @@ zoomed or resized while zoomed keeps them there (zoom_probe `--inset --zoom
 2`, resized to 620×420: 40 points, read from screen captures). Passed on
 macOS 27 (M4), 2026-10-26.
 
+## macOS baked loops
+
+`scripts/macos_baked_loops_probe.py` runs a Luau app in `zgx-run` with a shader
+ring and a pulsing dot, both `anime.animate` loops at 30 fps. While they play
+the app presents no frame (`ZGX_PRESENT_LOG`), its CPU time stands nearly
+still, and full-size captures over two seconds differ at the loops
+(`scripts/window_pixels.swift`). Its footprint then falls past the driver's
+hold (53 MB, M5 Max, macOS 26.4, 2026-10-30). `ZGX_PROBE_DIFFERENT=1` skips
+that last check on a Mac without the hold. `crates/zgx-gpu/tests/baked_loops.rs`
+covers what stays in the frames and what draws a sheet again, and
+`crates/zgx-script/tests/anime.rs` (`baked`) what hands a loop back to the engine.
+
 ## macOS caret (Core Animation's)
 
 `scripts/macos_caret_probe.py` runs the caret_idle example, a focused field

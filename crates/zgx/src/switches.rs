@@ -58,8 +58,15 @@ pub static PARTIAL_REPAINT: Switch = Switch::new(
     "frames paint only what changed; off, the whole window every frame",
 );
 
+/// A declared loop plays from frames drawn once (macOS's `zgx-gpu` loops.rs);
+/// off, it draws a frame each tick.
+pub static BAKED_LOOPS: Switch = Switch::new(
+    "baked_loops",
+    "small declared loops play from frames drawn once (macOS); off, they draw each tick",
+);
+
 /// Every switch.
-pub static ALL: [&Switch; 3] = [&SCROLL_COPY, &REFRESH_GRID, &PARTIAL_REPAINT];
+pub static ALL: [&Switch; 4] = [&SCROLL_COPY, &REFRESH_GRID, &PARTIAL_REPAINT, &BAKED_LOOPS];
 
 /// The switch named `name`.
 pub fn find(name: &str) -> Option<&'static Switch> {

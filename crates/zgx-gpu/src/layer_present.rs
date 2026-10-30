@@ -59,6 +59,21 @@ pub(crate) struct Buffer {
     pub drawable: bool,
 }
 impl Buffer {
+    /// Whether the surface is tagged sRGB, as every frame's is.
+    pub(crate) fn tagged_srgb(&self) -> bool {
+        let wanted = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
+            .and_then(|space| CGColorSpace::property_list(&space));
+        // SAFETY: IOSurface's own key, on the buffer's live surface.
+        let tag = unsafe { self.surface.value(kIOSurfaceColorSpace) };
+        match (tag, wanted) {
+            (Some(tag), Some(wanted)) => {
+                let tag: &CFType = &tag;
+                let wanted: &CFType = &wanted;
+                tag == wanted
+            }
+            _ => false,
+        }
+    }
     /// The surface as a sample buffer, made on first use.
     fn sample(&self) -> Option<&Sample> {
         self.sample
@@ -399,6 +414,10 @@ pub(crate) struct Layer {
     /// The caret the host draws itself (`Layer::set_caret`), above the
     /// frames, and what it was last given.
     caret: Option<(Retained<CALayer>, Option<Caret>)>,
+    /// Looping animations' layers (`sync_loops`), by key.
+    loops: Vec<(u64, Retained<CALayer>, u32)>,
+    /// What `set_loops` left for the next frame.
+    loops_due: Option<(Vec<u64>, Vec<LoopShown>)>,
     /// Full-rate frames presented as `CAMetalLayer` drawables
     /// (`ZGX_PRESENT_DRAWABLE`), above the plain layer.
     drawables: Option<Drawables>,
@@ -459,6 +478,75 @@ pub struct Caret {
     pub color: [f64; 4],
     /// Whether it shows now (a blink's phase).
     pub shown: bool,
+}
+/// A looping animation's sheet, as a layer plays it (loops.rs).
+pub(crate) struct LoopShown {
+    pub key: u64,
+    pub surface: CFRetained<IOSurfaceRef>,
+    /// Its box, in the host's points from the top left.
+    pub rect: (f64, f64, f64, f64),
+    /// The opacity of what holds it.
+    pub opacity: f32,
+    /// Each cell of the sheet, in its unit square.
+    pub rects: Vec<[f64; 4]>,
+    /// When each starts in the loop, 0 to 1, and a last 1.
+    pub times: Vec<f64>,
+    pub duration: f64,
+    /// How far into the loop it is now, in seconds.
+    pub phase: f64,
+    /// A frame's length, in seconds.
+    pub frame: f64,
+}
+unsafe extern "C" {
+    fn CACurrentMediaTime() -> f64;
+}
+/// A layer's `contentsRect` keyframes stepping through `shown`'s cells.
+fn loop_animation(shown: &LoopShown) -> Option<Retained<AnyObject>> {
+    let string = |text: &str| objc2_foundation::NSString::from_str(text);
+    let list = || -> Option<Retained<AnyObject>> {
+        let class = objc2::runtime::AnyClass::get(c"NSMutableArray")?;
+        // SAFETY: NSMutableArray's class method, returning an array.
+        Some(unsafe { msg_send![class, array] })
+    };
+    let value_class = objc2::runtime::AnyClass::get(c"NSValue")?;
+    let number_class = objc2::runtime::AnyClass::get(c"NSNumber")?;
+    let (values, times) = (list()?, list()?);
+    for [x, y, width, height] in &shown.rects {
+        let rect = objc2_core_foundation::CGRect::new(
+            objc2_core_foundation::CGPoint::new(*x, *y),
+            CGSize::new(*width, *height),
+        );
+        // SAFETY: NSValue's class method for a rect; the array keeps it.
+        unsafe {
+            let value: Retained<AnyObject> = msg_send![value_class, valueWithRect: rect];
+            let _: () = msg_send![&*values, addObject: &*value];
+        }
+    }
+    for time in &shown.times {
+        // SAFETY: NSNumber's class method; the array keeps it.
+        unsafe {
+            let value: Retained<AnyObject> = msg_send![number_class, numberWithDouble: *time];
+            let _: () = msg_send![&*times, addObject: &*value];
+        }
+    }
+    let class = objc2::runtime::AnyClass::get(c"CAKeyframeAnimation")?;
+    // SAFETY: CAKeyframeAnimation's class method and properties, with the
+    // types its header gives.
+    unsafe {
+        let animation: Retained<AnyObject> =
+            msg_send![class, animationWithKeyPath: &*string("contentsRect")];
+        let _: () = msg_send![&*animation, setValues: &*values];
+        let _: () = msg_send![&*animation, setKeyTimes: &*times];
+        let _: () = msg_send![&*animation, setCalculationMode: &*string("discrete")];
+        let _: () = msg_send![&*animation, setDuration: shown.duration];
+        let _: () = msg_send![&*animation, setRepeatCount: f32::INFINITY];
+        let _: () = msg_send![&*animation, setRemovedOnCompletion: false];
+        // On one clock: every loop at a rate steps at the same moments, so
+        // the window server composites them once, as one tick drew them.
+        let begin = ((CACurrentMediaTime() - shown.phase) / shown.frame).round() * shown.frame;
+        let _: () = msg_send![&*animation, setBeginTime: begin];
+        Some(animation)
+    }
 }
 /// See `Layer::probe`.
 struct Probe {
@@ -1034,6 +1122,8 @@ impl Layer {
             tiles: Vec::new(),
             opaque: Cell::new(false),
             caret: None,
+            loops: Vec::new(),
+            loops_due: None,
             drawables: None,
             probe: None,
             planes: Vec::new(),
@@ -1420,6 +1510,79 @@ impl Layer {
     /// Show `caret` over the frames, or none; in the caller's transaction
     /// (the frame's, so the editor's caret and this one never both show,
     /// nor neither), or one of its own.
+    /// The loops' layers (loops.rs) to keep (`alive`) and to place
+    /// (`shown`) with the next frame, in its transaction: a layer and the
+    /// frame's content move together.
+    pub(crate) fn set_loops(&mut self, alive: Vec<u64>, shown: Vec<LoopShown>) {
+        self.loops_due = Some((alive, shown));
+    }
+    /// What `set_loops` left for this frame; in the caller's transaction.
+    fn place_loops(&mut self) {
+        let Some((alive, shown)) = self.loops_due.take() else {
+            return;
+        };
+        self.loops.retain(|(key, layer, _)| {
+            let keep = alive.contains(key);
+            if !keep {
+                layer.removeFromSuperlayer();
+            }
+            keep
+        });
+        let host = &self.host;
+        for loop_ in &shown {
+            let at = self.loops.iter().position(|(key, ..)| *key == loop_.key);
+            let at = at.unwrap_or_else(|| {
+                let layer = CALayer::new();
+                fill(&layer, host, false);
+                layer.setAutoresizingMask(CAAutoresizingMask::empty());
+                // Over the frames, under the caret.
+                layer.setZPosition(0.5);
+                host.addSublayer(&layer);
+                self.loops.push((loop_.key, layer, 0));
+                self.loops.len() - 1
+            });
+            let (_, layer, sheet) = &mut self.loops[at];
+            let (x, y, width, height) = loop_.rect;
+            let y = if host.isGeometryFlipped() || host.contentsAreFlipped() {
+                y
+            } else {
+                host.bounds().size.height - y - height
+            };
+            layer.setFrame(objc2_core_foundation::CGRect::new(
+                objc2_core_foundation::CGPoint::new(x, y),
+                CGSize::new(width, height),
+            ));
+            if layer.opacity() != loop_.opacity {
+                layer.setOpacity(loop_.opacity);
+            }
+            // A new place changes no frame of the loop.
+            let id = loop_.surface.id();
+            if *sheet == id {
+                continue;
+            }
+            *sheet = id;
+            let surface = &*loop_.surface as *const IOSurfaceRef as *const AnyObject;
+            // SAFETY: `surface` points to the sheet's live IOSurface, an
+            // object (bridged to `IOSurface`) and a layer's valid contents,
+            // which the layer retains.
+            unsafe { layer.setContents(Some(&*surface)) };
+            if let Some(animation) = loop_animation(loop_) {
+                let key = objc2_foundation::NSString::from_str("loop");
+                // SAFETY: CALayer's method; it copies the animation.
+                let _: () =
+                    unsafe { msg_send![&**layer, addAnimation: &*animation, forKey: &*key] };
+            }
+        }
+    }
+    /// `set_loops`' changes, where no tile showed to carry them.
+    pub(crate) fn flush_loops(&mut self) {
+        if self.loops_due.is_some() {
+            CATransaction::begin();
+            CATransaction::setDisableActions(true);
+            self.place_loops();
+            CATransaction::commit();
+        }
+    }
     pub fn set_caret(&mut self, caret: Option<Caret>) {
         if self.caret.as_ref().map(|(_, shown)| *shown) == Some(caret)
             || (self.caret.is_none() && caret.is_none())
@@ -1478,6 +1641,7 @@ impl Layer {
     /// Shows `buffer`'s tile on the plain layer, made (its contents set) the
     /// first time the surface shows; in the caller's transaction.
     fn show_tile(&mut self, buffer: &Buffer) {
+        self.place_loops();
         // The plain layer exactly the host's box too: autoresizing rounds it
         // as it does a tile (a host that starts empty and grows to 1168.5 by
         // 400.25 points leaves it 1169 by 401), and every tile would show

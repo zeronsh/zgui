@@ -2477,6 +2477,43 @@ impl PaintExtras {
         (self != Self::default()).then(|| std::rc::Rc::new(self))
     }
 }
+/// A looping animation of a node's opacity and shader time, one value of
+/// each per frame, played by the compositor rather than frame by frame.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub struct BakedLoop {
+    /// Opacity and shader time at each frame of one period.
+    pub frames: Vec<(f32, f32)>,
+    pub fps: f32,
+    /// When its first frame showed.
+    pub started: std::time::Instant,
+    /// The renderer can't play it (`refuse`).
+    refused: std::cell::Cell<bool>,
+    wake: Box<dyn Fn()>,
+}
+#[cfg(target_os = "macos")]
+impl BakedLoop {
+    /// `wake` asks whoever animates it to look at it again.
+    pub fn new(frames: Vec<(f32, f32)>, fps: f32, wake: Box<dyn Fn()>) -> Self {
+        Self {
+            frames,
+            fps,
+            started: std::time::Instant::now(),
+            refused: std::cell::Cell::new(false),
+            wake,
+        }
+    }
+    /// The renderer can't play it (something cuts or covers it, it's in a
+    /// layer or a popup): whoever animates it goes on frame by frame.
+    pub fn refuse(&self) {
+        if !self.refused.replace(true) {
+            (self.wake)();
+        }
+    }
+    pub fn refused(&self) -> bool {
+        self.refused.get()
+    }
+}
 /// What a paint item took from its ancestors in the paint walk (see
 /// [`Scene::layer_items_recorded`]): their translation, opacity, clip and
 /// extras, and whether it is a border pass.
@@ -2623,6 +2660,11 @@ pub struct Scene {
     /// and those of them promoted for it (their layer revision counts
     /// changes inside them, `Node::promoted`).
     popups: Vec<NodeId>,
+    /// Nodes whose declared loop plays baked (`set_baked_loop`).
+    #[cfg(target_os = "macos")]
+    baked_loops: Vec<(NodeId, std::rc::Rc<BakedLoop>)>,
+    #[cfg(target_os = "macos")]
+    plays_loops: std::cell::Cell<bool>,
     /// Each popup root's trigger, where it has one (`set_popup_anchor`).
     popup_anchors: Vec<(NodeId, NodeId)>,
     popups_promoted: Vec<NodeId>,
@@ -2841,6 +2883,10 @@ impl Scene {
             cells_off: false,
             viewport: Rect::new(0.0, 0.0, width, height),
             popups: Vec::new(),
+            #[cfg(target_os = "macos")]
+            baked_loops: Vec::new(),
+            #[cfg(target_os = "macos")]
+            plays_loops: std::cell::Cell::new(false),
             popup_anchors: Vec::new(),
             popups_promoted: Vec::new(),
             blur_nodes: Vec::new(),
@@ -5552,6 +5598,37 @@ impl Scene {
     /// the root.
     pub fn remove(&mut self, id: NodeId) {
         self.remove_as::<false>(id, 0);
+    }
+    #[cfg(target_os = "macos")]
+    /// `id`'s looping animation, sampled for the renderer to bake and play
+    /// without drawing a frame per tick; `None` ends it. Internal to the
+    /// script host and the renderer.
+    #[doc(hidden)]
+    pub fn set_baked_loop(&mut self, id: NodeId, baked: Option<std::rc::Rc<BakedLoop>>) {
+        self.baked_loops.retain(|(node, _)| *node != id);
+        if let Some(baked) = baked {
+            self.baked_loops.push((id, baked));
+        }
+        // It leaves the frames, or comes back to them.
+        self.invalidate(id, PAINT);
+    }
+    #[cfg(target_os = "macos")]
+    /// See `set_baked_loop`.
+    #[doc(hidden)]
+    pub fn baked_loops(&self) -> &[(NodeId, std::rc::Rc<BakedLoop>)] {
+        &self.baked_loops
+    }
+    #[cfg(target_os = "macos")]
+    /// Whether a renderer that plays baked loops draws this scene, which
+    /// it says each frame.
+    #[doc(hidden)]
+    pub fn plays_loops(&self) -> bool {
+        self.plays_loops.get()
+    }
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn set_plays_loops(&self, plays: bool) {
+        self.plays_loops.set(plays);
     }
     pub(crate) fn remove_indexed(&mut self, id: NodeId, index: usize) {
         self.remove_as::<true>(id, index);
@@ -8832,6 +8909,13 @@ impl Scene {
     /// Lay out, paint and composite what changed since the last flush, and
     /// report the damage.
     pub fn flush(&mut self) -> FrameReport {
+        // (A subtree goes without each node being told: its loops go here.)
+        #[cfg(target_os = "macos")]
+        if !self.baked_loops.is_empty() {
+            let mut loops = std::mem::take(&mut self.baked_loops);
+            loops.retain(|(node, _)| self.contains(*node));
+            self.baked_loops = loops;
+        }
         let mut report = FrameReport::default();
         self.repaint_flushes += 1;
         // Read, or past what a renderer would patch rather than redraw: from

@@ -24,6 +24,8 @@ pub mod iosurface;
 #[cfg(target_os = "macos")]
 mod layer_present;
 #[cfg(target_os = "macos")]
+mod loops;
+#[cfg(target_os = "macos")]
 mod plane_drawables;
 /// A caret Core Animation draws over the frames (`GpuRenderer::set_caret`).
 #[cfg(target_os = "macos")]
@@ -829,6 +831,13 @@ fn copy_blocker(
             return Some(CopyBlocker::Between(item.id));
         }
         if item.isolated || item.effects.blur_radius > 0. {
+            return Some(CopyBlocker::Effect(item.id));
+        }
+        // A loop a layer plays moves with the view's repaint, not its copy.
+        #[cfg(target_os = "macos")]
+        if scene.baked_loops().iter().any(|(node, _)| {
+            std::iter::successors(Some(*node), |at| scene.parent(*at)).any(|at| at == scroll.node)
+        }) {
             return Some(CopyBlocker::Effect(item.id));
         }
         // Under two fades: copied pixels would carry the outer one's bands
@@ -3541,6 +3550,12 @@ pub struct GpuRenderer {
     /// dxgi_present.rs).
     #[cfg(own_surfaces)]
     layer_present: Option<LayerPresent>,
+    /// Looping animations' sheets (loops.rs), and the shader time of the
+    /// frame being drawn into one.
+    #[cfg(target_os = "macos")]
+    loop_sheets: Vec<loops::LoopSheet>,
+    #[cfg(target_os = "macos")]
+    loop_time: Option<f32>,
     /// Pipelines for frames encoded with Metal directly (`render_direct`);
     /// `None` inside if they could not be built.
     #[cfg(target_os = "macos")]
@@ -4044,6 +4059,10 @@ impl GpuRenderer {
             single_pass_format,
             #[cfg(target_os = "macos")]
             layer_present: layer_presenting.then(LayerPresent::default),
+            #[cfg(target_os = "macos")]
+            loop_sheets: Vec::new(),
+            #[cfg(target_os = "macos")]
+            loop_time: None,
             #[cfg(windows)]
             layer_present: own_chain.map(|chain| {
                 let mut present = LayerPresent::default();
@@ -4717,6 +4736,14 @@ impl GpuRenderer {
             _ => {}
         }
         // Kept up to date, drawn as usual this frame (little damage).
+        // (A kept frame's items would hold what a layer now plays.)
+        #[cfg(target_os = "macos")]
+        let loops_baked = !scene.baked_loops().is_empty();
+        #[cfg(not(target_os = "macos"))]
+        let loops_baked = false;
+        if loops_baked {
+            self.kept = None;
+        }
         let maintained = self.kept.is_some();
         let was_patched = std::mem::replace(&mut self.patched, maintained);
         // Lost (a change it couldn't patch, before it had patched): kept
@@ -4734,6 +4761,7 @@ impl GpuRenderer {
         // patching goes on after a change it can't patch, or one after
         // frames it would have patched.
         let keep = !maintained
+            && !loops_baked
             && self.plane.is_none()
             && !self.in_layer
             && !self.atlas_filling()
@@ -4780,6 +4808,8 @@ impl GpuRenderer {
             self.bands_seen = true;
         }
         // Around native views, only this plane's paint (planes.rs).
+        #[cfg(target_os = "macos")]
+        let items = self.place_loops(scene, items);
         let items = self.plane_items(items);
         let mut layer_stats = GpuStats::default();
         self.layer_frame += 1;
@@ -5224,6 +5254,8 @@ impl GpuRenderer {
         // Everything inside draws at the layer's raster scale: glyphs,
         // canvases and nested layers rasterize as finely as it shows.
         let device_scale = std::mem::replace(&mut self.scale, scale);
+        #[cfg(target_os = "macos")]
+        self.refuse_layered_loops(scene, &items);
         zgx::scene::translate_items(&mut items, -bounds.x, -bounds.y);
         // Nested layer images remain world-positioned in their cache; pass the offset
         // separately so the same texture can be composed into any ancestor layer.
@@ -6899,7 +6931,13 @@ impl GpuRenderer {
                                     .and_then(|d| d.background.as_ref())
                                     && self.prepare_fill(shader)
                                 {
-                                    let uniforms = Region::uniforms(scene.shader_uniforms(item.id));
+                                    #[allow(unused_mut)]
+                                    let mut uniforms = scene.shader_uniforms(item.id);
+                                    #[cfg(target_os = "macos")]
+                                    if let Some(time) = self.loop_time {
+                                        uniforms.time = time;
+                                    }
+                                    let uniforms = Region::uniforms(uniforms);
                                     let record = region_index(&mut clips, Some(uniforms));
                                     quads.push(Quad {
                                         rect: fade,
@@ -11194,7 +11232,16 @@ impl GpuRenderer {
     ) -> Result<PresentationStatus, GpuError> {
         let status = {
             let _span = zgx::profile::span(zgx::profile::Phase::Present);
-            self.present_frame(before_present)
+            let status = self.present_frame(before_present);
+            #[cfg(target_os = "macos")]
+            if let Some(layer) = self
+                .layer_present
+                .as_mut()
+                .and_then(|present| present.layer.as_mut())
+            {
+                layer.flush_loops();
+            }
+            status
         };
         // The frame is done once shown (see `render`).
         if self.presents() {

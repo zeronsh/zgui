@@ -424,6 +424,25 @@ wallpaper, power mode, macOS build and uptime, beside the desktop-alone
 baseline each repeat measures. Those explain a shift between days in the
 desktop's own cost.
 
+A looping animation would hold the floor for as long as it plays, at any
+rate (2 fps held it all, 2026-10-30). So a small declared loop (`anime.animate`
+with `loop = true` and a `frameRate`, on `opacity` or `shaderTime`) is drawn
+once into a sheet and played by Core Animation (`crates/zgx-gpu/src/loops.rs`):
+no frame is submitted while it plays. Measured on an M5 Max, 6 launches a
+cell, against the same round's desktop (window 42, 2026-10-30, the zeron-zgx
+gallery's statuses and App shell pages; app + WindowServer CPU, then MiB):
+
+| | 120 Hz | 60 Hz | footprint |
+|---|---|---|---|
+| drawn each tick | 8.35–8.43 | 8.76–8.93 | 291–346 |
+| baked | 6.46–6.57 | 7.06–7.26 | 131–170 |
+
+Lower in all 24 rounds, GPU level, frame gaps no worse (the render server's
+frame counter). The window server itself gains 0.6–0.7 points at 120 Hz and
+is level to slightly lower at 60 Hz. Loops still drawn: a drifting field with
+no short period, transform loops, and anything a layer over the frames
+couldn't show exactly.
+
 ## Validation environment
 
 On this development machine native windows were smoke-tested using Xvfb `:98` with Openbox and Mesa llvmpipe (LLVM 21.1.8, Mesa 26.0.8). GPUI required a window manager to present rather than a black mapped window. QuickGUI startup encountered an unresponsive desktop portal on the inherited D-Bus session; the isolated smoke runs used `DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent`, `DISPLAY=:98`, and removed `WAYLAND_DISPLAY`. These are environment-specific test workarounds, not recommended desktop settings. This software Vulkan environment is unsuitable for claims about native GPU performance.
