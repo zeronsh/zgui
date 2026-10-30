@@ -178,8 +178,9 @@ It draws what the Windows suite's scenes do: quads (borders, rounded
 corners, shadows' shading), text, clip regions with their rounded corners
 and fades, kept frames, and scroll copies. Images, isolated and transformed
 layers, backdrop blur, polylines and shader fills are not drawn yet (so
-neither are what they make: canvas strokes and filled areas, masks, blends,
-content blur, and `hue_rotate`, `sepia` and `invert`, layer shaders): a frame
+neither are what they make: canvas strokes and filled areas, blurred inset
+shadows, masks, blends, content blur, and `hue_rotate`, `sepia` and `invert`,
+layer shaders): a frame
 needing one fails with an error naming it (and panics in a debug build),
 since there is no Direct3D 12 to fall back to. What it draws is Direct3D 12's
 frame byte for byte (`tests/d3d11_parity.rs`, at 1×, 1.5× and 2×). Both run

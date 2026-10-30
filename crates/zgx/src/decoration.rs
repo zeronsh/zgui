@@ -161,7 +161,8 @@ pub struct Decoration {
     /// Shadows inside the box (CSS's `inset`), over its fill and under its
     /// border and children: the box less itself moved by the offset and
     /// shrunk by the spread, cut to its corners (a 1-point top highlight is
-    /// `inset 0 1px`). Drawn sharp: their blur is not applied.
+    /// `inset 0 1px`), their blur as CSS's: softened into the box from that
+    /// edge, half their colour on it.
     pub inset_shadows: Option<Arc<[BoxShadow]>>,
     /// Where it clips (`overflow: hidden`), its descendants fade out over
     /// this many points inside its rounded edge, rather than being cut at

@@ -140,8 +140,37 @@ fn zgx_area(v:Out)->vec4<f32> {
  if v.mask.x>.5 {color*=region(v.mask.x,v.position.xy);}
  return tinted(v.mask.x,color);
 }
+// The signed distance to a box (x, y, width, height) with these corners
+// (top-left, top-right, bottom-right, bottom-left).
+fn zgx_round_box(p:vec2<f32>, box:vec4<f32>, corners:vec4<f32>)->f32 {
+ let q0=p-(box.xy+box.zw*.5);
+ let r=select(select(corners.w,corners.z,q0.x>0.),select(corners.x,corners.y,q0.x>0.),q0.y<0.);
+ let q=abs(q0)-box.zw*.5+vec2(r);
+ return length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-r;
+}
+// A blurred inset shadow (`shape.x` 2): over the box `fade`, cut to its
+// corners `border`, what the box less itself (moved by the first point,
+// shrunk by the second's y) leaves, blurred by the second's x: the box
+// shadow's 0.5·erfc over the hole's distance, inverted, so half at the
+// hole's edge. Sharp ones draw as rings; only these come here.
+fn zgx_inset(v:Out)->vec4<f32> {
+ let p=v.position.xy/viewport.z;
+ let first=u32(v.mask.y)-1u;
+ let offset=points[first]; let sigma=points[first+1u].x; let spread=points[first+1u].y;
+ let hole=vec4(v.fade.xy+offset+vec2(spread),max(v.fade.zw-vec2(spread*2.),vec2(0.)));
+ let d=zgx_round_box(p,hole,max(v.border-vec4(spread),vec4(0.)));
+ let x=d/(sigma*1.41421356);
+ let x2=x*x;
+ let e=sign(x)*sqrt(1.-exp(-x2*(1.27323954+.147*x2)/(1.+.147*x2)));
+ let aa=max(1./viewport.z,.5);
+ let cover=clamp(.5-zgx_round_box(p,v.fade,v.border)/aa,0.,1.);
+ var color=vec4(v.color.rgb*v.color.a,v.color.a)*(.5+.5*e)*cover;
+ if v.mask.x>.5 {color*=region(v.mask.x,v.position.xy);}
+ return tinted(v.mask.x,color);
+}
 fn zgx_polyline(input:Out)->vec4<f32> {
  let v=input;
+ if v.shape.x>1.5 {return zgx_inset(v);}
  if v.shape.x>.5 {return zgx_area(v);}
  let p=v.position.xy/viewport.z;
  let first=u32(v.mask.y)-1u; let count=u32(v.mask.z);

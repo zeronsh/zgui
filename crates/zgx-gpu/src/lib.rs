@@ -6958,7 +6958,14 @@ impl GpuRenderer {
                                 }
                                 // (A shader fill shades this item's quads: no insets over it.)
                                 if fill_shading.is_none() {
-                                    quads.extend(inset_quads(style, bounds, opacity, edge_fade));
+                                    polylines |= push_insets(
+                                        &mut quads,
+                                        &mut points,
+                                        style,
+                                        bounds,
+                                        opacity,
+                                        edge_fade,
+                                    );
                                 }
                                 if ring && !later {
                                     quads.push(ring_quad(style, bounds, opacity, edge_fade));
@@ -7002,7 +7009,14 @@ impl GpuRenderer {
                                     ),
                                     mask: NO_MASK,
                                 });
-                                quads.extend(inset_quads(style, bounds, opacity, edge_fade));
+                                polylines |= push_insets(
+                                    &mut quads,
+                                    &mut points,
+                                    style,
+                                    bounds,
+                                    opacity,
+                                    edge_fade,
+                                );
                                 if ring && !later {
                                     quads.push(ring_quad(style, bounds, opacity, edge_fade));
                                 }
@@ -13050,29 +13064,52 @@ fn ring_quad(style: &zgx::scene::QuadStyle, bounds: Rect, opacity: f32, edge_fad
         mask: NO_MASK,
     }
 }
-/// A box's inset shadows (`Decoration::inset_shadows`), each a ring inside
-/// it as wide on each side as the shadow's offset pushes it (and its spread
-/// all round), in the shadow's colour, cut to the box's corners.
-fn inset_quads(
+/// A box's inset shadows (`Decoration::inset_shadows`): a sharp one a ring
+/// inside it as wide on each side as the shadow's offset pushes it (and its
+/// spread all round), in the shadow's colour, cut to the box's corners; a
+/// blurred one a quad of the polyline strokes' module (`zgx_inset`), with its
+/// offset, blur and spread in `points`. Whether any was that.
+fn push_insets(
+    quads: &mut Vec<Quad>,
+    points: &mut Vec<[f32; 2]>,
     style: &zgx::scene::QuadStyle,
     bounds: Rect,
     opacity: f32,
     edge_fade: f32,
-) -> impl Iterator<Item = Quad> + '_ {
+) -> bool {
     let shadows = style
         .decoration
         .as_deref()
         .and_then(|d| d.inset_shadows.as_deref())
         .unwrap_or(&[]);
-    shadows.iter().filter(|s| s.color.3 > 0).map(move |s| {
+    let mut blurred = false;
+    for s in shadows.iter().filter(|s| s.color.3 > 0) {
         let spread = s.spread.max(0.);
+        let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
+        let corners = decoration::shadow_corners(style, bounds.width, bounds.height, 0.);
+        if s.blur_radius > 0. && s.blur_radius.is_finite() {
+            let first = points.len();
+            points.push([s.offset.x, s.offset.y]);
+            points.push([s.blur_radius, spread]);
+            quads.push(Quad {
+                rect: fade,
+                uv: [0.; 4],
+                color: rgba(s.color, opacity),
+                fade,
+                options: [edge_fade, 0., 0., 1.],
+                shape: [2., 0., 0., 0.],
+                border: corners,
+                mask: [0., first as f32 + 1., 1., 0.],
+            });
+            blurred = true;
+            continue;
+        }
         let width = |value: f32| match value.is_finite() {
             true => ((value.max(0.) + spread) * 16.).round().min(4095.),
             false => 0.,
         };
         let (x, y) = (s.offset.x, s.offset.y);
-        let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
-        Quad {
+        quads.push(Quad {
             rect: fade,
             uv: [0.; 4],
             color: rgba(s.color, opacity),
@@ -13084,10 +13121,11 @@ fn inset_quads(
                 width(-y) + 4096. * width(x),
                 1.,
             ],
-            border: decoration::shadow_corners(style, bounds.width, bounds.height, 0.),
+            border: corners,
             mask: NO_MASK,
-        }
-    })
+        });
+    }
+    blurred
 }
 fn rgba(c: Color, opacity: f32) -> [f32; 4] {
     [
