@@ -69,6 +69,7 @@ mod persist;
 mod reorder;
 mod router;
 mod routes;
+pub mod scaffold;
 #[cfg(feature = "scene3d")]
 mod scene3d;
 mod socket;

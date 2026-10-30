@@ -1,5 +1,8 @@
 //! `zgx`: developer tools for zgx-script.
 //!
+//! `zgx new <name> [--template T] [--i18n]` writes a Luau app that runs at
+//! once, with its tests and a CI workflow (`zgx_script::scaffold`).
+//!
 //! `zgx run [--inspect] <app> [args…]` runs the app by zgx-run (beside this
 //! binary, or on PATH), as `zgx audit` audits it.
 //!
@@ -24,7 +27,8 @@
 use std::{path::PathBuf, process::ExitCode};
 use zgx_script::check::{CheckError, Options, Report, check};
 
-const USAGE: &str = "usage: zgx run [--inspect] <app.luau-or-dir> [args...]
+const USAGE: &str = "usage: zgx new <name> [--template basic|router|list|form] [--i18n]
+       zgx run [--inspect] <app.luau-or-dir> [args...]
        zgx check [--nonstrict] <file-or-dir>...
        zgx lint [--format text|json] <file-or-dir>...
        zgx lint --rules
@@ -32,6 +36,11 @@ const USAGE: &str = "usage: zgx run [--inspect] <app.luau-or-dir> [args...]
        zgx test [<app-dir>] [<name filter>]
        zgx inspect [--app PID] [--json] <command> [args]   (zgx inspect help)
        zgx audit [--human] <app.luau-or-dir>
+
+new: writes a Luau app into the directory <name> (empty or new): app.luau,
+components/, a theme, tests/, zgx.json, a README and a CI workflow running
+the checks below. `zgx run <name>` runs it, and check, lint, audit and test
+are clean. --i18n writes its text as ui.t messages with locales/en.json.
 
 run: opens the app in a window and reloads it as its files change
 (zgx-run, beside zgx or on PATH; `zgx-run --help` says what zgx.json sets).
@@ -117,6 +126,66 @@ fn audit(args: Vec<String>) -> ExitCode {
     }
 }
 
+/// `zgx new <name> [--template T] [--i18n]`
+fn new(args: Vec<String>) -> ExitCode {
+    let mut dir: Option<PathBuf> = None;
+    let mut template = zgx_script::scaffold::TEMPLATES[0].0.to_string();
+    let mut i18n = false;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--template" | "-t" => match args.next() {
+                Some(name) => template = name,
+                None => {
+                    eprintln!("zgx new: --template takes a name\n");
+                    for (name, about) in zgx_script::scaffold::TEMPLATES {
+                        eprintln!("  {name:8} {about}");
+                    }
+                    return ExitCode::from(2);
+                }
+            },
+            "--i18n" => i18n = true,
+            "-h" | "--help" => {
+                println!("{USAGE}\n\ntemplates:");
+                for (name, about) in zgx_script::scaffold::TEMPLATES {
+                    println!("  {name:8} {about}");
+                }
+                return ExitCode::SUCCESS;
+            }
+            flag if flag.starts_with('-') => {
+                eprintln!("zgx new: unknown option {flag}\n\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            _ if dir.is_some() => {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            path => dir = Some(PathBuf::from(path)),
+        }
+    }
+    let Some(dir) = dir else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    match zgx_script::scaffold::create(&dir, &template, i18n) {
+        Ok(files) => {
+            for file in &files {
+                println!("  {}", file.strip_prefix(&dir).unwrap_or(file).display());
+            }
+            println!(
+                "\nMade {}. Next:\n  cd {}\n  zgx run .\n  zgx test",
+                dir.display(),
+                dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("zgx new: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 /// `zgx test [<app-dir>] [<name filter>]`
 fn test(args: Vec<String>) -> ExitCode {
     if args.len() > 2 || args.iter().any(|a| a.starts_with('-')) {
@@ -196,6 +265,7 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("check") => {}
         Some("test") => return test(args.collect()),
+        Some("new") => return new(args.collect()),
         Some("lint") => return lint(args.collect()),
         Some("types") => return types(args.collect()),
         Some("inspect") => return inspect(args.collect()),

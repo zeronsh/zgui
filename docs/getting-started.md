@@ -231,6 +231,17 @@ LUAU_CXXFLAGS=-DNDEBUG cargo install zgx-script --bin zgx
 
 (`zgx-run` uses mimalloc as its allocator, for 6–10% less CPU on script, text and layout work at about 2 MB more memory; add `--no-default-features` to keep the system's. `LUAU_CXXFLAGS=-DNDEBUG` builds Luau without its asserts, a fifth faster: the repository's own builds set it in `.cargo/config.toml`, which an install doesn't read. Without it, `zgx-run` says so as it starts.)
 
+The quickest start is an app made for you:
+
+```sh
+zgx new my-app                     # or --template router, list or form; --i18n for ui.t messages
+cd my-app
+zgx run .                          # a window, reloading as you save
+zgx test                           # its tests, headless
+```
+
+It writes `app.luau`, a component, a theme of the app's own tokens (`theme.luau`), a test (`tests/app.test.luau`), `zgx.json`, a README, and a GitHub Actions workflow that runs `zgx check`, `zgx lint`, `zgx audit` and `zgx test`. All four are clean from the start. The sections below build the same pieces by hand.
+
 ### A window
 
 An app is a directory with an `app.luau` returning its interface, and optionally a `zgx.json` for its window:

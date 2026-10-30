@@ -264,3 +264,32 @@ fn a_misspelled_route_or_param_is_a_type_error() {
     assert!(stdout.contains("param.luau:2:"), "{stdout}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A module requiring `@app/…`, required by an app.luau that doesn't: the
+/// alias reaches it too (luau-lsp checks a module with each script that
+/// requires it).
+#[test]
+fn a_component_requiring_at_app_checks_when_the_app_does_not() {
+    if !installed() {
+        return;
+    }
+    let dir = scripts(
+        "at-app",
+        &[
+            (
+                "app.luau",
+                "local Card = require(\"./card\")\nreturn Card()\n",
+            ),
+            ("theme.luau", "return { card = \"$surface.raised\" }\n"),
+            (
+                "card.luau",
+                "local theme = require(\"@app/theme\")\n\
+                 return function()\n\treturn ui.div { bg = theme.card }\nend\n",
+            ),
+        ],
+    );
+    let out = zgx().arg("check").arg(&dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    std::fs::remove_dir_all(dir).unwrap();
+}

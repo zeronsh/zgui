@@ -17,6 +17,8 @@ mod lint_cli;
 mod reference_docs;
 #[path = "../run_cli.rs"]
 mod run_cli;
+#[path = "../scaffold.rs"]
+mod scaffold;
 #[path = "../test_cli.rs"]
 mod test_cli;
 #[path = "../testing_kit.rs"]

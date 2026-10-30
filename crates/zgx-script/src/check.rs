@@ -219,18 +219,25 @@ pub fn check(paths: &[PathBuf], options: &Options) -> Result<Report, CheckError>
     // zgx's, with the apps' own tokens in them (`app_types`).
     std::fs::write(&definitions, crate::app_types::definitions(&sources))
         .map_err(CheckError::Io)?;
-    // Scripts requiring `@app/…` (an app's own modules, which a plugin may
-    // replace) or `@app-original/…` (a replacement's original) are checked
-    // with both aliases naming their app's directory: the nearest holding
-    // an `app.luau`. A `.luaurc` cannot name them (zgx resolves them).
+    // An app whose scripts require `@app/…` (its own modules, which a
+    // plugin may replace) or `@app-original/…` (a replacement's original)
+    // is checked with both aliases naming its directory: the nearest
+    // holding an `app.luau`. All its scripts are, since luau-lsp checks a
+    // module again with each script requiring it (a component using
+    // `@app/theme`, required by an app.luau that doesn't). A `.luaurc`
+    // cannot name them (zgx resolves them).
     // Test files (`*.test.luau`) are checked apart, with `zgx test`'s
     // globals (`test`, `mount`, `expect`) beside zgx's: the app's own
     // scripts don't see them.
+    let aliased: std::collections::HashSet<PathBuf> = files
+        .iter()
+        .zip(&sources)
+        .filter(|(_, (_, code))| code.contains("\"@app/") || code.contains("\"@app-original/"))
+        .filter_map(|(file, _)| app_root(file))
+        .collect();
     let mut groups: Vec<(Option<PathBuf>, bool, Vec<PathBuf>)> = Vec::new();
-    for (file, (_, code)) in files.iter().zip(&sources) {
-        let root = (code.contains("\"@app/") || code.contains("\"@app-original/"))
-            .then(|| app_root(file))
-            .flatten();
+    for file in &files {
+        let root = app_root(file).filter(|root| aliased.contains(root));
         let test = crate::test_runner::is_test(file);
         match groups
             .iter_mut()

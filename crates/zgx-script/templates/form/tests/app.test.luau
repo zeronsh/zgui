@@ -1,0 +1,22 @@
+-- Run with `zgx test`. Targets are devtools' own: `#id`, `"label"`,
+-- `role:button "Save"`.
+test("an invalid email is reported and not saved", function()
+	local app = mount()
+	app:fill("#email", "nowhere")
+	app:click("#name")
+	expect(app:wait("#email-error", { text = "not an email" })).to_be(true)
+	app:click("#save")
+	expect(app:state("profile").email).to_be("ada@example.com")
+end)
+
+test("saving keeps the profile and Revert goes back to it", function()
+	local app = mount()
+	app:fill("#name", "Ada Byron")
+	app:click("#save")
+	expect(app:wait("#save", { text = "Save" })).to_be(true)
+	expect(app:state("profile").name).to_be("Ada Byron")
+	app:fill("#name", "Someone else")
+	app:click("#revert")
+	expect(app:state("profile").name).to_be("Ada Byron")
+	expect(app:has("#failure")).to_be(false)
+end)
