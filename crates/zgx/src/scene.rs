@@ -1637,6 +1637,30 @@ impl std::ops::DerefMut for Node {
         &mut self.head
     }
 }
+/// Whether a node composites through a layer shader (`Scene::layer_shaders`
+/// holds it: a layer while it has one), and whether its rounded corners cut
+/// its children though it clips them nowhere else (`Scene::set_corners_clip`).
+/// One byte, as `Node` has none to spare; an enum, not a `u8`: a niche as a
+/// `bool`'s keeps `Node`'s fields where they were (with a `u8` they moved, and
+/// `invalidate_layout` took two instructions more).
+#[derive(Clone, Copy, PartialEq)]
+#[repr(u8)]
+enum PaintFlags {
+    None,
+    LayerShaded,
+    CornersClip,
+    Both,
+}
+impl PaintFlags {
+    fn with(self, layer_shaded: bool, corners_clip: bool) -> Self {
+        match (layer_shaded, corners_clip) {
+            (false, false) => Self::None,
+            (true, false) => Self::LayerShaded,
+            (false, true) => Self::CornersClip,
+            (true, true) => Self::Both,
+        }
+    }
+}
 struct Node {
     cursor: Option<crate::cursor::Cursor>,
     parent: Option<NodeId>,
@@ -1688,9 +1712,8 @@ struct Node {
     local: Option<Box<Local>>,
     /// An alpha mask over the subtree (`Scene::set_mask`): a layer too.
     image_mask: Option<Box<ImageMask>>,
-    /// Whether it composites through a layer shader (`Scene::layer_shaders`
-    /// holds it): a layer while it has one.
-    layer_shaded: bool,
+    /// Its layer shader and clip of children at its corners (`PaintFlags`).
+    paint_flags: PaintFlags,
     /// Whether a mask, a layer shader or a blend mode makes it a layer
     /// (`effect_layer` asks every node walked: one test, not three).
     layered: bool,
@@ -1784,6 +1807,14 @@ impl Special {
     }
 }
 impl Node {
+    #[inline(always)]
+    fn layer_shaded(&self) -> bool {
+        matches!(self.paint_flags, PaintFlags::LayerShaded | PaintFlags::Both)
+    }
+    #[inline(always)]
+    fn corners_clip(&self) -> bool {
+        matches!(self.paint_flags, PaintFlags::CornersClip | PaintFlags::Both)
+    }
     /// Whether it lays out as its last child (`Scene::set_contents`).
     #[inline(always)]
     fn contents(&self) -> bool {
@@ -1843,7 +1874,7 @@ impl Node {
     /// Works `layered` out again after its mask, layer shader or blend changes.
     fn relayer(&mut self) {
         self.layered =
-            self.image_mask.is_some() || self.layer_shaded || self.blend != BlendMode::Normal;
+            self.image_mask.is_some() || self.layer_shaded() || self.blend != BlendMode::Normal;
     }
     fn set_local(&mut self, transform: LocalTransform) {
         match &mut self.local {
@@ -2859,7 +2890,7 @@ impl Scene {
                     isolated: false,
                     local: None,
                     image_mask: None,
-                    layer_shaded: false,
+                    paint_flags: PaintFlags::None,
                     layered: false,
                     blend: BlendMode::Normal,
                     clip_inset: None,
@@ -3729,7 +3760,7 @@ impl Scene {
             self.layer_shaders.insert(id, layer);
         }
         let node = self.node_mut(id);
-        node.layer_shaded = shaded;
+        node.paint_flags = node.paint_flags.with(shaded, node.corners_clip());
         node.relayer();
         if shaded && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
@@ -3861,6 +3892,22 @@ impl Scene {
         self.damage_subtree(id);
         let node = self.node_mut(id);
         node.clip_inset = inset.map(Box::new);
+        let flags = if node.transformed() { PAINT } else { COMPOSITE };
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.invalidate(id, flags);
+    }
+    /// Let `id`'s rounded corners cut its children, though it clips them
+    /// nowhere else: an image cropping its picture, which keeps its corners
+    /// and may still paint past its box when transformed. (`clip` cuts them
+    /// everywhere.)
+    pub fn set_corners_clip(&mut self, id: NodeId, cut: bool) {
+        if self.node(id).corners_clip() == cut {
+            return;
+        }
+        // As a clip inset: nothing shows that the subtree doesn't paint.
+        self.damage_subtree(id);
+        let node = self.node_mut(id);
+        node.paint_flags = node.paint_flags.with(node.layer_shaded(), cut);
         let flags = if node.transformed() { PAINT } else { COMPOSITE };
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
         self.invalidate(id, flags);
@@ -5553,7 +5600,7 @@ impl Scene {
             isolated: false,
             local: None,
             image_mask: None,
-            layer_shaded: false,
+            paint_flags: PaintFlags::None,
             layered: false,
             blend: BlendMode::Normal,
             clip_inset: None,
@@ -7068,7 +7115,7 @@ impl Scene {
             (own, held) => own.or(held),
         };
         // A layer shader may paint anywhere in its box.
-        let ink = match node.layer_shaded {
+        let ink = match node.layer_shaded() {
             true => Some(ink.map_or(node.bounds, |ink| ink.union(node.bounds))),
             false => ink,
         };
@@ -9726,7 +9773,7 @@ impl Scene {
                 && node.clip_inset.is_none()
                 && !fades(&node.style)
                 && !(matches!(node.kind, NodeKind::Quad(_) | NodeKind::Panel { .. })
-                    && clip_axes(&node.style) == (true, true));
+                    && (clips_both(&node.style) || node.corners_clip()));
             // What it adds to what was passed on: none for a plain node, which
             // passes on what it was given (most nodes, so none of this is
             // worked out for them).
@@ -9950,7 +9997,7 @@ fn rounded_clip(inherited: RoundedClip, node: &Node, bounds: Rect) -> RoundedCli
     let (NodeKind::Quad(quad) | NodeKind::Panel { quad, .. }) = &node.kind else {
         return inherited;
     };
-    if clip_axes(&node.style) != (true, true) {
+    if clip_axes(&node.style) != (true, true) && !node.corners_clip() {
         return inherited;
     }
     let (corners, feather) = match quad.decoration.as_deref() {
@@ -10017,6 +10064,17 @@ fn round_inset(mut clip: RoundedClip, inset: Rect) -> RoundedClip {
         own.radii = own.radii.map(|radius| radius.min(most));
     }
     clip
+}
+/// `clip_axes` is `(true, true)`, for every box the paint walk meets: most
+/// have no layout options, and need nothing else to tell.
+#[inline(always)]
+fn clips_both(style: &Style) -> bool {
+    match style.layout_options.as_deref() {
+        None => style.clip,
+        Some(options) => {
+            options.clip_x.unwrap_or(style.clip) && options.clip_y.unwrap_or(style.clip)
+        }
+    }
 }
 fn clip_axes(style: &Style) -> (bool, bool) {
     let options = style.layout_options.as_deref();

@@ -5616,6 +5616,8 @@ fn mount_image(
         );
         let mut scene = scene.borrow_mut();
         scene.set_kind(bitmap, NodeKind::Image(data));
+        // A crop is a picture past the box: its corners cut that too.
+        scene.set_corners_clip(root, crop);
         scene.set_style(
             viewport,
             Style {

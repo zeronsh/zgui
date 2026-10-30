@@ -5857,3 +5857,68 @@ fn a_grown_atlas_goes_back_at_idle_and_draws_the_same() {
     assert_eq!(gpu.debug_cache_stats().atlas_bytes, grown);
     assert!(gpu.readback().unwrap() == before, "the same picture");
 }
+
+/// A rounded, bordered image keeps its corners and its frame however it is
+/// fitted, on both of the renderer's ways of drawing an image: a portrait
+/// picture cropped top and bottom by `cover` too.
+#[test]
+fn a_rounded_image_keeps_its_corners_and_frame_however_it_fits() {
+    let _gpu_fixture = gpu_fixture();
+    use std::sync::Arc;
+    use zgx::{compose::prelude::*, image::ImageData, widgets::Ui};
+    let pixels: Vec<u8> = [230u8, 40, 40, 255].repeat(60 * 200);
+    let source = Arc::new(ImageData::new(60, 200, pixels).unwrap());
+    let background = [16, 32, 48, 255];
+    for (fit, layered, name) in [
+        (ObjectFit::Cover, false, "cover"),
+        (ObjectFit::Cover, true, "cover, in a layer"),
+        (ObjectFit::Fill, false, "fill"),
+        (ObjectFit::Fill, true, "fill, in a layer"),
+        (ObjectFit::None, false, "none"),
+    ] {
+        let mut gpu = GpuRenderer::new(120, 120).unwrap();
+        let mut ui = Ui::new(120., 120.);
+        let bitmap = source.clone();
+        ui.mount(div().size(120., 120.).bg(rgb(0x102030)).child({
+            let view = image_signal("Portrait", move || bitmap.clone())
+                .size(100., 100.)
+                .m(10.)
+                .rounded(24.)
+                .border(2.)
+                .border_color(rgb(0xffffff))
+                .object_fit(fit);
+            // Drawn into a layer of its own, then composited.
+            if layered { view.opacity(0.999) } else { view }
+        }));
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        let at = |x: usize, y: usize| {
+            let i = (y * 120 + x) * 4;
+            [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+        };
+        // Outside the rounded corners: what is behind, at each corner.
+        for (x, y) in [(12, 12), (107, 12), (12, 107), (107, 107)] {
+            let near = at(x, y)
+                .iter()
+                .zip(background)
+                .all(|(a, b)| a.abs_diff(b) <= 1);
+            assert!(near, "{name}: corner at {x},{y}: {:?}", at(x, y));
+        }
+        // The frame, on every side, over the picture.
+        for (x, y) in [(60, 11), (60, 108), (11, 60), (108, 60)] {
+            assert!(
+                at(x, y)[1] > 200,
+                "{name}: frame at {x},{y}: {:?}",
+                at(x, y)
+            );
+        }
+        // And the picture within it.
+        assert!(
+            at(60, 60)[0] > 180 && at(60, 60)[1] < 110,
+            "{name}: {:?}",
+            at(60, 60)
+        );
+    }
+}
