@@ -452,6 +452,7 @@ impl Scene {
     }
     /// Children resolve percentages against `bases` now: drop taffy's cached
     /// sizes of those that do, if the bases changed.
+    #[inline(always)]
     fn rebase(
         &self,
         cache: &mut AdvancedLayoutCache,
@@ -471,6 +472,29 @@ impl Scene {
                     .tree
                     .mark_dirty(*key)
                     .expect("retained child invalidation");
+            }
+        }
+        if self.any_size_calcs() {
+            self.rebase_size_calcs(cache, ids, keys, bases);
+        }
+    }
+    /// The sizes `ids` work out from the containing block, for new `bases`.
+    #[cold]
+    #[inline(never)]
+    fn rebase_size_calcs(
+        &self,
+        cache: &mut AdvancedLayoutCache,
+        ids: &[NodeId],
+        keys: &[t::NodeId],
+        bases: (Option<f32>, Option<f32>),
+    ) {
+        for (child, key) in ids.iter().zip(keys) {
+            let mut mapped = cache.tree.style(*key).expect("retained style").clone();
+            if self.map_size_calcs(*child, &mut mapped, bases) {
+                cache
+                    .tree
+                    .set_style(*key, mapped)
+                    .expect("retained style update");
             }
         }
     }
@@ -552,6 +576,37 @@ impl Scene {
         }
         style.padding_edges = Some(self.resolved_padding(id, constraints));
         style
+    }
+    /// Work the sizes `id` takes from its containing block out against
+    /// `bases`, in its mapped style. With no base, one with a percentage is
+    /// `auto`, as CSS has it. Whether it has any.
+    #[cold]
+    #[inline(never)]
+    fn map_size_calcs(
+        &self,
+        id: NodeId,
+        mapped: &mut t::Style,
+        bases: (Option<f32>, Option<f32>),
+    ) -> bool {
+        let Some(sizes) = self.size_calcs(id) else {
+            return false;
+        };
+        let set = |dimension: &mut t::Dimension,
+                   size: &Option<std::sync::Arc<crate::size_calc::SizeCalc>>,
+                   basis| {
+            if let Some(size) = size {
+                *dimension = size
+                    .resolve_in(basis)
+                    .map_or(t::Dimension::auto(), t::Dimension::length);
+            }
+        };
+        set(&mut mapped.size.width, &sizes.width, bases.0);
+        set(&mut mapped.size.height, &sizes.height, bases.1);
+        set(&mut mapped.min_size.width, &sizes.min_width, bases.0);
+        set(&mut mapped.max_size.width, &sizes.max_width, bases.0);
+        set(&mut mapped.min_size.height, &sizes.min_height, bases.1);
+        set(&mut mapped.max_size.height, &sizes.max_height, bases.1);
+        true
     }
     pub(super) fn uses_advanced_layout(&self, id: NodeId) -> bool {
         // By reference: most nodes have no options, and a copy is ~170 bytes.
@@ -667,8 +722,12 @@ impl Scene {
                     laid_writes: self.node(laid).style_writes,
                     stacked,
                 };
+                let bases = cache.bases;
                 let map = |scene: &Self| {
                     let mut mapped = style(&scene.node(*child).style, Layout::Column, true);
+                    if scene.node(*child).style.layout_options.is_some() {
+                        scene.map_size_calcs(*child, &mut mapped, bases);
+                    }
                     // A `contents` child clips as the child it lays out as.
                     mapped.overflow = overflow(super::clips(&scene.node(laid).style));
                     if stacked {

@@ -16,6 +16,7 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
+use zgx::size_calc::SizeCalc;
 use zgx::{
     canvas::GradientStop,
     decoration::Corners,
@@ -2059,6 +2060,43 @@ fn shadow(value: &Value) -> Option<BoxShadow> {
         spread: num(value, "spread"),
     })
 }
+/// What `lit` wouldn't take for the property `name`: size math on those
+/// that take it, or why not. Apart, so that a literal that fits pays nothing.
+#[cold]
+#[inline(never)]
+fn refused_lit(value: &Value, ty: Ty, name: &str) -> mlua::Result<Lit> {
+    let reason = match (ty, value) {
+        (Ty::Tracks, Value::Str(s)) => s
+            .parse::<zgx::grid_tracks::GridTracks>()
+            .err()
+            .map(|why| format!("`{name}`: {why}")),
+        (Ty::Radial, _) => return Err(mlua::Error::runtime(RADIAL_STOPS)),
+        (Ty::Len, Value::Str(s)) => match s.parse::<SizeCalc>() {
+            Ok(_) if takes_size_math(name) => return Ok(Lit::Str(s.clone())),
+            Ok(_) => Some(format!(
+                "`{name}`: calc(…), min(…), max(…) and clamp(…) size w, h and their limits"
+            )),
+            Err(why) if takes_size_math(name) => Some(format!("`{name}`: {why}")),
+            Err(_) => None,
+        },
+        _ => None,
+    };
+    Err(mlua::Error::runtime(reason.unwrap_or_else(|| {
+        format!("`{name}` expects a {ty:?}, got {value:?}")
+    })))
+}
+/// Whether the property `name` takes `calc(…)` and the like.
+fn takes_size_math(name: &str) -> bool {
+    matches!(name, "w" | "h" | "min_w" | "max_w" | "min_h" | "max_h")
+}
+/// A length that isn't a plain one: a string, as a track list is, checked
+/// here and worked out when it styles. Left to what `lit` refuses, so that
+/// no plain length pays.
+pub(crate) fn size_math(value: &Value) -> Option<Lit> {
+    let Value::Str(text) = value else { return None };
+    text.parse::<SizeCalc>().ok()?;
+    Some(Lit::Str(text.clone()))
+}
 /// Converts a value to a property's type, or `None` if it does not fit.
 pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
     if let Value::Str(s) = value
@@ -2236,17 +2274,10 @@ fn source_linted(
                 Some(color) => Lit::Color(color),
                 None => {
                     let value = lua.unpack::<Value>(other)?;
-                    lit(&value, ty).ok_or_else(|| {
-                        if let (Ty::Tracks, Value::Str(s)) = (ty, &value)
-                            && let Err(why) = s.parse::<zgx::grid_tracks::GridTracks>()
-                        {
-                            return mlua::Error::runtime(format!("`{name}`: {why}"));
-                        }
-                        if ty == Ty::Radial {
-                            return mlua::Error::runtime(RADIAL_STOPS);
-                        }
-                        mlua::Error::runtime(format!("`{name}` expects a {ty:?}, got {value:?}"))
-                    })?
+                    match lit(&value, ty) {
+                        Some(lit) => lit,
+                        None => refused_lit(&value, ty, name)?,
+                    }
                 }
             };
             if !raw {

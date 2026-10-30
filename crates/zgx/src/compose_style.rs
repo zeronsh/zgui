@@ -1947,6 +1947,7 @@ fn apply_rare(
         scene.set_grid_template(target, template);
         scene.set_z(node, cold.and_then(|cold| cold.z).unwrap_or(0));
         scene.set_sticky(node, cold.and_then(|cold| cold.sticky_top));
+        scene.set_size_calcs(node, cold.and_then(|cold| cold.size_calcs.as_ref()));
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));
