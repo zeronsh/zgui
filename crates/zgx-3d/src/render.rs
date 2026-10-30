@@ -356,7 +356,14 @@ impl Viewport for Renderer {
                 .queue
                 .write_buffer(&gpu.instances.as_ref().unwrap().0, 0, bytes);
         }
-        for d in &drawn {
+        // What they draw with, kept and marked used. (Meshes sharing it are
+        // mostly neighbours by now.)
+        let mut last = None;
+        for (d, &((_, set), _)) in drawn.iter().zip(&order) {
+            if last == Some((d.geometry.id(), set)) {
+                continue;
+            }
+            last = Some((d.geometry.id(), set));
             let entry = gpu.geometries.entry(d.geometry.id()).or_insert_with(|| {
                 use wgpu::util::DeviceExt;
                 Buffers {

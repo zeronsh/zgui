@@ -266,21 +266,21 @@ pub(crate) struct Inner {
     pub(crate) exposure: f32,
     /// Samples a pixel (`World::set_samples`): 4 or 1.
     pub(crate) samples: u32,
-    /// Objects' textures (`World::set_map`), by index and map, with the
-    /// generation they were set for.
-    textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
+    /// Objects' textures (`World::set_map`), by index, in `Map::ALL`'s order,
+    /// with the generation they were set for.
+    textures: ByIndex<(u32, [Option<crate::Texture>; crate::texture::MAPS])>,
     /// Skinned objects' skins (`World::set_skin`), by index, with the
     /// generation they were set for.
-    skins: std::collections::HashMap<u32, (u32, Skin)>,
+    skins: ByIndex<(u32, Skin)>,
     /// Objects' morph weights (`World::set_morph_weights`), by index, with
     /// the generation they were set for.
-    morph_weights: std::collections::HashMap<u32, (u32, Vec<f32>)>,
+    morph_weights: ByIndex<(u32, Vec<f32>)>,
     /// Maps' placements (`World::set_map_placement`), by index, with the
     /// generation they were set for: most have none.
-    placements: std::collections::HashMap<u32, (u32, Placements)>,
+    placements: ByIndex<(u32, Placements)>,
     /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
     /// index, with the generation they were set for: most have none.
-    surfaces: std::collections::HashMap<u32, (u32, Surface)>,
+    surfaces: ByIndex<(u32, Surface)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -311,6 +311,25 @@ pub(crate) struct Surface {
     pub(crate) alpha_cutoff: Option<f32>,
 }
 
+/// Hashes an object's index: it's small and ours, and these tables are read
+/// for every mesh, every frame, where SipHash costs more than the meshes.
+#[derive(Default)]
+struct IndexHasher(u64);
+impl std::hash::Hasher for IndexHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u32(u32::from(byte));
+        }
+    }
+    fn write_u32(&mut self, index: u32) {
+        self.0 = (self.0 ^ u64::from(index)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+/// A table by object index.
+type ByIndex<V> = std::collections::HashMap<u32, V, std::hash::BuildHasherDefault<IndexHasher>>;
 /// A mesh's maps' placements, by `Map::ALL`'s order.
 type Placements = [crate::MapPlacement; crate::texture::MAPS];
 /// What a frame draws: each visible mesh with its world matrix.
@@ -354,12 +373,7 @@ impl Inner {
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
-                    maps: crate::Map::ALL.map(|map| {
-                        self.textures
-                            .get(&(index as u32, map))
-                            .filter(|(set_for, _)| *set_for == generation)
-                            .map(|(_, texture)| texture)
-                    }),
+                    maps: self.maps(index, generation),
                     matrix: if palette.is_some() {
                         Mat4::IDENTITY
                     } else {
@@ -373,6 +387,17 @@ impl Inner {
             }
         }
         out
+    }
+    /// Object `index`'s textures.
+    fn maps(
+        &self,
+        index: usize,
+        generation: u32,
+    ) -> [Option<&crate::Texture>; crate::texture::MAPS] {
+        match self.textures.get(&(index as u32)) {
+            Some((set_for, maps)) if *set_for == generation => maps.each_ref().map(Option::as_ref),
+            _ => [None; crate::texture::MAPS],
+        }
     }
     /// Object `index`'s maps' placements, if any is set (no lookup in a
     /// world with none set).
@@ -619,7 +644,7 @@ impl World {
             Some(slot) if slot.generation == id.generation && slot.value.is_some() => {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
-                inner.textures.retain(|(index, _), _| *index != id.index);
+                inner.textures.remove(&id.index);
                 inner.skins.remove(&id.index);
                 inner.morph_weights.remove(&id.index);
                 inner.surfaces.remove(&id.index);
@@ -647,16 +672,17 @@ impl World {
             if inner.live(id.index, id.generation).is_none() {
                 return false;
             }
-            let key = (id.index, map);
-            let before = inner.textures.get(&key).map(|(_, t)| t.id());
-            match texture {
-                Some(texture) => {
-                    let changed = before != Some(texture.id());
-                    inner.textures.insert(key, (id.generation, texture));
-                    changed
-                }
-                None => inner.textures.remove(&key).is_some(),
+            let (_, maps) = inner
+                .textures
+                .entry(id.index)
+                .or_insert((id.generation, Default::default()));
+            let id_of = |texture: &Option<crate::Texture>| texture.as_ref().map(crate::Texture::id);
+            let changed = id_of(&maps[map as usize]) != id_of(&texture);
+            maps[map as usize] = texture;
+            if maps.iter().all(Option::is_none) {
+                inner.textures.remove(&id.index);
             }
+            changed
         });
     }
     /// Object `id`'s skin: what moves its skinned geometry
@@ -682,11 +708,7 @@ impl World {
     pub fn map(&self, id: ObjectId, map: crate::Map) -> Option<crate::Texture> {
         let inner = self.inner.borrow();
         inner.live(id.index, id.generation)?;
-        inner
-            .textures
-            .get(&(id.index, map))
-            .filter(|(set_for, _)| *set_for == id.generation)
-            .map(|(_, texture)| texture.clone())
+        inner.maps(id.index as usize, id.generation)[map as usize].cloned()
     }
     /// Change object `id` with `f` (nothing if it is gone). The view draws a
     /// frame only if the object changed.

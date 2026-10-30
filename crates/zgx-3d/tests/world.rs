@@ -411,6 +411,36 @@ fn a_texture_colours_a_mesh_across_its_coordinates() {
 }
 
 #[test]
+fn a_meshs_maps_are_set_and_cleared_each_on_its_own() {
+    let world = World::new();
+    let square = || Object::mesh(facing_square(), Material::rgb(0xffffff));
+    let id = world.add(square());
+    let texture = |shade| Texture::from_rgba8(1, 1, vec![shade; 4]).unwrap();
+    let (base, glow) = (texture(10), texture(20));
+    world.set_map(id, Map::BaseColour, Some(base.clone()));
+    world.set_map(id, Map::Emission, Some(glow.clone()));
+    assert_eq!(world.map(id, Map::BaseColour), Some(base.clone()));
+    assert_eq!(world.map(id, Map::Emission), Some(glow.clone()));
+    assert_eq!(world.map(id, Map::Normal), None);
+    // Clearing one leaves the other, and changes nothing a second time.
+    world.set_map(id, Map::BaseColour, None);
+    assert_eq!(world.map(id, Map::BaseColour), None);
+    assert_eq!(world.map(id, Map::Emission), Some(glow.clone()));
+    let revision = world.revision();
+    world.set_map(id, Map::BaseColour, None);
+    assert_eq!(world.revision(), revision);
+    // Clearing the last leaves none; setting one again counts as a change.
+    world.set_map(id, Map::Emission, None);
+    world.set_map(id, Map::Emission, Some(glow.clone()));
+    assert_ne!(world.revision(), revision);
+    // An object taking a removed one's place starts with no maps of its.
+    world.remove(id);
+    let next = world.add(square());
+    assert_eq!(world.map(next, Map::Emission), None);
+    assert_eq!(world.map(id, Map::Emission), None, "the old id is gone");
+}
+
+#[test]
 fn textures_are_checked_and_mipmapped_down_to_one_texel() {
     assert!(Texture::from_rgba8(0, 1, vec![]).is_err());
     assert!(Texture::from_rgba8(2, 2, vec![0; 15]).is_err());
