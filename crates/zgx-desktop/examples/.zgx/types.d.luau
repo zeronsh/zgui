@@ -1970,6 +1970,8 @@ export type AriaRole =
 	| "alert"
 	| "menu"
 	| "menuitem"
+	| "menuitemcheckbox"
+	| "menuitemradio"
 export type NodeProps = {
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).

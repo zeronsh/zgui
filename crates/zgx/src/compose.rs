@@ -1245,6 +1245,13 @@ impl View {
         self.accessibility_mut().checked = Some(Box::new(checked));
         self
     }
+    /// A checkable menu item (`Role::MenuItem` with `checked_when`) that is
+    /// one of a group: a radio item, `menuitemradio`, rather than
+    /// `menuitemcheckbox`.
+    pub fn radio_item(mut self) -> Self {
+        self.accessibility_mut().radio_item = true;
+        self
+    }
     /// What this control's value reads as to assistive technology, followed:
     /// a select's chosen option, a combobox's text. Worked out only while
     /// assistive technology listens, as `accessible_label_when`.
@@ -6013,6 +6020,7 @@ pub(crate) struct Accessibility {
     level: Option<usize>,
     selected: Option<Box<dyn FnMut() -> bool>>,
     checked: Option<Box<dyn FnMut() -> bool>>,
+    radio_item: bool,
     expanded: Option<Box<dyn FnMut() -> bool>>,
     value: Option<Box<dyn FnMut() -> String>>,
     numeric: Option<(f64, f64, NumericValue)>,
@@ -6051,6 +6059,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
         level,
         selected,
         checked,
+        radio_item,
         expanded,
         value,
         numeric,
@@ -6138,6 +6147,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
             let mut radio = false;
             tree.borrow_mut().update(root, |node| {
                 node.checked = Some(checked);
+                node.radio = radio_item;
                 radio = node.role == Role::RadioButton;
             });
             if radio

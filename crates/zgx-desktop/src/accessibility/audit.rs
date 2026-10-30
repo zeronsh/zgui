@@ -535,6 +535,13 @@ mod tests {
         let mut check = with(Native::Switch, &[Action::Click, Action::Focus]);
         check.set_label("Wi-Fi");
         assert_eq!(rules(&check)[0].0, "no-state");
+        for role in [Native::MenuItemCheckBox, Native::MenuItemRadio] {
+            let mut item = with(role, &[Action::Click, Action::Focus]);
+            item.set_label("Word wrap");
+            assert_eq!(rules(&item)[0].0, "no-state");
+            item.set_toggled(accesskit::Toggled::True);
+            assert!(rules(&item).is_empty(), "{:?}", rules(&item));
+        }
         let mut tab = with(Native::Tab, &[Action::Click, Action::Focus]);
         tab.set_label("General");
         assert_eq!(rules(&tab)[0].0, "no-state");

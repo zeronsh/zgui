@@ -164,6 +164,49 @@ fn menu_items_check_and_show_shortcuts_and_nodes_say_their_state() {
 }
 
 #[test]
+fn a_custom_menu_item_says_it_is_checkable_and_follows_its_state() {
+    let mut h = Harness::inline(
+        r#"
+        local wrap = ui.state("wrap", false)
+        return ui.column {
+            ui.div { id = "wrap", role = "menuitemcheckbox", label = "Word wrap", checked = wrap,
+                on_click = ui.toggle(wrap), w = 80, h = 20 },
+            ui.div { id = "mono", role = "menuitemradio", label = "Mono", checked = true, w = 80, h = 20 },
+            ui.div { id = "plain", role = "menuitem", label = "Plain", w = 80, h = 20 },
+        }
+        "#,
+    );
+    let (wrap, mono) = (node(&mut h, "wrap"), node(&mut h, "mono"));
+    assert_eq!(
+        (wrap.role, wrap.checked, wrap.radio),
+        (Role::MenuItem, Some(false), false)
+    );
+    assert_eq!(
+        (mono.role, mono.checked, mono.radio),
+        (Role::MenuItem, Some(true), true)
+    );
+    assert_eq!(
+        zgx_script::driver::semantic_role_name(&wrap),
+        "menuitemcheckbox"
+    );
+    assert_eq!(
+        zgx_script::driver::semantic_role_name(&mono),
+        "menuitemradio"
+    );
+    let plain = node(&mut h, "plain");
+    assert_eq!(zgx_script::driver::semantic_role_name(&plain), "menuitem");
+    let id = with_role(&mut h, Role::MenuItem)[0];
+    click_node(&mut h, id);
+    assert_eq!(node(&mut h, "wrap").checked, Some(true));
+}
+
+#[test]
+#[should_panic(expected = "role `menuitemradio` says whether it is checked")]
+fn a_checkable_menu_role_needs_its_state() {
+    Harness::inline(r#"return ui.div { role = "menuitemradio", label = "Mono" }"#);
+}
+
+#[test]
 fn a_menus_button_opens_it() {
     let mut h = Harness::inline(
         r#"local open = ui.state("open", false)

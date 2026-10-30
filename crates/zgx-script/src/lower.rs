@@ -3307,6 +3307,9 @@ fn styled(
                 resolve(&checked, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
             });
         }
+        if a11y.radio_item {
+            view = view.radio_item();
+        }
         if let Some(expanded) = &a11y.expanded {
             let (expanded, vm) = (resolve_owned(expanded), vm.clone());
             view = view.expanded_when(move || {

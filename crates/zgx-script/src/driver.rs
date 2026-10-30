@@ -32,6 +32,14 @@ use zgx::{
     widgets::Ui,
 };
 
+/// A node's role as ARIA names it, its checkable menu items told apart.
+pub fn semantic_role_name(semantic: &zgx::semantics::SemanticNode) -> &'static str {
+    match (semantic.role, semantic.checked, semantic.radio) {
+        (Role::MenuItem, Some(_), true) => "menuitemradio",
+        (Role::MenuItem, Some(_), false) => "menuitemcheckbox",
+        (role, ..) => role_name(role),
+    }
+}
 /// What a node is to assistive technology, as ARIA names it.
 pub fn role_name(role: Role) -> &'static str {
     match role {
@@ -307,7 +315,7 @@ fn describe(ui: &Ui, node: NodeId) -> String {
     let semantics = ui.semantics.borrow();
     let mut out = format!("@{}", number(node));
     if let Some(s) = semantics.get(node) {
-        let _ = write!(out, " {}", role_name(s.role));
+        let _ = write!(out, " {}", semantic_role_name(s));
         if !s.label.is_empty() {
             let _ = write!(out, " {:?}", clip(&s.label, 40));
         }
@@ -356,7 +364,11 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
                     continue;
                 }
                 if let Some(role) = &part.role
-                    && semantics.get(node).map(|s| role_name(s.role)) != Some(role.as_str())
+                    && !semantics.get(node).is_some_and(|s| {
+                        // `role:menuitem` finds them all, as ARIA's roles
+                        // are kinds of it.
+                        role_name(s.role) == role || semantic_role_name(s) == role
+                    })
                 {
                     continue;
                 }
@@ -416,7 +428,7 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
 fn describe_with(scene: &Scene, semantics: &zgx::semantics::Semantics, node: NodeId) -> String {
     let mut out = format!("@{}", number(node));
     if let Some(s) = semantics.get(node) {
-        let _ = write!(out, " {}", role_name(s.role));
+        let _ = write!(out, " {}", semantic_role_name(s));
     }
     let _ = write!(out, " {}", rect(scene.bounds(node)));
     out
@@ -641,7 +653,7 @@ pub fn tree(
     while let Some((node, depth)) = stack.pop() {
         let s = semantics.get(node);
         let role = s
-            .map(|s| role_name(s.role))
+            .map(semantic_role_name)
             .filter(|r| *r != "group" || options.all);
         let label = s.map(|s| s.label.clone()).filter(|l| !l.is_empty());
         let text = label.or_else(|| own_text(&scene, node));
@@ -795,7 +807,7 @@ pub fn node(
         }
     }
     if let Some(s) = semantics.get(node) {
-        out.push(("role".into(), role_name(s.role).into()));
+        out.push(("role".into(), semantic_role_name(s).into()));
         if !s.label.is_empty() {
             out.push(("name".into(), s.label.clone()));
         }

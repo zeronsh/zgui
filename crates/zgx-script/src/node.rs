@@ -2445,6 +2445,8 @@ pub(crate) struct A11y {
     pub selected: Option<Source>,
     /// `checked` and `expanded`: a custom switch's state, a disclosure's.
     pub checked: Option<Source>,
+    /// `role = "menuitemradio"`: one of a group of checkable menu items.
+    pub radio_item: bool,
     pub expanded: Option<Source>,
     pub live: Option<zgx::semantics::Live>,
     pub description: Option<Rc<str>>,
@@ -2523,6 +2525,10 @@ fn button_look(lua: &Lua, table: &Table) -> mlua::Result<()> {
     }
     Ok(())
 }
+/// Whether a `role` says it is checked: a menu item with a checkmark.
+fn checkable_menu_role(name: &str) -> bool {
+    matches!(name, "menuitemcheckbox" | "menuitemradio")
+}
 /// A `role` as ARIA names it.
 fn a11y_role(name: &str) -> Option<zgx::semantics::Role> {
     use zgx::semantics::Role;
@@ -2557,7 +2563,7 @@ fn a11y_role(name: &str) -> Option<zgx::semantics::Role> {
         "columnheader" => Role::ColumnHeader,
         "alert" => Role::Alert,
         "menu" => Role::Menu,
-        "menuitem" => Role::MenuItem,
+        "menuitem" | "menuitemcheckbox" | "menuitemradio" => Role::MenuItem,
         _ => return None,
     })
 }
@@ -3427,10 +3433,19 @@ fn fill_from(
                         "unknown role `{name}`: one of group, button, link, heading, list, \
                          listitem, listbox, option, toolbar, status, tablist, tab, tabpanel, \
                          dialog, img, radiogroup, radio, switch, checkbox, spinbutton, combobox, \
-                         tree, treeitem, grid, row, gridcell, columnheader, alert, menu, menuitem"
+                         tree, treeitem, grid, row, gridcell, columnheader, alert, menu, \
+                         menuitem, menuitemcheckbox, menuitemradio"
                     ))
                 })?;
-                node.a11y.get_or_insert_default().role = Some(role);
+                // ARIA requires their state; there is no saying "unknown".
+                if checkable_menu_role(&name) && !table.contains_key("checked")? {
+                    return Err(mlua::Error::runtime(format!(
+                        "role `{name}` says whether it is checked: give it `checked`"
+                    )));
+                }
+                let a11y = node.a11y.get_or_insert_default();
+                a11y.role = Some(role);
+                a11y.radio_item = name == "menuitemradio";
             }
             "heading" => {
                 let level: f64 = lua.unpack(value)?;

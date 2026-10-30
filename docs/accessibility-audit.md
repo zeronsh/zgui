@@ -18,7 +18,7 @@ and walks Tab through it:
 | `no-role` | something takes focus but is no control: a `ui.div` with `focusable = true` and no `role` |
 | `no-name` | a control, an image or a dialog with no name (`label`, or text a button shows) |
 | `no-action` | a control that can't be pressed, focused or set |
-| `no-state` | a check box, switch, radio button or tab that doesn't say whether it's chosen; a slider or spin button with no value; a slider or progress bar with a value and no range |
+| `no-state` | a check box, switch, radio button, checkable menu item or tab that doesn't say whether it's chosen; a slider or spin button with no value; a slider or progress bar with a value and no range |
 | `focus-unreachable` | Tab never reaches something that takes focus (outside a toolbar, list or other group the arrows move in) |
 | `focus-trap` | Tab, Control-Tab and Escape all keep focus on one control or a few |
 | `not-announced` | an alert or status that isn't live; an invalid field whose error isn't given to a reader |
