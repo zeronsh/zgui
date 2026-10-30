@@ -332,6 +332,44 @@ python scripts/windows_resize_probe.py target/release/examples/resize_probe.exe 
 python scripts/windows_resize_probe.py --reference --drag
 ```
 
+### Covered windows
+
+Windows doesn't say when a window is covered, so `WindowEvent::Occluded` comes
+from our winit (`platform_impl/windows/occlusion.rs`). A window is occluded on
+another virtual desktop (cloaked), or when windows above it that are known to
+be opaque leave none of it. It then stops drawing, as on macOS
+and X11; a covered ticker, spinner or heavy dashboard otherwise cost 2.4 to 9.2
+points of one core more than a minimized one, and all of its GPU use. Measured on this branch against main in one sitting, a
+shown heavy dashboard costs what it did, and covered it fell from 14.0 points to
+5.4, its timers' work, and its GPU use to none.
+
+Stopping a window someone can see is far worse than drawing one nobody can, so
+whatever may show what's behind it covers nothing: layered, click-through and
+tool windows (overlays, the taskbar), those composed by their own swap chain
+(`WS_EX_NOREDIRECTIONBITMAP`: WinUI apps, Windows Terminal, Zeron), an acrylic
+backdrop, a
+shaped region, and the window's own owned windows. Mica, as on File Explorer,
+shows the wallpaper and no window behind it, so it covers. A framed
+window's rounded corners don't cover what's under them. So under those a
+covered window goes on drawing, which costs what it did before.
+
+Only a layout free of doubt counts: a window whole on one monitor, under covers
+whole on that monitor, with every monitor at one scale and none at negative
+coordinates. A window spanning two monitors, or partly off screen, a cover
+reaching past the monitor's edge, or mixed scales, and it goes on drawing. This
+holds by construction and made-up layouts in unit tests: it hasn't been run on
+more than one monitor.
+
+A window drawing checks twice a second, from its frames, and two checks must
+agree before it stops; an idle window does nothing. An occluded one hears of
+other windows' changes through `SetWinEventHook` and looks each second for
+those no event reports (a z-order or style change alone).
+
+Two cases it can't see: a window made translucent through the undocumented
+accent API counts as opaque, and a covered window being captured (Teams, OBS)
+stops like any other. `ZGX_RENDER_WHEN_COVERED=1` keeps a covered window
+drawing.
+
 ## Title bars
 
 `Titlebar::Inset` and `Titlebar::Hidden` are frameless windows that keep the
@@ -679,6 +717,7 @@ python scripts/windows_touch_smoke.py target/debug/examples
 python scripts/windows_popup_smoke.py target/debug/examples
 python scripts/windows_drag_smoke.py target/debug/examples
 python scripts/windows_window_smoke.py target/debug/examples
+python scripts/windows_occlusion_smoke.py target/release --snap --desktops
 python scripts/windows_text_smoke.py target/debug/examples/text_selection.exe
 python scripts/windows_clipboard_image_smoke.py target/debug/examples/clipboard_image.exe
 python scripts/windows_contrast_smoke.py target/debug/examples/text_selection.exe
@@ -927,6 +966,11 @@ The probes for the rest of Windows:
   the pointer to the pixel; dropped on the other window's strip it merges
   there. It lays the windows out from the work area, so it fits at any
   scale (checked at 100% and 150%).
+- `windows_occlusion_smoke.py` (`zgx-run`, and windows of its own that it
+  confirms are above the app): a covered window stops drawing and comes back
+  however the cover goes, and a window anything of which can be seen never
+  stops. `--snap` and `--desktops` press Win+Left and make and remove a
+  virtual desktop; all its keys go through `guard_windows`.
 - `windows_window_smoke.py` (`window_probe`): a second window opens a step
   on from the first (`CW_USEDEFAULT`); a window with `frame_autosave` moved and
   closed reopens there at its size, left maximized reopens maximized, and at a

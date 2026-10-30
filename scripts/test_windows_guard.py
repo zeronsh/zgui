@@ -86,5 +86,21 @@ class Ours(unittest.TestCase):
         self.assertTrue(self.ours(window(3812, "Chrome_WidgetWin_0", "zgx web view"), processes=processes))
 
 
+class Own(unittest.TestCase):
+    OWN = (5240, "ZgxOcclusionCover")
+
+    def test_a_window_of_the_probes_process_and_class_is_its_own(self):
+        self.assertTrue(guard.is_own(window(5240, "ZgxOcclusionCover", "cover"), self.OWN))
+
+    def test_the_class_in_another_process_is_not(self):
+        self.assertFalse(guard.is_own(window(6620, "ZgxOcclusionCover", "cover"), self.OWN))
+
+    def test_another_class_of_the_probes_process_is_not(self):
+        self.assertFalse(guard.is_own(window(5240, "Credential Dialog Xaml Host", ""), self.OWN))
+
+    def test_with_nothing_named_nothing_is_its_own(self):
+        self.assertFalse(guard.is_own(window(5240, "ZgxOcclusionCover", "cover"), None))
+
+
 if __name__ == "__main__":
     unittest.main()
