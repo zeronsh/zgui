@@ -48,6 +48,11 @@ unsafe impl GlobalAlloc for Counting {
 }
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
+/// Held by each test while it measures: the counts are the process's, and
+/// the harness runs tests on threads of their own at once, so another
+/// test's decode counted in this one's peak (0.26 images, past a bound of
+/// 0.25, now and then).
+static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The most `decode_image(bytes)` holds at once beyond what was held
 /// before, and its pixels.
@@ -69,6 +74,7 @@ fn pattern(width: u32, height: u32, channels: usize) -> Vec<u8> {
 
 #[test]
 fn a_decode_holds_about_the_image_once() {
+    let _alone = ALONE.lock().unwrap_or_else(|p| p.into_inner());
     use image::{ExtendedColorType, ImageEncoder};
     let (width, height) = (1024_u32, 768_u32);
     let image_bytes = width as usize * height as usize * 4;
@@ -144,6 +150,7 @@ fn photo(width: u32, height: u32) -> Vec<u8> {
 /// the image, and draws what decoding it whole and shrinking it would.
 #[test]
 fn a_jpeg_drawn_small_never_decodes_whole() {
+    let _alone = ALONE.lock().unwrap_or_else(|p| p.into_inner());
     use image::{ExtendedColorType, ImageEncoder};
     let (width, height) = (1024_u32, 768_u32);
     let image_bytes = width as usize * height as usize * 4;
