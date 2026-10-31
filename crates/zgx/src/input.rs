@@ -829,6 +829,11 @@ impl InputDispatcher {
         self.state.borrow_mut().clicks.1 =
             interval.clamp(Duration::from_millis(100), Duration::from_secs(5));
     }
+    /// The double-click time in use (`set_double_click_time`): 500 ms until
+    /// the host gives the system's.
+    pub fn double_click_time(&self) -> Duration {
+        self.state.borrow().clicks.1
+    }
     /// The box, in points, centred on a press, that the next must land in
     /// to count as its double (then triple) click: the system's, which the
     /// desktop host gives (Windows' `SM_CXDOUBLECLK` by `SM_CYDOUBLECLK`,
@@ -2852,6 +2857,7 @@ mod tests {
         assert_eq!(press(0), 1);
         assert_eq!(press(700), 1, "past the default 500 ms");
         input.set_double_click_time(Duration::from_millis(900));
+        assert_eq!(input.double_click_time(), Duration::from_millis(900));
         assert_eq!(press(1400), 2);
         input.set_double_click_time(Duration::ZERO);
         assert_eq!(input.state.borrow().clicks.1, Duration::from_millis(100));
