@@ -1,0 +1,25 @@
+[package]
+name = "zgx-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords = ["terminal", "pty", "conpty", "gui", "zgx"]
+categories = ["gui", "command-line-interface"]
+description = "Terminal sessions for zgx: a shell on a pseudoterminal (openpty, ConPTY) and its screen, kept by alacritty_terminal."
+
+[dependencies]
+# The screen model: the VT parser, grid, scrollback, selection and modes,
+# and the pseudoterminals (openpty on Unix, ConPTY on Windows).
+alacritty_terminal = "0.26"
+# The session's I/O thread sleeps in it until the shell writes or the app does.
+polling = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# The shell's foreground descendant (Toolhelp snapshots).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
