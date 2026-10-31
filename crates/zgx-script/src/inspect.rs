@@ -453,10 +453,15 @@ impl Session {
             let target = text("target").ok_or("this command takes a `target`")?;
             driver::find(ui, &self.0.handle, &target)
         };
-        // The same for an action: it must show.
+        // The same for an action: what of it a person can reach, inside
+        // its clips and uncovered, or why not.
         let reachable = |ui: &Ui| -> Result<zgx::scene::NodeId, String> {
             let target = text("target").ok_or("this command takes a `target`")?;
             driver::find_shown(ui, &self.0.handle, &target)
+        };
+        let reach = |ui: &Ui| -> Result<(zgx::scene::NodeId, zgx::scene::Rect), String> {
+            let target = text("target").ok_or("this command takes a `target`")?;
+            driver::reach(ui, &self.0.handle, &target)
         };
         // Where a field says: a target's middle, or `x,y` in window points.
         let point_of = |ui: &Ui, name: &str| -> Result<(f32, f32), String> {
@@ -466,8 +471,8 @@ impl Session {
             {
                 return Ok((x, y));
             }
-            let node = driver::find_shown(ui, &self.0.handle, &said)?;
-            Ok(driver::middle(ui.scene.borrow().transformed_bounds(node)))
+            let (_, shown) = driver::reach(ui, &self.0.handle, &said)?;
+            Ok(driver::middle(shown))
         };
         let answer = match cmd.as_str() {
             "help" => Ok((HELP.to_string(), Value::Nil)),
@@ -626,8 +631,7 @@ impl Session {
                 self.0.host.set_state(&name, value)?;
                 Ok((format!("{name} set"), Value::Nil))
             })(),
-            "click" => reachable(&ui).map(|node| {
-                let b = ui.scene.borrow().transformed_bounds(node);
+            "click" => reach(&ui).map(|(node, b)| {
                 driver::click_at(&mut ui, b);
                 (format!("clicked @{}", driver::number(node)), Value::Nil)
             }),
@@ -654,9 +658,10 @@ impl Session {
                 ))
             })(),
             "type" => (|| {
-                let node = target(&ui)?;
+                let (node, b) = reach(&ui)?;
                 let typed = text("text").ok_or("type takes a `text`")?;
-                driver::type_into(&mut ui, node, &typed);
+                driver::click_at(&mut ui, b);
+                ui.dispatch(zgx::input::InputEvent::Text(typed));
                 Ok((format!("typed into @{}", driver::number(node)), Value::Nil))
             })(),
             "key" => (|| {

@@ -433,7 +433,7 @@ end)
   - `test(name, body)` adds a test. Tests run in the file's order, and each mounts fresh apps.
   - `mount(path?)` mounts the app headless (`path` from the app's directory).
   - `expect(actual)` checks a value: `to_be` (`==`), `to_equal` (tables field by field), `to_contain` (a substring, or a member of a list), `to_be_truthy` and `to_be_nil`. Each also has a negated form under `never`.
-- **Failures** name the test file's line: an `expect` that fails, a target that matches nothing, an unknown key.
+- **Failures** name the test file's line: an `expect` that fails, a target that matches nothing, an unknown key. An action acts where a person would, so a target outside its scroll's clip fails naming the clip (scroll it into view first), and one under another node fails naming that node, as `zgx inspect`'s actions do.
 - **Targets are devtools' own** (`zgx inspect`): `#id`, `"label or text"`, `~"part of it"`, `role:button`, `role:checkbox "Done"`, `#list row 3`, `"Copy"[2]`, `#dialog >> "OK"`.
 - **An app's methods:**
   - acting: `click`, `double_click`, `type` (click a field and type), `fill` (replace its whole text), `hover`, `drag(from, to)`, `key` (`"Enter"`, `"cmd+k"`), `scroll(target, dy)`, `command(id)` (a `ui.command`) and `resize(width, height)`;

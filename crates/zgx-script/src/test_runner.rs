@@ -24,7 +24,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
-use zgx::reactive::Signal;
+use zgx::{reactive::Signal, scene::Rect};
 
 /// The definitions of a test file's globals, for luau-lsp.
 pub const DEFINITIONS: &str = include_str!("../types/zgx-test.d.luau");
@@ -315,10 +315,11 @@ impl Mounted {
         app.ui.prepare_frame();
         crate::driver::find(&app.ui, &app.handle, target).map_err(mlua::Error::runtime)
     }
-    /// The same for an action: it must show, as a person can reach it.
-    fn reachable(app: &mut TestApp, target: &str) -> mlua::Result<zgx::scene::NodeId> {
+    /// The same for an action: what of it a person can reach, inside its
+    /// clips and uncovered, or why not.
+    fn reach(app: &mut TestApp, target: &str) -> mlua::Result<(zgx::scene::NodeId, Rect)> {
         app.ui.prepare_frame();
-        crate::driver::find_shown(&app.ui, &app.handle, target).map_err(mlua::Error::runtime)
+        crate::driver::reach(&app.ui, &app.handle, target).map_err(mlua::Error::runtime)
     }
 }
 
@@ -326,24 +327,23 @@ impl UserData for Mounted {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("click", |_, m, target: String| {
             let mut app = m.app.borrow_mut();
-            let node = Self::reachable(&mut app, &target)?;
-            let bounds = app.ui.scene.borrow().bounds(node);
+            let (_, bounds) = Self::reach(&mut app, &target)?;
             crate::driver::click_at(&mut app.ui, bounds);
             app.settle();
             Ok(())
         });
         methods.add_method("double_click", |_, m, target: String| {
             let mut app = m.app.borrow_mut();
-            let node = Self::node(&mut app, &target)?;
-            let bounds = app.ui.scene.borrow().bounds(node);
+            let (_, bounds) = Self::reach(&mut app, &target)?;
             crate::driver::double_click_at(&mut app.ui, bounds);
             app.settle();
             Ok(())
         });
         methods.add_method("type", |_, m, (target, text): (String, String)| {
             let mut app = m.app.borrow_mut();
-            let node = Self::node(&mut app, &target)?;
-            crate::driver::type_into(&mut app.ui, node, &text);
+            let (_, bounds) = Self::reach(&mut app, &target)?;
+            crate::driver::click_at(&mut app.ui, bounds);
+            app.ui.dispatch(zgx::input::InputEvent::Text(text));
             app.settle();
             Ok(())
         });
@@ -351,10 +351,9 @@ impl UserData for Mounted {
         // typing does (a form's `dirty` and validation follow).
         methods.add_method("fill", |_, m, (target, text): (String, String)| {
             let mut app = m.app.borrow_mut();
-            let node = Self::node(&mut app, &target)?;
+            let (_, bounds) = Self::reach(&mut app, &target)?;
             let (all, modifiers) =
                 crate::driver::parse_keys("cmd+a").map_err(mlua::Error::runtime)?;
-            let bounds = app.ui.scene.borrow().bounds(node);
             crate::driver::click_at(&mut app.ui, bounds);
             crate::driver::press(&mut app.ui, all, modifiers);
             crate::driver::press(&mut app.ui, zgx::input::Key::Backspace, Default::default());
@@ -364,19 +363,18 @@ impl UserData for Mounted {
         });
         methods.add_method("hover", |_, m, target: String| {
             let mut app = m.app.borrow_mut();
-            let node = Self::reachable(&mut app, &target)?;
-            let b = app.ui.scene.borrow().bounds(node);
-            crate::driver::hover_at(&mut app.ui, (b.x + b.width / 2., b.y + b.height / 2.));
+            let (_, b) = Self::reach(&mut app, &target)?;
+            crate::driver::hover_at(&mut app.ui, crate::driver::middle(b));
             app.settle();
             Ok(())
         });
         methods.add_method("drag", |_, m, (from, to): (String, String)| {
             let mut app = m.app.borrow_mut();
-            let (from, to) = (Self::node(&mut app, &from)?, Self::node(&mut app, &to)?);
-            let (from, to) = {
-                let scene = app.ui.scene.borrow();
-                (scene.bounds(from), scene.bounds(to))
-            };
+            // What it is dragged from must be in reach; where it lands is
+            // wherever its box lies (a drop under the preview, a list).
+            let (_, from) = Self::reach(&mut app, &from)?;
+            let to = Self::node(&mut app, &to)?;
+            let to = app.ui.scene.borrow().bounds(to);
             crate::driver::drag(&mut app.ui, from, to);
             app.settle();
             Ok(())
