@@ -174,25 +174,25 @@ float faded(float4 b_1, float4 f, float2 p_1)
     if ((f.x > 0.0)) {
         float t_1 = clamp(((p_1.y - b_1.y) / f.x), 0.0, 1.0);
         float _e16 = k;
-        k = (_e16 * (t_1 * t_1));
+        k = (_e16 * ((t_1 * t_1) * (3.0 - (2.0 * t_1))));
     }
     if ((f.y > 0.0)) {
         float t_2 = clamp(((b_1.z - p_1.x) / f.y), 0.0, 1.0);
-        float _e30 = k;
-        k = (_e30 * (t_2 * t_2));
+        float _e35 = k;
+        k = (_e35 * ((t_2 * t_2) * (3.0 - (2.0 * t_2))));
     }
     if ((f.z > 0.0)) {
         float t_3 = clamp(((b_1.w - p_1.y) / f.z), 0.0, 1.0);
-        float _e44 = k;
-        k = (_e44 * (t_3 * t_3));
+        float _e54 = k;
+        k = (_e54 * ((t_3 * t_3) * (3.0 - (2.0 * t_3))));
     }
     if ((f.w > 0.0)) {
         float t_4 = clamp(((p_1.x - b_1.x) / f.w), 0.0, 1.0);
-        float _e58 = k;
-        k = (_e58 * (t_4 * t_4));
+        float _e73 = k;
+        k = (_e73 * ((t_4 * t_4) * (3.0 - (2.0 * t_4))));
     }
-    float _e61 = k;
-    return _e61;
+    float _e81 = k;
+    return _e81;
 }
 
 float region(float index_1, float2 position_1)
