@@ -286,6 +286,15 @@ impl TreeChangeHandler for AdapterChangeHandler<'_> {
 
     fn node_updated(&mut self, old_node: &Node, new_node: &Node) {
         self.emit_text_change_if_needed(old_node, new_node);
+        // zgx patch: a node embedding another process's object anew asks it
+        // to take the node as its parent (`crate::EMBED`).
+        if old_node.author_id() != new_node.author_id()
+            && filter(new_node) == FilterResult::Include
+            && let Some((bus, path)) = new_node.author_id().and_then(crate::embedded)
+        {
+            self.adapter
+                .emit_object_event(new_node.id(), ObjectEvent::Embedded { bus, path });
+        }
         let filter_old = filter(old_node);
         let filter_new = filter(new_node);
         if filter_new != filter_old {
@@ -331,12 +340,15 @@ impl TreeChangeHandler for AdapterChangeHandler<'_> {
                 self.adapter.window_deactivated(&NodeWrapper(&root_window));
             }
         }
-        if let Some(node) = new_node {
+        // zgx patch: a node embedding another process's tree hands focus
+        // to it: the embedded tree says what is focused (`crate::EMBED`).
+        let embeds = |node: &Node| node.author_id().is_some_and(|id| id.starts_with(crate::EMBED));
+        if let Some(node) = new_node.filter(|node| !embeds(node)) {
             self.adapter
                 .emit_object_event(node.id(), ObjectEvent::StateChanged(State::Focused, true));
             self.emit_text_selection_change(None, node);
         }
-        if let Some(node) = old_node {
+        if let Some(node) = old_node.filter(|node| !embeds(node)) {
             self.adapter
                 .emit_object_event(node.id(), ObjectEvent::StateChanged(State::Focused, false));
         }

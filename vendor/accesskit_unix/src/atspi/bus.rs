@@ -129,6 +129,12 @@ impl Bus {
                 NodeAccessibleInterface::new(bus_name.clone(), node.clone()),
             )
             .await?;
+            // zgx patch: a node embedding another process's object from its
+            // first registration (the tree made as a reader arrives) asks it
+            // to take the node as its parent.
+            if let Ok(Some((bus, embedded))) = node.embedded() {
+                self.embed(&ObjectId::from(&node), &bus, &embedded).await?;
+            }
         }
         if new_interfaces.contains(Interface::Action) {
             self.register_interface(&path, ActionInterface::new(node.clone()))
@@ -248,6 +254,25 @@ impl Bus {
         )
     }
 
+    /// zgx patch: ask the object at `path` on `bus` (another process's
+    /// accessible root) to take `parent` as its parent, as an AT-SPI socket
+    /// asks the plug it embeds (`org.a11y.atspi.Socket.Embedded`, which takes
+    /// the caller for the parent's bus). Answered or not, nothing else waits.
+    async fn embed(&self, parent: &ObjectId, bus: &str, path: &str) -> Result<()> {
+        let parent = parent.path();
+        let _ = self
+            .conn
+            .call_method(
+                Some(bus),
+                path,
+                Some("org.a11y.atspi.Socket"),
+                "Embedded",
+                &(parent.as_str(),),
+            )
+            .await;
+        Ok(())
+    }
+
     pub(crate) async fn emit_object_event(
         &self,
         adapter_id: usize,
@@ -261,6 +286,10 @@ impl Bus {
             },
             NodeIdOrRoot::Root => ObjectId::Root,
         };
+        // zgx patch: no signal, a call to the embedded object.
+        if let ObjectEvent::Embedded { bus, path } = &event {
+            return self.embed(&target, bus, path).await;
+        }
         let interface = "org.a11y.atspi.Event.Object";
         let signal = match event {
             ObjectEvent::ActiveDescendantChanged(_) => "ActiveDescendantChanged",
@@ -273,6 +302,7 @@ impl Bus {
             ObjectEvent::StateChanged(_, _) => "StateChanged",
             ObjectEvent::TextInserted { .. } | ObjectEvent::TextRemoved { .. } => "TextChanged",
             ObjectEvent::TextSelectionChanged => "TextSelectionChanged",
+            ObjectEvent::Embedded { .. } => unreachable!("answered above"),
         };
         match event {
             ObjectEvent::ActiveDescendantChanged(child) => {
@@ -387,6 +417,7 @@ impl Bus {
                 self.emit_event(target, interface, signal, EventBodyBorrowed::default())
                     .await
             }
+            ObjectEvent::Embedded { .. } => Ok(()),
         }
     }
 

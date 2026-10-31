@@ -60,6 +60,12 @@ pub enum ObjectEvent {
         content: String,
     },
     TextSelectionChanged,
+    /// zgx patch: the node embeds this object of another process anew
+    /// (`crate::EMBED`): it is asked to take the node as its parent.
+    Embedded {
+        bus: String,
+        path: String,
+    },
 }
 
 #[derive(Debug)]

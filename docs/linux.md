@@ -461,6 +461,15 @@ the navigation policy, new-window requests, profiles (named ones under
 `$XDG_DATA_HOME/<program>/web-profiles/<name>`), zoom, transparency and Web
 Inspector (a GTK window of its own) work as on macOS.
 
+The page's accessible tree, which WebKit serves from its web process, is
+the window's too: the page's box is an internal frame (as a browser's iframe
+is) whose child is the page's document, and the document's parent is the
+box, so a screen reader following focus into the page finds the window
+above it. Orca reads the page's focused field, and in browse mode its
+headings by its heading keys. GTK's own window for the page is no window
+to a reader (it takes the role of a filler), but GTK still announces it
+active as the page takes focus, which can make Orca miss a mode switch.
+
 Unlike macOS:
 
 - Each frame the page draws is copied twice on the CPU: read from the
@@ -470,7 +479,6 @@ Unlike macOS:
   `devicePixelRatio` is 1 at any scale.
 - The cursor is the page's for the CSS cursors with a name in the cursor
   theme; an image cursor (`cursor: url(...)`) shows as the arrow.
-- The page's accessibility tree is not part of the window's (AT-SPI).
 - A message posted to `window.webkit.messageHandlers.zgx` directly, rather
   than through `window.zgx`, has no origin (empty) and `main_frame` false.
 - On Wayland the clipboard bridge carries text: what the page copies reaches

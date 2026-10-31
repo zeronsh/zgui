@@ -13,7 +13,7 @@ pub type GCallback = unsafe extern "C" fn();
 pub type Ptr = *mut c_void;
 
 /// The libraries, by soname, in the order symbols are looked up.
-const LIBRARIES: [&str; 9] = [
+const LIBRARIES: [&str; 10] = [
     "libwebkit2gtk-4.1.so.0",
     "libjavascriptcoregtk-4.1.so.0",
     "libgtk-3.so.0",
@@ -23,6 +23,7 @@ const LIBRARIES: [&str; 9] = [
     "libgio-2.0.so.0",
     "libcairo.so.2",
     "libsoup-3.0.so.0",
+    "libatk-1.0.so.0",
 ];
 
 macro_rules! api {
@@ -103,6 +104,10 @@ api! {
     fn gtk_widget_get_allocated_width(Ptr) -> c_int;
     fn gtk_widget_get_allocated_height(Ptr) -> c_int;
     fn gtk_main_do_event(Ptr);
+    fn gtk_widget_get_accessible(Ptr) -> Ptr;
+    fn atk_socket_get_type() -> GType;
+    fn atk_object_set_role(Ptr, c_int);
+    fn g_type_check_instance_is_a(Ptr, GType) -> gboolean;
     fn gdk_error_trap_push();
     fn gdk_event_new(c_int) -> Ptr;
     fn gdk_event_free(Ptr);

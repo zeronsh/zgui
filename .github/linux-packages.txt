@@ -23,6 +23,7 @@ libxkbcommon-dev
 libxrandr-dev
 mesa-vulkan-drivers
 openbox
+orca
 picom
 pkg-config
 python3-gi

@@ -482,6 +482,18 @@ impl AccessibilityTree {
                 continue;
             }
             let mut n = Node::new(semantic_role(semantic));
+            // A page drawn as an image embeds its own accessible tree
+            // (another process's) as its last child: a frame holding a
+            // document, as a browser's iframe is.
+            // From the first projection: a role changed later stays as a
+            // reader first cached it.
+            #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+            if let Some(embedding) = crate::native_host::webkitgtk::embedding(id) {
+                n.set_role(accesskit::Role::Iframe);
+                if let Some(embedding) = embedding {
+                    n.set_author_id(embedding);
+                }
+            }
             // AccessKit Label content belongs in value; AT-SPI derives its
             // accessible name from value, rather than the control-label field.
             // A long field has none: its text is its runs, a page of it.
