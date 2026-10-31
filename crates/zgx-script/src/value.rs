@@ -180,7 +180,7 @@ impl Value {
             }
             Value::Element(_) => 64,
             // Its pixels: a pasted 4K screenshot is 33 MB.
-            Value::Image(image) => 64 + image.pixels().len(),
+            Value::Image(image) => 64 + image.bytes(),
             Value::Nil | Value::Bool(_) | Value::Num(_) => 0,
         }
     }

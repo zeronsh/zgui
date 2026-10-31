@@ -101,3 +101,55 @@ fn more_photos_than_the_budget_in_one_frame_draw_what_fits() {
         stats.image_bytes
     );
 }
+
+/// A script's picture keeps its file: nothing is decoded until it is
+/// drawn, the first frame goes without it (and says it waited), and once
+/// decoded off the main thread it draws at the size it is shown, its
+/// decoded copy ready to go.
+#[test]
+fn a_kept_file_draws_once_decoded_at_the_size_it_shows() {
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(400, 300, image::Rgba([230, 20, 20, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let picture = zgx_gpu::assets::decode_image_kept(Arc::from(png)).unwrap();
+    assert!(picture.keeps_file());
+    assert_eq!((picture.width(), picture.height()), (400, 300));
+    let mut scene = Scene::new(200., 200.);
+    scene.append(
+        scene.root(),
+        NodeKind::Image(picture.clone()),
+        Style {
+            width: Some(100.),
+            height: Some(75.),
+            ..Default::default()
+        },
+    );
+    let mut gpu = GpuRenderer::new(200, 200).unwrap();
+    let damage = scene.flush().damage;
+    gpu.render(&scene, &damage).unwrap();
+    // (`images_decoded` takes that the first frame waited for it.)
+    assert_eq!(gpu.debug_cache_stats().image_textures, 0);
+    let mut drawn = false;
+    for _ in 0..500 {
+        std::thread::sleep(std::time::Duration::from_millis(4));
+        // As the host does once told they are decoded: not otherwise, so a
+        // frame that patched only what changed would be caught.
+        if gpu.images_decoded() {
+            gpu.render(&scene, &[Rect::new(0., 0., 200., 200.)])
+                .unwrap();
+        }
+        if gpu.debug_cache_stats().image_textures == 1 {
+            drawn = true;
+            break;
+        }
+    }
+    assert!(drawn, "drawn once decoded");
+    assert_eq!(
+        gpu.debug_cache_stats().image_bytes,
+        100 * 75 * 4,
+        "at the size it shows"
+    );
+    assert!(gpu.take_images_uploaded(), "its decoded copy may go");
+    assert!(gpu.readback().unwrap()[(30 * 200 + 30) * 4] > 200);
+}

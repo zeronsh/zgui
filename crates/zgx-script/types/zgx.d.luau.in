@@ -1605,6 +1605,11 @@ export type Styles = {
 	object_position: { number }?,
 	fit: Fit?,
 	tint: Color?,
+	-- When its file decodes (HTML's `decoding`): "auto", where a picture up
+	-- to 256 by 256 decodes as it is first drawn and a larger one off the
+	-- main thread, showing a frame later; "sync" waits for it, any size;
+	-- "async" never waits.
+	decode: ("auto" | "sync" | "async")?,
 	-- An image drawn dithered as Zeron dithers wallpapers, in dots this many
 	-- points square: each lit to its colour's full value or dimmed to 8% by a
 	-- 4x4 Bayer threshold, on the GPU as it draws (it follows the image as it
@@ -1777,6 +1782,7 @@ export type StyleProps = {
 	object_position: Reactive<{ number }>?,
 	fit: Reactive<Fit>?,
 	tint: Reactive<Color>?,
+	decode: ("auto" | "sync" | "async")?,
 	dither: number?,
 	characters: number?,
 	cursor: Reactive<Cursor>?,
