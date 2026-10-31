@@ -45,7 +45,7 @@ zgx = { path = "../zgx", version = "0.1.6", default-features = false }
 # Linux and its kind always build (below).
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "wgsl"] }
 winit = "0.30.13"
-cosmic-text = { package = "zgx-cosmic-text", version = "0.19.5", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
+cosmic-text = { package = "zgx-cosmic-text", version = "0.19.6", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25.10", default-features = false }

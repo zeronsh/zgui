@@ -809,17 +809,26 @@ impl TextEditor {
         self.move_to(pos, extend);
     }
     /// Left (`left`) or right as the text shows it, which right-to-left
-    /// text runs the other way from its order: of the boundaries before and
-    /// after the caret, the nearest whose caret (`caret`) lies that way on
-    /// the same line; else the one its order says. A selection collapses to
-    /// its edge that way.
+    /// text runs the other way from its order: of the places before and
+    /// after the caret (`from`, where it shows), the nearest whose caret
+    /// (`caret`) lies that way on the same line; else on through the text
+    /// the way that goes in the line's direction. A selection collapses to its edge that way. Where runs meet, a
+    /// boundary has a place on each side (its affinities), and each is a
+    /// stop: after a number ending a right-to-left run, as well as after the
+    /// run. The place it goes, to draw the caret there.
     pub fn move_visually(
         &mut self,
         word: bool,
         extend: bool,
         left: bool,
-        caret: impl Fn(usize) -> crate::scene::Rect,
-    ) {
+        from: crate::text_layout::TextPosition,
+        caret: impl Fn(crate::text_layout::TextPosition) -> crate::scene::Rect,
+    ) -> crate::text_layout::TextPosition {
+        use crate::text_layout::{TextAffinity, TextPosition};
+        let at = |byte_offset| TextPosition {
+            byte_offset,
+            affinity: TextAffinity::After,
+        };
         let toward = |from: f32, to: f32| {
             if left {
                 to < from - 0.5
@@ -829,20 +838,27 @@ impl TextEditor {
         };
         if !extend && !self.selection.is_empty() {
             let range = self.selection.range();
-            let (start, end) = (caret(range.start).x, caret(range.end).x);
+            let (start, end) = (caret(at(range.start)).x, caret(at(range.end)).x);
             let pos = if toward(end, start) || (start == end && left) {
                 range.start
             } else {
                 range.end
             };
-            return self.move_to(pos, false);
+            self.move_to(pos, false);
+            return at(pos);
         }
         let focus = self.selection.focus;
-        let here = caret(focus);
+        let from = if from.byte_offset == focus {
+            from
+        } else {
+            at(focus)
+        };
+        let here = caret(from);
         // Every caret place on its line (a grapheme's edges, or a word's),
         // and the nearest past it the way it goes: the order the text
         // shows, as AppKit's text views move, not its logical neighbours
         // (which, where its direction changes, can lie back where it was).
+        // Of two places at one spot, the one logically nearer.
         let line = self.text.line_around(focus);
         let (base, text) = (line.start, self.text.slice(line.clone()));
         let places: Vec<usize> = if word {
@@ -856,21 +872,73 @@ impl TextEditor {
                 .chain([line.end])
                 .collect()
         };
-        let pick = places
+        let row: Vec<(TextPosition, crate::scene::Rect)> = places
             .into_iter()
-            .filter(|p| *p != focus)
+            .flat_map(|byte_offset| {
+                // A line's start has no side before it, its end none after.
+                let sides: &[TextAffinity] = if byte_offset == line.start {
+                    &[TextAffinity::After]
+                } else if byte_offset == line.end {
+                    &[TextAffinity::Before]
+                } else {
+                    &[TextAffinity::After, TextAffinity::Before]
+                };
+                sides.iter().map(move |&affinity| TextPosition {
+                    byte_offset,
+                    affinity,
+                })
+            })
             .map(|p| (p, caret(p)))
-            .filter(|(_, r)| (r.y - here.y).abs() < 0.5 && toward(here.x, r.x))
-            .min_by(|a, b| (a.1.x - here.x).abs().total_cmp(&(b.1.x - here.x).abs()))
-            .map(|(p, _)| p);
+            .filter(|(_, r)| (r.y - here.y).abs() < 0.5)
+            .collect();
+        let pick = row
+            .iter()
+            .filter(|(_, r)| toward(here.x, r.x))
+            .min_by(|a, b| {
+                let far = |(p, r): &&(TextPosition, crate::scene::Rect)| {
+                    ((r.x - here.x).abs(), p.byte_offset.abs_diff(focus))
+                };
+                let (a, b) = (far(a), far(b));
+                a.0.total_cmp(&b.0).then(a.1.cmp(&b.1))
+            })
+            .map(|(p, _)| *p);
+        // None that way on its row: on to the row before or after it in the
+        // text, from the row's logical edge, the way the key goes in the
+        // row's direction (Right in a right-to-left row goes back); at the
+        // text's ends, nowhere.
         let pos = pick.unwrap_or_else(|| {
-            if left {
-                self.previous(word)
-            } else {
-                self.next(word)
+            let offsets = row.iter().map(|(p, _)| p.byte_offset).chain([focus]);
+            let (first, last) = (
+                offsets.clone().min().unwrap_or(focus),
+                offsets.max().unwrap_or(focus),
+            );
+            let rtl = caret(at(first)).x
+                > caret(TextPosition {
+                    byte_offset: last,
+                    affinity: TextAffinity::Before,
+                })
+                .x + 0.5;
+            let forward = left == rtl;
+            let edge = if forward { last } else { first };
+            if (forward && edge >= self.text.len()) || (!forward && edge == 0) {
+                return from;
             }
+            let held = self.selection.focus;
+            self.selection.focus = edge;
+            let on = if forward {
+                self.next(word)
+            } else {
+                self.previous(word)
+            };
+            self.selection.focus = held;
+            at(on)
         });
-        self.move_to(pos, extend);
+        self.move_to(pos.byte_offset, extend);
+        if self.selection.focus == pos.byte_offset {
+            pos
+        } else {
+            at(self.selection.focus)
+        }
     }
     /// Move the caret to the start of its line, just after the line break
     /// before it. `extend` moves only the focus.

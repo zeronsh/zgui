@@ -156,6 +156,29 @@ python3 scripts/platform_smoke.py target/debug/examples/gallery \
 
 The script requires Xvfb, Openbox, xdotool, Weston, weston-screenshooter and Python Pillow. It writes screenshots, compositor logs and `results.json`; the Wayland screenshot check rejects an absent gallery surface. X11 checks assert actual native window dimensions and the model's final logical viewport, so merely issuing a resize command cannot pass validation.
 
+## Text in every script
+
+Real text, shaped in each system's own fonts, as an editor shows, walks, selects and deletes it. [`text_scripts.rs`](../crates/zgx-gpu/tests/text_scripts.rs) runs in every platform's CI job, beside `editor_selection.rs`. The [probe](platform-validation/text-scripts/app.luau) is the same text in a real window (`zgx-run --inspect`), its marks row selected with `zgx inspect drag`. The captures are below.
+
+| Check | macOS 26 (Apple silicon) | Linux (Xvfb, llvmpipe) | Windows 11 (WING-PC) |
+| --- | --- | --- | --- |
+| ZWJ, flag, tag-flag, keycap and skin-tone emoji: one glyph each | Pass (Apple Color Emoji) | Pass with Noto Color Emoji; a box per code point without an emoji font | Pass (Segoe UI Emoji); the keycap only since this change, as it drew in black from Segoe UI before (a control without the fix fails the test on that font). Country and England's flags draw as letters and a black flag, as in Windows' own apps: Segoe UI Emoji has no flags |
+| The same emoji: a click never puts the caret inside one; the arrows, Shift+arrow, Backspace and Delete take each whole; side-by-side flags stay apart | Pass | Pass | Pass |
+| A click in mixed-direction text (Hebrew, Arabic, numbers inside them, brackets) puts the caret at the nearest place a caret can be | Pass | Pass | Pass |
+| The arrows walk that text in the order it shows, stopping at every place, including after a number that ends a right-to-left run (fixed in this change) | Pass | Pass | Pass |
+| A selection in that text is one logical range; its pieces never overlap and are as wide as the characters they hold | Pass | Pass | Pass |
+| Combining marks (decomposed Latin, Vietnamese, Hebrew points, Devanagari, Thai): the caret stops only between graphemes; a word selects in one rounded piece, its marks inside | Pass, in the window too | Pass, in the window too | Pass; the window's selection wasn't captured (a system notification held the foreground) |
+| Backspace after a mark: the platform's rule (macOS: an accent with its letter, one mark at a time in Hebrew to Thai; elsewhere one code point, emoji whole); Delete takes the grapheme | Pass | Pass | Pass |
+| Chinese and Japanese: no line starts with closing punctuation, small kana, `々` or `ー`, and none ends with opening punctuation, from 5 em wide | Pass, in the window too | Pass with Noto Sans CJK, in the window too | Pass, in the window too. On an English Windows, kanji beside kana draw in Microsoft YaHei UI, the kana in Yu Gothic: Han fallback follows the system's locale, not the text (a follow-up) |
+
+The fonts are the systems' own: Apple's on macOS, and Windows' on WING-PC. Linux has whatever its distribution installs: CI's runner has DejaVu and Droid Sans Fallback, with no color emoji font. The Linux window above used Ubuntu 24.04's Noto Color Emoji, Noto Sans CJK and Noto Sans (Hebrew, Arabic, Devanagari, Thai), loaded from a private `XDG_DATA_HOME`. The same tests also pass with DejaVu alone, where emoji and CJK draw as boxes.
+
+Narrower than 5 em, a run that may not break (a closing mark, an opening quote and the characters held to them) can be wider than the line. The line then breaks inside it, as text that can't fit must, and a `“` can end it.
+
+[macOS](platform-validation/text-scripts/macos.png) · [Linux](platform-validation/text-scripts/linux.png) · [Windows](platform-validation/text-scripts/windows.png) (WING-PC's `PrintWindow` capture, as `zgx inspect snapshot` captures only macOS windows; the marks row unselected).
+
+Autocorrect and smart punctuation (`View::autocorrect`, `smart_punctuation`) go through macOS's `NSSpellChecker`. Windows' spelling service (`ISpellChecker`, en-US) has no corrections of its own, giving no replacement for "teh" on WING-PC, and no smart quotes or dashes, so both options change nothing on Windows and Linux.
+
 ## Unverified platform behavior
 
 Real macOS windows, Metal presentation, the native clipboard (Unicode exchange with TextEdit), dead-key composition and the accessibility tree and actions are observed on an Apple M5 Max in the [Mac continuation packet](platform-validation/macos-continuation/README.md), and the macOS suite records hardware-GPU throughput and energy (`docs/results/suite-macos-*`: GPU Mcycles per second, GPU system watts). Still unvalidated: macOS candidate (Pinyin) input and a complete VoiceOver usability audit. Transparent-window composition is checked on X11, Wayland and macOS ([below](#native-macos-transparent-window-composition)). Native X11 alpha composition now passes under the owned picom setup recorded below. A private live Linux AT-SPI client now validates text, actions, state changes and accessibility reactivation. Orca end-user usability remains unvalidated; bus-client checks do not establish the complete screen-reader experience. Native IBus/libpinyin composition, cancellation, focus changes and candidate placement now pass on X11, and Wayland text-input-v3 composition passes a paced Sway/Fcitx5 smoke and a burst one ([below](#real-wayland-input-method-composition)). macOS candidate input is unvalidated.
