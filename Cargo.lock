@@ -5229,6 +5229,7 @@ dependencies = [
  "zgx",
  "zgx-cosmic-text",
  "zgx-harfrust",
+ "zgx-zune-jpeg",
 ]
 
 [[package]]
@@ -5317,6 +5318,13 @@ dependencies = [
 [[package]]
 name = "zgx-workload"
 version = "0.1.0"
+
+[[package]]
+name = "zgx-zune-jpeg"
+version = "0.5.15"
+dependencies = [
+ "zune-core",
+]
 
 [[package]]
 name = "zlib-rs"

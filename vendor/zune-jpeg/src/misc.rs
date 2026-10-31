@@ -246,8 +246,11 @@ pub(crate) fn setup_component_params<T: ZByteReaderTrait>(
         component.y = y;
         component.quantization_table = qt_table;
         // initially stride contains its horizontal sub-sampling
-        component.width_stride *= img.mcu_x * 8;
+        // zgx: in pixels, so a block is `scale_block` wide, not 8 (see `set_scale`).
+        component.width_stride *= img.mcu_x * img.scale_block;
     }
+    // zgx: then the pixel block of each (see `set_scale`).
+    setup_component_blocks(img);
     {
         // Sampling factors are one thing that suck
         // this fixes a specific problem with images like
@@ -346,6 +349,40 @@ pub(crate) fn setup_component_params<T: ZByteReaderTrait>(
     Ok(())
 }
 
+/// zgx: the pixel block each component's 8x8 coefficients become (see
+/// `JpegDecoder::set_scale`), and its size in its own samples.
+fn setup_component_blocks<T: ZByteReaderTrait>(img: &mut JpegDecoder<T>) {
+    let (img_width, img_height) = (img.width(), img.height());
+    // Scaled, a subsampled component is made at the image's scaled size by a
+    // larger reduced IDCT (2/8 instead of 1/8, say), as libjpeg does, when that block
+    // is one of its sizes (8, 4, 2 or 1 a side): it is then never up-sampled,
+    // and its chroma is as sharp as the full decode's. A horizontal ratio too
+    // large for the scale (4:1:1 at 1/2) takes the full 8 and up-samples the
+    // rest; a vertical one keeps `scale_block` and up-samples the rest. Both
+    // are up-sampled generically (see `set_upsampling`), as the full decode
+    // does those ratios. Unscaled, the block is 8x8.
+    for component in &mut img.components {
+        let b = img.scale_block;
+        let (mut block_w, mut block_h) = (b, b);
+        if b != 8 && img.h_max % component.horizontal_sample == 0 {
+            block_w = (b * (img.h_max / component.horizontal_sample)).min(8);
+        }
+        if b != 8 && img.v_max % component.vertical_sample == 0 {
+            let h = b * (img.v_max / component.vertical_sample);
+            if matches!(h, 1 | 2 | 4 | 8) {
+                block_h = h;
+            }
+        }
+        component.width_stride = component.width_stride / b * block_w;
+        component.block_w = block_w;
+        component.block_h = block_h;
+        component.full_w =
+            (usize::from(img_width) * component.horizontal_sample).div_ceil(img.h_max);
+        component.full_h =
+            (usize::from(img_height) * component.vertical_sample).div_ceil(img.v_max);
+    }
+}
+
 ///Calculate number of fill bytes added to the end of a JPEG image
 /// to fill the image
 ///
@@ -359,18 +396,21 @@ pub(crate) fn setup_component_params<T: ZByteReaderTrait>(
 ///
 /// # Returns
 /// The padded width, this is how long the width is for a particular image
-pub fn calculate_padded_width(actual_width: usize, sub_sample: SampleRatios) -> usize {
+///
+/// zgx: `block` is the side of a decoded pixel block, 8 unless scaled (see
+/// `JpegDecoder::set_scale`), and `actual_width` the scaled width.
+pub fn calculate_padded_width(actual_width: usize, sub_sample: SampleRatios, block: usize) -> usize {
     match sub_sample {
         SampleRatios::None | SampleRatios::V => {
             // None+V sends one MCU row, so that's a simple calculation
-            ((actual_width + 7) / 8) * 8
+            actual_width.div_ceil(block) * block
         }
         SampleRatios::H | SampleRatios::HV => {
             // sends two rows, width can be expanded by up to 15 more bytes
-            ((actual_width + 15) / 16) * 16
+            actual_width.div_ceil(2 * block) * (2 * block)
         }
         SampleRatios::Generic(h, _) => {
-            ((actual_width + ((h * 8).saturating_sub(1))) / (h * 8)) * (h * 8)
+            actual_width.div_ceil((h * block).max(1)) * (h * block)
         }
     }
 }

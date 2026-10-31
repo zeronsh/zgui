@@ -60,6 +60,13 @@ path = "src/lib.rs"
 version = "0.5.1"
 
 [dev-dependencies]
+# zgx: the unmodified crate, which a decode at full size must match byte for byte.
+upstream = { package = "zune-jpeg", version = "=0.5.15" }
+
+# zgx: DCT-scaled decoding against the full decode (fixtures in tests/scaled/).
+[[test]]
+name = "scaled"
+path = "tests/scaled.rs"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

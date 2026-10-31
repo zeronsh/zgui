@@ -36,6 +36,8 @@ use crate::headers::parse_sos;
 use crate::marker::Marker;
 use crate::mcu::DCT_BLOCK;
 use crate::misc::{calculate_padded_width, setup_component_params};
+// zgx: reduced IDCTs for a scaled decode (see `set_scale`).
+use crate::idct::scalar::idct_scaled_at;
 
 impl<T: ZByteReaderTrait> JpegDecoder<T> {
     /// Decode a progressive image
@@ -258,7 +260,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                         // handle EOB runs here.
                         stream.eob_run -= 1;
                     } else {
-                        let start = 64 * (j + i * (self.components[k].width_stride / 8));
+                        // zgx: blocks per row, `block_w` pixels each (see `set_scale`).
+                        let start = 64 * (j + i * (self.components[k].width_stride / self.components[k].block_w));
 
                         let data: &mut [i16; 64] = buffer
                             .get_mut(k)
@@ -394,7 +397,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                             for h_samp in 0..component.horizontal_sample {
                                 let x2 = j * component.horizontal_sample + h_samp;
                                 let y2 = i * component.vertical_sample + v_samp;
-                                let position = 64 * (x2 + y2 * component.width_stride / 8);
+                                // zgx: blocks per row, `block_w` pixels each.
+                                let position = 64 * (x2 + y2 * component.width_stride / component.block_w);
                                 let buf_n = &mut buffer[n];
 
                                 let Some(data) = &mut buf_n.get_mut(position) else {
@@ -503,8 +507,9 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         // Size of our output image(width*height)
         let is_hv = usize::from(self.is_interleaved);
         let upsampler_scratch_size = is_hv * self.components[0].width_stride;
-        let width = usize::from(self.info.width);
-        let padded_width = calculate_padded_width(width, self.info.sample_ratio);
+        // zgx: rows of pixels are the scaled size (see `set_scale`).
+        let width = self.out_width();
+        let padded_width = calculate_padded_width(width, self.info.sample_ratio, self.scale_block);
 
         let mut upsampler_scratch_space = vec![0; upsampler_scratch_size];
         let mut tmp = [0_i32; DCT_BLOCK];
@@ -524,7 +529,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                 // allocate enough space to hold a whole MCU width
                 // this means we should take into account sampling ratios
                 // `*8` is because each MCU spans 8 widths.
-                let len = comp.width_stride * comp.vertical_sample * 8;
+                // zgx: `block_h` rows when scaled.
+                let len = comp.width_stride * comp.vertical_sample * comp.block_h;
 
                 comp.needed = true;
                 comp.raw_coeff = vec![0; len];
@@ -562,14 +568,18 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                 // To figure out how many pixels we iterate by we use effective pixels
                 // Given to us by component.x
                 // iterate per effective pixels.
-                let mcu_x = component.width_stride / 8;
+                // zgx: blocks per row, `block_w` by `block_h` pixels each.
+                let (block_w, block_h) = (component.block_w, component.block_h);
+                let mcu_x = component.width_stride / block_w;
 
                 // iterate per every vertical sample.
                 for k in 0..component.vertical_sample {
                     for j in 0..mcu_x {
                         // after writing a single stride, we need to skip 8 rows.
                         // This does the row calculation
-                        let width_stride = k * 8 * component.width_stride;
+                        // zgx: a row of `mcu_x` blocks of 64 coefficients
+                        // (`8 * width_stride` unscaled).
+                        let width_stride = k * mcu_x * 64;
                         let start = j * 64 + width_stride;
 
                         // See https://github.com/etemesi254/zune-image/issues/262 sample 3.
@@ -587,9 +597,17 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                         // determine where to write.
                         let sl = &mut temp_channel[component.idct_pos..];
 
-                        component.idct_pos += 8;
-                        // tmp now contains a dequantized block so idct it
-                        (self.idct_func)(&mut tmp, sl, component.width_stride);
+                        // zgx: blocks are `block_w` pixels apart, and a scaled
+                        // decode takes the reduced IDCT (see `set_scale`).
+                        component.idct_pos += block_w;
+                        if (block_w, block_h) == (8, 8) {
+                            // tmp now contains a dequantized block so idct it
+                            (self.idct_func)(&mut tmp, sl, component.width_stride);
+                        } else {
+                            let by = i * component.vertical_sample + k;
+                            let (w, h, stride) = (component.full_w, component.full_h, component.width_stride);
+                            idct_scaled_at(block_w, block_h, j, by, w, h, &mut tmp, sl, stride);
+                        }
                     }
                     // after every write of 8, skip 7 since idct write stride wise 8 times.
                     //
@@ -597,7 +615,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                     // sl
                     //
                     // and component.idct_pos is one stride long
-                    component.idct_pos += 7 * component.width_stride;
+                    // zgx: `block_h - 1` when scaled.
+                    component.idct_pos += (block_h - 1) * component.width_stride;
                 }
                 component.idct_pos = 0;
             }
@@ -632,7 +651,12 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         self.info.sample_ratio = SampleRatios::None;
         self.is_interleaved = false;
         self.components[0].vertical_sample = 1;
-        self.components[0].width_stride = (((self.info.width as usize) + 7) / 8) * 8;
+        // zgx: in pixels, `scale_block` per block (see `set_scale`).
+        self.components[0].width_stride = (((self.info.width as usize) + 7) / 8) * self.scale_block;
+        self.components[0].block_w = self.scale_block;
+        self.components[0].block_h = self.scale_block;
+        self.components[0].full_w = usize::from(self.info.width);
+        self.components[0].full_h = usize::from(self.info.height);
         self.components[0].horizontal_sample = 1;
     }
 }

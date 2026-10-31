@@ -92,6 +92,14 @@ don't is tried once. Once the renderer has them as a texture they go, 1.5 s afte
 last upload (`zgx::image::release_decoded`), whether or not the window keeps
 animating. Drawn larger later, it decodes again at the new size.
 
+A JPEG is never decoded larger than it is drawn: it decodes at 1/2, 1/4 or 1/8
+of its size, the smallest that still covers it (`ImageData::kept_scaled`; the
+DCT scaled, in zgx's fork of zune-jpeg, `vendor/zune-jpeg/ZGX_PATCH.md`), each
+pixel the mean of those it stands for. Shrunk from there to the size drawn, it
+is the picture decoding it whole and shrinking would give, near enough: on the
+photo page below, a mean difference under 0.25 of a level a channel, 47.8 dB
+at worst. A PNG decodes whole, as it has no smaller form.
+
 The image cache's budget (`ScriptHost::image_cache`) counts these files'
 bytes, and `zgx inspect memory` shows what is decoded at the moment as
 `images decoded pixels held`. Code that borrows `ImageData::pixels` gets all
@@ -99,7 +107,10 @@ of them, decoded once and kept for the image's life; renderers ask for
 `ImageData::pixels_at` instead.
 
 On a page of eight 4000 by 3000 photos as 300 by 420 cards (macOS, 2x), the
-process footprint went from 662 MB to 294 MB.
+process footprint went from 662 MB to 294 MB. Decoding them at half their size
+(each drawn at 1120 by 840) took each decode's peak from 91.6 MiB to 18.6 MiB
+and its time from 47 ms to 22 ms, and the process's peak from about 490 MB to
+330 MB.
 
 The threshold is from a page of 48 PNG icons drawn at 32 points (release,
 this Mac, the median of two runs; "complete" is when the last one is drawn):
