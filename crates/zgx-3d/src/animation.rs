@@ -141,8 +141,26 @@ pub struct Placed {
     pub(crate) nodes: Vec<Option<ObjectId>>,
     /// Each node's meshes, by node index.
     pub(crate) meshes: Vec<Vec<ObjectId>>,
+    /// Its lights (`KHR_lights_punctual`), each following its node.
+    pub(crate) lights: Vec<crate::LightId>,
+    /// Its cameras, with the nodes holding them, in the order placed.
+    pub(crate) cameras: Vec<(ObjectId, crate::gltf::ModelCamera)>,
 }
 impl Placed {
+    /// Its lights, each following its node: set, turn off or remove them as
+    /// any (`World::set_light`, `World::remove_light`).
+    pub fn lights(&self) -> &[crate::LightId] {
+        &self.lights
+    }
+    /// Its cameras where its nodes are now, in its scene's order, for
+    /// `World::set_camera` (one under a hidden node left out). A camera
+    /// looks along its node's −z, without its roll.
+    pub fn cameras(&self, world: &World) -> Vec<crate::Camera> {
+        let placed = |(node, camera): &(ObjectId, crate::gltf::ModelCamera)| {
+            Some(camera.placed(&world.world_matrix(*node)?))
+        };
+        self.cameras.iter().filter_map(placed).collect()
+    }
     /// Pose `clip` at `seconds` into it (held at its ends: loop by taking
     /// the time modulo its `duration`): the nodes its channels move take
     /// their values then. A frame is drawn only if something moved.

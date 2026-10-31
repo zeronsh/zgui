@@ -31,6 +31,11 @@ What a world takes beyond meshes and lights, each costing nothing until used:
   scales and turns a map on its mesh (`MapPlacement`), says how it repeats
   (`Wrap`) and which coordinates it reads (`Geometry::with_second_uvs`). glTF
   models bring theirs: `KHR_texture_transform`, samplers' wrapping, `TEXCOORD_1`.
+- **Lights that follow objects, and spots**: `World::set_light_parent(light, Some(id))`
+  carries a light with an object, and `World::set_spot(light, Some(Spot::new(direction,
+  inner, outer)))` makes a point light a spot. A frame shades with the eight point
+  lights nearest the camera's target. glTF models bring theirs (`KHR_lights_punctual`)
+  and their cameras (`Placed::cameras`).
 - **Vertex colours**: `Geometry::with_colors(colors)` colours a mesh at each
   vertex, multiplying its material and base colour map; glTF models bring
   theirs (`COLOR_0`).
