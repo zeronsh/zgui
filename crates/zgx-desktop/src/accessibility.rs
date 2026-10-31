@@ -300,6 +300,11 @@ impl AccessibilityTree {
         if !hidden.is_empty() {
             ordered.retain(|(id, _)| !hidden.iter().any(|h| scene.is_within(*id, *h)));
         }
+        // Inert content (a row playing its exit, gone from its data) is not
+        // there to act on: a reader doesn't offer it.
+        if scene.has_inert() {
+            ordered.retain(|(id, _)| scene.inert_around(*id).is_none());
+        }
         if bare_image {
             ordered.retain(|(id, s)| {
                 !(s.role == Role::Image
@@ -2319,6 +2324,48 @@ mod projection_key_tests {
                 .nodes
                 .is_empty()
         );
+    }
+
+    /// A row playing its exit (inert, gone from its data) is no control a
+    /// reader offers; the one staying is.
+    #[test]
+    fn inert_content_is_not_offered() {
+        let mut scene = Scene::new(400., 300.);
+        let list = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Column),
+            fixed(300., 200.),
+        );
+        let [leaving, staying] = ["Remove 1", "Remove 2"]
+            .map(|_| scene.append(list, NodeKind::Rect(Color(0, 0, 0, 255)), fixed(100., 20.)));
+        scene.prepare_layout();
+        let mut semantics = Semantics::new();
+        semantics.set(
+            list,
+            zgx::semantics::SemanticNode::new(Role::Group, "Photos"),
+        );
+        semantics.set(
+            leaving,
+            zgx::semantics::SemanticNode::new(Role::Button, "Remove 1"),
+        );
+        semantics.set(
+            staying,
+            zgx::semantics::SemanticNode::new(Role::Button, "Remove 2"),
+        );
+        let mut adapter = AccessibilityTree::new();
+        adapter.update(&scene, &semantics, None, "Test", 1.);
+        let (list_id, staying_id) = (adapter.ids[&list], adapter.ids[&staying]);
+        scene.set_inert(leaving, true);
+        let update = adapter.update(&scene, &semantics, None, "Test", 1.);
+        let children = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == list_id)
+            .expect("the list changed")
+            .1
+            .children()
+            .to_vec();
+        assert_eq!(children, [staying_id]);
     }
 
     #[test]

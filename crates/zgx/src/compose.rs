@@ -6746,6 +6746,21 @@ impl NodeHandle {
         }
         false
     }
+    /// The node is leaving (a row playing its exit, gone from the data it
+    /// showed): until it unmounts it takes no input. The pointer reaches
+    /// what is under it (`Scene::set_inert`), focus inside it moves to the
+    /// next control (`Input::leave_inert`), no key activates it and
+    /// assistive technology doesn't offer it.
+    pub fn leave(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if !ui.scene.borrow().contains(self.node) {
+            return;
+        }
+        ui.scene.borrow_mut().set_inert(self.node, true);
+        ui.input.leave_inert(&ui.scene);
+    }
     /// Clear keyboard focus when it is on the node or inside it.
     pub fn blur(&self) {
         let Some(ui) = self.ui.upgrade() else {
