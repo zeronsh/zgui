@@ -195,6 +195,24 @@ pub struct TextMark {
     pub color: Color,
 }
 
+/// A text node's shadow (CSS's `text-shadow`): its glyphs again, under
+/// them, moved by `offset` and painted in `color`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextShadow {
+    /// How far it is moved from the glyphs, in points.
+    pub offset: Transform,
+    /// The blur's Gaussian sigma, in points; 0 draws it sharp.
+    pub blur: f32,
+    /// Its colour.
+    pub color: Color,
+}
+impl TextShadow {
+    /// Where it can paint, for text whose glyphs paint in `ink`.
+    fn ink(&self, ink: Rect) -> Rect {
+        ink.translated(self.offset).expand(self.blur.max(0.) * 3.)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Selectable {
     /// `Scene::set_user_select`'s settings.
@@ -328,6 +346,118 @@ impl Scene {
         self.damage_text_rects(id, &changed);
         // Its layers repaint; its own retained glyphs stay as they are.
         self.invalidate(id, PAINTED);
+    }
+    /// Paint `shadows` under the glyphs of text node `id`, or of the text
+    /// inside node `id` (inherited, as CSS's: the nearest set wins), the
+    /// first on top; none: no more. Nothing is laid out; the next flush
+    /// repaints where they were and where they go (`damage_text_shadows`).
+    pub fn set_text_shadows(&mut self, id: NodeId, shadows: Option<std::sync::Arc<[TextShadow]>>) {
+        let shadows = shadows.filter(|shadows| !shadows.is_empty());
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.text_shadows.get(&id));
+        if !self.contains(id) || held == shadows.as_ref() {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match shadows {
+            Some(shadows) => maps.text_shadows.insert(id, shadows),
+            None => maps.text_shadows.remove(&id),
+        };
+        self.sync_cold(id);
+        self.invalidate(id, PAINTED);
+    }
+    /// Whether any node has text shadows.
+    #[inline(always)]
+    pub fn has_text_shadows(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.text_shadows.is_empty())
+    }
+    pub(super) fn has_own_text_shadows(&self, id: NodeId) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| cold.text_shadows.contains_key(&id))
+    }
+    /// Whether a shadow was shown last flush.
+    #[inline(always)]
+    pub(super) fn text_shadows_shown(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.shadows_shown.is_empty())
+    }
+    /// Text node `id`'s shadows, its own or the nearest set around it, the
+    /// first on top; empty for none.
+    pub fn text_shadows(&self, id: NodeId) -> &[TextShadow] {
+        let Some(cold) = self
+            .cold
+            .as_ref()
+            .filter(|cold| !cold.text_shadows.is_empty())
+        else {
+            return &[];
+        };
+        if !self.contains(id) {
+            return &[];
+        }
+        std::iter::once(id)
+            .chain(self.ancestors(id))
+            .find_map(|node| cold.text_shadows.get(&node))
+            .map_or(&[], |shadows| shadows)
+    }
+    /// Where each shadowed text's shadows show now, against where they
+    /// showed last flush: both are damage where they differ. Only scenes
+    /// with shadows ask, so the text damage paths stay as they were.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn damage_text_shadows(&mut self) {
+        let mut texts = Vec::new();
+        let owners: Vec<NodeId> = self
+            .cold
+            .as_ref()
+            .map(|cold| cold.text_shadows.keys().copied().collect())
+            .unwrap_or_default();
+        for node in owners {
+            if !self.contains(node) {
+                continue;
+            }
+            let mut stack = vec![node];
+            while let Some(id) = stack.pop() {
+                match self.node(id).kind {
+                    NodeKind::Text { .. } | NodeKind::RichText { .. } => texts.push(id),
+                    _ => stack.extend(self.children(id).iter().copied()),
+                }
+            }
+        }
+        let mut now = super::NodeMap::default();
+        for text in texts {
+            let shadows = self.text_shadows(text);
+            if shadows.is_empty() || !self.shown(text) {
+                continue;
+            }
+            let bounds = self.world_bounds(text);
+            let reach = shadows
+                .iter()
+                .fold(bounds, |all, shadow| all.union(shadow.ink(bounds)));
+            now.insert(text, self.window_rect(text, reach));
+        }
+        let maps = self.cold.get_or_insert_default();
+        let was = std::mem::take(&mut maps.shadows_shown);
+        let changed: Vec<Rect> = was
+            .iter()
+            .filter(|(text, rect)| now.get(*text) != Some(*rect))
+            .chain(
+                now.iter()
+                    .filter(|(text, rect)| was.get(*text) != Some(*rect)),
+            )
+            .map(|(_, rect)| *rect)
+            .collect();
+        // `add_damage`'s body here, not a call: one more caller changes how
+        // it inlines into the hot paths that call it.
+        for rect in changed {
+            self.add_damage_as::<false>(rect);
+        }
+        self.cold.get_or_insert_default().shadows_shown = now;
     }
     /// The selection highlight shown on text node `id`, if any.
     pub fn text_highlight(&self, id: NodeId) -> Option<&TextHighlight> {

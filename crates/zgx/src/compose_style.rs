@@ -1953,6 +1953,7 @@ fn apply_rare(
             // (links, icons) looks again.
             ui.text_geometry_moved();
         }
+        scene.set_text_shadows(node, cold.and_then(|cold| cold.text_shadows.clone()));
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

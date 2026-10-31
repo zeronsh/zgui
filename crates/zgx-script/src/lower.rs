@@ -6989,6 +6989,17 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
             })
         }
         (Shadow, Lit::Shadows(shadows)) => s.shadows(shadows.clone()),
+        // The box shadow's form: its blur, halved as CSS's is; no spread.
+        (TextShadow, Lit::Shadows(shadows)) => s.text_shadows(
+            shadows
+                .iter()
+                .map(|shadow| zgx::scene::TextShadow {
+                    offset: shadow.offset,
+                    blur: shadow.blur_radius,
+                    color: shadow.color,
+                })
+                .collect::<Vec<_>>(),
+        ),
         (InsetShadow, Lit::Shadows(shadows)) => s.inset_shadows(shadows.clone()),
         (Opacity, Lit::Num(v)) => s.opacity(v.clamp(0., 1.)),
         (Blur, Lit::Num(v)) => s.filter_blur(v.max(0.)),
