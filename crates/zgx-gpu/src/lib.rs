@@ -13684,7 +13684,7 @@ fn polyline_source() -> String {
 /// Windows: FXC's optimizer recursed on area.wgsl until it overflowed any
 /// stack, which crashed an app at its first canvas stroke. A canvas holding
 /// an area rasterizes there, as one too dense for a quad does.
-const AREAS_ON_GPU: bool = !cfg!(windows);
+const AREAS_ON_GPU: bool = true;
 /// The polyline strokes' pipeline: into the retained target, with
 /// `drawable` also into that in the same pass (`fs_polyline_both`), or into
 /// it `alone` (`Deferred::direct`).

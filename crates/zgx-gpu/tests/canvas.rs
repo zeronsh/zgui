@@ -582,7 +582,7 @@ fn filled_areas_draw_as_quads_and_look_as_their_raster_does() {
         let (quads, drawn) = render(false, None);
         let (rasters, reference) = render(true, None);
         // On Windows areas rasterize: FXC can't compile area.wgsl.
-        let as_quads = if cfg!(windows) { 1 } else { 0 };
+        let as_quads = 0;
         assert_eq!(quads.canvas_rasterizations, as_quads, "drawn as quads");
         assert_eq!(rasters.canvas_rasterizations, 1);
         let back: &[(f32, f32)] = &[(10., 10.), (40., 20.), (20., 30.), (30., 5.)];
