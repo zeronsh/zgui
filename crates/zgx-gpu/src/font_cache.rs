@@ -56,6 +56,46 @@ fn platform_families(fonts: &mut FontSystem) {
             db.set_serif_family(serif);
         }
     }
+    // cosmic-text's monospace is Noto Sans Mono, which few Linux systems
+    // install: monospaced text then took any fixed-width face, and on one
+    // with DejaVu that was DejaVu Sans Mono Oblique, slanting every code
+    // block. A family with an upright face is taken instead, a common one
+    // first.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let db = fonts.db_mut();
+        let upright = |name: &str| {
+            db.faces().any(|face| {
+                face.style == Style::Normal
+                    && face.families.iter().any(|(family, _)| family == name)
+            })
+        };
+        if !upright(db.family_name(&fontdb::Family::Monospace)) {
+            let common = [
+                "DejaVu Sans Mono",
+                "Liberation Mono",
+                "Ubuntu Mono",
+                "Cascadia Mono",
+                "Source Code Pro",
+                "Hack",
+                "Fira Mono",
+                "Noto Mono",
+            ];
+            let mono = common
+                .into_iter()
+                .find(|name| upright(name))
+                .map(str::to_owned)
+                .or_else(|| {
+                    db.faces()
+                        .find(|face| face.monospaced && face.style == Style::Normal)
+                        .and_then(|face| face.families.first())
+                        .map(|(family, _)| family.clone())
+                });
+            if let Some(mono) = mono {
+                db.set_monospace_family(mono);
+            }
+        }
+    }
     // The desktop's interface face, as GTK and Qt apps take it, where the
     // host learned one; cosmic-text's Open Sans is seldom installed, and
     // its stand-in rarely the desktop's.
