@@ -226,8 +226,12 @@ fn byte_offset(text: &str, units: usize) -> usize {
 #[cfg(target_os = "linux")]
 use crate::linux_spelling as spelling;
 
-/// macOS's security-scoped bookmarks: a folder the user picked reached on a
-/// later launch, sandboxed or not, wherever it was moved or renamed.
+/// macOS's bookmarks: a folder the user picked reached on a later launch,
+/// wherever it was moved or renamed. Security-scoped in the sandbox, which
+/// needs the scope to reach it; plain outside, as a security-scoped one
+/// resolves only under the code-signing identifier that made it, and an
+/// unbundled app's changes with its build (zgx-run's is cargo's metadata
+/// hash: an upgrade would forget every folder).
 #[cfg(target_os = "macos")]
 mod bookmarks {
     use objc2::{rc::Retained, runtime::Bool};
@@ -243,12 +247,19 @@ mod bookmarks {
         static OPEN: RefCell<Vec<(PathBuf, Retained<NSURL>)>> = const { RefCell::new(Vec::new()) };
     }
 
+    /// Whether the app runs in the sandbox (its container named).
+    fn sandboxed() -> bool {
+        std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+    }
+
     pub(super) fn make(folder: &Path) -> Option<Vec<u8>> {
         let url = NSURL::fileURLWithPath(&NSString::from_str(folder.to_str()?));
+        let options = match sandboxed() {
+            true => NSURLBookmarkCreationOptions::WithSecurityScope,
+            false => NSURLBookmarkCreationOptions(0),
+        };
         url.bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(
-            NSURLBookmarkCreationOptions::WithSecurityScope,
-            None,
-            None,
+            options, None, None,
         )
         .ok()
         .map(|data| data.to_vec())
@@ -256,16 +267,24 @@ mod bookmarks {
     pub(super) fn resolve(grant: &[u8]) -> Option<ResolvedFolder> {
         let data = NSData::with_bytes(grant);
         let mut stale = Bool::NO;
-        // SAFETY: `stale` points at a BOOL that outlives the call.
-        let url = unsafe {
-            NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
-                &data,
-                NSURLBookmarkResolutionOptions::WithSecurityScope,
-                None,
-                &mut stale,
-            )
-        }
-        .ok()?;
+        // The kind this app makes first, then the other: a grant kept
+        // before a move into or out of the sandbox.
+        let scoped = NSURLBookmarkResolutionOptions::WithSecurityScope;
+        let plain = NSURLBookmarkResolutionOptions(0);
+        let order = match sandboxed() {
+            true => [scoped, plain],
+            false => [plain, scoped],
+        };
+        let (url, kind) = order.into_iter().find_map(|options| {
+            // SAFETY: `stale` points at a BOOL that outlives the call.
+            unsafe {
+                NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
+                    &data, options, None, &mut stale,
+                )
+            }
+            .ok()
+            .map(|url| (url, options))
+        })?;
         let path = PathBuf::from(url.path()?.to_string());
         if !path.is_dir() {
             return None;
@@ -275,8 +294,10 @@ mod bookmarks {
         if unsafe { url.startAccessingSecurityScopedResource() } {
             OPEN.with_borrow_mut(|open| open.push((path.clone(), url)));
         }
+        // Stale (moved), or of the kind this app no longer makes: kept anew.
+        let renew = stale.as_bool() || kind != order[0];
         let folder = ResolvedFolder::new(path.clone());
-        Some(match stale.as_bool().then(|| make(&path)).flatten() {
+        Some(match renew.then(|| make(&path)).flatten() {
             Some(renewed) => folder.renewed(renewed),
             None => folder,
         })
@@ -294,6 +315,27 @@ mod bookmarks {
 
     #[cfg(test)]
     mod tests {
+        /// Outside the sandbox a grant is a plain bookmark: one any build
+        /// of the app resolves, not only the signer that made it.
+        #[test]
+        fn outside_the_sandbox_a_grant_is_a_plain_bookmark() {
+            use objc2_foundation::{NSData, NSURL, NSURLBookmarkResolutionOptions};
+            let dir = std::env::temp_dir().join(format!("zgx-plain-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let grant = super::make(&dir).expect("a bookmark");
+            let mut stale = objc2::runtime::Bool::NO;
+            // SAFETY: `stale` points at a BOOL that outlives the call.
+            let plain = unsafe {
+                NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
+                    &NSData::with_bytes(&grant),
+                    NSURLBookmarkResolutionOptions(0),
+                    None,
+                    &mut stale,
+                )
+            };
+            assert!(plain.is_ok(), "resolves without a security scope");
+            let _ = std::fs::remove_dir_all(dir);
+        }
         /// A bookmark finds its folder renamed, and says it went stale.
         #[test]
         fn a_bookmark_follows_its_folder_renamed() {
