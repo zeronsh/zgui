@@ -747,9 +747,13 @@ fn layer_texture_budget_rasterizes_coarser_and_recovers_after_removal() {
     scene.set_isolated(huge, true);
     let d = scene.flush().damage;
     gpu.render(&scene, &d).unwrap();
-    assert!(gpu.take_issues()[0].contains("64 MiB"));
+    let issues = gpu.take_issues();
+    assert!(
+        issues[0].contains("budget of isolated layers (64 MiB)"),
+        "{issues:?}"
+    );
     let bytes = gpu.debug_cache_stats().layer_bytes;
-    assert!(bytes > 0 && bytes <= 17 * 1024 * 1024, "{bytes}");
+    assert!(bytes > 0 && bytes <= 64 * 1024 * 1024, "{bytes}");
     scene.remove(huge);
     let d = scene.flush().damage;
     gpu.render(&scene, &d).unwrap();
@@ -6220,7 +6224,13 @@ fn layers_past_their_count_and_budget_all_draw() {
     gpu.render(&scene, &report.damage).unwrap();
     let issues = gpu.take_issues();
     assert!(issues.iter().any(|i| i.contains("1024")), "{issues:?}");
-    assert!(issues.iter().any(|i| i.contains("64 MiB")), "{issues:?}");
+    assert!(
+        issues.iter().any(
+            |i| i.contains("past the budget of isolated layers (64 MiB)")
+                && i.contains("MiB allocated")
+        ),
+        "{issues:?}"
+    );
     assert!(gpu.readback().unwrap()[(300 * 600 + 300) * 4 + 1] > 150);
 }
 
@@ -6470,4 +6480,49 @@ fn large_photos_in_small_cards_hold_their_cards_pixels() {
     scene.set_local_transform(first, LocalTransform::IDENTITY);
     let report = scene.flush();
     assert_eq!(gpu.render(&scene, &report.damage).unwrap().image_uploads, 0);
+}
+
+/// One layer as large as a 2x window (2880 by 1800, 20.7 MB) is drawn at
+/// its scale, not coarser: a layer has no room of its own past what the
+/// budget leaves (it had 16 MiB, and warned of the 64 MiB budget alone).
+#[test]
+fn a_window_sized_layer_draws_at_its_scale() {
+    let _gpu_fixture = gpu_fixture();
+    let mut gpu = GpuRenderer::new(2880, 1800).unwrap();
+    gpu.set_scale_factor(2.);
+    let mut scene = Scene::new(1440., 900.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let layer = scene.append(
+        scene.root(),
+        NodeKind::Rect(Color(200, 30, 30, 255)),
+        fixed(1440., 900.),
+    );
+    scene.set_isolated(layer, true);
+    scene.set_effects(
+        layer,
+        Effects {
+            opacity: 0.999,
+            ..Default::default()
+        },
+    );
+    let report = scene.flush();
+    gpu.render(&scene, &report.damage).unwrap();
+    assert_eq!(gpu.take_issues(), Vec::<String>::new());
+    // Its texture: 2882 by 1802 with its border, rounded up to 64s.
+    assert_eq!(gpu.debug_cache_stats().layer_bytes, 2944 * 1856 * 4);
+    // Each layer is listed: its node, its pixels, its scale.
+    let mut report = zgx::memory::Report::default();
+    gpu.memory(&mut report);
+    let line = report
+        .lines
+        .iter()
+        .find(|line| line.area == "gpu layer")
+        .expect("listed");
+    assert!(
+        line.name
+            .starts_with(&format!("@{} 2882x1802 px at 2.00x", layer.number())),
+        "{}",
+        line.name
+    );
+    assert_eq!(line.bytes, Some(2944 * 1856 * 4));
 }
