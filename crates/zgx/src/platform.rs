@@ -119,7 +119,9 @@ pub trait Platform {
     }
     /// The system's autocorrection for the word at `word` (a UTF-8 byte
     /// range of `text`, the rest its context), where the person has
-    /// spelling correction on. None corrects nothing.
+    /// spelling correction on (macOS's "Correct spelling automatically",
+    /// Windows' "Autocorrect misspelled words I type"). None corrects
+    /// nothing.
     fn correction(&self, text: &str, word: std::ops::Range<usize>) -> Option<String> {
         let _ = (text, word);
         None
