@@ -273,6 +273,8 @@ impl Session {
             #[cfg(windows)]
             escape_args: false,
         };
+        #[cfg(windows)]
+        restore_ctrl_c();
         let pty = tty::new(&pty_options, size.window_size(), 0)?;
         #[cfg(unix)]
         let (pid, controller) = (pty.child().id(), pty.file().try_clone()?.into());
@@ -408,6 +410,19 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.shared.send(Msg::Shutdown);
     }
+}
+
+/// Whether a process handles Ctrl+C is inherited on Windows: a parent that
+/// ignores it (`SetConsoleCtrlHandler(NULL, TRUE)`: an agent's shell, a
+/// service, some launchers) passes that on to the app and from the app to
+/// the shell it starts, where Ctrl+C then never interrupts a program. So the
+/// app handles Ctrl+C again before it starts one, as Windows' default is:
+/// with no console of its own (a windowed app), nothing else changes.
+#[cfg(windows)]
+fn restore_ctrl_c() {
+    // SAFETY: no handler, FALSE: restores the default handling of Ctrl+C
+    // for this process and the children it starts.
+    unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 0) };
 }
 
 /// The program and arguments for `command`, or for the login shell.

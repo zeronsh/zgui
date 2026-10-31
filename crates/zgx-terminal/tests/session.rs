@@ -250,6 +250,10 @@ fn a_windows_program_gets_input_and_resizes() {
 #[cfg(windows)]
 #[test]
 fn ctrl_c_reaches_a_windows_program() {
+    // As when an app starts from a parent ignoring Ctrl+C (an agent's
+    // shell): inherited, the shell would never get it.
+    // SAFETY: no handler, TRUE: this process ignores Ctrl+C.
+    unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1) };
     let mut run = Scripted::run("cmd.exe /d /c ping -t 127.0.0.1", 60, 6);
     run.until("ping running", |_, term| {
         rows(term).iter().any(|row| row.starts_with("Pinging"))
