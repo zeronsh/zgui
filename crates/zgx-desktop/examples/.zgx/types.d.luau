@@ -2161,6 +2161,11 @@ export type NodeProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: ("target" | "shown")?,
 	window_drag: boolean?,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -2518,6 +2523,11 @@ export type Props = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -2817,6 +2827,7 @@ export type Props_error = (string | Readable<string?> | (() -> string?))?
 export type Props_aria_hidden = boolean?
 export type Props_focus_group = ("vertical" | "horizontal" | "both")?
 export type Props_pointer_events = (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?
+export type Props_hit = ("target" | "shown")?
 export type Props_window_drag = boolean?
 export type Props_hook = (string | boolean)?
 export type Props_private = boolean?
@@ -3092,6 +3103,11 @@ export type ContainerProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -3449,6 +3465,11 @@ export type ScrollProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -3817,6 +3838,11 @@ export type TextProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -4173,6 +4199,11 @@ export type MarkdownViewProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -4585,6 +4616,11 @@ export type RichProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -4935,6 +4971,11 @@ export type ImageProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -5295,6 +5336,11 @@ export type SvgProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -5750,6 +5796,11 @@ export type Scene3DProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -6123,6 +6174,11 @@ export type CanvasProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -6505,6 +6561,11 @@ export type CheckboxProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -6865,6 +6926,11 @@ export type InputProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -7326,6 +7392,11 @@ export type ProgressProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -7677,6 +7748,11 @@ export type SliderProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -8043,6 +8119,11 @@ export type SegmentedProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -8405,6 +8486,11 @@ export type StepperProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -8768,6 +8854,11 @@ export type DisclosureProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -9128,6 +9219,11 @@ export type AccordionProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -9476,6 +9572,11 @@ export type SectionProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -9835,6 +9936,11 @@ export type SeparatorProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -10191,6 +10297,11 @@ export type TabsProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -10568,6 +10679,11 @@ export type TreeProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -10942,6 +11058,11 @@ export type DataGridProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -11312,6 +11433,11 @@ export type CalendarProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -11675,6 +11801,11 @@ export type DatePickerProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -12036,6 +12167,11 @@ export type TimeFieldProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -12396,6 +12532,11 @@ export type ComboboxProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -12764,6 +12905,11 @@ export type CommandPaletteProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -13120,6 +13266,11 @@ export type SelectProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -13483,6 +13634,11 @@ export type SplitProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -13851,6 +14007,11 @@ export type ListProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -14281,6 +14442,11 @@ export type LayerProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -14637,6 +14803,11 @@ export type ModalProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -15011,6 +15182,11 @@ export type PopoverProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -15391,6 +15567,11 @@ export type MenuItemProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -15750,6 +15931,11 @@ export type SubmenuProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -16112,6 +16298,11 @@ export type WebViewProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -16482,6 +16673,11 @@ export type TerminalProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -16833,6 +17029,11 @@ export type SlotProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -17230,6 +17431,11 @@ export type EachOptions = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -17596,6 +17802,11 @@ export type PresenceOptions = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the

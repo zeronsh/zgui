@@ -3517,8 +3517,13 @@ fn styled(
             };
         }
     }
-    if let Some(layout) = node.layout.as_ref().filter(|_| node.sizes_layout()) {
-        view = layout_box(view, layout, vm, low);
+    if let Some(layout) = &node.layout {
+        if layout.hit {
+            view = hit_at_target(view, node, vm, low);
+        }
+        if node.sizes_layout() {
+            view = layout_box(view, layout, vm, low);
+        }
     }
     view
 }
@@ -6782,6 +6787,89 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
 }
 
 /// The translation and local transform a node's literals set, if any.
+/// What moves a node or shows it: where `hit = "target"` takes hits from.
+const HIT_PROPS: &[Prop] = &[
+    Prop::X,
+    Prop::Y,
+    Prop::Scale,
+    Prop::ScaleX,
+    Prop::ScaleY,
+    Prop::Rotate,
+    Prop::Skew,
+    Prop::SkewX,
+    Prop::SkewY,
+    Prop::RotateX,
+    Prop::RotateY,
+    Prop::Perspective,
+    Prop::Origin,
+    Prop::Opacity,
+    Prop::Left,
+    Prop::Top,
+];
+/// `hit = "target"`: the node takes hits where its animations are taking
+/// it (`Scene::set_hit_target`), its translation, transform and opacity
+/// at their goals. A tween's or spring's goal is the state it follows; a
+/// layout animation's offset isn't the node's own, so its target is the
+/// place layout gave it.
+#[cold]
+#[inline(never)]
+fn hit_at_target(view: View, node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
+    let sources: Vec<(Prop, Source)> = node
+        .props
+        .iter()
+        .filter(|(prop, _)| HIT_PROPS.contains(prop))
+        .cloned()
+        .collect();
+    let (vm, runtime) = (vm.clone(), low.runtime.clone());
+    view.on_mount(move |handle| {
+        let target = handle.clone();
+        let effect = runtime.effect(move || {
+            let goals: Vec<(Prop, Lit)> = sources
+                .iter()
+                .filter_map(|(prop, source)| {
+                    let goal = match source {
+                        Source::Anim(spec) => {
+                            // A loop has no goal: it hits where it shows.
+                            let t = spec.source.as_ref()?.get().as_f64()? as f32;
+                            match (&spec.from, &spec.to) {
+                                (Some(a), Some(b)) => {
+                                    lerp(&lit(a, prop.ty())?, &lit(b, prop.ty())?, t)?
+                                }
+                                _ => Lit::Num(t),
+                            }
+                        }
+                        other => resolve(&resolve_owned(other), prop.ty(), None, &vm)?,
+                    };
+                    Some((*prop, goal))
+                })
+                .collect();
+            let (translate, local) = literal_transform(&goals);
+            let gone = goals.iter().any(|(prop, lit)| {
+                *prop == Prop::Opacity && matches!(lit, Lit::Num(o) if *o <= 0.)
+            });
+            let (x, y) = translate.unwrap_or_default();
+            let inset = [Prop::Left, Prop::Top].map(|side| {
+                goals
+                    .iter()
+                    .find_map(|(prop, lit)| match (*prop == side, lit) {
+                        (true, Lit::Num(v) | Lit::Len(zgx::layout::Length::Px(v))) => Some(*v),
+                        _ => None,
+                    })
+            });
+            let Some(scene) = target.scene() else { return };
+            scene.borrow_mut().set_hit_target(
+                target.node(),
+                Some(zgx::scene::HitTarget {
+                    translation: zgx::scene::Transform { x, y },
+                    local,
+                    gone,
+                    inset,
+                }),
+            );
+        });
+        handle.retain(effect);
+    })
+}
 fn literal_transform(
     lits: &[(Prop, Lit)],
 ) -> (Option<(f32, f32)>, Option<crate::transform::LocalTransform>) {

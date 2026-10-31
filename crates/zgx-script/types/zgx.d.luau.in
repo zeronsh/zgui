@@ -1959,6 +1959,11 @@ export type NodeProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: ("target" | "shown")?,
 	window_drag: boolean?,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the

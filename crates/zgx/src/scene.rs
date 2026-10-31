@@ -1834,6 +1834,48 @@ struct ColdMaps {
     text_shadows: NodeMap<Arc<[TextShadow]>>,
     /// Where each shadowed text's shadows showed last flush.
     shadows_shown: NodeMap<Rect>,
+    /// Where nodes take hits while they animate (`set_hit_target`).
+    hit_targets: NodeMap<HitTarget>,
+}
+/// Where a node takes hits while an animation moves it: the place it's
+/// going, not the place it shows (Core Animation's model layer against its
+/// presentation). Painting, scroll copies and inspection keep what shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HitTarget {
+    /// Its own translation there, in place of the one it shows at.
+    pub translation: Transform,
+    /// Its scale and rotation there, if they animate; `None` uses the
+    /// ones it shows at.
+    pub local: Option<LocalTransform>,
+    /// Going out (its opacity's goal is 0): it takes no hits.
+    pub gone: bool,
+    /// An absolute node's `left` and `top` there, in points, where they
+    /// animate: it takes hits that far from where layout places it now,
+    /// with no layout at its goal (nothing else moves with an absolute
+    /// node's insets).
+    pub inset: [Option<f32>; 2],
+}
+impl HitTarget {
+    /// Its own translation there, `node`'s insets laid out now made its
+    /// goal ones.
+    fn place(&self, node: &Node) -> Transform {
+        let mut own = self.translation;
+        if self.inset != [None, None]
+            && let Some(options) = node.style.layout_options.as_deref()
+        {
+            let now = |inset: Option<crate::layout::Length>| match inset {
+                Some(crate::layout::Length::Px(v)) => Some(v),
+                _ => None,
+            };
+            if let (Some(goal), Some(now)) = (self.inset[0], now(options.inset.left)) {
+                own.x += goal - now;
+            }
+            if let (Some(goal), Some(now)) = (self.inset[1], now(options.inset.top)) {
+                own.y += goal - now;
+            }
+        }
+        own
+    }
 }
 /// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
 #[derive(Clone, Copy)]
@@ -4601,10 +4643,21 @@ impl Scene {
     /// are hit where they are drawn; a singular transform hits nothing.
     pub fn hit_test_all(&self, x: f32, y: f32) -> Vec<NodeId> {
         self.settle_children();
+        // Before the others, which compile as they did: a scene with
+        // targets walks apart (`hit_test_targets`).
+        if self.has_hit_targets() {
+            return self.hit_test_targets(x, y);
+        }
         match self.plain_walks() {
             true => self.hit_test_walk::<false>(x, y),
             false => self.hit_test_walk::<true>(x, y),
         }
+    }
+    /// Whether some node takes hits where it's going (`set_hit_target`).
+    fn has_hit_targets(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.hit_targets.is_empty())
     }
     // One endpoint suffices to reject a point outside a subtree. Cache
     // proved directions (bits 1..4) and a completed scan (bit 5), with ink
@@ -4790,6 +4843,146 @@ impl Scene {
             } else {
                 // Clipped around it, or flattened to nothing, nothing in it is hit.
                 let Some(inverse) = node.projective(bounds).inverse() else {
+                    continue;
+                };
+                if !inside(inherited_clip, point) {
+                    continue;
+                }
+                (inverse.point(point.0, point.1), UNCLIPPED)
+            };
+            let clip =
+                clipped_bounds(Some(inherited_clip), bounds, &node.style).unwrap_or(inherited_clip);
+            // Clipped by its inset too, in its own space.
+            let clip = match node.clip_inset.as_deref() {
+                Some(inset) => clip.intersection(inset.apply(bounds)).unwrap_or_default(),
+                None => clip,
+            };
+            let painted = |transform: crate::affine::Affine| {
+                transform
+                    .inverse()
+                    .is_some_and(|inverse| inside(bounds, inverse.point(point.0, point.1)))
+            };
+            let hit = match &node.kind {
+                NodeKind::Image(image) => painted(image.paint_transform(bounds)),
+                NodeKind::Svg(svg) => painted(svg.paint_transform(bounds)),
+                _ => inside(bounds, point),
+            };
+            if hit && inside(clip, point) {
+                hits.push(id);
+            }
+            if self.children_raw(node).is_empty() {
+                continue;
+            }
+            if !hit
+                && !POPUPS
+                && transform == Transform::default()
+                && self.hit_outside(node, bounds, point)
+            {
+                continue;
+            }
+            if !siblings.as_slice().is_empty() {
+                stack.push((
+                    siblings,
+                    parent_transform,
+                    parent_opacity,
+                    parent_clip,
+                    parent_point,
+                ));
+            }
+            siblings = match POPUPS {
+                true => self.paint_order(id, node).iter(),
+                false => self.children_raw(node).iter(),
+            };
+            parent_transform = transform;
+            parent_opacity = opacity;
+            parent_clip = clip;
+            parent_point = point;
+        }
+        // Inert subtrees paint but are not hit; what is under them is.
+        if !self.inert.is_empty() {
+            hits.retain(|hit| !self.inert.iter().any(|inert| self.is_within(*hit, *inert)));
+        }
+        hits.reverse();
+        hits
+    }
+    /// `hit_test_walk` for a scene with hit targets (`set_hit_target`): the
+    /// exceptional walk, each node where it's going. Apart, and a copy, so
+    /// that the other walks compile as they did.
+    #[cold]
+    #[inline(never)]
+    fn hit_test_targets(&self, x: f32, y: f32) -> Vec<NodeId> {
+        const POPUPS: bool = true;
+        let inside = |r: Rect, (x, y): (f32, f32)| {
+            x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height
+        };
+        let mut hits = Vec::new();
+        // Nodes hit where they're going (`set_hit_target`): looked up only
+        // in a scene with some.
+        let targets = self.cold.as_ref().map(|cold| &cold.hit_targets);
+        // Keep the active siblings and their inherited context in locals.
+        // Only a descent with siblings left to visit needs a stack entry.
+        let roots = [self.root];
+        let mut siblings = roots.iter();
+        let mut parent_transform = Transform::default();
+        let mut parent_opacity = 1.0;
+        let mut parent_clip = self.viewport;
+        let mut parent_point = (x, y);
+        let mut stack = Vec::new();
+        loop {
+            let Some(&id) = siblings.next() else {
+                let Some((rest, transform, opacity, clip, point)) = stack.pop() else {
+                    break;
+                };
+                siblings = rest;
+                parent_transform = transform;
+                parent_opacity = opacity;
+                parent_clip = clip;
+                parent_point = point;
+                continue;
+            };
+            let point = parent_point;
+            let node = self.node(id);
+            let inherited_clip = match POPUPS && self.popups.contains(&id) {
+                true => UNCLIPPED,
+                false => parent_clip,
+            };
+            let transform = Transform {
+                x: parent_transform.x + node.transform.x,
+                y: parent_transform.y + node.transform.y,
+            };
+            let bounds = node.bounds.translated(transform);
+            let (transform, bounds, local) = match targets.and_then(|targets| targets.get(&id)) {
+                Some(target) if target.gone => continue,
+                Some(target) => {
+                    let own = target.place(node);
+                    let transform = Transform {
+                        x: parent_transform.x + own.x,
+                        y: parent_transform.y + own.y,
+                    };
+                    (transform, node.bounds.translated(transform), target.local)
+                }
+                None => (transform, bounds, None),
+            };
+            let opacity = if own_visible(&node.style) {
+                node.effects.opacity * parent_opacity
+            } else {
+                0.
+            };
+            // NaN opacity is non-hittable too.
+            #[allow(clippy::neg_cmp_op_on_partial_ord)]
+            if !(opacity > 0.) {
+                continue;
+            }
+            let turned = node.transformed() || local.is_some();
+            let (point, inherited_clip) = if !turned {
+                (point, inherited_clip)
+            } else {
+                let projective = match local {
+                    Some(local) => local.projective(bounds),
+                    _ => node.projective(bounds),
+                };
+                // Clipped around it, or flattened to nothing, nothing in it is hit.
+                let Some(inverse) = projective.inverse() else {
                     continue;
                 };
                 if !inside(inherited_clip, point) {
@@ -6046,6 +6239,7 @@ impl Scene {
                 || cold.sticky.contains_key(&id)
                 || cold.size_calcs.contains_key(&id)
                 || cold.balanced.contains_key(&id)
+                || cold.hit_targets.contains_key(&id)
         }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
@@ -6453,7 +6647,66 @@ impl Scene {
             maps.size_calcs.remove(&id);
             maps.balanced.remove(&id);
             maps.text_shadows.remove(&id);
+            maps.content_widths.remove(&id);
+            maps.hit_targets.remove(&id);
         }
+    }
+    /// Hit `id` and what it holds where an animation is taking it, not
+    /// where it shows now (`HitTarget`), or as it shows with `None`. Hover
+    /// under a resting pointer follows, as it does after layout.
+    pub fn set_hit_target(&mut self, id: NodeId, target: Option<HitTarget>) {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.hit_targets.get(&id));
+        if held == target.as_ref() || !self.contains(id) {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match target {
+            Some(target) => {
+                maps.hit_targets.insert(id, target);
+            }
+            None => {
+                maps.hit_targets.remove(&id);
+            }
+        }
+        self.sync_cold(id);
+        // What a hit and hover read changed (`Ui::try_prepare_frame`).
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.invalidate(id, COMPOSITE);
+    }
+    /// `id`'s hit target (`set_hit_target`), if it has one.
+    pub fn hit_target(&self, id: NodeId) -> Option<HitTarget> {
+        let cold = self.cold.as_ref()?;
+        cold.hit_targets.get(&id).copied()
+    }
+    /// Where `id` takes hits, in window points: `transformed_bounds`, moved
+    /// by each hit target around it (its own and its ancestors'). Their
+    /// scale and rotation aren't applied: a box, for a driver's click and
+    /// for assistive technology.
+    pub fn hit_bounds(&self, id: NodeId) -> Rect {
+        self.transformed_bounds(id).translated(self.hit_offset(id))
+    }
+    /// How far from where it shows `id` takes hits (`hit_bounds`): by its
+    /// own hit target and its ancestors'; none without any.
+    pub fn hit_offset(&self, id: NodeId) -> Transform {
+        let Some(cold) = self
+            .cold
+            .as_ref()
+            .filter(|cold| !cold.hit_targets.is_empty())
+        else {
+            return Transform::default();
+        };
+        let (mut x, mut y) = (0., 0.);
+        for node in std::iter::once(id).chain(self.ancestors(id)) {
+            if let Some(target) = cold.hit_targets.get(&node) {
+                let (at, goal) = (self.node(node).transform, target.place(self.node(node)));
+                x += goal.x - at.x;
+                y += goal.y - at.y;
+            }
+        }
+        Transform { x, y }
     }
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
     #[cold]
