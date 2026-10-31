@@ -58,10 +58,10 @@ webkitgtk = []
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
-zgx = { path = "../zgx", version = "0.1.6", default-features = false }
-zgx-terminal = { path = "../zgx-terminal", version = "0.1.6", optional = true }
+zgx = { path = "../zgx", version = "0.1.7", default-features = false }
+zgx-terminal = { path = "../zgx-terminal", version = "0.1.7", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
-zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false }
+zgx-gpu = { path = "../zgx-gpu", version = "0.1.7", default-features = false }
 winit = "0.30.13"
 softbuffer = "0.4.8"
 fontdue = "0.9.3"
@@ -110,7 +110,7 @@ webview2-com = { version = "0.39", optional = true }
 # A drag handed to Windows (src/native_drag.rs) is a COM drop source.
 windows-core = "0.62"
 # Popup windows draw into DirectComposition visuals (src/popup_window/win32.rs).
-zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false, features = ["composition"] }
+zgx-gpu = { path = "../zgx-gpu", version = "0.1.7", default-features = false, features = ["composition"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.18.0", default-features = false }
@@ -119,7 +119,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services", "NSDictionary", "NSError", "NSURLRequest", "NSUUID", "NSKeyValueObserving", "NSValue", "NSData", "NSJSONSerialization", "NSGeometry", "objc2-core-foundation", "NSAttributedString", "NSRange", "NSURLResponse", "NSNotification", "NSOperation", "block2", "NSOrthography", "NSTextCheckingResult", "NSLocale", "NSBundle"] }
 # System notifications (src/notify.rs).
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification", "UNNotificationResponse"] }
-zgx-ghostty-sys = { path = "../zgx-ghostty-sys", version = "0.1.6", optional = true }
+zgx-ghostty-sys = { path = "../zgx-ghostty-sys", version = "0.1.7", optional = true }
 libc = { version = "0.2", optional = true }
 # Native views over zgx (src/native_host): web pages, clipping masks, backdrops.
 objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKBackForwardList", "WKBackForwardListItem", "WKNavigationDelegate", "WKNavigation", "WKNavigationAction", "WKNavigationResponse", "WKWebsiteDataStore", "WKUserContentController", "WKUserScript", "WKScriptMessageHandler", "WKScriptMessage", "WKUIDelegate", "WKWindowFeatures", "WKFrameInfo", "WKSecurityOrigin", "WKPreferences", "WKURLSchemeHandler", "WKURLSchemeTask"] }
@@ -148,7 +148,7 @@ required-features = ["terminal"]
 
 [build-dependencies]
 # `terminal-bundle`: compiles the terminal example's scripts (build.rs).
-zgx-script = { path = "../zgx-script", version = "0.1.6", optional = true }
+zgx-script = { path = "../zgx-script", version = "0.1.7", optional = true }
 
 # On the main thread, where AppKit's menus are made (`fn main`).
 [[test]]

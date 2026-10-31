@@ -11,7 +11,7 @@ categories = ["gui", "command-line-interface"]
 description = "Terminal sessions for zgx: a shell on a pseudoterminal (openpty, ConPTY) and its screen, kept by alacritty_terminal."
 
 [dependencies]
-zgx = { path = "../zgx", version = "0.1.6", default-features = false }
+zgx = { path = "../zgx", version = "0.1.7", default-features = false }
 # The screen model: the VT parser, grid, scrollback, selection and modes,
 # and the pseudoterminals (openpty on Unix, ConPTY on Windows).
 alacritty_terminal = { package = "zgx-alacritty-terminal", version = "=0.26.0", path = "../../vendor/alacritty-terminal", default-features = false }

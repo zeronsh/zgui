@@ -1,4 +1,0 @@
----
-section: added
----
-- **Web views on Linux** (zgx-desktop's `webkitgtk` feature, which zgx-run turns on): `zgx::web_view` and `ui.webview` show WebKitGTK 4.1 pages on X11 and Wayland, drawn offscreen and shown as images, so they clip, round, fade and take zgx content and glass over them as any node does. Pointer, keys (reserved shortcuts first, keys the page leaves alone falling through to the app's), input methods, `<select>` popups (as zgx menus), the clipboard (bridged through zgx's on Wayland), navigation, scripts, messages, app schemes, profiles and the inspector work as on macOS. WebKitGTK is opened at run time (`libwebkit2gtk-4.1-0`): building needs none of it, and without it pages stay placeholders. Two CPU copies a frame, and no drags out of a page yet: see docs/linux.md.

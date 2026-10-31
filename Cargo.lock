@@ -5035,7 +5035,7 @@ dependencies = [
 
 [[package]]
 name = "zgx"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "fixed_decimal",
  "foldhash 0.2.0",
@@ -5062,7 +5062,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-3d"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bytemuck",
  "serde_json",
@@ -5096,7 +5096,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-components"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "zgx",
  "zgx-desktop",
@@ -5126,7 +5126,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-demo"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "softbuffer",
  "winit",
@@ -5138,7 +5138,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-desktop"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "accesskit",
  "accesskit_atspi_common",
@@ -5197,11 +5197,11 @@ dependencies = [
 
 [[package]]
 name = "zgx-ghostty-sys"
-version = "0.1.6"
+version = "0.1.7"
 
 [[package]]
 name = "zgx-gpu"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "block2 0.6.2",
  "bytemuck",
@@ -5259,7 +5259,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-run"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "png 0.18.1",
  "polling",
@@ -5275,7 +5275,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-script"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "libc",
  "memchr",
@@ -5306,7 +5306,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-terminal"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "libc",
  "polling",
