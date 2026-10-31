@@ -561,8 +561,10 @@ fn image_cache_reclaims_removed_nodes_and_leaves_out_oversized_allocations() {
     scene.set_effects(hidden, Effects::default());
     let d = scene.flush().damage;
     gpu.render(&scene, &d).unwrap();
-    assert!(gpu.take_issues()[0].contains("64 MiB"));
-    assert_eq!(gpu.debug_cache_stats().image_bytes, 0);
+    // Shown in 8 by 8: held at 8 by 9 (its halving at least that), not
+    // 4096 by 4097.
+    assert!(gpu.take_issues().is_empty());
+    assert_eq!(gpu.debug_cache_stats().image_bytes, 8 * 9 * 4);
 }
 
 #[test]
@@ -6222,31 +6224,31 @@ fn layers_past_their_count_and_budget_all_draw() {
     assert!(gpu.readback().unwrap()[(300 * 600 + 300) * 4 + 1] > 150);
 }
 
-/// An image no texture can hold is left out, once said, and the rest of its
-/// frame draws.
+/// An image past the texture size or the budget at full size is drawn at
+/// the size it shows: nothing is left out, and nothing is said.
 #[test]
-fn images_with_no_texture_leave_the_frame_going() {
+fn images_too_large_for_a_texture_draw_at_the_size_they_show() {
     use std::sync::Arc;
     use zgx::image::ImageData;
     let _gpu_fixture = gpu_fixture();
-    let cases = [(5000, 4000, "64 MiB"), (40_000, 1, "texture dimensions")];
-    for (width, height, why) in cases {
+    for (width, height) in [(5000, 4000), (40_000, 1)] {
         let mut gpu = GpuRenderer::new(100, 100).unwrap();
         let mut scene = Scene::new(100., 100.);
         scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
         let pixels = vec![255; width * height * 4];
         let image = Arc::new(ImageData::new(width as u32, height as u32, pixels).unwrap());
-        scene.append(scene.root(), NodeKind::Image(image), fixed(50., 50.));
         scene.append(
             scene.root(),
             NodeKind::Rect(Color(30, 60, 220, 255)),
             fixed(100., 100.),
         );
+        scene.append(scene.root(), NodeKind::Image(image), fixed(50., 50.));
         let report = scene.flush();
         gpu.render(&scene, &report.damage).unwrap();
-        let issues = gpu.take_issues();
-        assert!(issues.iter().any(|i| i.contains(why)), "{issues:?}");
-        assert!(gpu.readback().unwrap()[(50 * 100 + 50) * 4 + 2] > 200);
+        assert!(gpu.take_issues().is_empty());
+        let pixels = gpu.readback().unwrap();
+        assert!(pixels[(25 * 100 + 25) * 4] > 200, "the image shows");
+        assert!(pixels[(75 * 100 + 75) * 4 + 2] > 200);
     }
 }
 
@@ -6401,4 +6403,71 @@ fn a_text_shadow_paints_under_its_glyphs_and_moves_without_a_trail() {
         damage.iter().any(|d| d.x <= 10. && d.y + d.height >= 75.),
         "its old shadow is damage: {damage:?}"
     );
+}
+
+/// The user's case: two large photos (4000 by 3000) shown as 300 by 420
+/// cards at 2x. Each texture holds its card's pixels, not its file's (48 MB
+/// each would pass the budget between them), both draw, and a card drawn
+/// larger (zoomed) is uploaded again, sharper; smaller, it keeps its own.
+#[test]
+fn large_photos_in_small_cards_hold_their_cards_pixels() {
+    use std::sync::Arc;
+    use zgx::image::ImageData;
+    let _gpu_fixture = gpu_fixture();
+    let (w, h) = (4000usize, 3000usize);
+    let photo = |shade: u8| {
+        let pixels: Vec<u8> = (0..w * h)
+            .flat_map(|p| {
+                [
+                    shade,
+                    ((p % w) * 255 / w) as u8,
+                    ((p / w) * 255 / h) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        Arc::new(ImageData::new(w as u32, h as u32, pixels).unwrap())
+    };
+    let mut gpu = GpuRenderer::new(1400, 1000).unwrap();
+    gpu.set_scale_factor(2.);
+    let mut scene = Scene::new(700., 500.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Row));
+    let card = |scene: &mut Scene, image| {
+        scene.append(scene.root(), NodeKind::Image(image), fixed(300., 420.))
+    };
+    let first = card(&mut scene, photo(200));
+    card(&mut scene, photo(40));
+    let report = scene.flush();
+    let stats = gpu.render(&scene, &report.damage).unwrap();
+    assert!(gpu.take_issues().is_empty(), "both drawn");
+    assert_eq!(stats.image_uploads, 2);
+    // Stretched into 600 by 840 device pixels: held at 1120 by 840, its
+    // shape kept (3.8 MB each, not 48: two at 48 pass the budget).
+    let held = gpu.debug_cache_stats().image_bytes;
+    assert_eq!(held, 2 * 1120 * 840 * 4, "{held}");
+    // Its card's red, top left: the photo, not a gap.
+    let pixels = gpu.readback().unwrap();
+    assert!(pixels[(20 * 1400 + 20) * 4..][..3].iter().any(|&c| c > 150));
+    // Drawn three times as large: uploaded again, larger (its layer
+    // rasterizes at the nearest √2 step, 2.83).
+    scene.set_local_transform(
+        first,
+        LocalTransform {
+            scale: (3., 3.),
+            ..LocalTransform::IDENTITY
+        },
+    );
+    scene.set_isolated(first, true);
+    let report = scene.flush();
+    let stats = gpu.render(&scene, &report.damage).unwrap();
+    assert_eq!(stats.image_uploads, 1, "the larger one alone");
+    let zoomed = gpu.debug_cache_stats().image_bytes - 1120 * 840 * 4;
+    assert!(
+        zoomed > 3 * 1120 * 840 * 4 && zoomed < 4000 * 3000 * 4,
+        "{zoomed}"
+    );
+    // Back down: kept as it is (no churn).
+    scene.set_local_transform(first, LocalTransform::IDENTITY);
+    let report = scene.flush();
+    assert_eq!(gpu.render(&scene, &report.damage).unwrap().image_uploads, 0);
 }

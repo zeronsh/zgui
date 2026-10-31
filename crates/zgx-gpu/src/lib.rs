@@ -193,6 +193,92 @@ const VERTEX_BUDGET: usize = 32 * 1024 * 1024;
 const MAX_IMAGES: usize = 16_384;
 /// The bytes images' own textures may hold (`upload_image`).
 const IMAGE_TEXTURES: usize = 64 * 1024 * 1024;
+/// An image's texture: its bind group, bytes, texture and the size it
+/// holds (`fitted_size`; (0, 0): all of it).
+type ImageTexture = (wgpu::BindGroup, usize, Option<wgpu::Texture>, (u32, u32));
+const IMAGE_COARSER: &str =
+    "images past the budget of image textures are drawn at a lower resolution";
+/// The size a texture of a `width` by `height` image holds when drawn at
+/// `drawn` device pixels (`None`: all of it): scaled down, its shape kept,
+/// to the least that is at least that large on both axes; never up.
+fn fitted_size(width: u32, height: u32, drawn: Option<(f32, f32)>) -> (u32, u32) {
+    let Some((w, h)) = drawn.filter(|(w, h)| w.is_finite() && h.is_finite()) else {
+        return (width.max(1), height.max(1));
+    };
+    let scale = (w / width.max(1) as f32).max(h / height.max(1) as f32);
+    if scale >= 1. {
+        return (width.max(1), height.max(1));
+    }
+    let side = |v: u32| ((v as f32 * scale).ceil() as u32).clamp(1, v.max(1));
+    (side(width), side(height))
+}
+/// Premultiplied RGBA `width` by `height` at half the size (rounding up),
+/// each texel the mean of the two by two it covers (an odd edge repeats).
+fn halve(pixels: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
+    let (w, h) = (width.div_ceil(2), height.div_ceil(2));
+    let mut out = vec![0u8; w as usize * h as usize * 4];
+    let at = |x: u32, y: u32| ((y.min(height - 1) * width + x.min(width - 1)) * 4) as usize;
+    for y in 0..h {
+        for x in 0..w {
+            let (a, b) = (at(2 * x, 2 * y), at(2 * x + 1, 2 * y));
+            let (c, d) = (at(2 * x, 2 * y + 1), at(2 * x + 1, 2 * y + 1));
+            let o = ((y * w + x) * 4) as usize;
+            for k in 0..4 {
+                let sum = u32::from(pixels[a + k])
+                    + u32::from(pixels[b + k])
+                    + u32::from(pixels[c + k])
+                    + u32::from(pixels[d + k]);
+                out[o + k] = ((sum + 2) / 4) as u8;
+            }
+        }
+    }
+    (out, w, h)
+}
+/// Premultiplied RGBA `width` by `height` at `to` (no larger), each texel
+/// the area-weighted mean of what it covers: from a halving at most twice
+/// its size, as sharp as a mip level, at any size.
+fn shrink(pixels: &[u8], width: u32, height: u32, to: (u32, u32)) -> Vec<u8> {
+    let (tw, th) = to;
+    // Each target texel's span along an axis: (first source texel, weights).
+    let spans = |from: u32, to: u32| -> Vec<(u32, Vec<f32>)> {
+        let step = from as f32 / to as f32;
+        (0..to)
+            .map(|t| {
+                let (start, end) = (t as f32 * step, (t + 1) as f32 * step);
+                let first = start.floor() as u32;
+                let last = (end.ceil() as u32).min(from);
+                let weights = (first..last)
+                    .map(|s| ((s + 1) as f32).min(end) - (s as f32).max(start))
+                    .collect();
+                (first, weights)
+            })
+            .collect()
+    };
+    let (xs, ys) = (spans(width, tw), spans(height, th));
+    let mut out = vec![0u8; tw as usize * th as usize * 4];
+    for (ty, (y0, wy)) in ys.iter().enumerate() {
+        for (tx, (x0, wx)) in xs.iter().enumerate() {
+            let mut sum = [0f32; 4];
+            let mut total = 0.;
+            for (dy, ky) in wy.iter().enumerate() {
+                let row = (y0 + dy as u32) * width;
+                for (dx, kx) in wx.iter().enumerate() {
+                    let at = ((row + x0 + dx as u32) * 4) as usize;
+                    let k = kx * ky;
+                    for c in 0..4 {
+                        sum[c] += pixels[at + c] as f32 * k;
+                    }
+                    total += k;
+                }
+            }
+            let o = (ty * tw as usize + tx) * 4;
+            for c in 0..4 {
+                out[o + c] = (sum[c] / total).round() as u8;
+            }
+        }
+    }
+    out
+}
 /// Why an image can have no texture: a frame goes on without it.
 const IMAGE_MISSES: [&str; 3] = [
     "the images one frame draws exceed the 64 MiB budget of image textures",
@@ -3540,7 +3626,7 @@ pub struct GpuRenderer {
     background: Color,
     /// Image textures: each bound for the quads, its size in bytes, and,
     /// where the CPU wrote its texels, the texture (see `render_direct`).
-    images: FxHashMap<u64, (wgpu::BindGroup, usize, Option<wgpu::Texture>)>,
+    images: FxHashMap<u64, ImageTexture>,
     /// Images' own textures (`upload_image`), by the frame each was last
     /// drawn in (`image_frame`): past the textures' budget, the least
     /// recently drawn go, not drawn this frame, and come back when drawn.
@@ -6986,7 +7072,14 @@ impl GpuRenderer {
                                     && let Some(quad) = background_quad(
                                         image, *fit, style, bounds, opacity, edge_fade,
                                     )
-                                    && self.ensure_image(image, &mut stats)?
+                                    && self.ensure_image(
+                                        image,
+                                        Some((
+                                            quad.rect[2] * self.scale,
+                                            quad.rect[3] * self.scale,
+                                        )),
+                                        &mut stats,
+                                    )?
                                 {
                                     quads.push(quad);
                                     canvas_image = Some(image.id());
@@ -7187,7 +7280,7 @@ impl GpuRenderer {
                                 image.height() as f32 / atlas,
                             ]
                         } else {
-                            if !self.ensure_image(&image, &mut stats)? {
+                            if !self.ensure_image(&image, None, &mut stats)? {
                                 continue;
                             }
                             canvas_image = Some(image.id());
@@ -7258,7 +7351,7 @@ impl GpuRenderer {
                             let view = cache.texture(frame.id()).create_view(&Default::default());
                             let bytes = cache.bytes(frame.id());
                             let bind = self.texture_bind(&view, "native CoreVideo frame");
-                            self.images.insert(frame.id(), (bind, bytes, None));
+                            self.images.insert(frame.id(), (bind, bytes, None, (0, 0)));
                         }
                         canvas_image = Some(frame.id());
                         quads.push(Quad {
@@ -7284,8 +7377,19 @@ impl GpuRenderer {
                             stats.image_uploads += 1;
                             continue;
                         }
-                        // (A view taking its layer drew itself already.)
-                        if !self.ensure_image(image, &mut stats)? {
+                        // (A view taking its layer drew itself already.) At the
+                        // size it is drawn: its box, through its own transform,
+                        // in this target's pixels (a layer's scale holds any
+                        // zoom or transform around it).
+                        let stretch = {
+                            let m = image.transform();
+                            (m.a.hypot(m.b)).max(m.c.hypot(m.d))
+                        };
+                        let drawn = (
+                            bounds.width * self.scale * stretch,
+                            bounds.height * self.scale * stretch,
+                        );
+                        if !self.ensure_image(image, Some(drawn), &mut stats)? {
                             continue;
                         }
                         let transform = image.paint_transform(bounds);
@@ -10096,18 +10200,26 @@ impl GpuRenderer {
     /// `image`'s texture for this frame: uploaded if it has none, and
     /// marked drawn now, so it is the last to go past the budget. `false`:
     /// no texture to be had (`IMAGE_MISSES`): this frame goes on without it.
+    /// `drawn`: its size where it is drawn now, in device pixels (`None`:
+    /// all of it). A texture holds it at that size (`fitted_size`): a photo
+    /// in a card takes the card's pixels, not the photo's, and is uploaded
+    /// again only as it is drawn larger.
     fn ensure_image(
         &mut self,
         image: &zgx::image::ImageData,
+        drawn: Option<(f32, f32)>,
         stats: &mut GpuStats,
     ) -> Result<bool, GpuError> {
-        if self.images.contains_key(&image.id()) {
+        let size = fitted_size(image.width(), image.height(), drawn);
+        if let Some(entry) = self.images.get(&image.id())
+            && (entry.3 == (0, 0) || (entry.3.0 >= size.0 && entry.3.1 >= size.1))
+        {
             if let Some(drawn) = self.image_drawn.get_mut(&image.id()) {
                 *drawn = self.image_frame;
             }
             return Ok(true);
         }
-        match self.upload_image(image) {
+        match self.upload_image_at(image, size) {
             Ok(()) => {}
             Err(error) if IMAGE_MISSES.contains(&error.0.as_str()) => {
                 self.warn(&format!("{}: not drawn", error.0));
@@ -10119,12 +10231,44 @@ impl GpuRenderer {
         Ok(true)
     }
     fn upload_image(&mut self, image: &zgx::image::ImageData) -> Result<(), GpuError> {
+        self.upload_image_at(image, (image.width().max(1), image.height().max(1)))
+    }
+    /// The bytes image textures may hold: four of this window's frames, and
+    /// at least `IMAGE_TEXTURES`. With images held at the size they are
+    /// drawn, what shows at once is bounded by the window, not the files.
+    fn image_budget(&self) -> usize {
+        (self.width as usize * self.height as usize * 4 * 4).max(IMAGE_TEXTURES)
+    }
+    /// `upload_image` at `size` (`fitted_size`), or smaller where the budget
+    /// or the texture limit says: drawn softer rather than left out.
+    fn upload_image_at(
+        &mut self,
+        image: &zgx::image::ImageData,
+        wanted: (u32, u32),
+    ) -> Result<(), GpuError> {
         if let Some(frame) = image.gpu_frame() {
             return self.render_view(image, frame);
         }
-        let bytes = image.pixels().len();
-        let mut held = self.images.values().map(|entry| entry.1).sum::<usize>();
-        if bytes + held > IMAGE_TEXTURES {
+        let budget = self.image_budget();
+        let limit = self.device.limits().max_texture_dimension_2d;
+        let (full_w, full_h) = (image.width().max(1), image.height().max(1));
+        // Smaller by `scale` from `wanted`, its shape kept.
+        let at = |scale: f32| {
+            let side = |v: u32, full: u32| ((v as f32 * scale).ceil() as u32).clamp(1, full);
+            (side(wanted.0, full_w), side(wanted.1, full_h))
+        };
+        let bytes = |(w, h): (u32, u32)| w as usize * h as usize * 4;
+        let mut scale = 1f32;
+        while {
+            let (w, h) = at(scale);
+            (w > limit || h > limit) && (w, h) != (1, 1)
+        } {
+            scale *= 0.75;
+        }
+        // An image it replaces at another size gives its bytes back.
+        let replaced = self.images.get(&image.id()).map_or(0, |entry| entry.1);
+        let mut held = self.images.values().map(|entry| entry.1).sum::<usize>() - replaced;
+        if bytes(at(scale)) + held > budget {
             // Images not drawn this frame give their textures back, least
             // recently drawn first (a long page scrolled through): drawn
             // again, they upload again.
@@ -10136,8 +10280,11 @@ impl GpuRenderer {
                 .collect();
             idle.sort_unstable();
             for (_, id) in idle {
-                if bytes + held <= IMAGE_TEXTURES {
+                if bytes(at(scale)) + held <= budget {
                     break;
+                }
+                if id == image.id() {
+                    continue;
                 }
                 self.image_drawn.remove(&id);
                 if let Some(entry) = self.images.remove(&id) {
@@ -10145,24 +10292,26 @@ impl GpuRenderer {
                 }
             }
         }
-        if bytes + held > IMAGE_TEXTURES {
+        // Still past it: drawn smaller rather than left out.
+        let unshrunk = at(scale);
+        while bytes(at(scale)) + held > budget && at(scale) != (1, 1) {
+            scale *= 0.75;
+        }
+        let (width, height) = at(scale);
+        if bytes((width, height)) + held > budget {
             return Err(GpuError(IMAGE_MISSES[0].into()));
         }
-        if self.images.len() >= MAX_IMAGES {
+        if (width, height) != unshrunk {
+            self.warn(IMAGE_COARSER);
+        }
+        let bytes = bytes((width, height));
+        if self.images.len() >= MAX_IMAGES && !self.images.contains_key(&image.id()) {
             return Err(GpuError(IMAGE_MISSES[1].into()));
         }
-        if image.width() > self.device.limits().max_texture_dimension_2d
-            || image.height() > self.device.limits().max_texture_dimension_2d
-        {
+        if width > limit || height > limit {
             return Err(GpuError(IMAGE_MISSES[2].into()));
         }
-        let texture = sampled_texture(
-            &self.device,
-            self.unified,
-            image.width(),
-            image.height(),
-            "image",
-        );
+        let texture = sampled_texture(&self.device, self.unified, width, height, "image");
         let mut pixels = image.pixels().to_vec();
         for pixel in pixels.as_chunks_mut::<4>().0 {
             let alpha = u16::from(pixel[3]);
@@ -10170,7 +10319,17 @@ impl GpuRenderer {
                 *channel = ((u16::from(*channel) * alpha + 127) / 255) as u8;
             }
         }
-        self.write_texels(&texture, (0, 0, image.width(), image.height()), &mut pixels);
+        // Halved while still at least its size, averaging premultiplied
+        // texels four to one (mip levels), then to its size exactly by area:
+        // as sharp as it is drawn, without shimmer.
+        let (mut w, mut h) = (full_w, full_h);
+        while w.div_ceil(2) >= width && h.div_ceil(2) >= height && (w, h) != (1, 1) {
+            (pixels, w, h) = halve(&pixels, w, h);
+        }
+        if (w, h) != (width, height) {
+            pixels = shrink(&pixels, w, h, (width, height));
+        }
+        self.write_texels(&texture, (0, 0, width, height), &mut pixels);
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image"),
             layout: &self.context.inner.texture_layout,
@@ -10193,7 +10352,12 @@ impl GpuRenderer {
                 },
             ],
         });
-        self.images.insert(image.id(), (bind, bytes, Some(texture)));
+        let held_size = match (width, height) == (full_w, full_h) {
+            true => (0, 0),
+            false => (width, height),
+        };
+        self.images
+            .insert(image.id(), (bind, bytes, Some(texture), held_size));
         self.image_drawn.insert(image.id(), self.image_frame);
         Ok(())
     }
@@ -14314,6 +14478,41 @@ impl surface::SurfaceSource for GpuRenderer {
     }
 }
 
+#[cfg(test)]
+mod image_level_tests {
+    /// The level an image needs is its coarsest halving still at least as
+    /// large as it is drawn, and a halving averages texels four to one.
+    #[test]
+    fn images_are_held_at_the_size_they_are_drawn() {
+        assert_eq!(
+            super::fitted_size(4000, 3000, Some((1120., 840.))),
+            (1120, 840)
+        );
+        assert_eq!(
+            super::fitted_size(4000, 3000, Some((600., 840.))),
+            (1120, 840)
+        );
+        assert_eq!(
+            super::fitted_size(4000, 3000, Some((9000., 1.))),
+            (4000, 3000)
+        );
+        assert_eq!(super::fitted_size(4000, 3000, None), (4000, 3000));
+        assert_eq!(
+            super::fitted_size(4000, 3000, Some((f32::NAN, 1.))),
+            (4000, 3000)
+        );
+        assert_eq!(super::fitted_size(5, 3, Some((0., 0.))), (1, 1));
+        let (out, w, h) = super::halve(&[0, 0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 255], 3, 1);
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(out, [128, 128, 128, 128, 255, 0, 0, 255]);
+        // Three to two by area: the middle texel shared half and half.
+        let row = [0, 0, 0, 255, 120, 120, 120, 255, 240, 240, 240, 255];
+        assert_eq!(
+            super::shrink(&row, 3, 1, (2, 1)),
+            [40, 40, 40, 255, 200, 200, 200, 255]
+        );
+    }
+}
 #[cfg(test)]
 mod blur_damage_tests {
     use super::*;
