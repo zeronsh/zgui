@@ -6205,10 +6205,19 @@ impl Ui {
                             Key::Character(ref k) if command && k.eq_ignore_ascii_case("a") => {
                                 e.select_all()
                             }
-                            Key::Character(ref k) if command && k.eq_ignore_ascii_case("z") => {
+                            // With nothing to undo or redo, the key goes on to
+                            // the app's commands (its own undo), as AppKit's
+                            // responder chain hands it to the window's.
+                            Key::Character(ref k)
+                                if command
+                                    && k.eq_ignore_ascii_case("z")
+                                    && (if modifiers.shift { e.can_redo() } else { e.can_undo() }) =>
+                            {
                                 changed = if modifiers.shift { e.redo() } else { e.undo() };
                             }
-                            Key::Character(ref k) if command && k.eq_ignore_ascii_case("y") => {
+                            Key::Character(ref k)
+                                if command && k.eq_ignore_ascii_case("y") && e.can_redo() =>
+                            {
                                 changed = e.redo();
                             }
                             // A composition to cancel takes it; otherwise it goes
