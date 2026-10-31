@@ -815,6 +815,12 @@ impl InputDispatcher {
         )
         .default_prevented
     }
+    /// The next press starts a count of its own, as one after the
+    /// double-click time has passed would: separate clicks a test makes in
+    /// a row, which a person's hand could not make that fast.
+    pub fn forget_clicks(&self) {
+        self.state.borrow_mut().clicks.0 = None;
+    }
     /// How soon after a press another on the same spot counts as a double
     /// (then triple) click: the system's double-click time, which the
     /// desktop host gives (macOS's and Windows' setting, GNOME's and KDE's);
