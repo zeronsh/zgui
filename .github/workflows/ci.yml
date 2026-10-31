@@ -336,6 +336,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload --all-targets --locked
+      # Text in every script, shaped in the system's own fonts.
+      - run: cargo test -p zgx-gpu --test text_scripts --test editor_selection --locked
       # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
       - run: cargo test -p zgx-terminal --locked
       # The soak (an app used for a while holds what it did), on Metal.
@@ -406,6 +408,8 @@ jobs:
       # notifications) and its bundled script paths (caught a Windows
       # separator bug), in one run.
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-script --lib --test components --test bundle --locked
+      # Text in every script, shaped in the system's own fonts.
+      - run: cargo test -p zgx-gpu --test text_scripts --test editor_selection --locked
       # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
       - run: cargo test -p zgx-terminal --locked
       # The swap chain's alpha (opaque windows aren't blended by DWM, #513)

@@ -303,6 +303,40 @@ fn shape_fallback(
     missing
 }
 
+/// zgx: the scripts of `run` (text not all ASCII) besides Common, Latin
+/// and Inherited, added to `scripts`; whether a cluster in it asks for
+/// emoji presentation (U+FE0F after it, or a keycap's U+20E3, both
+/// Inherited).
+#[inline(never)]
+fn run_scripts(run: &str, scripts: &mut Vec<Script>) -> bool {
+    let mut emoji = false;
+    for c in run.chars() {
+        match c.script() {
+            Script::Inherited if matches!(c, '\u{FE0F}' | '\u{20E3}') => emoji = true,
+            Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
+            script => {
+                if !scripts.contains(&script) {
+                    scripts.push(script);
+                }
+            }
+        }
+    }
+    emoji
+}
+
+/// zgx: the clusters of `glyphs` asking for emoji presentation, added to
+/// `missing` (`shape_run`).
+#[cold]
+#[inline(never)]
+fn emoji_presentation_missing(line: &str, glyphs: &[ShapeGlyph], missing: &mut Vec<usize>) {
+    for glyph in glyphs {
+        let cluster = line.get(glyph.start..glyph.end).unwrap_or_default();
+        if cluster.contains(['\u{FE0F}', '\u{20E3}']) && !missing.contains(&glyph.start) {
+            missing.push(glyph.start);
+        }
+    }
+}
+
 /// zgx patch: out of line, so the word cache's path through `Shaping::run`
 /// keeps its code whatever shaping a new run adds.
 #[inline(never)]
@@ -321,18 +355,10 @@ fn shape_run(
         scripts.clear();
         scripts
     };
-    // zgx patch: ASCII is all Common or Latin; only other text is looked up.
+    // zgx patch: ASCII is all Common or Latin; only other text is looked up,
+    // and whether a cluster asks for emoji presentation with it.
     let run = &line[start_run..end_run];
-    for c in run.chars().filter(|_| !run.is_ascii()) {
-        match c.script() {
-            Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
-            script => {
-                if !scripts.contains(&script) {
-                    scripts.push(script);
-                }
-            }
-        }
-    }
+    let emoji = !run.is_ascii() && run_scripts(run, &mut scripts);
 
     log::trace!("      Run {:?}: '{}'", &scripts, &line[start_run..end_run],);
 
@@ -390,6 +416,13 @@ fn shape_run(
             scratch, glyphs, &font, line, attrs_list, start_run, end_run, span_rtl,
         )
     };
+    // zgx: a cluster asking for emoji presentation is missing from a font
+    // without color glyphs, so the fallback finds the emoji font, as browsers
+    // do: Segoe UI has `1` and the keycap mark, and drew 1️⃣ in black. With
+    // no emoji font, it keeps what it had.
+    if emoji && !font.is_color() {
+        emoji_presentation_missing(line, &glyphs[glyph_start..], &mut missing);
+    }
 
     //TODO: improve performance!
     while !missing.is_empty() {
@@ -403,7 +436,7 @@ fn shape_run(
         );
         let mut fb_glyphs = Vec::new();
         let scratch = font_iter.shape_caches();
-        let fb_missing = shape_fallback(
+        let mut fb_missing = shape_fallback(
             scratch,
             &mut fb_glyphs,
             &font,
@@ -413,6 +446,9 @@ fn shape_run(
             end_run,
             span_rtl,
         );
+        if emoji && !font.is_color() {
+            emoji_presentation_missing(line, &fb_glyphs, &mut fb_missing);
+        }
 
         // Insert all matching glyphs
         let mut fb_i = 0;
