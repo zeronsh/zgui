@@ -357,6 +357,22 @@ impl std::hash::Hasher for IndexHasher {
 }
 /// A table by object index.
 type ByIndex<V> = std::collections::HashMap<u32, V, std::hash::BuildHasherDefault<IndexHasher>>;
+/// A frame's poses: every skinned mesh's joints and morphing mesh's
+/// weights, one after another, kept for the next frame to fill again.
+#[derive(Default)]
+pub(crate) struct Poses {
+    joints: Vec<Mat4>,
+    weights: Vec<[f32; 2]>,
+    matrices: Vec<Option<Option<Mat4>>>,
+    posed: Vec<Posed>,
+}
+/// A posed mesh: its place in a frame's list, and where its joints and
+/// weights are.
+struct Posed {
+    at: usize,
+    joints: Option<std::ops::Range<usize>>,
+    weights: Option<std::ops::Range<usize>>,
+}
 /// A mesh's maps' placements, by `Map::ALL`'s order.
 type Placements = [crate::MapPlacement; crate::texture::MAPS];
 /// What a frame draws: each visible mesh with its world matrix.
@@ -368,10 +384,10 @@ pub(crate) struct Drawn<'a> {
     /// A skinned mesh's joints' matrices (each joint's place in the world
     /// times its inverse bind): its vertices are placed by these, and its
     /// `matrix` is the identity.
-    pub(crate) palette: Option<Vec<Mat4>>,
+    pub(crate) palette: Option<&'a [Mat4]>,
     /// A morphing mesh's targets at any weight: `[target, weight]`s. `None`
     /// at rest (it draws as any mesh).
-    pub(crate) morph: Option<Vec<[f32; 2]>>,
+    pub(crate) morph: Option<&'a [[f32; 2]]>,
     pub(crate) surface: Surface,
     /// Its maps' placements, if any is set.
     pub(crate) placement: Option<&'a Placements>,
@@ -454,36 +470,56 @@ impl Inner {
         let mut memo = vec![None; self.objects.len()];
         world_matrix(self, index, &mut memo, 0)
     }
-    pub(crate) fn drawn(&self) -> Vec<Drawn<'_>> {
-        let mut matrices: Vec<Option<Option<Mat4>>> = vec![None; self.objects.len()];
-        // At most one an object, made once: grown a push at a time, it was
-        // copied again at each doubling, every frame.
-        let mut out = Vec::with_capacity(self.objects.len());
+    /// Every visible mesh into `out` (emptied first), their poses into
+    /// `poses`: a frame's lists, kept to be filled again by the next.
+    pub(crate) fn drawn_into<'a>(&'a self, poses: &'a mut Poses, out: &mut Vec<Drawn<'a>>) {
+        out.clear();
+        out.reserve(self.objects.len());
+        let Poses {
+            joints,
+            weights,
+            matrices,
+            posed,
+        } = poses;
+        joints.clear();
+        weights.clear();
+        posed.clear();
+        matrices.clear();
+        matrices.resize(self.objects.len(), None);
         for index in 0..self.objects.len() {
             if let Some(object) = &self.objects[index].value
                 && let Some(geometry) = &object.geometry
-                && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
+                && let Some(matrix) = world_matrix(self, index, matrices, 0)
             {
                 let generation = self.objects[index].generation;
-                let palette = self.palette(index, generation, geometry, &mut matrices);
-                let morph = self.morphing(index, generation, geometry);
+                let (from_joint, from_weight) = (joints.len(), weights.len());
+                let skinned = self.palette_into(index, generation, geometry, matrices, joints);
+                let morphing = self.morphing_into(index, generation, geometry, weights);
+                if skinned || morphing {
+                    posed.push(Posed {
+                        at: out.len(),
+                        joints: skinned.then_some(from_joint..joints.len()),
+                        weights: morphing.then_some(from_weight..weights.len()),
+                    });
+                }
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
                     maps: self.maps(index, generation),
-                    matrix: if palette.is_some() {
-                        Mat4::IDENTITY
-                    } else {
-                        matrix
-                    },
-                    palette,
-                    morph,
+                    matrix: if skinned { Mat4::IDENTITY } else { matrix },
+                    palette: None,
+                    morph: None,
                     surface: self.surface(index, generation),
                     placement: self.placement(index, generation),
                 });
             }
         }
-        out
+        let poses: &'a Poses = poses;
+        for posed in &poses.posed {
+            let drawn = &mut out[posed.at];
+            drawn.palette = posed.joints.clone().map(|range| &poses.joints[range]);
+            drawn.morph = posed.weights.clone().map(|range| &poses.weights[range]);
+        }
     }
     /// Whether any object has a skin or morph weights.
     pub(crate) fn posing(&self) -> bool {
@@ -531,19 +567,37 @@ impl Inner {
         generation: u32,
         geometry: &Geometry,
     ) -> Option<Vec<[f32; 2]>> {
-        let targets = geometry.morphs()?.targets();
-        let (_, weights) = self
+        let mut active = Vec::new();
+        self.morphing_into(index, generation, geometry, &mut active)
+            .then_some(active)
+    }
+    /// As `morphing`, onto the end of `out`: whether it added any.
+    fn morphing_into(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+        out: &mut Vec<[f32; 2]>,
+    ) -> bool {
+        let Some(morphs) = geometry.morphs() else {
+            return false;
+        };
+        let Some((_, weights)) = self
             .morph_weights
             .get(&(index as u32))
-            .filter(|(set_for, _)| *set_for == generation)?;
-        let active: Vec<[f32; 2]> = weights
+            .filter(|(set_for, _)| *set_for == generation)
+        else {
+            return false;
+        };
+        let from = out.len();
+        let active = weights
             .iter()
-            .take(targets)
+            .take(morphs.targets())
             .enumerate()
             .filter(|(_, weight)| weight.is_finite() && **weight != 0.)
-            .map(|(target, &weight)| [target as f32, weight])
-            .collect();
-        (!active.is_empty()).then_some(active)
+            .map(|(target, &weight)| [target as f32, weight]);
+        out.extend(active);
+        out.len() > from
     }
     /// Object `index`'s joints' matrices, if it is a skinned geometry with a
     /// skin: a joint gone or hidden places its vertices where it was bound.
@@ -554,22 +608,36 @@ impl Inner {
         geometry: &Geometry,
         matrices: &mut [Option<Option<Mat4>>],
     ) -> Option<Vec<Mat4>> {
-        geometry.skin()?;
-        let (_, skin) = self
+        let mut palette = Vec::new();
+        self.palette_into(index, generation, geometry, matrices, &mut palette)
+            .then_some(palette)
+    }
+    /// As `palette`, onto the end of `out`: whether it is skinned.
+    fn palette_into(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+        matrices: &mut [Option<Option<Mat4>>],
+        out: &mut Vec<Mat4>,
+    ) -> bool {
+        if geometry.skin().is_none() {
+            return false;
+        }
+        let Some((_, skin)) = self
             .skins
             .get(&(index as u32))
-            .filter(|(set_for, _)| *set_for == generation)?;
-        Some(
-            skin.joints
-                .iter()
-                .zip(&skin.inverse_binds)
-                .map(|(joint, inverse_bind)| {
-                    self.live(joint.index, joint.generation)
-                        .and_then(|at| world_matrix(self, at, matrices, 0))
-                        .map_or(Mat4::IDENTITY, |placed| placed * *inverse_bind)
-                })
-                .collect(),
-        )
+            .filter(|(set_for, _)| *set_for == generation)
+        else {
+            return false;
+        };
+        let joints = skin.joints.iter().zip(&skin.inverse_binds);
+        out.extend(joints.map(|(joint, inverse_bind)| {
+            self.live(joint.index, joint.generation)
+                .and_then(|at| world_matrix(self, at, matrices, 0))
+                .map_or(Mat4::IDENTITY, |placed| placed * *inverse_bind)
+        }));
+        true
     }
     /// The nearest visible mesh the world segment `from` to `to` meets, and
     /// where along it (0 to 1).
@@ -1046,7 +1114,11 @@ impl World {
             if entry.0 == id.generation && entry.1 == weights {
                 return false;
             }
-            *entry = (id.generation, weights.to_vec());
+            // Into its list: set a frame, a new one each time was an
+            // allocation a mesh a frame.
+            entry.0 = id.generation;
+            entry.1.clear();
+            entry.1.extend_from_slice(weights);
             true
         });
     }
