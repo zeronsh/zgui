@@ -1288,7 +1288,8 @@ pub(crate) fn mount_style_with_intrinsic(
             || resolved.text_size.is_none()
             || resolved.text_wrap.is_none()
             || resolved.font_family.is_none()
-            || resolved.rare().font_features.is_none()
+            || (resolved.rare().font_features.as_ref())
+                .is_none_or(crate::text_layout::FontFeatures::takes_parents)
             || resolved.text_align.is_none()
             || resolved.rare().font_fallbacks.is_none()
             || resolved.font_weight.is_none()
@@ -1323,6 +1324,12 @@ pub(crate) fn mount_style_with_intrinsic(
                 (Some(family), None) => (family.clone(), None),
                 (None, _) => (parent.font.family.clone(), parent.family),
             };
+            // Features of its own go over the inherited ones as a language
+            // says (`lang`), out of line: the usual inherit as they did.
+            let features = match &resolved.rare().font_features {
+                None => parent.font.features.clone(),
+                Some(own) => own_features(own, &parent.font.features),
+            };
             Typography {
                 family: family.1,
                 display: crate::text_layout::TextOptions {
@@ -1340,11 +1347,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 wrap: resolved.text_wrap.unwrap_or(parent.wrap),
                 font: crate::text_layout::FontStyle {
                     family: family.0,
-                    features: resolved
-                        .rare()
-                        .font_features
-                        .clone()
-                        .unwrap_or_else(|| parent.font.features.clone()),
+                    features,
                     align: resolved.text_align.unwrap_or(parent.font.align),
                     fallbacks: resolved
                         .rare()
@@ -1931,6 +1934,17 @@ fn apply_resolved(
     }
     style
 }
+/// A text's features from its style's `own`, as `FontFeatures::layer` makes
+/// them over its parent's.
+#[inline(never)]
+fn own_features(
+    own: &crate::text_layout::FontFeatures,
+    parent: &crate::text_layout::FontFeatures,
+) -> crate::text_layout::FontFeatures {
+    let mut features = own.clone();
+    features.layer(own, parent);
+    features
+}
 /// What a style with rare properties sets as it's applied, or clears from
 /// `node` having lost them.
 #[inline(never)]
@@ -1961,6 +1975,12 @@ fn apply_rare(
             cold.and_then(|cold| cold.image_rendering)
                 .unwrap_or_default(),
         );
+        // What assistive technology reads its text in (its fonts come with
+        // its typography): looked at once a node has said.
+        let language = cold.and_then(|cold| cold.lang.clone());
+        if language.is_some() || scene.language_revision() != 0 {
+            scene.set_language(node, language);
+        }
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

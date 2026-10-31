@@ -178,6 +178,113 @@ impl FontFeatures {
         let others = others.filter(|(tag, _)| *tag != Self::HYPHENS);
         Self::new(others.chain(hyphens.then_some((Self::HYPHENS, 1))))
     }
+    /// zgx's own tag for the language a text's Han characters are in
+    /// (`_han`, never given to a font, as `HYPHENS`): its `lang`'s
+    /// (`Styled::lang`), which the shaper takes their fallback fonts by.
+    /// 1 Japanese, 2 Korean, 3 another language (the app's fonts), 4
+    /// simplified Chinese, 5 traditional, 6 Hong Kong's (`han_of`).
+    pub const HAN: [u8; 4] = *b"_han";
+    /// What these say of Han characters' language (`HAN`): 0 for nothing.
+    pub fn han(&self) -> u32 {
+        self.settings()
+            .iter()
+            .find(|(tag, _)| *tag == Self::HAN)
+            .map_or(0, |(_, value)| *value)
+    }
+    /// These features, saying Han characters are in `han`'s language (0:
+    /// saying nothing).
+    pub fn with_han(&self, han: u32) -> Self {
+        if self.han() == han {
+            return self.clone();
+        }
+        let others = self.settings().iter().copied();
+        let others = others.filter(|(tag, _)| *tag != Self::HAN);
+        Self::new(others.chain((han != 0).then_some((Self::HAN, han))))
+    }
+    /// zgx's mark on a style's features that say only a language
+    /// (`Styled::lang`): they go over the inherited ones (`layered`), not
+    /// in their place. Never in a text's resolved features.
+    const INHERITS: [u8; 4] = *b"_inh";
+    /// Whether these go over the inherited features (`INHERITS`).
+    fn inherits(&self) -> bool {
+        self.settings()
+            .iter()
+            .any(|(tag, _)| *tag == Self::INHERITS)
+    }
+    /// A style's features saying only that Han characters are in `han`'s
+    /// language, over the inherited ones (`Styled::lang`).
+    pub(crate) fn language_only(han: u32) -> Self {
+        Self::new([(Self::HAN, han), (Self::INHERITS, 1)])
+    }
+    /// `over`, a style's own features, on these (its parent's, or a style
+    /// it goes over): a language alone keeps these features, and features
+    /// saying no language keep these' language, which is inherited apart
+    /// from them.
+    #[inline(never)]
+    pub(crate) fn layered(&self, over: &Self) -> Self {
+        if over.inherits() {
+            return self.with_han(over.han());
+        }
+        match self.han() {
+            0 => over.clone(),
+            han if over.han() == 0 => over.with_han(han),
+            _ => over.clone(),
+        }
+    }
+    /// These, a text's features from `own` (its style's: `parent`'s where
+    /// it has none), as `layered` makes them: a language alone over
+    /// `parent`'s features, features of its own keeping `parent`'s
+    /// language. Most features of their own stay as they are.
+    #[inline(never)]
+    pub(crate) fn layer(&mut self, own: &Self, parent: &Self) {
+        if own.inherits() || (parent.han() != 0 && own.han() == 0) {
+            *self = parent.layered(own);
+        }
+    }
+    /// Whether a text with these features of its own still takes its
+    /// parent's: a language it inherits, or the features themselves. Out of
+    /// line: the style effect asks it last, of the few styles setting every
+    /// other typography field.
+    #[inline(never)]
+    pub(crate) fn takes_parents(&self) -> bool {
+        self.han() == 0 || self.inherits()
+    }
+    /// What a text in `language` (a BCP 47 tag: "ja", "zh-Hant-TW") says of
+    /// its Han characters (`HAN`): which Chinese, Japanese or Korean, or
+    /// another language, its fonts the app's.
+    pub fn han_of(language: &str) -> u32 {
+        let mut parts = language.split(['-', '_']);
+        let primary = parts.next().unwrap_or_default();
+        let is = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+        if is(primary, "ja") {
+            return 1;
+        }
+        if is(primary, "ko") {
+            return 2;
+        }
+        if is(primary, "yue") {
+            return 6;
+        }
+        if !is(primary, "zh") && !is(primary, "cmn") {
+            return 3;
+        }
+        // A region names one Chinese where a script does not (Hans or
+        // Hant): Hong Kong's or Macau's, Taiwan's, the mainland's.
+        let mut traditional = false;
+        for part in parts {
+            if is(part, "hk") || is(part, "mo") {
+                return 6;
+            }
+            if is(part, "tw") {
+                return 5;
+            }
+            if is(part, "hans") || is(part, "cn") || is(part, "sg") {
+                return 4;
+            }
+            traditional |= is(part, "hant");
+        }
+        if traditional { 5 } else { 4 }
+    }
     /// The bytes the settings take, for cache accounting.
     pub fn storage_bytes(&self) -> usize {
         std::mem::size_of_val(self.settings())

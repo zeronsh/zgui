@@ -20,6 +20,8 @@ mod system_preferences;
 mod text_balance;
 #[path = "../text_hyphens.rs"]
 mod text_hyphens;
+#[path = "../text_lang.rs"]
+mod text_lang;
 #[path = "../text_range_area.rs"]
 mod text_range_area;
 #[path = "../theme.rs"]

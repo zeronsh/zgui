@@ -181,8 +181,12 @@ impl FontFeatures {
     /// (1, Japanese) or hangul (2, Korean), or by an app's language (3,
     /// `FontSystem::set_language`): `ShapeLine::build` sets it on
     /// such a line's copy of its attributes, so its Han characters take that
-    /// language's fallback fonts and the run cache keeps its runs apart. No
-    /// font can have it, as `HYPHENS`.
+    /// language's fallback fonts and the run cache keeps its runs apart. A
+    /// text's own language (HTML's `lang`) sets it on its attributes, which
+    /// the line's kana then leave as they are: 1 or 2 for Japanese or
+    /// Korean, 4 simplified Chinese, 5 traditional (Taiwan's), 6 Hong
+    /// Kong's, 3 another language (the app's fonts, no hint). No font can
+    /// have it, as `HYPHENS`.
     pub const HAN: FeatureTag = FeatureTag::new(b"_han");
 
     pub const fn new() -> Self {
@@ -192,7 +196,8 @@ impl FontFeatures {
     }
 
     /// zgx: the language these say their Han characters are in (`HAN`): 0
-    /// none, 1 Japanese, 2 Korean.
+    /// none, 1 Japanese, 2 Korean, 3 the app's, 4 to 6 simplified,
+    /// traditional and Hong Kong Chinese.
     pub fn han(&self) -> u32 {
         (self.features.iter())
             .find(|feature| feature.tag == Self::HAN)

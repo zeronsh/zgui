@@ -131,6 +131,11 @@ pub struct ShapeBuffer {
 
     /// Buffer for sets of layout glyphs.
     glyph_sets: Vec<Vec<LayoutGlyph>>,
+
+    /// zgx: the language the last run's Han characters were said to be in
+    /// (`FontFeatures::HAN`, from `run_scripts`), which the fallback search
+    /// reads for Han's fonts: written only where a run has Han.
+    pub(crate) han: u32,
 }
 
 impl fmt::Debug for ShapeBuffer {
@@ -310,10 +315,17 @@ fn shape_fallback(
 /// Inherited).
 ///
 /// Han goes as the line's attributes say (`FontFeatures::HAN`, from its
-/// kana or hangul): a Japanese line's kanji in a Japanese font, not the
-/// system language's Chinese one.
+/// kana or hangul, or a text's language): a Japanese line's kanji in a
+/// Japanese font, not the system language's Chinese one. What they say
+/// goes in `han`, for the fallback search (`ShapeBuffer::han`).
 #[inline(never)]
-fn run_scripts(run: &str, scripts: &mut Vec<Script>, attrs_list: &AttrsList, start: usize) -> bool {
+fn run_scripts(
+    run: &str,
+    scripts: &mut Vec<Script>,
+    attrs_list: &AttrsList,
+    start: usize,
+    han: &mut u32,
+) -> bool {
     let mut emoji = false;
     for c in run.chars() {
         match c.script() {
@@ -321,11 +333,14 @@ fn run_scripts(run: &str, scripts: &mut Vec<Script>, attrs_list: &AttrsList, sta
             Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
             script => {
                 let script = match script {
-                    Script::Han => match attrs_list.get_span(start).font_features.han() {
-                        HAN_JAPANESE => Script::Hiragana,
-                        HAN_KOREAN => Script::Hangul,
-                        _ => script,
-                    },
+                    Script::Han => {
+                        *han = attrs_list.get_span(start).font_features.han();
+                        match *han {
+                            HAN_JAPANESE => Script::Hiragana,
+                            HAN_KOREAN => Script::Hangul,
+                            _ => script,
+                        }
+                    }
                     _ => script,
                 };
                 if !scripts.contains(&script) {
@@ -338,16 +353,19 @@ fn run_scripts(run: &str, scripts: &mut Vec<Script>, attrs_list: &AttrsList, sta
 }
 
 /// zgx: `attrs_list` with `han`, what language a line's Han characters
-/// are in (`FontFeatures::HAN`), on its defaults and each span; none for
-/// `HAN_NONE`, as for most text.
+/// are in (`FontFeatures::HAN`), on its defaults and each span not saying
+/// its own; none for `HAN_NONE`, as for most text.
 #[inline(never)]
 fn hinted(attrs_list: &AttrsList, han: u32) -> Option<AttrsList> {
     if han == HAN_NONE {
         return None;
     }
+    // A text that says its language (`lang`) keeps it.
     let with = |attrs: &AttrsOwned| {
         let mut features = attrs.font_features.clone();
-        features.set(FontFeatures::HAN, han);
+        if features.han() == HAN_NONE {
+            features.set(FontFeatures::HAN, han);
+        }
         AttrsOwned::new(&attrs.as_attrs().font_features(features))
     };
     let mut list = AttrsList::new(&with(attrs_list.defaults_owned()).as_attrs());
@@ -503,7 +521,14 @@ fn shape_run(
     // zgx patch: ASCII is all Common or Latin; only other text is looked up,
     // and whether a cluster asks for emoji presentation with it.
     let run = &line[start_run..end_run];
-    let emoji = !run.is_ascii() && run_scripts(run, &mut scripts, attrs_list, start_run);
+    let emoji = !run.is_ascii()
+        && run_scripts(
+            run,
+            &mut scripts,
+            attrs_list,
+            start_run,
+            &mut font_system.shape_buffer.han,
+        );
 
     log::trace!("      Run {:?}: '{}'", &scripts, &line[start_run..end_run],);
 

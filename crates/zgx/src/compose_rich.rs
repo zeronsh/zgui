@@ -210,7 +210,25 @@ impl TextSpan {
     }
     /// OpenType features (ligatures, tabular figures) for the span.
     pub fn font_features(mut self, features: crate::text_layout::FontFeatures) -> Self {
-        self.styles.rare_mut().font_features = Some(features);
+        let rare = self.styles.rare_mut();
+        // Keeping a language it says (`lang`).
+        rare.font_features = Some(match &rare.font_features {
+            Some(own) => own.layered(&features),
+            None => features,
+        });
+        self
+    }
+    /// The language the span's text is in (HTML's `lang`: "zh-TW"), over
+    /// its paragraph's: its Han characters take that language's fonts
+    /// (`Styled::lang`).
+    pub fn lang(mut self, language: impl AsRef<str>) -> Self {
+        use crate::text_layout::FontFeatures;
+        let only = FontFeatures::language_only(FontFeatures::han_of(language.as_ref()));
+        let rare = self.styles.rare_mut();
+        rare.font_features = Some(match &rare.font_features {
+            Some(features) => features.layered(&only),
+            None => only,
+        });
         self
     }
     /// The span's font family.

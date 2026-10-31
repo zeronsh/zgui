@@ -107,6 +107,9 @@ pub struct AccessibilityTree {
     /// Where the text node showing a node's runs was when they were placed
     /// (`Scene::text_lines`): moved (scrolled in its field), they are again.
     run_boxes: HashMap<NodeId, zgx::scene::Rect>,
+    /// The scene's `language_revision` at the last update: changed, every
+    /// node is projected again, its language perhaps an ancestor's.
+    language_revision: u64,
 }
 /// A line of a long field, as text runs: kept while its text is, so an edit
 /// sends the runs of the lines it changed, and a scroll those it shows.
@@ -272,6 +275,10 @@ impl AccessibilityTree {
         scale: f64,
     ) -> TreeUpdate {
         let root = self.id(scene.root());
+        if scene.language_revision() != self.language_revision {
+            self.language_revision = scene.language_revision();
+            self.projection_revisions.clear();
+        }
         let mut children: HashMap<NodeId, Vec<AccessibleId>> = HashMap::new();
         // Scene order, not hash-map iteration order, determines accessible traversal.
         let mut ordered: Vec<_> = scene
@@ -609,6 +616,11 @@ impl AccessibilityTree {
 
             if disabled {
                 n.set_disabled();
+            }
+            // The language its text is in (`lang`), its own or what holds
+            // it says: AccessKit gives what it holds the same.
+            if let Some(language) = scene.language(id) {
+                n.set_language(language.to_string());
             }
             if semantic.read_only {
                 n.set_read_only();
@@ -1515,6 +1527,7 @@ mod editor_text_tests {
         ui.prepare_frame();
         ui.input.focus(&ui.scene, Some(view.node()));
         ui.prepare_frame();
+        eprintln!("rev {}", ui.scene.borrow().language_revision());
         let mut adapter = AccessibilityTree::new();
         let update = adapter.update(
             &ui.scene.borrow(),
@@ -1565,6 +1578,7 @@ mod editor_text_tests {
             .set_selection(1, value.get().len());
         editor.refresh();
         ui.prepare_frame();
+        eprintln!("rev {}", ui.scene.borrow().language_revision());
         let mut adapter = AccessibilityTree::new();
         let update = adapter.update(
             &ui.scene.borrow(),
@@ -1932,6 +1946,7 @@ mod editor_text_tests {
         editor.editor.borrow_mut().set_selection(0, 0);
         editor.refresh();
         ui.prepare_frame();
+        eprintln!("rev {}", ui.scene.borrow().language_revision());
         let mut adapter = AccessibilityTree::new();
         let update = |adapter: &mut AccessibilityTree| {
             adapter.update(
@@ -2019,6 +2034,7 @@ mod editor_text_tests {
         let read = count.clone();
         let view = ui.mount(text_signal(move || format!("Count: {}", read.get())));
         ui.prepare_frame();
+        eprintln!("rev {}", ui.scene.borrow().language_revision());
         let mut adapter = AccessibilityTree::new();
         let update = adapter.update(
             &ui.scene.borrow(),
@@ -2137,6 +2153,7 @@ mod editor_text_tests {
         let one = ui.mount(text_area("One", ui.signal("one".to_owned())));
         let two = ui.mount(text_area("Two", ui.signal("two".to_owned())));
         ui.prepare_frame();
+        eprintln!("rev {}", ui.scene.borrow().language_revision());
         let mut adapter = AccessibilityTree::new();
         adapter.update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.);
         let selection = accesskit::TextSelection {
@@ -2748,6 +2765,7 @@ mod vocabulary_tests {
     /// Every projected node, after a frame.
     fn project(ui: &mut Ui) -> Vec<Node> {
         ui.prepare_frame();
+        eprintln!("rev {}", ui.scene.borrow().language_revision());
         let mut adapter = AccessibilityTree::new();
         adapter
             .update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.)
@@ -3319,5 +3337,50 @@ mod pacing_tests {
         assert!(pacer.update_now(at(500), false, true));
         // Focus moving goes out at once, even right after.
         assert!(pacer.update_now(at(501), true, false));
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+    use zgx::{compose::prelude::*, widgets::Ui};
+
+    #[test]
+    fn a_texts_language_reaches_assistive_technology_its_own_or_what_holds_its() {
+        let mut ui = Ui::new(400., 200.);
+        let language = ui.signal(String::from("zh-TW"));
+        let read = language.clone();
+        let view = ui.mount(
+            column().children([
+                column()
+                    .reactive_style(move || zgx::style::Styles::new().lang(read.get()))
+                    .children([
+                        text("中文").id("inherited"),
+                        text("日本語").lang("ja").id("own"),
+                    ]),
+                text("plain").id("plain"),
+            ]),
+        );
+        ui.prepare_frame();
+        let mut adapter = AccessibilityTree::new();
+        // The language each node is sent with; none for one not sent again.
+        let sent = |adapter: &mut AccessibilityTree, ui: &Ui| {
+            let update = adapter.update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "T", 1.);
+            ["inherited", "own", "plain"].map(|id| {
+                let node = adapter.ids[&view.find(id).unwrap()];
+                let (_, sent) = update.nodes.iter().find(|(n, _)| *n == node)?;
+                Some(sent.language().map(str::to_owned))
+            })
+        };
+        let some = |language: &str| Some(Some(language.to_owned()));
+        assert_eq!(
+            sent(&mut adapter, &ui),
+            [some("zh-TW"), some("ja"), Some(None)]
+        );
+        // What holds it says another: its text is read in that one, and
+        // what says its own, or is outside, is as it was.
+        language.set("zh-HK".into());
+        ui.prepare_frame();
+        assert_eq!(sent(&mut adapter, &ui), [some("zh-HK"), None, None]);
     }
 }

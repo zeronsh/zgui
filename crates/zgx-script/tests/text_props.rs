@@ -305,3 +305,57 @@ fn hyphens_need_the_feature_or_say_so() {
     }
     panic!("no text");
 }
+
+#[test]
+fn a_texts_lang_is_inherited_follows_state_and_a_span_says_its_own() {
+    use zgx::scene::NodeKind;
+    let mut h = Harness::inline(
+        r##"local hk = ui.state("hk", false)
+        return ui.column {
+            lang = "ja",
+            ui.text { id = "inherited", "中文" },
+            ui.text { id = "own", lang = "zh-TW", "中文" },
+            ui.text { id = "followed", "中文", lang = function()
+                return if hk:get() then "zh-HK" else "ko"
+            end },
+            ui.rich { id = "para", ui.span { "日本" }, ui.span { "中文", lang = "zh-TW" } },
+        }"##,
+    );
+    h.frames(1);
+    assert_eq!(h.error(), None);
+    // What each says of its Han characters (`FontFeatures::HAN`).
+    let han = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        let scene = h.ui.scene.borrow();
+        scene.font(scene.children(node)[0]).features.han()
+    };
+    assert_eq!(han(&mut h, "inherited"), 1);
+    assert_eq!(han(&mut h, "own"), 5);
+    assert_eq!(han(&mut h, "followed"), 2);
+    {
+        let (node, own) = (h.find("para").unwrap(), h.find("own").unwrap());
+        let scene = h.ui.scene.borrow();
+        let mut pending = vec![node];
+        let mut found = None;
+        while let Some(next) = pending.pop() {
+            if let NodeKind::RichText { text } = scene.kind(next) {
+                found = Some(
+                    text.runs()
+                        .iter()
+                        .map(|r| r.font.features.han())
+                        .collect::<Vec<_>>(),
+                );
+            }
+            pending.extend(scene.children(next).iter().copied());
+        }
+        assert_eq!(found.as_deref(), Some(&[1, 5][..]));
+        // Assistive technology's language, the nearest that says.
+        let own = scene.children(own)[0];
+        assert_eq!(scene.language(own).map(|l| &**l), Some("zh-TW"));
+    }
+    h.host
+        .set_state("hk", zgx_script::Value::Bool(true))
+        .unwrap();
+    h.frames(1);
+    assert_eq!(han(&mut h, "followed"), 6);
+}

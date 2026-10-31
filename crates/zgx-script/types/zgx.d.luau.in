@@ -1714,6 +1714,8 @@ export type Styles = {
 	-- below the baseline the line sits.
 	underline: boolean?,
 	underline_offset: Num?,
+	-- The language its text is in (HTML's `lang`): "ja", "zh-TW".
+	lang: string?,
 	-- Transforms: after layout, about `origin` (fractions of the node).
 	x: number?,
 	y: number?,
@@ -1887,6 +1889,11 @@ export type StyleProps = {
 	-- below the baseline the line sits.
 	underline: Reactive<boolean>?,
 	underline_offset: Reactive<Num>?,
+	-- The language its text is in (HTML's `lang`, a BCP 47 tag: "ja",
+	-- "zh-TW"), inherited: Han characters take its fonts (a Chinese quote's
+	-- in a Japanese app), over the app's locale and a line's kana, and
+	-- assistive technology reads it in that language.
+	lang: Reactive<string>?,
 	-- Transforms: after layout, about `origin` (fractions of the node).
 	x: Reactive<number>?,
 	y: Reactive<number>?,
@@ -2205,6 +2212,8 @@ export type SpanProps = {
 	strike: Reactive<boolean>?,
 	-- As `ui.text`'s: "mono", "sans", "serif" or a family's name.
 	font: Reactive<string>?,
+	-- The language its text is in, over its paragraph's (`lang`).
+	lang: string?,
 	-- How far below the baseline the underline sits (CSS's
 	-- `text-underline-offset`).
 	underline_offset: number?,

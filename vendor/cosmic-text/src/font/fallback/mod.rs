@@ -83,6 +83,9 @@ pub struct Fallbacks {
     forbidden_fallback_range: Range<usize>,
     // PERF: Consider using NoHashHasher since Script is just an integer
     script_fallback_ranges: HashMap<Script, Range<usize>>,
+    /// zgx: Han's fallbacks in simplified, traditional and Hong Kong
+    /// Chinese (`FontFeatures::HAN` 4 to 6), whatever the locale.
+    chinese: [Range<usize>; 3],
     locale: String,
 }
 
@@ -108,6 +111,11 @@ impl Fallbacks {
         lists.extend_from_slice(forbidden_fallback);
         let forbidden_fallback_range = new_range(&lists);
 
+        let chinese = ["zh-CN", "zh-TW", "zh-HK"].map(|chinese| {
+            lists.extend_from_slice(fallbacks.script_fallback(Script::Han, chinese));
+            new_range(&lists)
+        });
+
         let mut script_fallback_ranges =
             HashMap::with_capacity_and_hasher(scripts.len(), BuildHasher::default());
         for &script in scripts {
@@ -123,6 +131,7 @@ impl Fallbacks {
             common_fallback_range,
             forbidden_fallback_range,
             script_fallback_ranges,
+            chinese,
             locale,
         }
     }
@@ -160,6 +169,13 @@ impl Fallbacks {
         self.script_fallback_ranges
             .get(&script)
             .map_or(&[], |range| &self.lists[range.clone()])
+    }
+
+    /// zgx: the fallbacks for Han characters said to be in Chinese
+    /// (`FontFeatures::HAN` 4 to 6, `han`): that Chinese's.
+    fn chinese_fallback(&self, han: u32) -> Option<&[&'static str]> {
+        let range = self.chinese.get(han.checked_sub(4)? as usize)?;
+        Some(&self.lists[range.clone()])
     }
 }
 
@@ -227,6 +243,7 @@ impl<'a> FontFallbackIter<'a> {
             optical,
         }
     }
+
 
     /// zgx patch: whether the font `next` gave first was its default
     /// family's face (no monospace, script or other fallback looked at).
@@ -462,7 +479,13 @@ impl<'a> FontFallbackIter<'a> {
         while self.script_i.0 < self.scripts.len() {
             let script = self.scripts[self.script_i.0];
 
-            let script_families = fallbacks.script_fallback(script);
+            let script_families = match script {
+                // Its run's language (`ShapeBuffer::han`): a Chinese
+                // one's fonts, not the locale's.
+                Script::Han => fallbacks.chinese_fallback(self.font_system.shape_buffer.han),
+                _ => None,
+            }
+            .unwrap_or_else(|| fallbacks.script_fallback(script));
 
             while self.script_i.1 < script_families.len() {
                 let script_family = script_families[self.script_i.1];

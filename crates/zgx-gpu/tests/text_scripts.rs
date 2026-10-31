@@ -652,8 +652,16 @@ fn an_app_language_decides_which_font_its_han_characters_take() {
     assert_eq!(han(&found), [kana_font(&found)], "no language: {found:?}");
 }
 
+/// Traditional Chinese fonts each platform has.
+const TRADITIONAL_FONTS: &[&str] = &[
+    "PingFang TC",
+    "Heiti TC",
+    "Noto Sans CJK TC",
+    "Microsoft JhengHei UI",
+    "Microsoft JhengHei",
+];
+
 /// The family each character of `buffer`'s text (shaped) is drawn from.
-#[cfg(target_os = "macos")]
 fn drawn(fonts: &cosmic_text::FontSystem, buffer: &cosmic_text::Buffer) -> Vec<(char, String)> {
     let mut found = Vec::new();
     for run in buffer.layout_runs() {
@@ -713,4 +721,83 @@ fn chinese_text_on_macos_takes_the_systems_chinese_face_in_each_chinese() {
             "{language}: {found:?}, not {expected}"
         );
     }
+}
+
+#[test]
+fn a_texts_lang_decides_its_han_fonts_over_its_kana_and_its_paragraphs() {
+    if !has_font(JAPANESE_FONTS) || !has_font(TRADITIONAL_FONTS) {
+        return;
+    }
+    let is_han = |c: &char| ('\u{4E00}'..='\u{9FFF}').contains(c);
+    let is_kana = |c: &char| ('\u{3040}'..='\u{30FF}').contains(c);
+    let han = |found: &[(char, String)]| -> Vec<String> {
+        let mut han: Vec<String> = (found.iter())
+            .filter(|(c, _)| is_han(c))
+            .map(|(_, f)| f.clone())
+            .collect();
+        han.dedup();
+        han
+    };
+    // Han that Japanese and Chinese fonts both have.
+    let (quote, japanese) = ("中国人和日本人。", "日本語の文章です。");
+    let found = families(japanese);
+    let kana = found.iter().find(|(c, _)| is_kana(c)).unwrap().1.clone();
+    let mut ui = Ui::new(600., 400.);
+    let handle = ui.mount(
+        column()
+            .lang("ja")
+            .child(text(quote).id("inherited"))
+            .child(text(quote).lang("zh-TW").id("own"))
+            .child(text(japanese).lang("zh-TW").id("kana"))
+            .child(
+                rich_text()
+                    .child(text_span("日本の"))
+                    .child(text_span(quote).lang("zh-TW"))
+                    .id("paragraph"),
+            ),
+    );
+    ui.prepare_frame();
+    let scene = ui.scene.borrow();
+    let fonts = fonts();
+    let mut fonts = fonts.borrow_mut();
+    let shown = |fonts: &mut cosmic_text::FontSystem, id: &str| {
+        let node = handle.find(id).unwrap();
+        let metrics = cosmic_text::Metrics::new(20., 24.);
+        let mut buffer = cosmic_text::Buffer::new(fonts, metrics);
+        let zgx::scene::NodeKind::Text { text, .. } = scene.kind(node) else {
+            panic!("{id}: text");
+        };
+        zgx_gpu::text::set_buffer_text(fonts, &mut buffer, text, scene.font(node), 20.);
+        buffer.shape_until_scroll(fonts, false);
+        drawn(fonts, &buffer)
+    };
+    // The app's language comes down: a Chinese quote's Han in Japanese.
+    assert_eq!(
+        han(&shown(&mut fonts, "inherited")),
+        std::slice::from_ref(&kana)
+    );
+    // Its own: traditional Chinese, whatever its kana or what holds it say.
+    for id in ["own", "kana"] {
+        let found = shown(&mut fonts, id);
+        let han = han(&found);
+        assert!(
+            !han.is_empty() && han.iter().all(|f| TRADITIONAL_FONTS.contains(&f.as_str())),
+            "{id}: {found:?}"
+        );
+    }
+    // A span's own, over its paragraph's; the rest as the paragraph says.
+    let paragraph = scene.children(handle.find("paragraph").unwrap())[0];
+    let zgx::scene::NodeKind::RichText { text } = scene.kind(paragraph) else {
+        panic!("a paragraph");
+    };
+    let buffer = zgx_gpu::text::rich_buffer(&mut fonts, text, None, None);
+    let found = drawn(&fonts, &buffer);
+    let (japanese, chinese) = found.split_at(3);
+    assert_eq!(han(japanese), [kana], "{found:?}");
+    assert!(
+        han(chinese)
+            .iter()
+            .all(|f| TRADITIONAL_FONTS.contains(&f.as_str())),
+        "{found:?}"
+    );
 }
