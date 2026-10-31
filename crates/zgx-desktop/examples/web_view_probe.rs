@@ -1,7 +1,8 @@
 //! A web page under test (Linux, `--features webkitgtk`; run by
 //! `scripts/web_view_smoke.py`): a page in a box rounded by 24 points at
 //! (40, 40), 600 × 400, with a red zgx square drawn over its bottom right
-//! corner; on the page a field at (20, 20), 300 × 40, a `<select>` at
+//! corner, and a zgx button before the page at (660, 40); on the page a
+//! field at (20, 20), 300 × 40, a `<select>` at
 //! (360, 20), 200 × 30, a green target at (20, 100), 200 × 80, and enough
 //! height to scroll.
 //!
@@ -30,6 +31,7 @@ const post = (value) => window.zgx.postMessage(value);
 const field = document.getElementById('field');
 document.getElementById('target').addEventListener('click', (e) => post({ click: [e.offsetX, e.offsetY], detail: e.detail }));
 field.addEventListener('input', () => post({ value: field.value }));
+field.addEventListener('focus', () => post({ focused: 'field' }));
 const choice = document.getElementById('choice');
 choice.addEventListener('change', () => post({ chose: choice.value }));
 field.addEventListener('compositionstart', () => post({ composition: 'start' }));
@@ -106,6 +108,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .w(120.)
                             .h(120.)
                             .bg(rgba(0xff0000ff)),
+                    )
+                    // zgx content before the page in Tab's order.
+                    .child(
+                        button()
+                            .id("before")
+                            .absolute()
+                            .left(660.)
+                            .top(40.)
+                            .w(90.)
+                            .h(30.)
+                            .accessible_label("Before page")
+                            .child(text("Before page")),
                     ),
             );
             let root = cx.ui.root();

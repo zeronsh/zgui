@@ -1012,6 +1012,19 @@ impl Page {
                     );
                 }
                 Command::Focus(focus) => self.focus(focus),
+                // Tab (or Shift+Tab) given to the page with nothing in it
+                // focused yet: WebKit focuses its first (or last) focusable
+                // element, as focus tabbing into a browser's frame lands.
+                Command::TabIn { forward } => {
+                    let (keyval, state) = if forward {
+                        (0xff09, 0)
+                    } else {
+                        (0xfe20, gtk::GDK_SHIFT_MASK)
+                    };
+                    let time = now_ms();
+                    self.key(true, keyval, 23, state, time);
+                    self.key(false, keyval, 23, state, time);
+                }
                 Command::OpenDevtools => {
                     (api.webkit_web_inspector_show)((api.webkit_web_view_get_inspector)(view));
                 }
@@ -2099,6 +2112,11 @@ enum Command {
         reply: u64,
     },
     Focus(bool),
+    /// Focus came from the keyboard: the page's first focusable element
+    /// (`forward`), or its last.
+    TabIn {
+        forward: bool,
+    },
     OpenDevtools,
     SetZoom(f64),
     /// The box's size in device pixels, and device pixels a point.
@@ -2371,7 +2389,14 @@ impl UiPage {
                     zgx::native_view::post(move || web.set_pointer(None));
                 }
             }
-            InputEvent::Focus => self.send(Command::Focus(true)),
+            InputEvent::Focus => {
+                self.send(Command::Focus(true));
+                // By Tab (or Shift+Tab), as into a browser's frame: the
+                // page's first focusable element (or its last).
+                if let Some(forward) = TABBING.get() {
+                    self.send(Command::TabIn { forward });
+                }
+            }
             InputEvent::Blur => self.send(Command::Focus(false)),
             _ => {}
         }
@@ -2651,6 +2676,27 @@ pub(crate) fn embedding(node: NodeId) -> Option<Option<String>> {
             .filter_map(Weak::upgrade)
             .find(|page| page.node.get() == Some(node))
             .map(|page| page.embedding.borrow().clone())
+    })
+}
+thread_local! {
+    /// A Tab key is being dispatched (`tabbing`): whether forward.
+    static TABBING: Cell<Option<bool>> = const { Cell::new(None) };
+}
+/// Clears `TABBING` as the key's dispatch ends.
+pub(crate) struct Tabbing;
+impl Drop for Tabbing {
+    fn drop(&mut self) {
+        TABBING.set(None);
+    }
+}
+/// While the returned guard lives (a key's dispatch), a page's box focused
+/// is tabbed into if `key` is Tab: its page's first focusable element (last,
+/// with Shift) takes focus. Focus coming back from a page's own popup, or
+/// given by a press, leaves the page's focus where it was.
+pub(crate) fn tabbing(key: &zgx::input::Key, modifiers: Modifiers) -> Option<Tabbing> {
+    (live() && *key == zgx::input::Key::Tab).then(|| {
+        TABBING.set(Some(!modifiers.shift));
+        Tabbing
     })
 }
 /// The page whose box has zgx's focus.

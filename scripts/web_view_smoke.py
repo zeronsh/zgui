@@ -23,8 +23,9 @@ caret is, after IBus's candidates showed (they still go under it).
 `--transparent`: a transparent page with no background of its own shows
 its box's yellow through it. `--orca` (X11): over a private AT-SPI bus, the
 page's own accessible tree is a child of its box (an internal frame) and
-has the box for its parent, and Orca reads the page's field as it takes
-focus and, by its browse mode's heading key, the page's heading.
+has the box for its parent, and Orca reads the page's heading from browse
+mode and names its first field as Tab moves focus there from the app's own
+button.
 """
 import argparse
 import json
@@ -244,10 +245,11 @@ def spoken(output):
     return [m.group(1) for m in re.finditer(r"SPEECH OUTPUT: '([^']*)'", text)]
 
 
-def said(session, output, text):
-    """Whether Orca said `text`. Its debug log reaches the file in blocks: a
-    Shift, which it echoes, now and then fills one."""
-    found = any(text in line for line in spoken(output))
+def said(session, output, text, after=0):
+    """Whether Orca said `text` (after its first `after` utterances). Its
+    debug log reaches the file in blocks: a Shift, which it echoes, now and
+    then fills one."""
+    found = any(text in line for line in spoken(output)[after:])
     if not found and time.monotonic() - said.nudged > 2:
         said.nudged = time.monotonic()
         session.xdo("key", "shift")
@@ -267,6 +269,7 @@ def orca_checks(session, env, output, checks):
     # mode), below the heading: Orca reads where its caret lands, or its
     # previous-heading key reads the heading, in one utterance or two.
     def heading():
+        said(session, output, "Probe heading")
         return re.search(r"Probe heading\.? heading level 1", " ".join(spoken(output)))
     # Pressed before the page's first event reached Orca, the key goes to
     # the app's script, which has none: then the heading's own text (Orca
@@ -284,17 +287,14 @@ def orca_checks(session, env, output, checks):
             pass
     session.wait(heading, "Orca never read the heading", 2)
     checks["heading"] = "Probe heading heading level 1."
-    # The field: Orca names it as it takes focus. Coming from the app's own
-    # content, Orca changes script as focus enters the page and may say
-    # only what the field holds; so once more from the page if so.
-    session.click(120, 80)
-    try:
-        session.wait(lambda: said(session, output, "Probe field entry."), "", 8)
-    except AssertionError:
-        session.click(440, 340)
-        session.click(120, 80)
-    session.wait(lambda: said(session, output, "Probe field entry."), "Orca never read the focused field", 12)
-    checks["focused field"] = "Probe field entry."
+    # The app's own button, then Tab into the page, as into a form: the
+    # page's first field takes focus, and Orca names it (once, with no retry).
+    session.click(705, 55)
+    session.wait(lambda: said(session, output, "Before page push button."), "Orca never read the app's button", 15)
+    before = len(spoken(output))
+    session.key("Tab")
+    session.wait(lambda: said(session, output, "Probe field entry.", before), "Orca never named the field Tab reached", 15)
+    checks["tabbed into the field"] = "Probe field entry."
     return checks
 
 
