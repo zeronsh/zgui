@@ -100,7 +100,8 @@ pub fn run(
         };
         let start = Instant::now();
         let lua = Lua::new();
-        let tests = match load(&lua, dir, &file) {
+        let launches = Rc::new(Launches::default());
+        let tests = match load(&lua, dir, &file, launches.clone()) {
             Ok(tests) => tests,
             Err(error) => {
                 record(
@@ -120,7 +121,9 @@ pub fn run(
                 .call::<()>(())
                 .err()
                 .map(|error| message(&error, &file));
-            // Its apps go with it: the next test mounts fresh ones.
+            // Its apps go with it, and what they kept: the next test mounts
+            // fresh ones.
+            launches.end();
             let _ = lua.gc_collect();
             let _ = lua.gc_collect();
             record(name, failure, start.elapsed());
@@ -129,8 +132,49 @@ pub fn run(
     Ok(report)
 }
 
+/// A test's launches: its apps share a storage directory of the test's own,
+/// so a second `mount` is the next launch, finding what the first kept
+/// (`ui.persist`, remembered folders), saved before it starts.
+#[derive(Default)]
+struct Launches {
+    dir: RefCell<Option<PathBuf>>,
+    hosts: RefCell<Vec<ScriptHost>>,
+}
+impl Launches {
+    /// The test's storage, its apps so far saved to it: where the next keeps
+    /// its own.
+    fn next(&self) -> PathBuf {
+        for host in self.hosts.borrow().iter() {
+            host.save();
+        }
+        self.dir
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                static TESTS: AtomicUsize = AtomicUsize::new(0);
+                std::env::temp_dir().join(format!(
+                    "zgx-test-storage-{}-{}",
+                    std::process::id(),
+                    TESTS.fetch_add(1, Ordering::Relaxed)
+                ))
+            })
+            .clone()
+    }
+    /// The test ended: its storage goes.
+    fn end(&self) {
+        self.hosts.borrow_mut().clear();
+        if let Some(dir) = self.dir.borrow_mut().take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
 /// The file's tests, by name, once it has run.
-fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Function)>> {
+fn load(
+    lua: &Lua,
+    dir: &Path,
+    file: &Path,
+    launches: Rc<Launches>,
+) -> mlua::Result<Vec<(String, Function)>> {
     let globals = lua.globals();
     let tests = lua.create_table()?;
     let added = tests.clone();
@@ -158,12 +202,12 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
             // `zgx run` gives them.
             let host = crate::app_config::read(&dir)
                 .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
+            let storage = launches.next();
             let app = TestApp::try_with_desktop(|runtime| {
-                let host = host.apply(ScriptHost::new(runtime, &path));
-                host.0.persist.quiet();
-                host
+                host.apply(ScriptHost::new(runtime, &path)).storage(storage)
             })
             .map_err(|error| mlua::Error::runtime(format!("mount: {error}")))?;
+            launches.hosts.borrow_mut().push(app.host.clone());
             // The window's size, as `zgx run` opens it.
             let (width, height) = window_size(&dir);
             app.ui.scene.borrow_mut().resize(width, height);
