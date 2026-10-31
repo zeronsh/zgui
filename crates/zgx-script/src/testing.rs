@@ -332,6 +332,54 @@ impl TestApp {
         Ok(app)
     }
 
+    /// Window `id` the script declares (`ui.window`, or one of
+    /// `ui.windows`), mounted headless at its size on this app's runtime,
+    /// tasks, frames and desktop, as a desktop app's other windows share its
+    /// own; None while it is closed. Each call mounts its content anew, as a
+    /// window opening does.
+    pub fn window(&self, id: &str) -> Option<TestApp> {
+        let window = self
+            .host
+            .windows()
+            .with_untracked(|list| list.iter().find(|w| w.id == id).cloned())?;
+        if !window.open.with_untracked(crate::Value::truthy) {
+            return None;
+        }
+        let mut ui = Ui::with_runtime(
+            self.ui.runtime.clone(),
+            window.width as f32,
+            window.height as f32,
+        );
+        let view = self.host.window_view(id);
+        let view = match &self.desktop {
+            Some(desktop) => provide(zgx::platform::PlatformService(desktop.clone()), view),
+            None => view,
+        };
+        let natives = zgx::native_view::NativeViews::new();
+        let handle = ui.mount(provide(
+            natives.clone(),
+            provide(
+                TaskRunner::from_executor(self.executor.clone()),
+                provide(self.clock.clone(), view),
+            ),
+        ));
+        let app = Self {
+            ui,
+            host: self.host.clone(),
+            handle,
+            executor: self.executor.clone(),
+            clock: self.clock.clone(),
+            frame: Cell::new(self.frame.get()),
+            start: self.start,
+            natives,
+            desktop: self.desktop.clone(),
+        };
+        app.settle();
+        app.ui.prepare_frame();
+        app.settle();
+        Some(app)
+    }
+
     /// Run what is ready (handlers' tasks, settled host calls) until
     /// nothing is.
     pub fn settle(&self) {
@@ -339,7 +387,10 @@ impl TestApp {
     }
     /// Deliver one 60 Hz display frame and lay out, as a window does.
     pub fn frame(&self) {
-        let index = self.frame.get() + 1;
+        // After the last frame delivered, by this app or a window sharing
+        // its clock.
+        let last = self.clock.last().map_or(0, |frame| frame.index);
+        let index = self.frame.get().max(last) + 1;
         self.frame.set(index);
         let interval = Duration::from_secs_f64(1. / 60.);
         self.clock.deliver(Frame {
