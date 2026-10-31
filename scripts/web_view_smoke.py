@@ -24,7 +24,7 @@ caret is, after IBus's candidates showed (they still go under it).
 its box's yellow through it. `--orca` (X11): over a private AT-SPI bus, the
 page's own accessible tree is a child of its box (an internal frame) and
 has the box for its parent, and Orca reads the page's field as it takes
-focus.
+focus and, by its browse mode's heading key, the page's heading.
 """
 import argparse
 import json
@@ -263,13 +263,38 @@ def orca_checks(session, env, output, checks):
         raise AssertionError("the page's tree is not under its box; see tree.txt")
     checks["tree"] = tree.stdout.strip().splitlines()[0]
     checks["heading in the tree"] = "Probe heading"
+    # The page's plain background first (no field: Orca stays in browse
+    # mode), below the heading: Orca reads where its caret lands, or its
+    # previous-heading key reads the heading, in one utterance or two.
+    def heading():
+        return re.search(r"Probe heading\.? heading level 1", " ".join(spoken(output)))
+    # Pressed before the page's first event reached Orca, the key goes to
+    # the app's script, which has none: then the heading's own text (Orca
+    # reads the line its caret lands on), then the background again.
+    for x, y in ((440, 340), (140, 250), (440, 340)):
+        session.click(x, y)
+        time.sleep(2)
+        if heading():
+            break
+        session.key("shift+h")
+        try:
+            session.wait(heading, "", 6)
+            break
+        except AssertionError:
+            pass
+    session.wait(heading, "Orca never read the heading", 2)
+    checks["heading"] = "Probe heading heading level 1."
+    # The field: Orca names it as it takes focus. Coming from the app's own
+    # content, Orca changes script as focus enters the page and may say
+    # only what the field holds; so once more from the page if so.
     session.click(120, 80)
-    session.wait(lambda: said(session, output, "Probe field entry."), "Orca never read the focused field", 20)
+    try:
+        session.wait(lambda: said(session, output, "Probe field entry."), "", 8)
+    except AssertionError:
+        session.click(440, 340)
+        session.click(120, 80)
+    session.wait(lambda: said(session, output, "Probe field entry."), "Orca never read the focused field", 12)
     checks["focused field"] = "Probe field entry."
-    # Orca's heading keys read the page's heading too, in browse mode; but
-    # GTK's own window, active for the page's focus, sometimes swaps Orca's
-    # script as Escape switches modes, so that isn't asserted (the tree
-    # check above finds the heading).
     return checks
 
 
