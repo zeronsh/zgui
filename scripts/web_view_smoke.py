@@ -240,6 +240,17 @@ def spoken(output):
     return [m.group(1) for m in re.finditer(r"SPEECH OUTPUT: '([^']*)'", text)]
 
 
+def said(session, output, text):
+    """Whether Orca said `text`. Its debug log reaches the file in blocks: a
+    Shift, which it echoes, now and then fills one."""
+    found = any(text in line for line in spoken(output))
+    if not found and time.monotonic() - said.nudged > 2:
+        said.nudged = time.monotonic()
+        session.xdo("key", "shift")
+    return found
+said.nudged = 0.
+
+
 def orca_checks(session, env, output, checks):
     """The page's tree under its box, and what Orca reads of it."""
     tree = subprocess.run([sys.executable, "-c", TREE], env=env, capture_output=True, text=True, timeout=60)
@@ -249,7 +260,7 @@ def orca_checks(session, env, output, checks):
     checks["tree"] = tree.stdout.strip().splitlines()[0]
     checks["heading in the tree"] = "Probe heading"
     session.click(120, 80)
-    session.wait(lambda: "Probe field entry." in spoken(output), "Orca never read the focused field", 20)
+    session.wait(lambda: said(session, output, "Probe field entry."), "Orca never read the focused field", 20)
     checks["focused field"] = "Probe field entry."
     # Orca's heading keys read the page's heading too, in browse mode; but
     # GTK's own window, active for the page's focus, sometimes swaps Orca's
