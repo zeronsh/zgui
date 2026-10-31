@@ -109,6 +109,76 @@ fn output_shows_in_rows_and_reports_reach_the_controller() {
     });
 }
 
+/// Every `line N` shown, with the top of its box on screen, in the order
+/// the scene paints them (which assistive technology reads).
+#[cfg(unix)]
+fn lines_shown(app: &Harness) -> Vec<(u32, f32)> {
+    let scene = app.ui.scene.borrow();
+    scene
+        .paint_items()
+        .filter_map(|item| match scene.kind(item.id) {
+            NodeKind::Text { text, .. } => text
+                .strip_prefix("line ")
+                .and_then(|n| n.trim().parse().ok())
+                .map(|n| (n, scene.transformed_bounds(item.id).y)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn scrolled_output_shows_each_line_at_its_row_in_order() {
+    let mut app = Harness::new();
+    // Forty lines at once, then twenty one by one (a scroll of a line or
+    // two between frames), past the bottom of about twenty rows.
+    let term = Terminal::new(
+        &app.ui.runtime,
+        session(
+            "i=1; while [ $i -le 40 ]; do echo \"line $i\"; i=$((i+1)); done; \
+             while [ $i -le 60 ]; do echo \"line $i\"; i=$((i+1)); sleep 0.02; done; sleep 30",
+        ),
+    );
+    let renderer = zgx::terminal::TerminalRenderer::new(zgx_terminal::terminal_view);
+    app.mount(provide(
+        renderer,
+        zgx::terminal::terminal(&term).w(600.).h(300.),
+    ));
+    let mut checked = 0;
+    app.until("line 60", |app| {
+        // Each frame on the way: the lines shown are consecutive, each a row
+        // below the one before, in reading order, and on screen.
+        let shown = lines_shown(app);
+        if let Some((first, top)) = shown.first().copied() {
+            let rows = shown.len() as f32;
+            let height = shown.get(1).map_or(0., |second| second.1 - top);
+            for (i, (line, y)) in shown.iter().enumerate() {
+                assert_eq!(*line, first + i as u32, "lines out of order: {shown:?}");
+                assert!(
+                    (y - (top + i as f32 * height)).abs() < 0.01,
+                    "line {line} not at its row: {shown:?}"
+                );
+            }
+            assert!(
+                height > 0. || shown.len() == 1,
+                "lines on one row: {shown:?}"
+            );
+            assert!(
+                top >= 0. && top + rows * height <= 300.,
+                "lines off screen: {shown:?}"
+            );
+            checked += 1;
+        }
+        shown.last().is_some_and(|last| last.0 == 60)
+    });
+    assert!(checked > 1, "only {checked} frames checked");
+    let shown = lines_shown(&app);
+    assert!(
+        shown.len() > 10 && shown[0].0 > 1,
+        "the screen didn't scroll: {shown:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn typing_reaches_the_program() {

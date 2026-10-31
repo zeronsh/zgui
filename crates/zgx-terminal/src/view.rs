@@ -4,6 +4,8 @@
 //! Each row of the screen is a canvas drawing what [`crate::paint`] worked
 //! out for it: when output arrives, only the rows the screen model marks
 //! damaged are worked out again, and only those that differ draw again.
+//! Canvases stand at their lines in a container that moves up as the screen
+//! scrolls, so a scroll draws the new lines alone: the rest move with it.
 //! Keys go to the program through a hidden editor at the cursor, so input
 //! methods compose there and place their candidates at the cursor on every
 //! platform; what they commit is sent, never kept.
@@ -58,8 +60,18 @@ struct Engine {
     runner: RefCell<TaskRunner>,
     wake: Arc<Mutex<Option<zgx::task::LatestSender<()>>>>,
     platform: RefCell<Option<Rc<PlatformService>>>,
-    /// Each viewport row's paint, as its canvas draws it.
+    /// Each row canvas's paint, as it draws it, and the line it shows (by
+    /// slot), counted from `scrolled`'s base: lines stay where they are
+    /// while `scrolled` moves the rows' container over them, so a scroll
+    /// changes the canvases of new lines alone.
     rows: RefCell<Vec<Signal<Rc<RowPaint>>>>,
+    lines: RefCell<Vec<Signal<usize>>>,
+    /// The line at the top of the screen.
+    scrolled: Signal<usize>,
+    /// The slot showing each screen row, and that order for the view (and
+    /// for readers, top to bottom).
+    slots: RefCell<Vec<usize>>,
+    order: Signal<Rc<[usize]>>,
     /// How many rows show, and the metrics they are laid out by (rows are
     /// made again when these change).
     layout: Signal<(u16, u32)>,
@@ -135,6 +147,10 @@ impl EngineTerminal {
             wake: Arc::new(Mutex::new(None)),
             platform: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
+            lines: RefCell::new(Vec::new()),
+            scrolled: runtime.signal(0),
+            slots: RefCell::new(Vec::new()),
+            order: runtime.signal(Rc::from([])),
             layout: runtime.signal((24, 0)),
             metrics: Cell::new(Metrics {
                 font_size: options.font_size.unwrap_or(FONT_SIZE),
@@ -344,9 +360,11 @@ impl Engine {
         let mut changed = Vec::new();
         let caret;
         let output;
+        let screen_rows;
         {
             let mut term = session.term();
             let rows = term.screen_lines();
+            screen_rows = rows;
             let offset = term.grid().display_offset();
             let mode = *term.mode();
             let point = term.grid().cursor.point;
@@ -400,21 +418,39 @@ impl Engine {
             }
             term.reset_damage();
         }
-        let rows = self.rows.borrow();
+        self.fit_slots(screen_rows);
         // Worked out only while a screen reader listens.
         let listening = self
             .root
             .borrow()
             .as_ref()
             .is_some_and(NodeHandle::assistive_technology);
+        let every_row = changed.len() == screen_rows;
+        let shown: Vec<Rc<RowPaint>> = if every_row || (output && listening) {
+            let rows = self.rows.borrow();
+            self.slots
+                .borrow()
+                .iter()
+                .map(|slot| rows[*slot].with_untracked(Rc::clone))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let news = if output && listening {
-            self.news_of(&rows, &changed)
+            self.news_of(&shown, &changed)
         } else {
             String::new()
         };
         self.runtime.batch(|| {
+            // Every row worked out again (output scrolled, most often): the
+            // slots of lines still on screen move up with them.
+            if every_row {
+                self.scroll_slots(shift(&shown, &changed));
+            }
+            let rows = self.rows.borrow();
+            let slots = self.slots.borrow();
             for (row, paint) in changed {
-                if let Some(signal) = rows.get(row)
+                if let Some(signal) = slots.get(row).map(|slot| &rows[*slot])
                     && signal.with_untracked(|shown| **shown != paint)
                 {
                     signal.set(Rc::new(paint));
@@ -429,15 +465,11 @@ impl Engine {
 
     /// What a reader hears of rows `changed` from what `rows` show: new
     /// lines and what lines gained, less the shell's echo of what was typed.
-    fn news_of(&self, rows: &[Signal<Rc<RowPaint>>], changed: &[(usize, RowPaint)]) -> String {
+    fn news_of(&self, shown: &[Rc<RowPaint>], changed: &[(usize, RowPaint)]) -> String {
         if changed.is_empty() {
             return String::new();
         }
-        let before: Vec<Rc<RowPaint>> = rows
-            .iter()
-            .map(|row| row.with_untracked(Rc::clone))
-            .collect();
-        let mut after: Vec<&str> = before.iter().map(|paint| paint.text.as_str()).collect();
+        let mut after: Vec<&str> = shown.iter().map(|paint| paint.text.as_str()).collect();
         let before: Vec<&str> = after.clone();
         for (row, paint) in changed {
             if let Some(text) = after.get_mut(*row) {
@@ -452,13 +484,71 @@ impl Engine {
         news
     }
 
-    /// The row signal at `row`, made on first use.
-    fn row(&self, row: usize) -> Signal<Rc<RowPaint>> {
+    /// Slot `slot`'s paint and line, made on first use.
+    fn slot(&self, slot: usize) -> (Signal<Rc<RowPaint>>, Signal<usize>) {
         let mut rows = self.rows.borrow_mut();
-        while rows.len() <= row {
+        let mut lines = self.lines.borrow_mut();
+        while rows.len() <= slot {
             rows.push(self.runtime.signal(Rc::new(RowPaint::default())));
+            let line = lines.len();
+            lines.push(self.runtime.signal(line));
         }
-        rows[row].clone()
+        (rows[slot].clone(), lines[slot].clone())
+    }
+
+    /// Slots for `rows` screen rows, each showing its own row again if
+    /// they were for another count.
+    fn fit_slots(&self, rows: usize) {
+        if self.slots.borrow().len() == rows {
+            return;
+        }
+        for slot in 0..rows {
+            self.slot(slot);
+        }
+        *self.slots.borrow_mut() = (0..rows).collect();
+        self.rebase();
+    }
+
+    /// Each slot's line counted from the top of the screen again: lines
+    /// counted from far back would be placed less exactly.
+    fn rebase(&self) {
+        let slots = self.slots.borrow();
+        let lines = self.lines.borrow();
+        for (row, slot) in slots.iter().enumerate() {
+            if lines[*slot].with_untracked(|line| *line != row) {
+                lines[*slot].set(row);
+            }
+        }
+        if self.scrolled.with_untracked(|top| *top != 0) {
+            self.scrolled.set(0);
+        }
+        self.order.set(slots.iter().copied().collect());
+    }
+
+    /// The screen scrolled by `shift` lines: each screen row is shown by the
+    /// slot of the row `shift` below it, which keeps its line and what it
+    /// draws, and the first `shift` slots take the lines new at the bottom.
+    fn scroll_slots(&self, shift: usize) {
+        /// Lines scrolled before the slots' lines are counted afresh.
+        const REBASE: usize = 4096;
+        let count = self.slots.borrow().len();
+        if shift == 0 || shift >= count {
+            return;
+        }
+        let top = self.scrolled.with_untracked(|top| *top) + shift;
+        let mut slots = self.slots.borrow_mut();
+        slots.rotate_left(shift);
+        if top >= REBASE {
+            drop(slots);
+            self.rebase();
+            return;
+        }
+        let lines = self.lines.borrow();
+        for row in count - shift..count {
+            lines[slots[row]].set(top + row);
+        }
+        self.scrolled.set(top);
+        self.order.set(slots.iter().copied().collect());
     }
 
     /// Fit the grid to the view's `size` (its content box, in points).
@@ -493,6 +583,7 @@ impl Engine {
             }
         }
         self.full.set(true);
+        self.fit_slots(usize::from(rows));
         let layout = (rows, self.generation.get());
         if self.layout.with_untracked(|shown| *shown != layout) {
             self.layout.set(layout);
@@ -1272,14 +1363,41 @@ fn view(engine: Rc<Engine>) -> View {
         let engine = engine.clone();
         keyed(
             {
+                // Slots in screen order, so readers meet rows top to bottom;
+                // a scroll moves slots rather than making them again.
                 let layout = engine.layout.clone();
+                let order = engine.order.clone();
                 move || {
-                    let (rows, generation) = layout.get();
-                    (0..rows).map(|row| (row, generation)).collect::<Vec<_>>()
+                    let (_, generation) = layout.get();
+                    order.with(|order| {
+                        order
+                            .iter()
+                            .map(|slot| (*slot, generation))
+                            .collect::<Vec<_>>()
+                    })
                 }
             },
-            move |(row, _), _cx| row_view(&engine, usize::from(row)),
+            move |(slot, _), _cx| row_view(&engine, slot),
         )
+    };
+    // The rows' container, moved up over their lines as the screen scrolls:
+    // moving it changes no row.
+    let rows = {
+        let scrolled = engine.scrolled.clone();
+        let metrics = engine.clone();
+        div()
+            .absolute()
+            .left(0.)
+            .top(0.)
+            .w_full()
+            .h_full()
+            .reactive_style(move || {
+                // The cell's height as the rows are laid out by.
+                let _ = metrics.layout.get();
+                let height = metrics.metrics.get().cell_height;
+                Styles::new().translate(0., -(scrolled.get() as f32) * height)
+            })
+            .child(rows)
     };
     let input = {
         let value = engine.runtime.signal(String::new());
@@ -1416,19 +1534,42 @@ fn view(engine: Rc<Engine>) -> View {
         })
 }
 
-fn row_view(engine: &Rc<Engine>, row: usize) -> View {
-    let paint = engine.row(row);
+fn row_view(engine: &Rc<Engine>, slot: usize) -> View {
+    let (paint, line) = engine.slot(slot);
     let metrics = engine.metrics.get();
     let font = engine.font.clone();
     let label = paint.clone();
     canvas(move |_| paint::draw(&paint.get(), metrics, &font))
         .absolute()
         .left(PAD_X)
-        .top(PAD_Y + row as f32 * metrics.cell_height)
+        .top(PAD_Y)
+        // At its line, moved without layout when the slot takes another.
+        .reactive_style(move || {
+            Styles::new().translate(0., line.get() as f32 * metrics.cell_height)
+        })
         .w_full()
         .h(metrics.cell_height)
         .role(Role::Label)
         .accessible_label_when(move || label.with(|paint| paint.text.clone()))
+}
+
+/// How many lines the screen scrolled from `shown` to `rows` (every screen
+/// row, in order): the least whose rows below match the first rows now,
+/// three of them where there are. 0 where none does, or the first row is
+/// unchanged. Only how much is drawn again depends on it: each row is
+/// compared with what its slot drew either way.
+fn shift(shown: &[Rc<RowPaint>], rows: &[(usize, RowPaint)]) -> usize {
+    let count = shown.len();
+    if count < 2
+        || rows.len() != count
+        || rows.iter().enumerate().any(|(i, (row, _))| *row != i)
+        || *shown[0] == rows[0].1
+    {
+        return 0;
+    }
+    (1..count)
+        .find(|&lines| (0..(count - lines).min(3)).all(|i| *shown[lines + i] == rows[i].1))
+        .unwrap_or(0)
 }
 
 /// The latest output, for screen readers alone: a live region they announce
