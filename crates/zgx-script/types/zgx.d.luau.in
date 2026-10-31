@@ -3228,6 +3228,19 @@ declare ui: {
 	-- A form's fields, checked as they are typed, and its submit with its
 	-- pending and failure states; controls bind with `field`.
 	form: (spec: FormSpec) -> Form,
+	-- A field's undo, and the byte under a point: for an app's own undo stack
+	-- across panes, and a drop where the pointer is. Each takes the field's
+	-- element (a ref's, `on_mount`'s); for other elements, false or nil.
+	editor: {
+		-- As ⌘Z and ⌘⇧Z: whether there was a step.
+		undo: (el: Element) -> boolean,
+		redo: (el: Element) -> boolean,
+		can_undo: (el: Element) -> boolean,
+		can_redo: (el: Element) -> boolean,
+		-- The byte, from 0, a click at `x`, `y` (the window's points, as a drop's)
+		-- would put the caret at.
+		offset_at: (el: Element, x: number, y: number) -> number?,
+	},
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
 	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,

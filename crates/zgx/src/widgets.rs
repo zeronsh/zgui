@@ -178,6 +178,8 @@ struct EditorHint {
     /// selection left as they are (find in page's match in a field), and
     /// where in the view (`scroll_to_line`).
     reveal_at: Cell<Option<(usize, crate::compose::RowAlign)>>,
+    /// The byte at a point (`EditorHandle::offset_at`).
+    point: std::cell::OnceCell<Rc<dyn Fn(f32, f32) -> usize>>,
     /// What a code editor adds (`CodeHint`), made when first used: an
     /// editor without it carries a pointer's room.
     code: std::cell::OnceCell<Box<CodeHint>>,
@@ -335,6 +337,7 @@ impl EditorHint {
             composition_layer: Cell::default(),
             reveal: Cell::default(),
             reveal_at: Cell::default(),
+            point: std::cell::OnceCell::new(),
             code: std::cell::OnceCell::default(),
             themed: Cell::default(),
             theme_watch: Cell::default(),
@@ -925,6 +928,29 @@ impl EditorHandle {
             .insert_pasted(&normalize_text(text, self.multiline));
         self.hint.value.write(&self.editor);
         self.refresh();
+    }
+    /// Undo its last step, as ⌘Z does; whether there was one to undo.
+    pub fn undo(&self) -> bool {
+        self.step(TextEditor::undo)
+    }
+    /// Redo the last step undone, as ⌘⇧Z does; whether there was one.
+    pub fn redo(&self) -> bool {
+        self.step(TextEditor::redo)
+    }
+    fn step(&self, step: fn(&mut TextEditor) -> bool) -> bool {
+        if self.is_read_only() || !step(&mut self.editor.borrow_mut()) {
+            return false;
+        }
+        self.preferred_x.set(None);
+        self.hint.value.write(&self.editor);
+        self.hint.reveal.set(true);
+        self.refresh();
+        true
+    }
+    /// The byte the text has at `x`, `y` (the window's points): where a
+    /// click there would put the caret.
+    pub fn offset_at(&self, x: f32, y: f32) -> Option<usize> {
+        self.hint.point.get().map(|point| point(x, y))
     }
 }
 /// What `View::on_paste` gives an editor: handed what the person pasted
@@ -5172,6 +5198,8 @@ impl Ui {
                 layout.hit_position(x, y).byte_offset
             })
         };
+        // Kept in the hint, which offset_at and the drop handler both reach.
+        let _ = hint.point.set(drop_point);
         let drag_select: Rc<dyn Fn()> = {
             let scene = scene.clone();
             let gesture = gesture.clone();
@@ -5698,7 +5726,7 @@ impl Ui {
                         // Over it: the caret where it would drop.
                         (crate::input::DragPhase::Over, Some(_)) if !read_only.get() => {
                             cx.accept_drag();
-                            let at = drop_point(drag.x, drag.y);
+                            let at = tab_indent.point.get().map_or(0, |point| point(drag.x, drag.y));
                             let mut edit = editor.borrow_mut();
                             if gesture.drop_restore.get().is_none() {
                                 gesture.drop_restore.set(Some(edit.selection()));
@@ -5723,7 +5751,7 @@ impl Ui {
                         (crate::input::DragPhase::Drop, Some(text))
                             if !read_only.get() && !cx.default_prevented() =>
                         {
-                            let at = drop_point(drag.x, drag.y);
+                            let at = tab_indent.point.get().map_or(0, |point| point(drag.x, drag.y));
                             let mut edit = editor.borrow_mut();
                             if let Some(was) = gesture.drop_restore.take() {
                                 edit.set_selection(was.anchor, was.focus);

@@ -1057,6 +1057,64 @@ fn off_clock<R>(lua: &mlua::Lua, work: impl FnOnce(&zgx::reactive::Runtime) -> R
         None => work(&runtime),
     })
 }
+/// `ui.editor`: a field's undo and the byte under a point, for an app's own
+/// undo stack across panes and drops where the pointer is. On `ui`, made
+/// when first read, so an element's metatable stays as small as it was.
+pub(crate) fn install_editor(lua: &mlua::Lua, ui: &mlua::Table) -> mlua::Result<()> {
+    type El<'a> = mlua::UserDataRef<ElementUd>;
+    let editor_of = |e: &El| e.0.handle.get().and_then(NodeHandle::editor);
+    let table = lua.create_table()?;
+    table.set(
+        "undo",
+        lua.create_function(move |lua, e: El| {
+            settle(lua);
+            let Some(editor) = editor_of(&e) else {
+                return Ok(false);
+            };
+            let mut done = false;
+            off_clock(lua, |_| done = editor.undo());
+            settle(lua);
+            Ok(done)
+        })?,
+    )?;
+    table.set(
+        "redo",
+        lua.create_function(move |lua, e: El| {
+            settle(lua);
+            let Some(editor) = editor_of(&e) else {
+                return Ok(false);
+            };
+            let mut done = false;
+            off_clock(lua, |_| done = editor.redo());
+            settle(lua);
+            Ok(done)
+        })?,
+    )?;
+    table.set(
+        "can_undo",
+        lua.create_function(move |lua, e: El| {
+            settle(lua);
+            Ok(editor_of(&e).is_some_and(|editor| editor.editor.borrow().can_undo()))
+        })?,
+    )?;
+    table.set(
+        "can_redo",
+        lua.create_function(move |lua, e: El| {
+            settle(lua);
+            Ok(editor_of(&e).is_some_and(|editor| editor.editor.borrow().can_redo()))
+        })?,
+    )?;
+    table.set(
+        "offset_at",
+        lua.create_function(move |lua, (e, x, y): (El, f32, f32)| {
+            settle(lua);
+            Ok(editor_of(&e).and_then(|editor| editor.offset_at(x, y)))
+        })?,
+    )?;
+    table.set_readonly(true);
+    ui.set("editor", table)
+}
+
 impl UserData for ElementUd {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("id", |_, e| Ok(e.0.id.as_deref().map(str::to_owned)));
