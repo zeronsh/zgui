@@ -514,7 +514,20 @@ pub fn follow_windows(host: &ScriptHost, cx: &zgx_desktop::WindowContext) -> zgx
     let open: Rc<RefCell<HashMap<String, zgx_desktop::WindowHandle>>> = Rc::default();
     let (list, host) = (host.windows(), host.clone());
     cx.ui.runtime.effect(move || {
-        for window in list.get() {
+        let windows = list.get();
+        // Gone from the list (an item's window, its item let go): closed.
+        let gone: Vec<String> = open
+            .borrow()
+            .keys()
+            .filter(|id| !windows.iter().any(|w| &w.id == *id))
+            .cloned()
+            .collect();
+        for id in gone {
+            if let Some(handle) = open.borrow_mut().remove(&id) {
+                runtime.untracked(|| handle.close());
+            }
+        }
+        for window in windows {
             let wanted = window.open.get().truthy();
             let shown = open
                 .borrow()
@@ -526,6 +539,7 @@ pub fn follow_windows(host: &ScriptHost, cx: &zgx_desktop::WindowContext) -> zgx
                     width: window.width,
                     height: window.height,
                     frame_autosave: window.frame_autosave.clone(),
+                    under_pointer: window.under_pointer,
                     tabbing: match window.tabbing.as_deref() {
                         Some("preferred") => zgx_desktop::Tabbing::Preferred,
                         Some("disallowed") => zgx_desktop::Tabbing::Disallowed,

@@ -84,6 +84,7 @@ const WINDOW_OPTIONS: &[&str] = &[
     "height",
     "open",
     "frame_autosave",
+    "under_pointer",
     "tabbing",
 ];
 
@@ -227,6 +228,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "after",
     "shortcut_text",
     "window_rect",
+    "windows",
     "set",
     "toggle",
     "add",

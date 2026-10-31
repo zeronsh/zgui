@@ -1,6 +1,8 @@
 //! Windows scripts declare: `ui.window { id, title, width, height, open,
-//! frame_autosave, tabbing, node }`. A settings window, an inspector: each is open while its `open`
-//! state is true, and closing it sets the state false.
+//! frame_autosave, tabbing, under_pointer, node }`. A settings window, an inspector: each is open
+//! while its `open` state is true, and closing it sets the state false.
+//! `ui.windows(list, build, { key, on_close })` is a window an item of a
+//! list: opened as the item appears, closed as it goes.
 //!
 //! As commands are, each run declares its windows afresh, and after a
 //! successful load the host publishes them ([`crate::ScriptHost::windows`]);
@@ -11,7 +13,7 @@ use crate::{
     node::{Node, expect_node, expect_state},
     value::{ReadState, State, Store, Value},
 };
-use mlua::{Lua, Table};
+use mlua::{Function, Lua, Table};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use zgx::reactive::{Runtime, Signal};
 
@@ -36,6 +38,9 @@ pub struct Window {
     /// AppKit's window tabs (macOS): `"automatic"` (the user's setting),
     /// `"preferred"` or `"disallowed"`.
     pub tabbing: Option<String>,
+    /// Where it opens: the window's top-left this far up and left of the
+    /// pointer (a tab torn off, kept under the grab).
+    pub under_pointer: Option<(f64, f64)>,
 }
 impl PartialEq for Window {
     fn eq(&self, other: &Self) -> bool {
@@ -46,6 +51,7 @@ impl PartialEq for Window {
             self.height,
             &self.frame_autosave,
             &self.tabbing,
+            self.under_pointer,
         ) == (
             &other.id,
             &other.title,
@@ -53,6 +59,7 @@ impl PartialEq for Window {
             other.height,
             &other.frame_autosave,
             &other.tabbing,
+            other.under_pointer,
         ) && self.open.ptr_eq(&other.open)
     }
 }
@@ -66,8 +73,32 @@ impl std::fmt::Debug for Window {
     }
 }
 
+/// `ui.windows(list, build, { key, on_close })`: a window an item.
+struct Group {
+    list: Signal<Value>,
+    build: Function,
+    key: Option<Function>,
+    on_close: Option<Function>,
+    vm: std::rc::Weak<crate::Vm>,
+}
+/// A group's window: built once, as its item first appears.
+struct Built {
+    window: Window,
+    node: Rc<Node>,
+    item: Value,
+    /// `on_close` was told the person closed it.
+    told: bool,
+}
+
 pub(crate) struct Windows {
+    runtime: Runtime,
     pending: RefCell<Vec<(Window, Rc<Node>)>>,
+    pending_groups: RefCell<Vec<Group>>,
+    /// What follows the published groups' lists, while they are published.
+    following: RefCell<Option<zgx::reactive::Effect>>,
+    /// Errors building windows while `publish` runs: the load's, to show
+    /// with its own (later ones are reported as they happen).
+    first_errors: RefCell<Option<Vec<String>>>,
     /// The published windows' content, by id.
     pub content: RefCell<HashMap<String, Rc<Node>>>,
     pub list: Signal<Vec<Window>>,
@@ -75,7 +106,11 @@ pub(crate) struct Windows {
 impl Windows {
     pub fn new(runtime: &Runtime) -> Self {
         Self {
+            runtime: runtime.clone(),
             pending: RefCell::default(),
+            pending_groups: RefCell::default(),
+            following: RefCell::default(),
+            first_errors: RefCell::default(),
             content: RefCell::default(),
             list: runtime.signal(Vec::new()),
         }
@@ -83,12 +118,15 @@ impl Windows {
     /// A load begins: what it declares replaces what is published.
     pub fn begin(&self) {
         self.pending.borrow_mut().clear();
+        self.pending_groups.borrow_mut().clear();
     }
-    /// The load succeeded: publish what it declared.
-    pub fn publish(&self) {
+    /// The load succeeded: publish what it declared. What failed to build
+    /// as it did (an item's window), for the load's error.
+    pub fn publish(self: &Rc<Self>) -> Vec<String> {
         let pending = std::mem::take(&mut *self.pending.borrow_mut());
+        let groups = std::mem::take(&mut *self.pending_groups.borrow_mut());
         let mut content = HashMap::new();
-        let list: Vec<Window> = pending
+        let fixed: Vec<Window> = pending
             .into_iter()
             .map(|(window, node)| {
                 content.insert(window.id.clone(), node);
@@ -96,10 +134,198 @@ impl Windows {
             })
             .collect();
         *self.content.borrow_mut() = content;
-        if self.list.with_untracked(|old| *old != list) {
-            self.list.set(list);
+        self.following.borrow_mut().take();
+        if groups.is_empty() {
+            if self.list.with_untracked(|old| *old != fixed) {
+                self.list.set(fixed);
+            }
+            return Vec::new();
+        }
+        // Each group's windows by id, kept across its list's changes.
+        let mut built: Vec<HashMap<String, Built>> =
+            groups.iter().map(|_| HashMap::new()).collect();
+        let weak = Rc::downgrade(self);
+        let runtime = self.runtime.clone();
+        *self.first_errors.borrow_mut() = Some(Vec::new());
+        let effect = self.runtime.effect(move || {
+            let Some(windows) = weak.upgrade() else {
+                return;
+            };
+            let mut list = fixed.clone();
+            let mut content: HashMap<String, Rc<Node>> = HashMap::new();
+            for (n, group) in groups.iter().enumerate() {
+                let Some(vm) = group.vm.upgrade() else {
+                    continue;
+                };
+                let items = group.list.get();
+                let mut seen = std::collections::HashSet::new();
+                for item in items.list() {
+                    let Some(id) = runtime.untracked(|| key_of(&vm, group, n, item)) else {
+                        continue;
+                    };
+                    seen.insert(id.clone());
+                    if !built[n].contains_key(&id) {
+                        let made = runtime.untracked(|| build(&vm, group, &id, item));
+                        match made {
+                            Ok((window, node)) => {
+                                built[n].insert(
+                                    id.clone(),
+                                    Built {
+                                        window,
+                                        node,
+                                        item: item.clone(),
+                                        told: false,
+                                    },
+                                );
+                            }
+                            Err(error) => {
+                                match windows.first_errors.borrow_mut().as_mut() {
+                                    Some(first) => first.push(error.to_string()),
+                                    None => vm.report(error),
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+                built[n].retain(|id, _| seen.contains(id));
+                for b in built[n].values_mut() {
+                    // The person closed it: the app hears, to let the item go.
+                    if !b.window.open.get().truthy() && !b.told {
+                        b.told = true;
+                        if let Some(on_close) = &group.on_close {
+                            let item = b.item.clone();
+                            runtime.untracked(|| {
+                                if let Err(error) = vm.call::<()>(on_close, item) {
+                                    vm.report(error);
+                                }
+                            });
+                        }
+                    }
+                }
+                let mut ids: Vec<&String> = built[n].keys().collect();
+                ids.sort();
+                for id in ids {
+                    let b = &built[n][id];
+                    content.insert(id.clone(), b.node.clone());
+                    list.push(b.window.clone());
+                }
+            }
+            {
+                let mut all = windows.content.borrow_mut();
+                all.retain(|id, _| fixed.iter().any(|w| &w.id == id));
+                all.extend(content);
+            }
+            if windows.list.with_untracked(|old| *old != list) {
+                windows.list.set(list);
+            }
+        });
+        *self.following.borrow_mut() = Some(effect);
+        self.first_errors.borrow_mut().take().unwrap_or_default()
+    }
+}
+
+/// An item's window id: `key(item)`, else its `id` field.
+fn key_of(vm: &crate::Vm, group: &Group, n: usize, item: &Value) -> Option<String> {
+    let key = match &group.key {
+        Some(key) => match vm.call::<mlua::Value>(key, item.clone()) {
+            Ok(mlua::Value::String(s)) => s.to_string_lossy(),
+            Ok(mlua::Value::Integer(i)) => i.to_string(),
+            Ok(mlua::Value::Number(f)) => f.to_string(),
+            Ok(_) => return None,
+            Err(error) => {
+                vm.report(error);
+                return None;
+            }
+        },
+        None => item.field("id").map(Value::to_string)?,
+    };
+    Some(format!("windows{n}:{key}"))
+}
+
+/// `build(item)`'s window, as `ui.window`'s options give one.
+fn build(
+    vm: &crate::Vm,
+    group: &Group,
+    id: &str,
+    item: &Value,
+) -> mlua::Result<(Window, Rc<Node>)> {
+    let table: Table = vm.call(&group.build, item.clone())?;
+    let open = vm.runtime.signal(Value::Bool(true));
+    window_of(&table, id.to_owned(), open, false)
+}
+
+/// A window from `ui.window`'s options; `declared` for `ui.window`'s own,
+/// which takes `id` and `open` and checks every key.
+fn window_of(
+    table: &Table,
+    id: String,
+    open: Signal<Value>,
+    declared: bool,
+) -> mlua::Result<(Window, Rc<Node>)> {
+    let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
+    let node = expect_node(table.get::<mlua::Value>(1)?, &what("content ([1])"))?;
+    let number = |key: &str, default: f64| -> mlua::Result<f64> {
+        Ok(table.get::<Option<f64>>(key)?.unwrap_or(default))
+    };
+    let under_pointer = match table.get::<Option<Table>>("under_pointer")? {
+        Some(at) => Some((at.get::<f64>(1)?, at.get::<f64>(2)?)),
+        None => None,
+    };
+    let window = Window {
+        title: table
+            .get::<Option<String>>("title")?
+            .unwrap_or_else(|| id.clone()),
+        width: number("width", 480.)?,
+        height: number("height", 360.)?,
+        open,
+        frame_autosave: table.get::<Option<String>>("frame_autosave")?,
+        tabbing: match table.get::<Option<String>>("tabbing")? {
+            Some(tabbing) if !["automatic", "preferred", "disallowed"].contains(&&*tabbing) => {
+                return Err(mlua::Error::runtime(format!(
+                    "{}: \"automatic\", \"preferred\" or \"disallowed\", not \"{tabbing}\"",
+                    what("tabbing")
+                )));
+            }
+            tabbing => tabbing,
+        },
+        under_pointer,
+        id,
+    };
+    let known: &[&str] = if declared {
+        &[
+            "id",
+            "title",
+            "width",
+            "height",
+            "open",
+            "frame_autosave",
+            "tabbing",
+            "under_pointer",
+        ]
+    } else {
+        &[
+            "title",
+            "width",
+            "height",
+            "frame_autosave",
+            "tabbing",
+            "under_pointer",
+        ]
+    };
+    for key in table.pairs::<mlua::Value, mlua::Value>() {
+        let (key, _) = key?;
+        if let mlua::Value::String(key) = key {
+            let key = key.to_str()?;
+            if !known.contains(&&*key) {
+                return Err(mlua::Error::runtime(format!(
+                    "ui.window `{}`: unknown option `{key}`",
+                    window.id
+                )));
+            }
         }
     }
+    Ok((window, node))
 }
 
 /// The shared keys holding the window's title bar area and buttons
@@ -139,6 +365,7 @@ pub(crate) fn install(
     windows: Rc<Windows>,
     shared: &Rc<Store>,
 ) -> mlua::Result<()> {
+    let windows_for_groups = windows.clone();
     // Where an element shows in the window, through every zoom and
     // transform around it (its own included): `{ x, y, width, height }` in
     // the window's points, as a pointer's `x` and `y` are; nil if it is not
@@ -209,53 +436,7 @@ pub(crate) fn install(
                 .ok_or_else(|| mlua::Error::runtime("ui.window needs an `id`"))?;
             let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
             let open = expect_state(&table.get::<mlua::Value>("open")?, &what("open"))?;
-            let node = expect_node(table.get::<mlua::Value>(1)?, &what("content ([1])"))?;
-            let number = |key: &str, default: f64| -> mlua::Result<f64> {
-                Ok(table.get::<Option<f64>>(key)?.unwrap_or(default))
-            };
-            let window = Window {
-                title: table
-                    .get::<Option<String>>("title")?
-                    .unwrap_or_else(|| id.clone()),
-                width: number("width", 480.)?,
-                height: number("height", 360.)?,
-                open,
-                frame_autosave: table.get::<Option<String>>("frame_autosave")?,
-                tabbing: match table.get::<Option<String>>("tabbing")? {
-                    Some(tabbing)
-                        if !["automatic", "preferred", "disallowed"].contains(&&*tabbing) =>
-                    {
-                        return Err(mlua::Error::runtime(format!(
-                            "{}: \"automatic\", \"preferred\" or \"disallowed\", not \"{tabbing}\"",
-                            what("tabbing")
-                        )));
-                    }
-                    tabbing => tabbing,
-                },
-                id,
-            };
-            for key in table.pairs::<mlua::Value, mlua::Value>() {
-                let (key, _) = key?;
-                if let mlua::Value::String(key) = key {
-                    let key = key.to_str()?;
-                    if ![
-                        "id",
-                        "title",
-                        "width",
-                        "height",
-                        "open",
-                        "frame_autosave",
-                        "tabbing",
-                    ]
-                    .contains(&&*key)
-                    {
-                        return Err(mlua::Error::runtime(format!(
-                            "ui.window `{}`: unknown option `{key}`",
-                            window.id
-                        )));
-                    }
-                }
-            }
+            let (window, node) = window_of(&table, id, open, true)?;
             let mut pending = windows.pending.borrow_mut();
             if pending.iter().any(|(w, _)| w.id == window.id) {
                 return Err(mlua::Error::runtime(format!(
@@ -268,5 +449,31 @@ pub(crate) fn install(
         })?,
     )?;
     window.set_metatable(Some(meta))?;
-    ui.set("window", window)
+    ui.set("window", window)?;
+    // `ui.windows(list, build, { key, on_close })`.
+    let groups = windows_for_groups;
+    ui.set(
+        "windows",
+        lua.create_function(
+            move |lua, (list, build, options): (mlua::Value, Function, Option<Table>)| {
+                let env = crate::node::env(lua)?;
+                env.may(crate::Capability::Windows, "ui.windows")?;
+                let list = crate::node::state_of(&list).ok_or_else(|| {
+                    mlua::Error::runtime("ui.windows' list must be a ui.state of items")
+                })?;
+                let (key, on_close) = match &options {
+                    Some(options) => (options.get("key")?, options.get("on_close")?),
+                    None => (None, None),
+                };
+                groups.pending_groups.borrow_mut().push(Group {
+                    list,
+                    build,
+                    key,
+                    on_close,
+                    vm: env.vm.clone(),
+                });
+                Ok(())
+            },
+        )?,
+    )
 }
