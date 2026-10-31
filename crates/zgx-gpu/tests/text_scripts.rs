@@ -162,7 +162,10 @@ fn an_emoji_sequence_draws_as_one_glyph_and_takes_no_caret_inside() {
     let color = has_font(EMOJI_FONTS);
     // macOS and Windows always have theirs; a Linux may have none, and then
     // draws a box for each code point.
-    assert!(color || !cfg!(any(target_os = "macos", windows)), "no color emoji font");
+    assert!(
+        color || !cfg!(any(target_os = "macos", windows)),
+        "no color emoji font"
+    );
     let size = 32.;
     for (name, emoji) in EMOJI {
         let layout = shaped(emoji, size, None);
@@ -172,6 +175,35 @@ fn an_emoji_sequence_draws_as_one_glyph_and_takes_no_caret_inside() {
         if color {
             // One glyph about an em wide, not one for each code point.
             assert!(width < size * 1.6, "{name}: {width} wide at {size}");
+        }
+        if color {
+            // In color: every glyph from a color font, even where the text
+            // font has the characters (Segoe UI has a keycap's `1` and its
+            // mark, and drew it in black).
+            let fonts = fonts();
+            let mut fonts = fonts.borrow_mut();
+            let mut buffer =
+                cosmic_text::Buffer::new(&mut fonts, cosmic_text::Metrics::new(size, size));
+            buffer.set_text(
+                emoji,
+                &cosmic_text::Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+                None,
+            );
+            buffer.shape_until_scroll(&mut fonts, false);
+            for run in buffer.layout_runs() {
+                for glyph in run.glyphs {
+                    let font = fonts.get_font(glyph.font_id, glyph.font_weight);
+                    assert!(
+                        font.is_some_and(|font| font.is_color()),
+                        "{name}: a glyph not from a color font ({:?})",
+                        fonts
+                            .db()
+                            .face(glyph.font_id)
+                            .map(|face| face.post_script_name.clone())
+                    );
+                }
+            }
         }
         // Wherever a click lands on it, the caret goes before or after it.
         let (_, height) = layout.size();
