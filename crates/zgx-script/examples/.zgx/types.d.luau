@@ -1334,7 +1334,19 @@ export type TermOptions = {
 	-- A shell-integrated command finished.
 	on_command: ((exit_code: number?, duration_ms: number) -> ...unknown)?,
 	on_notify: ((title: string, body: string) -> ...unknown)?,
+	-- A program asks to read the clipboard (OSC 52): answer with
+	-- `request:allow()` (it gets the clipboard's text) or `request:deny()`,
+	-- now or after asking the user; a request let go is denied. Without
+	-- this, the platform terminal answers (Ghostty asks; zgx's denies).
+	on_clipboard_read: ((request: ClipboardReadRequest) -> ...unknown)?,
 	[number]: never,
+}
+
+-- A program's request to read the clipboard (`on_clipboard_read`). It
+-- answers once.
+export type ClipboardReadRequest = {
+	allow: (self: ClipboardReadRequest) -> (),
+	deny: (self: ClipboardReadRequest) -> (),
 }
 
 -- `ui.command(opts)`: an app command, shown as a menu item; its key

@@ -277,9 +277,28 @@ impl Engine {
                         platform.0.set_clipboard_text(text);
                     }
                 }
-                // Reading the clipboard needs the user's word, which this
-                // can't ask yet: the program hears nothing back.
-                SessionEvent::ClipboardLoad(_) => {}
+                // The app answers, as its user says (its reader), or
+                // nothing does: the program is told the clipboard is empty.
+                SessionEvent::ClipboardLoad(load) => {
+                    let weak = Rc::downgrade(self);
+                    let request = zgx::terminal::ClipboardRead::new(move |allow| {
+                        let Some(engine) = weak.upgrade() else { return };
+                        let text = allow
+                            .then(|| {
+                                engine
+                                    .platform
+                                    .borrow()
+                                    .as_ref()
+                                    .and_then(|p| p.0.clipboard_text())
+                            })
+                            .flatten()
+                            .unwrap_or_default();
+                        engine
+                            .with_session(|session| session.write(load.reply(&text).into_bytes()));
+                    });
+                    // Unanswered by the app: denied as it drops.
+                    drop(term.request_clipboard_read(request));
+                }
                 SessionEvent::Exited(code) => {
                     self.exited.set(true);
                     term.update_state(|state| {
