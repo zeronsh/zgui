@@ -75,6 +75,8 @@ fn runs(ui: &Ui, root: NodeId, line: &str) -> Vec<(String, Color)> {
     }
     panic!("no line {line:?} shows");
 }
+/// How many rectangles of `color` an editor draws: its current line's a
+/// node, its decorations' marks on a node of their own.
 fn rects(ui: &Ui, root: NodeId, color: Color) -> usize {
     let scene = ui.scene.borrow();
     let mut pending = vec![root];
@@ -83,6 +85,11 @@ fn rects(ui: &Ui, root: NodeId, color: Color) -> usize {
         if matches!(scene.kind(id), NodeKind::Rect(c) if *c == color) {
             count += 1;
         }
+        count += scene
+            .text_marks(id)
+            .iter()
+            .filter(|mark| mark.color == color)
+            .count();
         pending.extend(scene.children(id).iter().copied());
     }
     count
@@ -192,6 +199,11 @@ fn decorations_and_the_current_line_show_behind_the_text_in_view() {
     let shown = rects(&ui, editor.node, MATCH);
     assert!((5..=12).contains(&shown), "{shown}");
     assert_eq!(rects(&ui, editor.node, CURRENT), 1);
+    // The matches are shapes, as a selection is, each its own.
+    let scene = ui.scene.borrow();
+    let carrier = scene.marked_text().next().expect("decorations' node");
+    let pieces = scene.text_mark_pieces(carrier, 0., 0., 2.).expect("shapes");
+    assert_eq!(pieces.len(), shown);
 }
 
 #[test]

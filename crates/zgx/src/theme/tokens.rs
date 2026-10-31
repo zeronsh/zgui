@@ -291,6 +291,9 @@ schema! {
     FIND_MATCH: Color = "find.match" => "#ffd60a80",
     /// Find in page's current match (Chrome's orange).
     FIND_CURRENT: Color = "find.current" => "#ff9632d9",
+    /// The corner radius of marks behind text (find's matches, an editor's
+    /// decorations), drawn as a selection is: its radius by default.
+    MARK_RADIUS: Number = "mark.radius" => "{selection.radius}",
 }
 
 struct Registry {

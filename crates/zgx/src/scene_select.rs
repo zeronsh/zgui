@@ -38,98 +38,107 @@ impl TextHighlight {
     /// curves the other way, in a `Fillet`. A step too short for the radius
     /// takes half of it each way, as Zed and VS Code draw it.
     pub fn pieces(&self, x: f32, y: f32, scale: f32) -> Vec<HighlightPiece> {
-        let snap = |value: f32| (value * scale).round() / scale;
-        let pixel = 1. / scale;
-        let mut rects = self.rects.clone();
-        rects.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
-        let mut rows: Vec<HighlightRow> = Vec::new();
-        let mut runs: Vec<(f32, f32)> = Vec::new();
-        for r in rects {
-            let left = snap(x + r.x);
-            let right = snap(x + r.x + r.width).max(left + pixel);
-            let (mut top, bottom) = (snap(y + r.y), snap(y + r.y + r.height));
-            match rows.last_mut() {
-                // Another run of the line: mixed-direction text.
-                Some(row) if y + r.y + r.height * 0.5 < row.bottom => {
-                    match runs.last_mut() {
-                        Some(last) if left <= last.1 + pixel => last.1 = last.1.max(right),
-                        _ => {
-                            runs.push((left, right));
-                            row.runs.end += 1;
-                        }
-                    }
-                    continue;
-                }
-                // Touching, or overlapping in a tight line height: one edge.
-                Some(row) if top <= row.bottom + pixel => {
-                    row.bottom = snap((row.bottom + top) * 0.5);
-                    top = row.bottom;
-                }
-                _ => {}
-            }
-            if bottom > top {
-                rows.push(HighlightRow {
-                    top,
-                    bottom,
-                    runs: runs.len()..runs.len() + 1,
-                });
-                runs.push((left, right));
-            }
-        }
-        let mut pieces = Vec::with_capacity(runs.len() * 2);
-        for (i, row) in rows.iter().enumerate() {
-            let above = i
-                .checked_sub(1)
-                .map(|k| &rows[k])
-                .filter(|above| above.bottom == row.top);
-            let below = rows.get(i + 1).filter(|below| below.top == row.bottom);
-            let height = row.bottom - row.top;
-            let radius = self.radius.min(height * 0.5);
-            let own = &runs[row.runs.clone()];
-            for (k, &run) in own.iter().enumerate() {
-                let (left, right) = run;
-                // Before the next run along its line, if any.
-                let room_left = k.checked_sub(1).map_or(f32::MAX, |k| left - own[k].1);
-                let room_right = own.get(k + 1).map_or(f32::MAX, |next| next.0 - right);
-                let mut radii = [radius.min((right - left) * 0.5); 4];
-                let corners = [(above, true), (above, false), (below, false), (below, true)];
-                for (corner, (neighbour, is_left)) in corners.into_iter().enumerate() {
-                    let reach = neighbour
-                        .and_then(|n| neighbour_reach(&runs[n.runs.clone()], run, is_left));
-                    match reach {
-                        None => {}
-                        Some(reach) if reach < 0. => {
-                            radii[corner] = radii[corner].min(-reach * 0.5)
-                        }
-                        Some(reach) => {
-                            radii[corner] = 0.;
-                            let room = if is_left { room_left } else { room_right };
-                            let curve = radius.min(reach * 0.5).min(room * 0.5);
-                            let curve = (curve * scale).floor() / scale;
-                            if curve <= 0. {
-                                continue;
-                            }
-                            let x = if is_left { left - curve } else { right };
-                            let is_top = corner < 2;
-                            let y = if is_top { row.top } else { row.bottom - curve };
-                            pieces.push(HighlightPiece::Fillet {
-                                rect: Rect::new(x, y, curve, curve),
-                                centre: (
-                                    if is_left { x } else { x + curve },
-                                    if is_top { y + curve } else { y },
-                                ),
-                                radius: curve,
-                            });
-                        }
-                    }
-                }
-                pieces.push(HighlightPiece::Run {
-                    rect: Rect::new(left, row.top, right - left, height),
-                    radii,
-                });
-            }
-        }
+        let mut pieces = Vec::with_capacity(self.rects.len() * 2);
+        shape_pieces(&self.rects, self.radius, (x, y), scale, &mut pieces);
         pieces
+    }
+}
+
+/// `TextHighlight::pieces` of `rects` rounded by `radius`, into `pieces`.
+fn shape_pieces(
+    rects: &[Rect],
+    radius: f32,
+    (x, y): (f32, f32),
+    scale: f32,
+    pieces: &mut Vec<HighlightPiece>,
+) {
+    let snap = |value: f32| (value * scale).round() / scale;
+    let pixel = 1. / scale;
+    let mut rects = rects.to_vec();
+    rects.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
+    let mut rows: Vec<HighlightRow> = Vec::new();
+    let mut runs: Vec<(f32, f32)> = Vec::new();
+    for r in rects {
+        let left = snap(x + r.x);
+        let right = snap(x + r.x + r.width).max(left + pixel);
+        let (mut top, bottom) = (snap(y + r.y), snap(y + r.y + r.height));
+        match rows.last_mut() {
+            // Another run of the line: mixed-direction text.
+            Some(row) if y + r.y + r.height * 0.5 < row.bottom => {
+                match runs.last_mut() {
+                    Some(last) if left <= last.1 + pixel => last.1 = last.1.max(right),
+                    _ => {
+                        runs.push((left, right));
+                        row.runs.end += 1;
+                    }
+                }
+                continue;
+            }
+            // Touching, or overlapping in a tight line height: one edge.
+            Some(row) if top <= row.bottom + pixel => {
+                row.bottom = snap((row.bottom + top) * 0.5);
+                top = row.bottom;
+            }
+            _ => {}
+        }
+        if bottom > top {
+            rows.push(HighlightRow {
+                top,
+                bottom,
+                runs: runs.len()..runs.len() + 1,
+            });
+            runs.push((left, right));
+        }
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let above = i
+            .checked_sub(1)
+            .map(|k| &rows[k])
+            .filter(|above| above.bottom == row.top);
+        let below = rows.get(i + 1).filter(|below| below.top == row.bottom);
+        let height = row.bottom - row.top;
+        let radius = radius.min(height * 0.5);
+        let own = &runs[row.runs.clone()];
+        for (k, &run) in own.iter().enumerate() {
+            let (left, right) = run;
+            // Before the next run along its line, if any.
+            let room_left = k.checked_sub(1).map_or(f32::MAX, |k| left - own[k].1);
+            let room_right = own.get(k + 1).map_or(f32::MAX, |next| next.0 - right);
+            let mut radii = [radius.min((right - left) * 0.5); 4];
+            let corners = [(above, true), (above, false), (below, false), (below, true)];
+            for (corner, (neighbour, is_left)) in corners.into_iter().enumerate() {
+                let reach =
+                    neighbour.and_then(|n| neighbour_reach(&runs[n.runs.clone()], run, is_left));
+                match reach {
+                    None => {}
+                    Some(reach) if reach < 0. => radii[corner] = radii[corner].min(-reach * 0.5),
+                    Some(reach) => {
+                        radii[corner] = 0.;
+                        let room = if is_left { room_left } else { room_right };
+                        let curve = radius.min(reach * 0.5).min(room * 0.5);
+                        let curve = (curve * scale).floor() / scale;
+                        if curve <= 0. {
+                            continue;
+                        }
+                        let x = if is_left { left - curve } else { right };
+                        let is_top = corner < 2;
+                        let y = if is_top { row.top } else { row.bottom - curve };
+                        pieces.push(HighlightPiece::Fillet {
+                            rect: Rect::new(x, y, curve, curve),
+                            centre: (
+                                if is_left { x } else { x + curve },
+                                if is_top { y + curve } else { y },
+                            ),
+                            radius: curve,
+                        });
+                    }
+                }
+            }
+            pieces.push(HighlightPiece::Run {
+                rect: Rect::new(left, row.top, right - left, height),
+                radii,
+            });
+        }
     }
 }
 
@@ -193,8 +202,13 @@ pub(super) struct Selectable {
     /// How many of them allow selection: none keeps cursors as they were.
     allowed: usize,
     highlights: HashMap<NodeId, TextHighlight>,
-    marks: HashMap<NodeId, Vec<TextMark>>,
+    /// Each text's marks, and if they are drawn as shapes
+    /// (`Scene::set_text_mark_shapes`) where each shape's marks end and their
+    /// radius.
+    marks: HashMap<NodeId, (Vec<TextMark>, Option<Box<MarkShapes>>)>,
 }
+/// Where each shape of a text's marks ends, and their radius.
+type MarkShapes = (Vec<usize>, f32);
 impl Selectable {
     /// Whether anything allows selection.
     pub(super) fn any(&self) -> bool {
@@ -325,34 +339,85 @@ impl Scene {
     /// Show `marks` behind text node `id`'s glyphs, under its selection (none:
     /// no more). Repaints only where they changed; nothing is laid out.
     pub fn set_text_marks(&mut self, id: NodeId, marks: Vec<TextMark>) {
-        let old = self
-            .selectable
-            .marks
-            .get(&id)
-            .map_or(&[][..], Vec::as_slice);
-        if !self.contains(id) || old == marks.as_slice() {
+        self.set_marks(id, marks, None);
+    }
+    /// `set_text_marks` with the marks drawn as shapes, as a selection is
+    /// (`TextHighlight::pieces`): the marks before each of `ends` (a find
+    /// match's lines, ascending, the last `marks.len()`) are one shape,
+    /// rounded by `radius`, in its first mark's colour.
+    pub fn set_text_mark_shapes(
+        &mut self,
+        id: NodeId,
+        marks: Vec<TextMark>,
+        ends: Vec<usize>,
+        radius: f32,
+    ) {
+        self.set_marks(id, marks, Some((ends, radius.max(0.))));
+    }
+    fn set_marks(&mut self, id: NodeId, marks: Vec<TextMark>, shapes: Option<(Vec<usize>, f32)>) {
+        let held = self.selectable.marks.get(&id);
+        let old = held.map_or(&[][..], |(marks, _)| marks.as_slice());
+        let old_shapes = held.and_then(|(_, shapes)| shapes.as_deref());
+        if !self.contains(id) || (old == marks.as_slice() && old_shapes == shapes.as_ref()) {
             return;
         }
+        // A shape's corners meet its neighbours': around what changed.
+        let reach = old_shapes
+            .into_iter()
+            .chain(shapes.as_ref())
+            .map(|(_, radius)| radius + 1.)
+            .fold(0., f32::max);
         let changed: Vec<Rect> = old
             .iter()
-            .filter(|m| !marks.contains(m))
-            .chain(marks.iter().filter(|m| !old.contains(m)))
-            .map(|m| m.rect)
+            .filter(|m| !marks.contains(m) || reach > 0.)
+            .chain(marks.iter().filter(|m| !old.contains(m) || reach > 0.))
+            .map(|m| m.rect.expand(reach))
             .collect();
         if marks.is_empty() {
             self.selectable.marks.remove(&id);
         } else {
-            self.selectable.marks.insert(id, marks);
+            self.selectable
+                .marks
+                .insert(id, (marks, shapes.map(Box::new)));
         }
         self.damage_text_rects(id, &changed);
         self.invalidate(id, PAINTED);
+    }
+    /// Text node `id`'s marks as pieces of shapes at (`x`, `y`), on whole
+    /// pixels of a target of `scale` pixels a point, each with its colour:
+    /// `None` if they were not set as shapes (`set_text_mark_shapes`).
+    pub fn text_mark_pieces(
+        &self,
+        id: NodeId,
+        x: f32,
+        y: f32,
+        scale: f32,
+    ) -> Option<Vec<(HighlightPiece, Color)>> {
+        let (_, shapes) = self.selectable.marks.get(&id)?;
+        let (ends, radius) = shapes.as_deref()?;
+        let marks = self.text_marks(id);
+        let mut out = Vec::with_capacity(marks.len() * 2);
+        let mut pieces = Vec::new();
+        let mut start = 0;
+        for &end in ends {
+            let Some(shape) = marks.get(start..end.min(marks.len())) else {
+                break;
+            };
+            if let Some(first) = shape.first() {
+                let rects: Vec<Rect> = shape.iter().map(|m| m.rect).collect();
+                shape_pieces(&rects, *radius, (x, y), scale, &mut pieces);
+                out.extend(pieces.drain(..).map(|piece| (piece, first.color)));
+            }
+            start = end;
+        }
+        Some(out)
     }
     /// The marks shown behind text node `id`'s glyphs.
     pub fn text_marks(&self, id: NodeId) -> &[TextMark] {
         if self.selectable.marks.is_empty() {
             return &[];
         }
-        self.selectable.marks.get(&id).map_or(&[], Vec::as_slice)
+        (self.selectable.marks.get(&id)).map_or(&[], |(marks, _)| marks.as_slice())
     }
     /// The text nodes showing marks.
     pub fn marked_text(&self) -> impl Iterator<Item = NodeId> + '_ {

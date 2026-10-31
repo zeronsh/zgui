@@ -277,6 +277,46 @@ fn underline_canvas(
     }
     canvas
 }
+/// An editor's decorations (`shaped`, each shape's marks ending at one of
+/// `ends`) as marks on a node of their own, last in their layer, over the
+/// current line; made when the first shows.
+#[cold]
+#[inline(never)]
+fn show_decorations(
+    s: &mut crate::scene::Scene,
+    code: &CodeHint,
+    (width, height): (f32, f32),
+    (shaped, ends): (Vec<crate::scene::TextMark>, Vec<usize>),
+    radius: f32,
+) {
+    let Some(layer) = code.decoration_layer.get() else {
+        return;
+    };
+    let id = match code.decoration_text.get() {
+        Some(id) => id,
+        None => {
+            let kind = NodeKind::Text {
+                text: "".into(),
+                color: Color(0, 0, 0, 0),
+                font_size: 1.,
+            };
+            let id = s.append(layer, kind, Style::default());
+            code.decoration_text.set(Some(id));
+            id
+        }
+    };
+    if s.children(layer).last() != Some(&id) {
+        let mut order = s.children(layer).to_vec();
+        order.retain(|child| *child != id);
+        order.push(id);
+        s.reorder_children(layer, &order);
+    }
+    // Padded: flush takes its ink from its box, shaping nothing.
+    let mut style = fixed(width, height);
+    style.padding = 1.;
+    s.set_style(id, style);
+    s.set_text_mark_shapes(id, shaped, ends, radius);
+}
 #[derive(Default)]
 struct CodeHint {
     /// Ranges of the text marked with a colour behind them (a search's
@@ -300,6 +340,9 @@ struct CodeHint {
     /// when the first shows.
     decoration_layer: Cell<Option<NodeId>>,
     decoration_nodes: RefCell<Vec<NodeId>>,
+    /// Carries the decorations as marks drawn as shapes, made when one
+    /// first shows.
+    decoration_text: Cell<Option<NodeId>>,
     /// Told where the caret is when it moves (`EditorHandle::on_caret`),
     /// and whether one listens (the slot is empty while it runs).
     on_caret: RefCell<Option<CaretListener>>,
@@ -4607,6 +4650,9 @@ impl Ui {
                 if let Some(row) = code.current_line.get() {
                     marks.push((Rect::new(0., cy - scroll.1, inner_width, line_height), row));
                 }
+                // Each range one shape, as a selection is.
+                let mut shaped: Vec<crate::scene::TextMark> = Vec::new();
+                let mut ends = Vec::new();
                 {
                     let decorations = code.decorations.borrow();
                     // Those in the text in view: from where the first line
@@ -4629,15 +4675,14 @@ impl Ui {
                         {
                             break;
                         }
-                        marks.extend(rects.into_iter().map(|r| {
-                            (
-                                Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height),
-                                *mark,
-                            )
+                        shaped.extend(rects.into_iter().map(|r| crate::scene::TextMark {
+                            rect: Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height),
+                            color: *mark,
                         }));
+                        ends.push(shaped.len());
                     }
                 }
-                if !marks.is_empty()
+                if (!marks.is_empty() || !shaped.is_empty())
                     && code
                         .decoration_layer
                         .get()
@@ -4658,6 +4703,7 @@ impl Ui {
                     s.reorder_children(viewport, &order);
                     code.decoration_layer.set(Some(layer));
                     code.decoration_nodes.borrow_mut().clear();
+                    code.decoration_text.set(None);
                 }
                 let mut marked = code.decoration_nodes.borrow_mut();
                 while marked.len() > marks.len() {
@@ -4682,6 +4728,12 @@ impl Ui {
                     }
                 }
                 drop(marked);
+                // The decorations, over the current line: a node of their own.
+                if !shaped.is_empty() || code.decoration_text.get().is_some() {
+                    let size = (inner_width, inner_height);
+                    let radius = theme.number_untracked(tok::MARK_RADIUS);
+                    show_decorations(&mut s, code, size, (shaped, ends), radius);
+                }
                 // Under the text in view, each row of a range a node.
                 let underlines = code.underlines.borrow();
                 let mut rows: Vec<(Rect, Color, crate::rich_text::LineStyle)> = Vec::new();
