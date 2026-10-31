@@ -4489,6 +4489,9 @@ impl Host {
                     && self.clipboard_key(&key);
                 #[cfg(not(windows))]
                 let cut = false;
+                // A page's box focused by this key is tabbed into.
+                #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+                let _tabbing = crate::native_host::webkitgtk::tabbing(&key, self.modifiers);
                 prevented = cut
                     || self.dispatch_prevented(InputEvent::KeyDown {
                         key: key.clone(),

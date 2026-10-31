@@ -484,8 +484,9 @@ to a reader: it takes the role of a filler and announces no activation,
 and GTK in this process names WebKitGTK as its toolkit, so Orca keeps to
 its web script for the page's objects (named GTK, the page's root switched
 Orca to its GTK script at the page's focus, losing a mode switch or the
-next focus). Moving focus from the app's own content into a page changes
-Orca's script, and Orca may then say only what a field holds.
+next focus). Tab (or Shift+Tab) into a page's box focuses the page's first
+(or last) focusable element, as tabbing into a browser's frame does, and
+Orca names it with its role.
 
 Unlike macOS:
 
