@@ -1756,7 +1756,7 @@ impl ScriptHost {
         let host = self.0.clone();
         let generation = self.0.generation.clone();
         let id = id.to_owned();
-        switch(
+        let content = switch(
             move || generation.get(),
             move |_, _| {
                 let current = host.current.borrow().clone();
@@ -1768,7 +1768,13 @@ impl ScriptHost {
                     _ => div(),
                 }
             },
-        )
+        );
+        // As the app's own window does: across it fills, as a block fills its
+        // parent; down, it takes what it holds, and `h_full` asks for the rest.
+        overlay()
+            .w_full()
+            .h_full()
+            .child(content.items_stretch().w_full().h_full())
     }
     /// Run the command `id` (a menu item was chosen); whether one ran.
     pub fn run_command(&self, id: &str) -> bool {

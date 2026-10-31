@@ -474,3 +474,27 @@ fn a_windows_own_state_survives_a_reload() {
         texts(&vs)
     );
 }
+
+/// A window's content fills it as the app's own window's does: across, as
+/// a block fills its parent, and down with `h_full`. It took its content's
+/// size, so a detail window's column sat in its top-left corner.
+#[test]
+fn a_windows_content_fills_it() {
+    let h = Harness::inline(
+        r##"local items = ui.state("items", { { id = "a" } })
+        ui.windows(items, function(item)
+            return { title = item.id, width = 420, height = 360,
+                ui.column { id = "detail", h_full = true, ui.text { "a detail" } } }
+        end)
+        return ui.text { "app" }"##,
+    );
+    h.frames(2);
+    let id = h.host.windows().get()[0].id.clone();
+    let mut window = Ui::with_runtime(h.ui.runtime.clone(), 420., 360.);
+    let handle = window.mount(h.host.window_view(&id));
+    window.prepare_frame();
+    window.prepare_frame();
+    let detail = handle.find("detail").expect("its column");
+    let b = window.scene.borrow().bounds(detail);
+    assert_eq!((b.width, b.height), (420., 360.), "{b:?}");
+}
