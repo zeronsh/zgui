@@ -7028,6 +7028,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         }),
         (Font, Lit::Str(v)) => s.font_family(font_family(v)),
         (Wrap, Lit::Bool(v)) => s.text_wrap(*v),
+        (Wrap, Lit::Str(_)) => s.text_balance(true),
         (Truncate, Lit::Bool(true)) => s.truncate(),
         (Lines, Lit::Num(v)) => s.line_clamp(*v as u32),
         (LineHeight, Lit::Num(v)) => s.line_height(*v),

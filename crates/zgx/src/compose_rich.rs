@@ -453,10 +453,15 @@ pub(crate) fn mount_links(
             geometry = if data.links.is_empty() {
                 Vec::new()
             } else {
-                let layout = ui
-                    .scene
-                    .borrow()
-                    .shape_rich_text(&data.rich, Some(bounds.width));
+                // At the width its lines wrap at, where they show
+                // (balanced). A change of balance moves `engine`.
+                let scene = ui.scene.borrow();
+                let (wrap, inset) = scene.text_wrap(paragraph, bounds.width);
+                let layout = crate::text_layout::Inset::around(
+                    scene.shape_rich_text(&data.rich, Some(wrap)),
+                    inset,
+                );
+                drop(scene);
                 data.links
                     .iter()
                     .map(|link| {
@@ -751,7 +756,12 @@ pub(crate) fn mount_icons(
         let key = (data.rich.clone(), bounds.width.to_bits(), engine);
         if geometry_key.as_ref() != Some(&key) {
             let scene = ui.scene.borrow();
-            let layout = scene.shape_rich_text(&data.rich, Some(bounds.width));
+            // As links' (above).
+            let (wrap, inset) = scene.text_wrap(paragraph, bounds.width);
+            let layout = crate::text_layout::Inset::around(
+                scene.shape_rich_text(&data.rich, Some(wrap)),
+                inset,
+            );
             rects = data
                 .icons
                 .iter()

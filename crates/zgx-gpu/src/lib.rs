@@ -7354,12 +7354,15 @@ impl GpuRenderer {
                         // highlights) keeps glyph positions, so the cached shape
                         // is recoloured instead of re-shaped; then whether it is
                         // stale.
+                        // Its lines wrap at its box's width, or narrower if
+                        // they are balanced.
+                        let (wrap, inset) = scene.text_wrap(item.id, bounds.width);
                         let stale = self.shapes.get_mut(&item.id).is_none_or(|shaped| {
                             if let Some(new) = &rich
                                 && let Some(old) = &shaped.rich
                                 && !Arc::ptr_eq(old, new)
                                 && old.same_shape(new)
-                                && shaped.width == bounds.width
+                                && shaped.width == wrap
                                 && shaped.height == bounds.height
                                 && shaped.text_options == item.text_options
                                 && shaped.font == *item.font
@@ -7375,7 +7378,7 @@ impl GpuRenderer {
                                 || shaped.text != *text
                                 || shaped.font != *item.font
                                 || shaped.size != font_size
-                                || shaped.width != bounds.width
+                                || shaped.width != wrap
                                 || shaped.height != bounds.height
                                 || shaped.scale != self.scale
                         });
@@ -7410,7 +7413,7 @@ impl GpuRenderer {
                                 let mut hasher = rustc_hash::FxHasher::default();
                                 text.hash(&mut hasher);
                                 font_size.to_bits().hash(&mut hasher);
-                                bounds.width.to_bits().hash(&mut hasher);
+                                wrap.to_bits().hash(&mut hasher);
                                 bounds.height.to_bits().hash(&mut hasher);
                                 hasher.finish()
                             });
@@ -7420,7 +7423,7 @@ impl GpuRenderer {
                                 .filter(|twin| {
                                     twin.text == *text
                                         && twin.size == font_size
-                                        && twin.width == bounds.width
+                                        && twin.width == wrap
                                         && twin.height == bounds.height
                                         && twin.scale == self.scale
                                         && twin.text_options == item.text_options
@@ -7444,7 +7447,7 @@ impl GpuRenderer {
                                     text,
                                     font_size,
                                     item.font,
-                                    Some(bounds.width),
+                                    Some(wrap),
                                 );
                                 // Plain text has one run: no line starts to find it by.
                                 let glyphs = glyphs_of(
@@ -7465,7 +7468,7 @@ impl GpuRenderer {
                                 Err((glyphs, underlines, Some(laid.key()), None))
                             } else if let Some(rich) = prepared {
                                 let mut cache = self.text_cache.borrow_mut();
-                                let laid = cache.layout(&mut fonts, rich, Some(bounds.width));
+                                let laid = cache.layout(&mut fonts, rich, Some(wrap));
                                 let starts = laid.line_starts();
                                 let glyphs = glyphs_of(
                                     std::mem::take(&mut spare_glyphs),
@@ -7484,7 +7487,7 @@ impl GpuRenderer {
                                 Ok(text::rich_buffer(
                                     &mut fonts,
                                     rich,
-                                    Some(bounds.width),
+                                    Some(wrap),
                                     Some(bounds.height),
                                 ))
                             } else if item.text_options != Default::default() {
@@ -7493,7 +7496,7 @@ impl GpuRenderer {
                                     text,
                                     item.font,
                                     font_size,
-                                    Some(bounds.width),
+                                    Some(wrap),
                                     Some(bounds.height),
                                     item.text_options,
                                 ))
@@ -7502,10 +7505,7 @@ impl GpuRenderer {
                                     font_size.max(1.),
                                     item.font.line_height.resolve(font_size),
                                 ));
-                                b.set_size(
-                                    text::wrap_width(Some(bounds.width)),
-                                    Some(bounds.height),
-                                );
+                                b.set_size(text::wrap_width(Some(wrap)), Some(bounds.height));
                                 text::set_buffer_text(
                                     &mut fonts,
                                     &mut b,
@@ -7544,7 +7544,7 @@ impl GpuRenderer {
                                 font: item.font.clone(),
                                 text: text.clone(),
                                 size: font_size,
-                                width: bounds.width,
+                                width: wrap,
                                 height: bounds.height,
                                 scale: self.scale,
                                 glyphs,
@@ -7564,6 +7564,9 @@ impl GpuRenderer {
                         }
                         let snap = |value: f32| (value * self.scale).round() / self.scale;
                         let (x, y) = (snap(bounds.x), snap(bounds.y));
+                        // Its glyphs' origin: right of its box's, its lines
+                        // balanced and centred or right-aligned.
+                        let glyph_x = snap(bounds.x + inset);
                         // Partly outside its clip (a long document scrolled in a
                         // view): its lines that reach the clip, as quads made this
                         // frame (`visible_glyphs`), rather than every glyph's.
@@ -7623,7 +7626,7 @@ impl GpuRenderer {
                                 place_text_quads(
                                     quads,
                                     source,
-                                    x,
+                                    glyph_x,
                                     y,
                                     fade,
                                     item.effects.edge_fade,
@@ -7633,7 +7636,7 @@ impl GpuRenderer {
                                 place_text_quads(
                                     quads,
                                     source,
-                                    x,
+                                    glyph_x,
                                     y,
                                     fade,
                                     item.effects.edge_fade,
@@ -7642,7 +7645,7 @@ impl GpuRenderer {
                                             .filter(|_| cached.paint[1] > 0.5)
                                             .and_then(|h| {
                                                 h.glyph_color(
-                                                    cached.rect[0] + cached.rect[2] * 0.5,
+                                                    inset + cached.rect[0] + cached.rect[2] * 0.5,
                                                     cached.rect[1] + cached.rect[3] * 0.5,
                                                 )
                                             });

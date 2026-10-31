@@ -1821,6 +1821,12 @@ struct ColdMaps {
     sticky: NodeMap<Sticky>,
     /// Sizes worked out from the containing block (`set_size_calcs`).
     size_calcs: NodeMap<std::sync::Arc<crate::size_calc::SizeCalcs>>,
+    /// Nodes that balance their text's lines, or not (`set_text_balance`),
+    /// for what they hold.
+    balanced: NodeMap<bool>,
+    /// The width each balanced text wraps at, for what it was worked out
+    /// from.
+    balanced_widths: std::cell::RefCell<NodeMap<(u64, f32)>>,
 }
 /// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
 #[derive(Clone, Copy)]
@@ -5262,20 +5268,12 @@ impl Scene {
         use crate::text_layout::{TextAffinity, TextPosition};
         use unicode_segmentation::UnicodeSegmentation;
         let bounds = self.bounds(id);
-        let (text, layout): (Arc<str>, Box<dyn crate::text_layout::TextLayout>) =
-            match self.kind(id) {
-                NodeKind::Text {
-                    text, font_size, ..
-                } if !self.font(id).masked => (
-                    text.clone(),
-                    self.shape_text_with_font(text, *font_size, Some(bounds.width), self.font(id)),
-                ),
-                NodeKind::RichText { text } => (
-                    text.text_arc(),
-                    self.shape_rich_text(text, Some(bounds.width)),
-                ),
-                _ => return None,
-            };
+        let text: Arc<str> = match self.kind(id) {
+            NodeKind::Text { text, .. } if !self.font(id).masked => text.clone(),
+            NodeKind::RichText { text } => text.text_arc(),
+            _ => return None,
+        };
+        let layout = self.shape_node_text(id, bounds.width)?;
         // Every line in one pass where the shaper can (zgx-gpu's).
         if let Some(lines) = layout.line_carets(&text) {
             return Some(
@@ -6040,6 +6038,7 @@ impl Scene {
                 || cold.stacked.contains_key(&id)
                 || cold.sticky.contains_key(&id)
                 || cold.size_calcs.contains_key(&id)
+                || cold.balanced.contains_key(&id)
         });
         self.set_special(id, COLD, cold);
     }
@@ -6108,6 +6107,193 @@ impl Scene {
             self.restack(parent);
         }
         self.invalidate(id, COMPOSITE);
+    }
+    /// Balance the lines of the text in `id`, itself and what it holds
+    /// (CSS's `text-wrap: balance`, inherited): wrapped, they break at the
+    /// narrowest width that keeps as many lines, so the last isn't left
+    /// short. For text of up to six lines, as Chrome limits it; boxes and
+    /// lines' counts are as they were. `Some(false)` stops what an ancestor
+    /// asked; `None` takes its parent's. Whether it changed anything.
+    #[cold]
+    #[inline(never)]
+    pub fn set_text_balance(&mut self, id: NodeId, balance: Option<bool>) -> bool {
+        let held = (self.cold.as_ref()).and_then(|cold| cold.balanced.get(&id).copied());
+        if held == balance || !self.contains(id) {
+            return false;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match balance {
+            Some(balance) => maps.balanced.insert(id, balance),
+            None => maps.balanced.remove(&id),
+        };
+        self.sync_cold(id);
+        self.invalidate(id, PAINTED);
+        self.damage_subtree(id);
+        true
+    }
+    /// The width text `id` wraps at in a box `width` wide, and how far right
+    /// of the box's left edge its lines start: `(width, 0)`, unless its lines
+    /// are balanced (`set_text_balance`), when they wrap narrower and, centred
+    /// or right-aligned, are aligned in the box, not in that narrower width.
+    /// Renderers, and the layouts selection, find and accessibility read,
+    /// lay text out at the width and draw it the inset to the right.
+    #[inline]
+    pub fn text_wrap(&self, id: NodeId, width: f32) -> (f32, f32) {
+        match &self.cold {
+            Some(cold) if !cold.balanced.is_empty() => self.balanced_wrap(cold, id, width),
+            _ => (width, 0.),
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn balanced_wrap(&self, cold: &ColdMaps, id: NodeId, width: f32) -> (f32, f32) {
+        use crate::text_layout::TextAlign;
+        let wrap = self.balanced_width(cold, id, width);
+        if wrap >= width {
+            return (width, 0.);
+        }
+        let align = match &self.node(id).kind {
+            NodeKind::Text { .. } => self.node(id).font.align,
+            NodeKind::RichText { text } => {
+                (text.runs().first()).map_or(TextAlign::Start, |run| run.font.align)
+            }
+            _ => return (width, 0.),
+        };
+        let inset = (width - wrap)
+            * match align {
+                TextAlign::Center => 0.5,
+                TextAlign::Right | TextAlign::End => 1.,
+                TextAlign::Start | TextAlign::Left => 0.,
+            };
+        (wrap, inset)
+    }
+    /// Text `id` shaped as it shows in a box `width` wide: at its wrap
+    /// width, its lines where they are drawn (`text_wrap`).
+    pub(crate) fn shape_node_text(
+        &self,
+        id: NodeId,
+        width: f32,
+    ) -> Option<Box<dyn crate::text_layout::TextLayout>> {
+        let (wrap, inset) = self.text_wrap(id, width);
+        let layout = match self.kind(id) {
+            NodeKind::Text {
+                text, font_size, ..
+            } => self.shape_text_with_font(text, *font_size, Some(wrap), self.font(id)),
+            NodeKind::RichText { text } => self.shape_rich_text(text, Some(wrap)),
+            _ => return None,
+        };
+        Some(crate::text_layout::Inset::around(layout, inset))
+    }
+    fn balanced_width(&self, cold: &ColdMaps, id: NodeId, width: f32) -> f32 {
+        use std::hash::{Hash, Hasher};
+        if !matches!(
+            self.node(id).kind,
+            NodeKind::Text { .. } | NodeKind::RichText { .. }
+        ) {
+            return width;
+        }
+        // As the nearest of it and its ancestors that says.
+        let mut at = Some(id);
+        let balanced = loop {
+            match at {
+                Some(node) => match cold.balanced.get(&node) {
+                    Some(balanced) => break *balanced,
+                    None => at = self.node(node).parent,
+                },
+                None => break false,
+            }
+        };
+        if !balanced {
+            return width;
+        }
+        // What it was worked out from: the box's width, the shaper, and the
+        // text with its font.
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        width.to_bits().hash(&mut hasher);
+        self.text_shaper_revision.hash(&mut hasher);
+        match &self.node(id).kind {
+            NodeKind::Text {
+                text, font_size, ..
+            } => {
+                text.hash(&mut hasher);
+                font_size.to_bits().hash(&mut hasher);
+                self.node(id).font.hash(&mut hasher);
+            }
+            NodeKind::RichText { text } => (Arc::as_ptr(text) as usize).hash(&mut hasher),
+            _ => return width,
+        }
+        let key = hasher.finish();
+        if let Some((at, balanced)) = cold.balanced_widths.borrow().get(&id)
+            && *at == key
+        {
+            return *balanced;
+        }
+        let balanced = self.balance_lines(id, width);
+        let mut widths = cold.balanced_widths.borrow_mut();
+        // Those of texts long gone go too, now and then.
+        if widths.len() >= 1024 {
+            widths.clear();
+        }
+        widths.insert(id, (key, balanced));
+        balanced
+    }
+    /// The narrowest width under `width` at which text `id` takes as many
+    /// lines as at `width` (`width` itself for one line, or more than six).
+    fn balance_lines(&self, id: NodeId, width: f32) -> f32 {
+        let height = |limit: Option<f32>| self.wrapped_size(id, limit).1;
+        let (full, line) = (height(Some(width)), height(None));
+        if !(width.is_finite() && width > 0.) || line <= 0. {
+            return width;
+        }
+        let lines = (full / line).round();
+        if lines < 2. || lines > 6. {
+            return width;
+        }
+        // As narrow as the longest line, unwrapped, over the lines: no
+        // narrower keeps their count.
+        let single = self.wrapped_size(id, None).0;
+        let (mut narrow, mut wide) = ((single / lines).min(width), width);
+        while wide - narrow > 0.5 {
+            let middle = (narrow + wide) * 0.5;
+            if height(Some(middle)) <= full + 0.01 {
+                wide = middle;
+            } else {
+                narrow = middle;
+            }
+        }
+        wide
+    }
+    /// Text `id` laid out at `limit` (`None`: unwrapped), as layout measures it.
+    fn wrapped_size(&self, id: NodeId, limit: Option<f32>) -> (f32, f32) {
+        let node = self.node(id);
+        match &node.kind {
+            NodeKind::Text {
+                text, font_size, ..
+            } => {
+                if node.style.text_options != Default::default() {
+                    let runs = if text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![crate::rich_text::TextRun {
+                            range: 0..text.len(),
+                            font: node.font.clone(),
+                            font_size: *font_size,
+                            ..Default::default()
+                        }]
+                    };
+                    let rich = crate::rich_text::RichText::new(text.clone(), runs)
+                        .unwrap()
+                        .with_options(node.style.text_options);
+                    return self.rich_measurer.measure_mounted(&rich, limit);
+                }
+                match &self.font_measurer {
+                    Some(measure) => measure(text, *font_size, limit, &node.font),
+                    None => self.measure_text_with_font(text, *font_size, limit, &node.font),
+                }
+            }
+            NodeKind::RichText { text } => self.rich_measurer.measure_mounted(text, limit),
+            _ => (0., 0.),
+        }
     }
     /// Work what `sizes` sets of `id`'s size out from its containing block,
     /// over its style's. Such a node has layout options, which a parent lays
@@ -6244,6 +6430,7 @@ impl Scene {
             maps.stacked.remove(&id);
             maps.sticky.remove(&id);
             maps.size_calcs.remove(&id);
+            maps.balanced.remove(&id);
         }
     }
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
@@ -7544,7 +7731,9 @@ impl Scene {
         if style.text_options != Default::default() || padded {
             return bounds;
         }
-        // Renderers lay text out at its box's width, wrapping or not.
+        // Renderers lay text out at its box's width, wrapping or not. (Lines
+        // balanced narrower are within what they are at its width, which is
+        // all ink is for: what a change repaints.)
         let limit = Some(bounds.width);
         // What layout measured serves when it breaks lines as `limit` would:
         // a size measured wider (or unwrapped) whose widest line fits.

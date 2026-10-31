@@ -165,7 +165,8 @@ impl Source {
 struct Shaped {
     node: NodeId,
     source: Source,
-    width: u32,
+    /// Its box's width and the width it wraps at, by their bits.
+    width: u64,
     revision: u64,
     layout: Rc<dyn TextLayout>,
 }
@@ -885,11 +886,14 @@ impl Ui {
     pub(crate) fn selection_layout(&self, scene: &Scene, id: NodeId) -> Option<Rc<dyn TextLayout>> {
         let source = Source::of(scene, id)?;
         let width = scene.layout_bounds(id).width;
+        // Its box's width, and the width it wraps at in it (balanced).
+        let widths =
+            (u64::from(width.to_bits()) << 32) | u64::from(scene.text_wrap(id, width).0.to_bits());
         let revision = scene.text_shaper_revision();
         let mut state = self.selection_state().borrow_mut();
         if let Some(index) = state.layouts.iter().position(|s| s.node == id) {
             let kept = &state.layouts[index];
-            if kept.width == width.to_bits() && kept.revision == revision && kept.source == source {
+            if kept.width == widths && kept.revision == revision && kept.source == source {
                 return Some(kept.layout.clone());
             }
             state.layouts.remove(index);
@@ -903,7 +907,7 @@ impl Ui {
         state.layouts.push(Shaped {
             node: id,
             source,
-            width: width.to_bits(),
+            width: widths,
             revision,
             layout: layout.clone(),
         });
@@ -2403,16 +2407,9 @@ fn stamp(scene: &Scene, id: NodeId) -> Option<(u32, u32, usize, usize, u64)> {
 }
 
 fn shape(scene: &Scene, id: NodeId, width: f32) -> Option<Rc<dyn TextLayout>> {
-    // Renderers lay text out at its box's width, wrapping or not.
-    Some(match scene.kind(id) {
-        NodeKind::Text {
-            text, font_size, ..
-        } => scene
-            .shape_text_with_font(text, *font_size, Some(width), scene.font(id))
-            .into(),
-        NodeKind::RichText { text } => scene.shape_rich_text(text, Some(width)).into(),
-        _ => return None,
-    })
+    // As renderers lay it out: at its box's width (narrower, balanced),
+    // wrapping or not.
+    scene.shape_node_text(id, width).map(Rc::from)
 }
 
 /// The list item whose marker `id` is: text hidden from assistive
