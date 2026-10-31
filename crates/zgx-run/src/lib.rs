@@ -128,6 +128,10 @@ pub struct AppConfig {
     /// hands the app the files and URLs it opens with it (`ui.on_open`),
     /// and on Windows a second launch's go to the first.
     pub application_id: Option<String>,
+    /// False: the window opens hidden, laid out and drawn, until the script
+    /// shows it (`ui.window.visible:set(true)`): an app showing an intro of
+    /// its own first.
+    pub visible: bool,
 }
 impl AppConfig {
     /// The config for the script at `script`: its directory's `zgx.json`
@@ -158,6 +162,7 @@ impl AppConfig {
             glass: false,
             app_id: name,
             application_id: None,
+            visible: true,
         };
         // Or, for one release, the name it had before the rename to zgx.
         let old = dir.join("zgui.json"); // rename-to-zgx: keep
@@ -205,6 +210,7 @@ impl AppConfig {
                 "app_id",
                 "application_id",
                 "frame_autosave",
+                "visible",
             ]
             .contains(&key.as_str())
                 && !zgx_script::app_config::KEYS.contains(&key.as_str())
@@ -237,6 +243,12 @@ impl AppConfig {
             Some(v) => v
                 .as_bool()
                 .ok_or_else(|| fail("`glass` is not a boolean".into()))?,
+        };
+        config.visible = match object.get("visible") {
+            None => true,
+            Some(v) => v
+                .as_bool()
+                .ok_or_else(|| fail("`visible` is not a boolean".into()))?,
         };
         if let Some(id) = string("app_id")? {
             config.app_id = id;
@@ -327,6 +339,7 @@ pub fn run_hosting(
         titlebar: config.titlebar,
         glass: config.glass.then(zgx_desktop::Glass::default),
         frame_autosave,
+        visible: config.visible,
         ..Default::default()
     };
     let launched: Vec<PathBuf> = args
@@ -384,6 +397,11 @@ pub fn run_hosting(
         host.window_state(&cx.ui);
         // `ui.window.size`.
         host.window_size(cx.viewport.clone());
+        // `ui.window.visible`: shown as zgx.json says, and as the script sets it.
+        {
+            let window = cx.window.clone();
+            host.window_visible(config.visible, move |visible| window.set_visible(visible));
+        }
         // The network, unless the host's setup brings its own transport.
         #[cfg(feature = "fetch")]
         fetch::install(&host);
@@ -545,10 +563,15 @@ pub fn follow_windows(host: &ScriptHost, cx: &zgx_desktop::WindowContext) -> zgx
                         Some("disallowed") => zgx_desktop::Tabbing::Disallowed,
                         _ => zgx_desktop::Tabbing::Automatic,
                     },
+                    visible: window
+                        .visible
+                        .as_ref()
+                        .is_none_or(|visible| visible.with_untracked(Value::truthy)),
                     ..Default::default()
                 };
                 let (view_host, state, id) = (host.clone(), window.open.clone(), window.id.clone());
                 let own = window.state.clone();
+                let visible = window.visible.clone();
                 let handle = factory.open(options, move |wcx| {
                     // The window's own state, as its content reads it (`win`).
                     if let Some(own) = own {
@@ -573,6 +596,14 @@ pub fn follow_windows(host: &ScriptHost, cx: &zgx_desktop::WindowContext) -> zgx
                             if own.size.with_untracked(|was| *was != now) {
                                 own.size.set(now);
                             }
+                        });
+                        wcx.on_closed(move || drop(keep));
+                    }
+                    // Shown and hidden as its `visible` state says.
+                    if let Some(visible) = visible {
+                        let window = wcx.window.clone();
+                        let keep = wcx.ui.runtime.effect(move || {
+                            window.set_visible(visible.get().truthy());
                         });
                         wcx.on_closed(move || drop(keep));
                     }
@@ -616,6 +647,13 @@ mod tests {
             ("Mail", 1100., Some((600., 400.)))
         );
         assert_eq!(config.titlebar, zgx_desktop::Titlebar::Inset);
+        assert!(config.visible);
+        // Opened hidden, for the script to show.
+        std::fs::write(dir.join("zgx.json"), r#"{ "visible": false }"#).unwrap();
+        assert!(!AppConfig::for_script(&script).unwrap().visible);
+        std::fs::write(dir.join("zgx.json"), r#"{ "visible": "no" }"#).unwrap();
+        let error = AppConfig::for_script(&script).unwrap_err();
+        assert!(error.contains("`visible` is not a boolean"), "{error}");
         std::fs::write(dir.join("zgx.json"), r#"{ "widht": 3 }"#).unwrap();
         let error = AppConfig::for_script(&script).unwrap_err();
         assert!(error.contains("unknown key `widht`"), "{error}");

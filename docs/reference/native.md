@@ -97,6 +97,7 @@ ui.windows(list: State<{ any }>, build: (item: any) -> ItemWindow, opts: { key: 
 | `frame_autosave` | `string` | none | its frame saved under this name as it moves and resizes, and reopened where it was left (macOS, Windows, X11; on Wayland its size and maximized state) |
 | `tabbing` | `"automatic"`, `"preferred"`, `"disallowed"` | `"automatic"` | AppKit's window tabs (macOS): as the user's setting says, always, or never (a window with tabs of its own) |
 | `under_pointer` | `{ number }` | none | where it opens: its top-left this far up and left of the pointer, as `on_drag_outside`'s `{ e.grab_x, e.grab_y }`, so a tab torn off stays under the grab (macOS, Windows, X11) |
+| `visible` | `boolean` or `State<boolean>` | shown | false: made hidden, its content laid out and drawn meanwhile, and shown whole the moment it turns true (on Wayland, where a window appears as it first draws, its first frame is drawn as it shows: whole, with no blank frame, a frame's time later; on X11 its theme's background shows for the few milliseconds from its mapping to its first frame) |
 | `[1]` | `Node` | required | its content |
 
 ```lua
@@ -192,6 +193,14 @@ ui.window.zoomable: State<boolean>
 ```
 
 The app's window zooms as a browser's page does: Cmd+= or Cmd++ zooms in, Cmd+- out and Cmd+0 back to 100% (Ctrl elsewhere), through Chrome's levels from 25% to 500%, and its content reflows in the smaller or larger viewport, text and paths drawn crisply. `ui.window.zoom` is the zoom (1 at 100%): it follows the keys and the View menu's items, and setting it zooms the window (`ui.window.zoom:set(1.25)`). `ui.window.zoomable:set(false)` turns the keys off; a `ui.command` with one of the keys keeps it either way. `zgx run` keeps both; a Rust host passes its window with `ScriptHost::window_zoom`.
+
+### Visible
+
+```luau
+ui.window.visible: State<boolean>
+```
+
+Whether the app's window shows. zgx.json's `"visible": false` opens it hidden, for an app that plays an intro of its own first: meanwhile its script runs, its state stays current and its content is laid out and drawn once, and then it draws nothing more until `ui.window.visible:set(true)` shows it, whole, with what changed since drawn before it appears. A Rust host passes its window with `ScriptHost::window_visible`.
 
 ### Size
 

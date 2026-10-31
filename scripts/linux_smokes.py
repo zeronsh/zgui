@@ -45,6 +45,7 @@ SMOKES = [
     ("menus", "python3 scripts/menus_smoke.py {bin}/menus --output {out}", True),
     ("submenus", "python3 scripts/submenus_smoke.py {bin}/submenus --output {out}", True),
     ("hidden-updates", "python3 scripts/hidden_updates_smoke.py {bin}/hidden_updates --output {out}", True),
+    ("hidden-window", "python3 scripts/hidden_window_x11_smoke.py {bin}/hidden_window --output {out}", True),
     ("paint-media", "python3 scripts/paint_media_smoke.py --binaries {bin} --output {out}", True),
     ("cursors", "python3 scripts/cursors_smoke.py {bin}/cursors --output {out}", True),
     ("wayland-cursors", "python3 scripts/wayland_cursors_smoke.py {bin}/cursors --output {out}", False),

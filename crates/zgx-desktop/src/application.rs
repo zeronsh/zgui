@@ -94,6 +94,14 @@ pub struct WindowOptions {
     /// primary), rather than in a fullscreen space of its own: transparent
     /// and frameless, a layer over the desktop and the windows on it.
     pub covers_display: bool,
+    /// Shown as it is made (the default). False: made hidden, its content
+    /// laid out and its first frame drawn meanwhile, so that
+    /// `WindowHandle::set_visible(true)` shows it whole at once, its
+    /// changes since drawn before it appears; hidden, it draws nothing more.
+    /// Wayland maps a window as it first draws: there its first frame is
+    /// drawn as it shows. X11 keeps no picture of an unmapped window: there
+    /// its background shows from its mapping to its first frame.
+    pub visible: bool,
 }
 impl WindowOptions {
     /// Whether the window is transparent where zgx paints nothing.
@@ -124,6 +132,7 @@ impl Default for WindowOptions {
             level: crate::WindowLevel::Normal,
             shadow: true,
             covers_display: false,
+            visible: true,
         }
     }
 }
@@ -613,9 +622,13 @@ impl WindowFactory {
             handle.closed.store(true, Ordering::Release);
             return handle;
         }
+        let state = WindowState {
+            visible: options.visible,
+            ..Default::default()
+        };
         self.pending.borrow_mut().push_back(WindowRequest {
             options,
-            state: WindowState::default(),
+            state,
             handle: handle.clone(),
             build: Box::new(build),
         });
@@ -1461,6 +1474,13 @@ struct Host {
     /// (`frame_source::latch_wait`).
     #[cfg(windows)]
     latch_holding: bool,
+    /// A hidden window's next frame draws all the same (`show_drawn`): its
+    /// first, as it is made hidden, and the one that shows it.
+    draw_hidden: bool,
+    /// Made hidden on Wayland and not yet shown: there a window maps as it
+    /// first draws, so it draws nothing until it is shown, and then its
+    /// first frame maps it whole.
+    unmapped: bool,
     present_ready: bool,
     frames: FrameClock,
     #[cfg(any(target_os = "macos", windows))]
@@ -1804,8 +1824,11 @@ impl Host {
             file_surface: None,
             menu_binding,
             _menu_listener: menu_listener,
+            state: WindowState {
+                visible: options.visible,
+                ..Default::default()
+            },
             options,
-            state: WindowState::default(),
             context,
             window: None,
             renderer: None,
@@ -1879,6 +1902,8 @@ impl Host {
             input_draw: false,
             #[cfg(windows)]
             latch_holding: false,
+            draw_hidden: false,
+            unmapped: false,
             present_ready: false,
             gpu_stats: crate::gpu_stats::GpuStatsLog::from_env(),
             damage_check: zgx::env::var_os("ZGX_DAMAGE_CHECK").map(|_| 0),
@@ -2263,7 +2288,11 @@ impl Host {
             .get_or_insert_with(|| window.inner_size());
         #[cfg(not(target_os = "macos"))]
         let size = window.inner_size();
-        let visible = window.is_visible();
+        let visible = match (self.draw_hidden, self.unmapped) {
+            (true, _) => Some(true),
+            (false, true) => Some(false),
+            (false, false) => window.is_visible(),
+        };
         // X11's minimized query is a synchronous property roundtrip. Focused
         // windows cannot be minimized, and known-hidden windows need no query.
         let minimized = if window.has_focus()
@@ -2324,6 +2353,7 @@ impl Host {
             self.applied_background = Some(color);
             renderer.set_background(color);
             self.force = true;
+            self.hidden_background(&window, color);
         }
         let scene = self.context.ui.scene.clone();
         let mut scene = scene.borrow_mut();
@@ -3375,6 +3405,7 @@ impl Host {
             let background = themes.root().color_untracked(zgx::theme::tok::BACKGROUND);
             renderer.set_background(background);
             self.applied_background = Some(background);
+            self.hidden_background(&window, background);
             if self._background_effect.is_none() {
                 // The clear colour follows the theme: the effect hands a new
                 // background to the next frame and asks for that frame.
@@ -3525,7 +3556,36 @@ impl Host {
 
         self.tree.reset();
         self.last_accessibility = None;
+        // Made hidden: its first frame drawn now, so it shows whole.
+        if !self.state.visible {
+            self.unmapped = self.frame_paced;
+            self.draw_hidden_frame()?;
+        }
         Ok(())
+    }
+    /// Draw a frame while the window is hidden (`WindowOptions::visible`):
+    /// as it is made, so that it shows whole, and just before it shows, with
+    /// what changed while it was hidden. Not on Wayland, where a window shows
+    /// as it first draws: there it draws nothing until shown (`unmapped`).
+    /// A hidden X11 window shows `color` from its mapping until its first
+    /// frame after (`window_place::set_background`); shown windows, and
+    /// other platforms, have nothing to do.
+    fn hidden_background(&self, window: &Window, color: zgx::scene::Color) {
+        #[cfg(target_os = "linux")]
+        if !self.state.visible && !self.frame_paced {
+            crate::window_place::set_background(window, color);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (window, color);
+    }
+    fn draw_hidden_frame(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.frame_paced {
+            return Ok(());
+        }
+        self.draw_hidden = true;
+        let drawn = self.draw();
+        self.draw_hidden = false;
+        drawn
     }
     fn command(&mut self, command: WindowCommand) {
         self.state.apply(&mut self.options, &command);
@@ -3658,11 +3718,25 @@ impl Host {
                 if !value {
                     self.context.ui.cancel_interactions();
                 }
-                window.set_visible(value);
+                let window = window.clone();
+                let showing = value && window.is_visible() == Some(false);
+                if value {
+                    self.unmapped = false;
+                }
                 self.context
                     .ui
                     .set_presented(value && !self.state.minimized && !self.native_occluded);
-                if value {
+                // Shown from hidden: what changed while it was hidden is
+                // drawn first, so it appears whole (`WindowOptions::visible`).
+                if showing && let Err(error) = self.draw_hidden_frame() {
+                    eprintln!("zgx: {error}");
+                }
+                window.set_visible(value);
+                if showing {
+                    zgx_gpu::present_log::log(|| "window shown".into());
+                    zgx::profile::mark("window shown");
+                    self.presentation.expose();
+                } else if value {
                     self.presentation.expose();
                     self.force = true;
                     window.request_redraw();

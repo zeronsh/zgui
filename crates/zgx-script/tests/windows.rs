@@ -174,6 +174,69 @@ fn a_window_says_how_it_reopens_and_tabs() {
     assert_eq!(windows[0].tabbing.as_deref(), Some("disallowed"));
 }
 
+/// `ui.window.visible`: the app's window opened hidden, as its host says,
+/// and shown as the script sets it; the host told once per change.
+#[test]
+fn the_window_visible_is_a_state_a_script_sets_to_show_it() {
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.text { id = "shown", function() return `visible {ui.window.visible:get()}` end },
+            ui.button { id = "show", on_click = function() ui.window.visible:set(true) end, "Show" },
+        }"##,
+    );
+    let told = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    {
+        let told = told.clone();
+        h.host
+            .window_visible(false, move |visible| told.borrow_mut().push(visible));
+    }
+    h.frames(1);
+    assert!(
+        texts(&h.ui).contains(&"visible false".to_owned()),
+        "{:?}",
+        texts(&h.ui)
+    );
+    assert!(told.borrow().is_empty(), "opened hidden: nothing to show");
+    h.click("show");
+    h.click("show");
+    assert_eq!(*told.borrow(), [true]);
+}
+
+/// A declared window made hidden (`visible = false`), or shown as a state
+/// says; a `visible` that is neither is an error.
+#[test]
+fn a_window_may_be_made_hidden() {
+    let h = Harness::inline(
+        r##"ui.window { id = "intro", open = ui.state("intro", true), visible = false, ui.text("Intro") }
+        ui.window { id = "later", open = ui.state("later", true),
+            visible = ui.state("later_visible", false), ui.text("Later") }
+        ui.window { id = "plain", open = ui.state("plain", true), ui.text("Plain") }
+        return ui.text("main")"##,
+    );
+    let windows = h.host.windows().get();
+    let visible = |id: &str| {
+        let window = windows.iter().find(|w| w.id == id).unwrap();
+        window
+            .visible
+            .as_ref()
+            .map(|v| v.with_untracked(|v| v.truthy()))
+    };
+    assert_eq!(visible("intro"), Some(false));
+    assert_eq!(visible("later"), Some(false));
+    assert_eq!(visible("plain"), None);
+    let error = zgx_script::testing::TestApp::try_new(|runtime| {
+        zgx_script::ScriptHost::inline(
+            runtime,
+            "app",
+            r##"ui.window { id = "w", open = ui.state("w", true), visible = "no", ui.text("w") }
+            return ui.text("main")"##,
+        )
+    })
+    .err()
+    .expect("it doesn't load");
+    assert!(error.contains("`visible` must be a boolean"), "{error}");
+}
+
 /// `ui.window.size`: the window's size in points, followed, for decisions
 /// layout can't make (a sidebar collapsing to icons below a width).
 #[test]

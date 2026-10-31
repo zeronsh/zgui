@@ -1401,6 +1401,9 @@ export type WindowOptions = {
 	-- `on_drag_outside`'s `{ e.grab_x, e.grab_y }` (a tab torn off stays
 	-- under the grab).
 	read under_pointer: { number }?,
+	-- False, or a state that is: made hidden, laid out and drawn meanwhile,
+	-- and shown whole as it turns true (on Wayland drawn as it shows).
+	read visible: (boolean | State<boolean>)?,
 	read [number]: Node | ((win: OwnWindow) -> Node),
 }
 
@@ -1422,6 +1425,7 @@ export type ItemWindow = {
 	read frame_autosave: string?,
 	read tabbing: ("automatic" | "preferred" | "disallowed")?,
 	read under_pointer: { number }?,
+	read visible: (boolean | State<boolean>)?,
 	read [number]: Node,
 }
 
@@ -1445,6 +1449,10 @@ declare extern type WindowApi with
 	controls: State<WindowRect?>
 	zoom: State<number>
 	zoomable: State<boolean>
+	-- Whether the app's window shows: false while zgx.json's `"visible":
+	-- false` keeps it hidden (laid out and drawn meanwhile); setting it true
+	-- shows the window whole, at once.
+	visible: State<boolean>
 	-- Whether the window is the active one (keys go to it), and whether it
 	-- shows (not hidden, minimized or covered): what arrives while either
 	-- is false is worth a notification or a badge.
