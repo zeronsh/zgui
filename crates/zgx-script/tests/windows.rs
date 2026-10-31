@@ -209,3 +209,86 @@ fn the_window_size_is_followed_and_read_only() {
         h.error()
     );
 }
+
+#[test]
+fn a_window_an_item_opens_and_closes_with_its_item() {
+    let mut h = Harness::inline(
+        r##"local details = ui.state("details", {} :: { { id: string, name: string } })
+        local closed = ui.state("closed", "")
+        local count = ui.state("count", 0)
+        ui.windows(details, function(item)
+            return {
+                title = item.name,
+                width = 300,
+                height = 200,
+                under_pointer = { 12, 8 },
+                ui.column { ui.text { item.name }, ui.text { function() return `count {count:get()}` end } },
+            }
+        end, {
+            on_close = function(item)
+                closed:set(item.id)
+                details:update(function(list)
+                    local kept = {}
+                    for _, d in list do if d.id ~= item.id then table.insert(kept, d) end end
+                    return kept
+                end)
+            end,
+        })
+        return ui.column {
+            ui.button { id = "a", on_click = function() details:push({ id = "a", name = "Apple" }) end, "a" },
+            ui.button { id = "b", on_click = function() details:push({ id = "b", name = "Berry" }) end, "b" },
+            ui.button { id = "more", on_click = function() count:add(1) end, "more" },
+            ui.text { id = "closed", "{closed}" },
+        }"##,
+    );
+    h.frames(2);
+    assert!(h.host.windows().get().is_empty());
+    h.click("a");
+    h.click("b");
+    h.frames(1);
+    let windows = h.host.windows().get();
+    assert_eq!(windows.len(), 2);
+    assert_eq!(
+        windows.iter().map(|w| w.title.as_str()).collect::<Vec<_>>(),
+        ["Apple", "Berry"]
+    );
+    assert_eq!((windows[0].width, windows[0].height), (300., 200.));
+    assert_eq!(windows[0].under_pointer, Some((12., 8.)));
+    assert!(windows[0].open.get().truthy(), "open as its item appears");
+    // Its content follows the app's state.
+    let mut other = Ui::with_runtime(h.ui.runtime.clone(), 300., 200.);
+    other.mount(h.host.window_view(&windows[0].id));
+    other.prepare_frame();
+    assert!(texts(&other).contains(&"Apple".to_owned()));
+    h.click("more");
+    other.prepare_frame();
+    assert!(texts(&other).contains(&"count 1".to_owned()));
+    // The person closes Apple's: the app hears and lets the item go.
+    windows[0].open.set(zgx_script::Value::Bool(false));
+    h.frames(1);
+    assert_eq!(h.text("closed"), "a");
+    let left = h.host.windows().get();
+    assert_eq!(
+        left.iter().map(|w| w.title.as_str()).collect::<Vec<_>>(),
+        ["Berry"]
+    );
+    // A reload keeps the windows its list still has.
+    let berry = left[0].id.clone();
+    h.host.reload().expect("reloads");
+    h.frames(1);
+    let after = h.host.windows().get();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].id, berry);
+}
+
+#[test]
+fn an_item_windows_build_must_give_a_window() {
+    let h = Harness::inline(
+        r##"local items = ui.state("items", { { id = "x" } })
+        ui.windows(items, function(item) return { title = "x", colour = "red", ui.text { "x" } } end)
+        return ui.text { "app" }"##,
+    );
+    h.frames(1);
+    let error = h.host.error().get().unwrap_or_default();
+    assert!(error.contains("unknown option `colour`"), "{error}");
+}

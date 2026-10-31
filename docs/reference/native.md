@@ -82,6 +82,7 @@ Commands are the app's menu bar, and their keys are its menu items' shortcuts: `
 
 ```luau
 ui.window(opts: WindowOptions) -> ()
+ui.windows(list: State<{ any }>, build: (item: any) -> ItemWindow, opts: { key: ((any) -> string | number)?, on_close: ((any) -> ())? }?) -> ()
 ```
 
 `ui.window { id, open = state, node }` declares a window of the app's own, a settings window say: it is open while `open` is true, closing it sets `open` false, and its node is its content. Declared at a script's top level, as commands are, each load declares them again; what a window shows follows reloads. The windows share the app's state: a switch in the settings window changes what the main window shows (and `ui.theme.set` restyles every window). `zgx-run` opens them, and a Rust host opens them from `ScriptHost::windows()` with `ScriptHost::window_view(id)` (`zgx_run::follow_windows` does both).
@@ -94,6 +95,7 @@ ui.window(opts: WindowOptions) -> ()
 | `width`, `height` | `number` | `480`, `360` | points |
 | `frame_autosave` | `string` | none | its frame saved under this name as it moves and resizes, and reopened where it was left (macOS, Windows, X11; on Wayland its size and maximized state) |
 | `tabbing` | `"automatic"`, `"preferred"`, `"disallowed"` | `"automatic"` | AppKit's window tabs (macOS): as the user's setting says, always, or never (a window with tabs of its own) |
+| `under_pointer` | `{ number }` | none | where it opens: its top-left this far up and left of the pointer, as `on_drag_outside`'s `{ e.grab_x, e.grab_y }`, so a tab torn off stays under the grab (macOS, Windows, X11) |
 | `[1]` | `Node` | required | its content |
 
 ```lua
@@ -117,6 +119,38 @@ ui.window {
 }
 return ui.button { on_click = ui.set(settings, true), "Settings…" }
 ```
+
+### A window an item
+
+`ui.windows(list, build, { key, on_close })` is a window an item of a list, as `ui.each` is a row an item: a detail window per photo, a tab torn off into a window of its own. An item's window opens as the item appears in the list and closes as it leaves. `build(item)` gives its options, `ui.window`'s without `id` and `open`, and its content, once, as the item first appears; what the content reads follows state as any node does. `key(item)` names an item (its `id` field by default): an item that keeps its key keeps its window. A person closing a window calls `on_close(item)`, for the app to let the item go; until it does, the window stays closed. Declared at the top level, as `ui.window` is, and a reload keeps the windows whose items are still in the list.
+
+```lua
+local details = ui.persist("details", {} :: { { id: string, name: string } })
+ui.windows(details, function(photo)
+	return {
+		title = photo.name,
+		width = 480,
+		height = 360,
+		frame_autosave = `detail:{photo.id}`,
+		ui.column { p = 16, ui.text { photo.name, literal = true } },
+	}
+end, {
+	on_close = function(photo)
+		details:update(function(list)
+			local kept = {}
+			for _, d in list do
+				if d.id ~= photo.id then
+					table.insert(kept, d)
+				end
+			end
+			return kept
+		end)
+	end,
+})
+return ui.button { on_click = function() details:push({ id = "p1", name = "Harbour" }) end, "Open Harbour" }
+```
+
+A list in `ui.persist` reopens its windows on the next launch, each where `frame_autosave` left it.
 
 ### The title bar
 

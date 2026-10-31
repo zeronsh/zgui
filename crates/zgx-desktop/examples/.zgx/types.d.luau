@@ -1508,6 +1508,22 @@ export type WindowOptions = {
 	-- AppKit's window tabs (macOS): as the user's setting says, always, or
 	-- never (a window with tabs of its own).
 	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	-- Where it opens: its top-left this far up and left of the pointer, as
+	-- `on_drag_outside`'s `{ e.grab_x, e.grab_y }` (a tab torn off stays
+	-- under the grab).
+	read under_pointer: { number }?,
+	read [number]: Node,
+}
+
+-- What `ui.windows`' `build` gives an item's window: `ui.window`'s options
+-- without `id` and `open`.
+export type ItemWindow = {
+	read title: string?,
+	read width: number?,
+	read height: number?,
+	read frame_autosave: string?,
+	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	read under_pointer: { number }?,
 	read [number]: Node,
 }
 
@@ -17755,6 +17771,11 @@ declare ui: {
 	-- pointer's `x` and `y`), through every zoom and transform around it;
 	-- nil if it is not laid out. Its `x`, `y`, `width`, `height` are as laid
 	-- out.
+	-- A window an item of `list`: opened as the item appears, closed as it
+	-- goes, built once by `build(item)`. A person closing one calls
+	-- `on_close(item)`, for the app to let the item go. `key` names an item
+	-- (its `id` field by default).
+	windows: (list: State<{ any }>, build: (item: any) -> ItemWindow, options: { key: ((item: any) -> string | number)?, on_close: ((item: any) -> ())? }?) -> (),
 	window_rect: (el: Element) -> { x: number, y: number, width: number, height: number }?,
 	checkbox: (props: CheckboxProps) -> Node,
 	input: (props: InputProps) -> Node,

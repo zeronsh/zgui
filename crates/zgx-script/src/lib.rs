@@ -2090,13 +2090,19 @@ impl ScriptHost {
         *self.0.stamps.borrow_mut() = self.stamps();
         match loaded {
             Ok(loaded) => {
-                let broken = (!loaded.broken.is_empty()).then(|| loaded.broken.join("\n"));
+                *self.0.current.borrow_mut() = Some(Rc::new(loaded));
+                self.0.commands.publish();
+                let mut problems = self
+                    .0
+                    .current
+                    .borrow()
+                    .as_ref()
+                    .map_or_else(Vec::new, |l| l.broken.clone());
+                problems.extend(self.0.windows.publish());
+                let broken = (!problems.is_empty()).then(|| problems.join("\n"));
                 if let Some(broken) = &broken {
                     eprintln!("{broken}");
                 }
-                *self.0.current.borrow_mut() = Some(Rc::new(loaded));
-                self.0.commands.publish();
-                self.0.windows.publish();
                 // What the system asked to open before a script could take it.
                 self.0.opens.deliver_waiting(&self.0.picked);
                 self.0.runtime.batch(|| {
@@ -2864,7 +2870,7 @@ impl ScriptHost {
         });
         i18n::install(&lazy, self.0.locales.clone(), self.0.files);
         let (windows, shared) = (self.0.windows.clone(), self.0.shared.clone());
-        lazy.ui(&["window", "window_rect"], move |lua, ui| {
+        lazy.ui(&["window", "window_rect", "windows"], move |lua, ui| {
             windows::install(lua, ui, windows, &shared)
         });
         let may = |capability: Capability| grants.allows(&capability);
