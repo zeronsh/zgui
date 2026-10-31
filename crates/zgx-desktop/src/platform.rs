@@ -70,6 +70,21 @@ impl Platform for Desktop {
             .as_mut()
             .is_some_and(|clipboard| clipboard.set_text(text).is_ok())
     }
+    #[cfg(target_os = "linux")]
+    fn primary_text(&self) -> Option<String> {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()?
+            .get_primary_text()
+            .ok()
+    }
+    #[cfg(target_os = "linux")]
+    fn set_primary_text(&self, text: String) -> bool {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|clipboard| clipboard.set_primary_text(text).is_ok())
+    }
     #[cfg(target_os = "macos")]
     fn looks_up(&self) -> bool {
         true

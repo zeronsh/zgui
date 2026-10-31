@@ -639,6 +639,20 @@ impl Engine {
                     cx.prevent_default();
                     return;
                 }
+                // X11's and Wayland's middle click pastes what was last
+                // selected anywhere.
+                if button == PointerButton::Middle {
+                    let text = self
+                        .platform
+                        .borrow()
+                        .as_ref()
+                        .and_then(|platform| platform.0.primary_text());
+                    if let Some(text) = text {
+                        self.paste(&text);
+                        cx.prevent_default();
+                    }
+                    return;
+                }
                 if button != PointerButton::Primary {
                     return;
                 }
@@ -680,13 +694,21 @@ impl Engine {
             InputEvent::PointerUp { button, .. } => match self.pressed.take() {
                 Some(Press::Reporting(_)) => report(keys::Mouse::Release(button)),
                 Some(Press::Selecting) => {
-                    // A click without a drag leaves nothing selected.
-                    self.with_session(|session| {
-                        let mut term = session.term();
-                        if term.selection.as_ref().is_some_and(|s| s.is_empty()) {
-                            term.selection = None;
-                        }
-                    });
+                    // A click without a drag leaves nothing selected; a
+                    // selection made is the primary selection (X11, Wayland).
+                    let selected = self
+                        .with_session(|session| {
+                            let mut term = session.term();
+                            if term.selection.as_ref().is_some_and(|s| s.is_empty()) {
+                                term.selection = None;
+                            }
+                            term.selection_to_string()
+                        })
+                        .flatten()
+                        .filter(|text| !text.is_empty());
+                    if let (Some(text), Some(platform)) = (selected, &*self.platform.borrow()) {
+                        platform.0.set_primary_text(text);
+                    }
                     self.paint();
                 }
                 None => {}

@@ -80,6 +80,18 @@ pub trait Platform {
     fn clipboard_text(&self) -> Option<String>;
     /// Put `text` on the clipboard; whether it took it.
     fn set_clipboard_text(&self, text: String) -> bool;
+    /// The primary selection's text (X11's and Wayland's: what was last
+    /// selected anywhere, which a middle click pastes). None where the
+    /// platform has none.
+    fn primary_text(&self) -> Option<String> {
+        None
+    }
+    /// Make `text` the primary selection (a terminal's selection, as it
+    /// settles); whether the platform has one and took it.
+    fn set_primary_text(&self, text: String) -> bool {
+        let _ = text;
+        false
+    }
     /// Open `url` with the system's handler for it (a browser for
     /// `https:`); whether the request was made. None opens nothing.
     fn open_url(&self, url: &str) -> bool {

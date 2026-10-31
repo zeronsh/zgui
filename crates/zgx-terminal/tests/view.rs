@@ -270,3 +270,101 @@ fn a_program_asking_for_the_kitty_keyboard_protocol_gets_it() {
     // Ctrl+C as CSI 99;5 u, not ^C.
     app.until("the key", |app| app.shows(r"033[99;5u"));
 }
+
+/// A platform keeping a clipboard and a primary selection in memory.
+#[cfg(unix)]
+#[derive(Default)]
+struct Selections {
+    clipboard: RefCell<Option<String>>,
+    primary: RefCell<Option<String>>,
+}
+#[cfg(unix)]
+impl zgx::platform::Platform for Selections {
+    fn clipboard_text(&self) -> Option<String> {
+        self.clipboard.borrow().clone()
+    }
+    fn set_clipboard_text(&self, text: String) -> bool {
+        *self.clipboard.borrow_mut() = Some(text);
+        true
+    }
+    fn primary_text(&self) -> Option<String> {
+        self.primary.borrow().clone()
+    }
+    fn set_primary_text(&self, text: String) -> bool {
+        *self.primary.borrow_mut() = Some(text);
+        true
+    }
+    fn open_files(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn save_file(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_selection_is_the_primary_and_a_middle_click_pastes_it() {
+    use zgx::input::PointerButton;
+    let mut app = Harness::new();
+    let selections = Rc::new(Selections::default());
+    let platform = zgx::platform::PlatformService(selections.clone());
+    let term = Terminal::new(&app.ui.runtime, session(r"printf 'pick me\r\n'; exec cat"));
+    app.mount(provide(
+        platform,
+        zgx_terminal::terminal_view(&term).w(600.).h(300.),
+    ));
+    app.until("the output", |app| app.shows("pick me"));
+    // Drag across the first row's text (the grid starts 10 points in, 6
+    // down), as far as its end.
+    let (y, right) = (12., 400.);
+    let press = |app: &mut Harness, event| {
+        app.ui.dispatch(event);
+        app.pump();
+    };
+    press(
+        &mut app,
+        InputEvent::PointerDown {
+            x: 11.,
+            y,
+            button: PointerButton::Primary,
+        },
+    );
+    press(&mut app, InputEvent::PointerMove { x: right, y });
+    press(
+        &mut app,
+        InputEvent::PointerUp {
+            x: right,
+            y,
+            button: PointerButton::Primary,
+        },
+    );
+    assert_eq!(selections.primary.borrow().as_deref(), Some("pick me"));
+    // A middle click pastes it to cat, which echoes it back.
+    *selections.primary.borrow_mut() = Some("from elsewhere".into());
+    press(
+        &mut app,
+        InputEvent::PointerDown {
+            x: 100.,
+            y: 100.,
+            button: PointerButton::Middle,
+        },
+    );
+    press(
+        &mut app,
+        InputEvent::PointerUp {
+            x: 100.,
+            y: 100.,
+            button: PointerButton::Middle,
+        },
+    );
+    app.until("the paste", |app| {
+        app.texts().iter().any(|t| t.starts_with("from elsewhere"))
+    });
+}
