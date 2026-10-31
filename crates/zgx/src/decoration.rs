@@ -33,13 +33,25 @@ pub enum BorderStyle {
     /// One unbroken line.
     #[default]
     Solid,
-    /// Dashes `length` long with `gap` between them.
+    /// Dashes `length` long with `gap` between them. A `length` of 0 draws
+    /// dots (CSS's `dotted`, `BorderStyle::DOTTED`): round, as wide as the
+    /// line, `gap` apart (0: as far apart as they are wide), spaced evenly
+    /// round the box.
     Dashed {
-        /// Each dash's length, in logical points (above 0).
+        /// Each dash's length, in logical points (above 0; 0, a dot).
         length: f32,
-        /// The room between dashes, in logical points (above 0).
+        /// The room between dashes, in logical points (above 0; for dots,
+        /// 0 or more).
         gap: f32,
     },
+}
+impl BorderStyle {
+    /// Round dots as wide as the line, as far apart as they are wide, evenly
+    /// round the box (CSS's `dotted`): `Dashed` of length 0.
+    pub const DOTTED: Self = Self::Dashed {
+        length: 0.,
+        gap: 0.,
+    };
 }
 /// What fills a box, in place of or over its `fill` colour.
 #[derive(Clone, Debug, PartialEq)]

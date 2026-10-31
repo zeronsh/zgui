@@ -68,6 +68,11 @@ impl CanvasCache {
         });
         self.bytes = self.entries.values().map(|e| e.bytes).sum();
     }
+    /// Forget the rasters of nodes `keep` says no to.
+    pub fn retain_nodes(&mut self, keep: impl Fn(NodeId) -> bool) {
+        self.entries.retain(|id, _| keep(*id));
+        self.bytes = self.entries.values().map(|e| e.bytes).sum();
+    }
     /// The image ids of the rasters it holds.
     pub fn image_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.entries.values().map(|e| e.id)
@@ -484,7 +489,10 @@ pub fn rasterize_viewed(
                     || style.miter_limit < 1.
                     || !style.dash_offset.is_finite()
                     || style.dash.len() > 1024
-                    || style.dash.iter().any(|d| !d.is_finite() || *d <= 0.)
+                    // A dash may be 0 long (a dot, with round caps, as an
+                    // HTML canvas's `setLineDash` takes), not the pattern.
+                    || style.dash.iter().any(|d| !d.is_finite() || *d < 0.)
+                    || (!style.dash.is_empty() && style.dash.iter().sum::<f32>() <= 0.)
                 {
                     return Err(GpuError("invalid stroke style".into()));
                 }

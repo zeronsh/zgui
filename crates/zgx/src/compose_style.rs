@@ -1961,6 +1961,10 @@ fn apply_rare(
             cold.and_then(|cold| cold.image_rendering)
                 .unwrap_or_default(),
         );
+        scene.set_outline_style(
+            node,
+            cold.and_then(|cold| cold.outline_style).unwrap_or_default(),
+        );
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

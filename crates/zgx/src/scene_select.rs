@@ -388,6 +388,26 @@ impl Scene {
         self.sync_cold(id);
         self.invalidate(id, PAINTED);
     }
+    /// Draw node `id`'s outline (`QuadStyle::outline`) dashed or dotted
+    /// (CSS's `outline-style`), or solid (`BorderStyle::Solid`, the default).
+    pub fn set_outline_style(&mut self, id: NodeId, style: crate::decoration::BorderStyle) {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.outline_styles.get(&id))
+            .copied()
+            .unwrap_or_default();
+        if !self.contains(id) || held == style {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match style {
+            crate::decoration::BorderStyle::Solid => maps.outline_styles.remove(&id),
+            style => maps.outline_styles.insert(id, style),
+        };
+        self.sync_cold(id);
+        self.invalidate(id, PAINTED);
+    }
     /// Whether any node's image is sampled other than smoothly.
     #[inline(always)]
     pub fn has_image_rendering(&self) -> bool {
@@ -400,6 +420,21 @@ impl Scene {
         self.cold
             .as_ref()
             .and_then(|cold| cold.image_rendering.get(&id))
+            .copied()
+            .unwrap_or_default()
+    }
+    /// Whether any node's outline is dashed or dotted.
+    #[inline(always)]
+    pub fn has_outline_styles(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.outline_styles.is_empty())
+    }
+    /// How node `id`'s outline is drawn (`set_outline_style`).
+    pub fn outline_style(&self, id: NodeId) -> crate::decoration::BorderStyle {
+        self.cold
+            .as_ref()
+            .and_then(|cold| cold.outline_styles.get(&id))
             .copied()
             .unwrap_or_default()
     }

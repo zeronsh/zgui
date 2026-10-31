@@ -296,3 +296,115 @@ fn underlined_plain_text_draws_a_line_under_each_line_of_glyphs() {
     )))));
     assert!(!rows.is_empty(), "a line under the glyphs");
 }
+
+/// Runs of bright and dark along `row` from `x0` to `x1` of a `width`-wide
+/// readback: how many times it changes between them.
+fn changes(data: &[u8], width: usize, row: usize, x0: usize, x1: usize) -> (usize, Vec<u8>) {
+    let line: Vec<u8> = (x0..x1).map(|x| data[(row * width + x) * 4]).collect();
+    let bright: Vec<bool> = line.iter().map(|v| *v > 128).collect();
+    (bright.windows(2).filter(|w| w[0] != w[1]).count(), line)
+}
+
+/// A dotted border (`BorderStyle::DOTTED`) is round dots as wide as the
+/// border, as far apart, along its middle: its top edge alternates dot and
+/// gap, where a solid one is one run.
+#[test]
+fn dotted_borders_draw_dots_along_the_border() {
+    let draw = |border_style: BorderStyle| {
+        let mut scene = Scene::new(120., 60.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let node = scene.append(
+            scene.root(),
+            NodeKind::Quad(QuadStyle {
+                fill: Color(0, 0, 0, 255),
+                border_color: Color(255, 255, 255, 255),
+                border_width: 4.,
+                decoration: Some(Arc::new(Decoration {
+                    border_style,
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+            Style {
+                width: Some(100.),
+                height: Some(40.),
+                ..Default::default()
+            },
+        );
+        scene.set_transform(node, Transform { x: 10., y: 10. });
+        let mut gpu = GpuRenderer::new(120, 60).unwrap();
+        let report = scene.flush();
+        gpu.render(&scene, &report.damage).unwrap();
+        gpu.readback().unwrap()
+    };
+    // The border's middle row: y 12.
+    let (solid, _) = changes(&draw(BorderStyle::Solid), 120, 12, 20, 100);
+    assert_eq!(solid, 0, "solid: one run");
+    let (dotted, line) = changes(&draw(BorderStyle::DOTTED), 120, 12, 20, 100);
+    // Dots 4 across every 8 or so: about ten over 80 points.
+    assert!((14..=24).contains(&dotted), "{dotted} changes: {line:?}");
+    assert!(
+        line.iter().any(|v| *v > 230) && line.iter().any(|v| *v < 25),
+        "{line:?}"
+    );
+}
+
+/// An outline drawn dotted or dashed (`Scene::set_outline_style`) rings the
+/// box outside it as a solid one does, broken as asked, and rasterizes once;
+/// a solid one stays the shader's ring (no raster), and the box under them
+/// is as it was.
+#[test]
+fn dotted_and_dashed_outlines_ring_the_box() {
+    let draw = |outline_style: BorderStyle| {
+        let mut scene = Scene::new(140., 80.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let node = scene.append(
+            scene.root(),
+            NodeKind::Quad(QuadStyle {
+                fill: Color(40, 40, 40, 255),
+                outline: Some(Outline {
+                    width: 3.,
+                    color: Color(255, 255, 255, 255),
+                    offset: 4.,
+                }),
+                ..Default::default()
+            }),
+            Style {
+                width: Some(80.),
+                height: Some(40.),
+                ..Default::default()
+            },
+        );
+        scene.set_transform(node, Transform { x: 30., y: 20. });
+        scene.set_outline_style(node, outline_style);
+        let mut gpu = GpuRenderer::new(140, 80).unwrap();
+        let report = scene.flush();
+        let first = gpu.render(&scene, &report.damage).unwrap();
+        let again = gpu.render(&scene, &[Rect::new(0., 0., 140., 80.)]).unwrap();
+        (
+            gpu.readback().unwrap(),
+            first.canvas_rasterizations,
+            again.image_uploads,
+        )
+    };
+    // The outline's middle row: 4 + 1.5 above the box's top (y 20), y 14.
+    let (pixels, rasters, _) = draw(BorderStyle::Solid);
+    assert_eq!(rasters, 0, "solid: the shader's ring");
+    assert_eq!(changes(&pixels, 140, 14, 34, 106).0, 0, "solid: one run");
+    assert_eq!(pixels[(40 * 140 + 70) * 4], 40, "the box under it");
+    let (pixels, rasters, uploads) = draw(BorderStyle::DOTTED);
+    assert_eq!(rasters, 1, "dotted: rasterized");
+    assert_eq!(uploads, 0, "and kept");
+    let (dotted, line) = changes(&pixels, 140, 14, 34, 106);
+    // Dots 3 across every 6 or so: about twelve over 72 points.
+    assert!((16..=30).contains(&dotted), "{dotted} changes: {line:?}");
+    assert_eq!(pixels[(40 * 140 + 70) * 4], 40, "the box under it");
+    let (pixels, _, _) = draw(BorderStyle::Dashed {
+        length: 10.,
+        gap: 6.,
+    });
+    let (dashed, line) = changes(&pixels, 140, 14, 34, 106);
+    // Dashes 10 long every 16: four or five over 72 points.
+    assert!((6..=12).contains(&dashed), "{dashed} changes: {line:?}");
+    assert!(pixels[(14 * 140 + 10) * 4] < 25, "nothing past the outline");
+}

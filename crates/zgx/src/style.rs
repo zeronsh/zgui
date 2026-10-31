@@ -743,6 +743,8 @@ pub(crate) struct ColdStyles {
     pub(crate) text_shadows: Option<std::sync::Arc<[crate::scene::TextShadow]>>,
     /// `Styled::image_rendering`.
     pub(crate) image_rendering: Option<crate::image::ImageRendering>,
+    /// `Styled::outline_style`.
+    pub(crate) outline_style: Option<crate::decoration::BorderStyle>,
     /// `Styled::w_calc` and the like.
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
     /// `Styled::text_balance`.
@@ -939,6 +941,9 @@ impl RareStyles {
             }
             if theirs.image_rendering.is_some() {
                 mine.image_rendering = theirs.image_rendering;
+            }
+            if theirs.outline_style.is_some() {
+                mine.outline_style = theirs.outline_style;
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -2234,6 +2239,16 @@ pub trait Styled: Sized {
             .cold
             .get_or_insert_default()
             .image_rendering = Some(rendering);
+        self
+    }
+    /// Draw the outline solid, dashed or dotted (CSS `outline-style`; see
+    /// `BorderStyle`, `BorderStyle::DOTTED`).
+    fn outline_style(mut self, style: crate::decoration::BorderStyle) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .outline_style = Some(style);
         self
     }
     /// No outline.

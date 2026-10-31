@@ -50,7 +50,7 @@ A `scroll(..)` or `scroll_x(..)` view is 320 by 240 when nothing else sizes it, 
 | Layout | `flex_row`, `flex_col`, `gap`, `flex_grow`, `flex_shrink`, `grow`, `shrink_0`, `absolute`, `relative`, `left`, `top`, `right`, `bottom`, `start`, `end` (logical insets) |
 | Direction | `rtl`, `direction(Direction)`; logical edges `ps`, `pe`, `ms`, `me` (see [layout](layout.md)) |
 | Alignment | `items_start`, `items_center`, `items_end`, `items_stretch`, `justify_start`, `justify_center`, `justify_end`, `justify_between`, `justify_around`, `justify_stretch` |
-| Surface | `bg`, `rounded`, `border`, `border_1`, `border_edges`, `border_color`, `border_over`, `outline`, `stroke`, `shadow`, `shadow_none` |
+| Surface | `bg`, `rounded`, `border`, `border_1`, `border_edges`, `border_color`, `border_over`, `border_style` (solid, `BorderStyle::Dashed { length, gap }`, `BorderStyle::DOTTED`), `outline`, `outline_style` (the same), `stroke`, `shadow`, `shadow_none` |
 | Text | `text_color`, `text_size`, `line_height`, `line_height_normal`, `letter_spacing`, `text_wrap`, `font_family`, `font_weight`, `font_bold`, `italic` |
 | Effects | `opacity`, `blur`, `filter_blur`, `mask`, `mask_offset`, `edge_fade`, `translate`, `scale`, `scale_xy`, `rotate`, `skew`, `rotate_x`, `rotate_y`, `perspective`, `transform_origin`, `blend`, `layer_shader`, `layer_uniforms`, `isolated` |
 | Clipping | `overflow_hidden`, `overflow_visible` |
