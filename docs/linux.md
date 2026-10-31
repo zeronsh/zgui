@@ -480,8 +480,12 @@ is) whose child is the page's document, and the document's parent is the
 box, so a screen reader following focus into the page finds the window
 above it. Orca reads the page's focused field, and in browse mode its
 headings by its heading keys. GTK's own window for the page is no window
-to a reader (it takes the role of a filler), but GTK still announces it
-active as the page takes focus, which can make Orca miss a mode switch.
+to a reader: it takes the role of a filler and announces no activation,
+and GTK in this process names WebKitGTK as its toolkit, so Orca keeps to
+its web script for the page's objects (named GTK, the page's root switched
+Orca to its GTK script at the page's focus, losing a mode switch or the
+next focus). Moving focus from the app's own content into a page changes
+Orca's script, and Orca may then say only what a field holds.
 
 Unlike macOS:
 

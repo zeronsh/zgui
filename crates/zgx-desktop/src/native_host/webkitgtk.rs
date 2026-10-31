@@ -103,6 +103,28 @@ fn started() -> bool {
                         let _ = BRIDGE_EMBED.set(*slot);
                         *slot = Some(embedded);
                     }
+                    // SAFETY: ATK's utility class, which GTK set up, on
+                    // GTK's thread: `AtkUtilClass` is a `GObjectClass` (its
+                    // size GObject's), then four listener functions,
+                    // `get_root`, and `get_toolkit_name`, which this sets.
+                    // GTK's accessible objects here are only WebKit's pages:
+                    // their application names WebKitGTK as its toolkit, so a
+                    // reader keeps to its web script for them. (Their roots
+                    // take their application from GTK's; named GTK, Orca
+                    // switched to its GTK script at the page's focus, and
+                    // lost its browse mode or the next focus.)
+                    unsafe {
+                        unsafe extern "C" fn toolkit() -> *const c_char {
+                            c"WebKitGTK".as_ptr()
+                        }
+                        let mut query = std::mem::zeroed::<gtk::GTypeQuery>();
+                        (api.g_type_query)(20 << 2, &mut query);
+                        let class = (api.g_type_class_ref)((api.atk_util_get_type)());
+                        let slot = (class as *mut u8)
+                            .add(query.class_size as usize + 5 * std::mem::size_of::<Ptr>())
+                            as *mut Option<unsafe extern "C" fn() -> *const c_char>;
+                        *slot = Some(toolkit);
+                    }
                 }
                 let _ = sender.send(ready);
                 if ready {
@@ -1061,6 +1083,23 @@ impl Page {
         // SAFETY: a focus event GDK allocates, for the live window's own
         // GDK window (referenced, as the event frees it), sent on GTK's thread.
         unsafe {
+            // GTK's accessibility hears the window's focus through handlers
+            // of its focus events, and tells readers a window became active:
+            // this one is no window of the app's (the class's own handler,
+            // which WebKit's focus follows, stays).
+            let widget = (api.gtk_widget_get_type)();
+            for signal in [c"focus-in-event", c"focus-out-event"] {
+                let id = (api.g_signal_lookup)(signal.as_ptr(), widget);
+                (api.g_signal_handlers_disconnect_matched)(
+                    self.window,
+                    1,
+                    id,
+                    0,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                );
+            }
             let event = (api.gdk_event_new)(gtk::GDK_FOCUS_CHANGE);
             let focus_event = event as *mut gtk::GdkEventFocus;
             (*focus_event).window = (api.g_object_ref)((api.gtk_widget_get_window)(self.window));
