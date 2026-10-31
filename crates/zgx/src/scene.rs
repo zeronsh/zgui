@@ -4451,7 +4451,8 @@ impl Scene {
     /// row, each an item. Its own box takes none of its size, padding or
     /// margins; it spans its children, for paint, clip and hit testing,
     /// which keep the tree as it is, as do focus order and assistive
-    /// technology. Its parent lays out with taffy. `set_contents` is the
+    /// technology. A column or row lays them out as it would its own, taffy
+    /// only where its own children would need it. `set_contents` is the
     /// one-child kind regions use.
     pub fn set_display_contents(&mut self, id: NodeId, on: bool) {
         if self.is_display_contents(id) == on {
@@ -4492,8 +4493,8 @@ impl Scene {
             .is_some_and(|cold| cold.flat.contains_key(&id))
     }
     /// Whether some of `id`'s children lay theirs out in their place: it
-    /// lays out with taffy, theirs as its own. One test a scene with no
-    /// special nodes pays.
+    /// lays theirs out as its own (`Scene::flatten`). One test a scene with
+    /// no special nodes pays.
     #[inline(always)]
     pub(crate) fn has_flat_children(&self, id: NodeId) -> bool {
         self.contents_count > 0 && self.node(id).special.has(COLD) && self.flat_parent(id)
@@ -9366,6 +9367,50 @@ impl Scene {
         self.store_measurement(id, constraints, size, children);
         size
     }
+    /// `measure_uncached` for a column, row or grid some of whose children
+    /// lay theirs out in their place (`set_display_contents`): measured
+    /// through `measured` (its one copy of `measure_uncached` stays the hot
+    /// one) with theirs as its own children meanwhile, its `COLD` bit set
+    /// aside so this isn't asked again, then their places folded back under
+    /// them. Taffy lays them out where they or it need it, as its own
+    /// children would. `None` for a node that holds none as a container.
+    #[cold]
+    #[inline(never)]
+    fn measure_flat(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
+        if !matches!(
+            self.node(id).kind,
+            NodeKind::Container(_) | NodeKind::Panel { .. }
+        ) {
+            return None;
+        }
+        let own = self.children_raw(self.node(id)).clone();
+        let items = self.flatten(&own);
+        let node = self.node_mut(id);
+        let own = std::mem::replace(node.children.get_mut(), items);
+        node.special = node.special.with(COLD, false);
+        let mut inner = constraints;
+        let size = self.measured(id, &mut inner, true);
+        let node = self.node_mut(id);
+        node.special = node.special.with(COLD, true);
+        *node.children.get_mut() = own;
+        let advanced = node.advanced_layout.is_some();
+        if let Some(mut measurement) = node.measurement.take() {
+            let placed = std::mem::take(&mut measurement.children);
+            // A column or row places its absolute children after the rest;
+            // taffy, all in order.
+            let split = match advanced {
+                true => placed.len(),
+                false => placed
+                    .iter()
+                    .filter(|(child, ..)| !self.node(*child).style.absolute)
+                    .count(),
+            };
+            let inner = (measurement.size.0.max(0.), measurement.size.1.max(0.));
+            measurement.children = self.fold_flat(id, placed, split, inner);
+            self.node_mut(id).measurement = Some(measurement);
+        }
+        Some(size)
+    }
     /// `measure_uncached` for a contents node (as its last child) or a
     /// zoomed one: laid out in its own points, under its parent's room
     /// divided by its zoom, the room it takes times it. A zoomed node's
@@ -9376,6 +9421,9 @@ impl Scene {
     #[cold]
     #[inline(never)]
     fn measure_special(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
+        if self.has_flat_children(id) {
+            return self.measure_flat(id, constraints);
+        }
         if !self.tree_node(id).special.laid_out() {
             return None;
         }

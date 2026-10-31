@@ -145,3 +145,143 @@ fn focus_keeps_document_order() {
     }
     assert_eq!(order, [Some("one"), Some("two"), Some("three")]);
 }
+
+/// Each leaf of `build(true)`, children laid out in their place, where it is
+/// in `build(false)`, the same leaves written as the parent's own.
+fn lays_out_as_written_flat(ids: &[&str], build: impl Fn(bool) -> View) {
+    let place = |flat: bool| {
+        let mut ui = Ui::new(400., 300.);
+        let view = ui.mount(build(flat));
+        ui.prepare_frame();
+        ids.iter()
+            .map(|id| bounds(&ui, &view, id))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(place(true), place(false));
+}
+/// `items` in a group laid out in its place, or as they are.
+fn grouped(flat: bool, items: Vec<View>) -> Vec<View> {
+    match flat {
+        true => vec![div().id("group").display_contents().children(items)],
+        false => items,
+    }
+}
+
+#[test]
+fn in_a_column_or_row_the_children_lay_out_as_its_own() {
+    let leaves = ["a", "b", "c", "d"];
+    let items = || {
+        vec![
+            div().id("b").h(20.).w(30.),
+            div().id("c").grow().h(10.),
+            div().id("d").h(15.).w_percent(50.),
+        ]
+    };
+    let justifies: [fn(View) -> View; 3] = [
+        |v| v.justify_start(),
+        |v| v.justify_center(),
+        |v| v.justify_between(),
+    ];
+    for justify in justifies {
+        lays_out_as_written_flat(&leaves, |flat| {
+            justify(column().h(200.))
+                .child(div().id("a").h(10.))
+                .children(grouped(flat, items()))
+        });
+        lays_out_as_written_flat(&leaves, |flat| {
+            justify(row().w(300.).h(50.).items_center())
+                .child(div().id("a").w(10.).h(10.))
+                .children(grouped(flat, items()))
+        });
+    }
+}
+
+#[test]
+fn nested_groups_and_absolute_children_lay_out_as_its_own() {
+    lays_out_as_written_flat(&["a", "b", "c", "pinned"], |flat| {
+        let inner = grouped(
+            flat,
+            vec![
+                div().id("b").h(20.),
+                div().id("pinned").absolute().right(4.).top(4.).w(8.).h(8.),
+            ],
+        );
+        let items = grouped(
+            flat,
+            inner.into_iter().chain([div().id("c").h(30.)]).collect(),
+        );
+        column()
+            .w(200.)
+            .p(5.)
+            .child(div().id("a").h(10.))
+            .children(items)
+    });
+}
+
+#[test]
+fn in_a_column_a_child_that_changes_or_comes_and_goes_lays_out_again() {
+    let mut ui = Ui::new(400., 300.);
+    let (tall, many) = (ui.signal(10_f32), ui.signal(2_usize));
+    let (read_tall, read_many) = (tall.clone(), many.clone());
+    let view = ui.mount(
+        column().child(
+            div()
+                .id("group")
+                .display_contents()
+                .child(
+                    div()
+                        .id("first")
+                        .w(10.)
+                        .reactive_style(move || Styles::new().h(read_tall.get())),
+                )
+                .child(keyed(
+                    move || (0..read_many.get()).collect::<Vec<_>>(),
+                    |i, _| div().id(format!("k{i}")).w(20.).h(10.),
+                )),
+        ),
+    );
+    ui.prepare_frame();
+    tall.set(40.);
+    ui.prepare_frame();
+    let y = |ui: &Ui, id: &str| view.find(id).map(|n| ui.scene.borrow().bounds(n).y);
+    assert_eq!(y(&ui, "k0"), Some(40.), "below the taller first child");
+    many.set(3);
+    ui.prepare_frame();
+    assert_eq!(y(&ui, "k2"), Some(60.));
+    assert_eq!(bounds(&ui, &view, "group"), Rect::new(0., 0., 20., 70.));
+}
+
+/// A group's box spans what it holds: as a child widens it, the child and
+/// the group's box are repainted where they grow.
+#[test]
+fn a_child_that_widens_its_group_is_repainted_where_it_grows() {
+    let mut ui = Ui::new(400., 300.);
+    let wide = ui.signal(40_f32);
+    let read = wide.clone();
+    ui.mount(
+        column().items_start().child(
+            div()
+                .display_contents()
+                .bg(zgx::scene::Color(0, 0, 255, 255))
+                .child(
+                    div()
+                        .h(20.)
+                        .bg(zgx::scene::Color(255, 0, 0, 255))
+                        .reactive_style(move || Styles::new().w(read.get())),
+                )
+                .child(div().w(30.).h(20.)),
+        ),
+    );
+    ui.prepare_frame();
+    ui.scene.borrow_mut().flush();
+    wide.set(120.);
+    ui.prepare_frame();
+    let damage = ui.scene.borrow_mut().flush().damage;
+    let covered = |x: f32, y: f32| {
+        damage
+            .iter()
+            .any(|r| r.x <= x && x < r.x + r.width && r.y <= y && y < r.y + r.height)
+    };
+    assert!(covered(100., 10.), "where the child grew: {damage:?}");
+    assert!(covered(100., 30.), "where the group's box grew: {damage:?}");
+}

@@ -209,16 +209,16 @@ return ui.div {
 
 - Its own size, padding and margins don't apply. It spans its children for paint, clip and hits, so a `bg` on it paints the box around them.
 - Focus order and assistive technology keep it where it is: a role or label on it stays, with its children under it.
-- Its parent lays out with taffy. Use it where the rows must join the parent's own flow (grid cells, items wrapping with the parent's, a `gap` between them and their siblings); where a box holding them lays out the same, keep the box. 500 rows, counted instructions:
+- A column or row lays its rows out as its own, without taffy: mounting costs what a box does, laying out again under twice as much; a grid, or a parent that wraps or has a `gap`, lays out with taffy, as it would anyway. Use it where the rows must join the parent's own flow (grid cells, items wrapping with the parent's, a `gap` between them and their siblings). 500 rows, counted instructions:
 
   | 500 rows in | box (`ui.each` default) | `display = "contents"` |
   | --- | ---: | ---: |
-  | a column, mount | 5.9 M | 9.2 M |
-  | a column, each relayout | 0.3 M | 1.2 M |
+  | a column, mount | 5.9 M | 6.0 M |
+  | a column, each relayout | 0.30 M | 0.54 M |
   | a wrapping row, mount | 25.2 M | 12.9 M |
-  | a wrapping row, each relayout | 13.1 M | 3.3 M |
+  | a wrapping row, each relayout | 13.1 M | 3.4 M |
 
-  A column or row of boxes skips taffy; a box that wraps inside a wrapping row is measured several times by its parent.
+  A box that wraps inside a wrapping row is measured several times by its parent.
 
 ### Grid tracks
 

@@ -1623,11 +1623,7 @@ pub trait Styled: Sized {
     /// order and for assistive technology (a role or label it has stays,
     /// its children under it). See `Scene::set_display_contents`.
     fn display_contents(mut self) -> Self {
-        let styles = self.styles_mut();
-        // Its parent lays out with taffy, which lays it out in its place:
-        // a value that changes nothing, to say so.
-        styles.layout_options_mut().reverse.get_or_insert(false);
-        styles
+        self.styles_mut()
             .rare_mut()
             .cold
             .get_or_insert_default()
