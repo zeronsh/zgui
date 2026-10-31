@@ -2814,7 +2814,7 @@ impl ScriptHost {
         });
         i18n::install(&lazy, self.0.locales.clone(), self.0.files);
         let (windows, shared) = (self.0.windows.clone(), self.0.shared.clone());
-        lazy.ui(&["window"], move |lua, ui| {
+        lazy.ui(&["window", "window_rect"], move |lua, ui| {
             windows::install(lua, ui, windows, &shared)
         });
         let may = |capability: Capability| grants.allows(&capability);

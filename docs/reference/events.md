@@ -68,7 +68,20 @@ on_drag_spring: ((payload: any) -> boolean?)?
 | `on_drop` | the payload, `{ x, y, local_x, local_y, w, h }` | an accepted drag is released over it |
 | `on_drag_spring` | the payload; returns `false` to decline | spring-loading: an accepted drag has rested on it for the system's delay (macOS's setting, 0.5 s by default; never where it is turned off), or Space was pressed while it is over it. Open what it stands for, as a tab shows or a folder opens; once per stay (moving within it does not start the delay again, leaving does) |
 
-`x` and `y` are in the window. `local_x` and `local_y` are the same point in the node's own box, from its top-left corner as laid out: through every zoom and transform around it, its own included, as hit testing maps a pointer. They stay in `0` to its width and height while the pointer is on it, however it shows.
+Which points a field is in, under `zoom` or any transform:
+
+| Field | Points |
+| --- | --- |
+| `x`, `y` (every pointer event, `on_drag_outside`) | the window's |
+| `local_x`, `local_y` | the node's own box, from its top-left corner as laid out: through every zoom and transform around it, its own included, as hit testing maps a pointer. They stay in `0` to its width and height while the pointer is on it |
+| `dx`, `dy` (`on_wheel`) | the node's own: a zoomed box's content moves by them as far as the wheel says on screen, as a scroll view's does |
+| `scale` (`on_pinch`) | a ratio, no points |
+| `grab_x`, `grab_y` (`on_drag_outside`) | the window's, from the corner where the source shows: what to subtract from `x`, `y` to keep a preview under the grab |
+| `w`, `h` (`on_resize`, `on_drag_over`) | the node's own |
+| a ref's `x`, `y`, `width`, `height` | as laid out, before any zoom or transform: neither the window's nor the box's own under a zoom |
+| `ui.window_rect(el)` | the window's: where it shows, through every zoom and transform (CSS's `getBoundingClientRect`), to place something at it in window points |
+
+A draggable (`anime.createDraggable`) moves its `x` and `y` in its parent's points, so it stays under the pointer in a zoomed box.
 
 `cmd` is the platform's command key, as `cmd` in a command's keys: Command (`meta`) on macOS, Ctrl (`ctrl`) elsewhere; test it for a shortcut (`e.cmd and e.key == "z"`) rather than `meta or ctrl`, which takes Super+Z on Linux and Ctrl+Z on macOS. `x` and `y` are in points from the window's top left, `local_x` and `local_y` from the node's, `w` and `h` its size. Key names are the character typed (`"a"`, `"A"`, `"/"`), `" "` for Space, `"F1"` to `"F35"`, or one of `"Tab"`, `"Enter"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"ArrowRight"`, `"ArrowUp"`, `"ArrowDown"`, `"Home"`, `"End"`, `"PageUp"`, `"PageDown"`, `"Insert"`.
 

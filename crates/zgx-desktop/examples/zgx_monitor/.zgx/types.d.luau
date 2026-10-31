@@ -17428,6 +17428,11 @@ declare ui: {
 	-- elsewhere); a lone modifier ("cmd") as itself, "⌘" or "Ctrl".
 	shortcut_text: (keys: string) -> string,
 	window: WindowApi,
+	-- Where an element shows in the window, in the window's points (a
+	-- pointer's `x` and `y`), through every zoom and transform around it;
+	-- nil if it is not laid out. Its `x`, `y`, `width`, `height` are as laid
+	-- out.
+	window_rect: (el: Element) -> { x: number, y: number, width: number, height: number }?,
 	checkbox: (props: CheckboxProps) -> Node,
 	input: (props: InputProps) -> Node,
 	textarea: (props: InputProps) -> Node,

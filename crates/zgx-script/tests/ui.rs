@@ -4646,3 +4646,122 @@ fn a_drag_over_a_zoomed_target_says_its_local_point() {
     let said = h.text("said");
     assert_eq!(said, "50 100 120", "its middle, in its own box");
 }
+
+/// Under `zoom = 0.5`, what a wheel and a drag move is in the box's own
+/// points, so content follows the hand on screen: a scroll view's offset, an
+/// `on_wheel`'s `dx`/`dy`, a draggable's `x`. A drag's `grab_x` stays in the
+/// window's points, from where the source shows, as its preview is placed.
+#[test]
+fn wheels_and_drags_move_a_zoomed_box_as_far_as_the_hand() {
+    use zgx::input::{InputEvent, PointerButton};
+    let mut h = Harness::inline(
+        r##"local off = ui.state("off", 0)
+        local said = ui.state("said", "")
+        anime.createDraggable("#knob", { y = false, velocityMultiplier = 0 })
+        return ui.column {
+            ui.text { id = "said", said },
+            ui.text { id = "off", "{off}" },
+            ui.div { zoom = 0.5, w = 800, h = 1200, ui.column {
+                ui.scroll { id = "view", w = 200, h = 100, offset = off,
+                    ui.column { h = 2000 } },
+                ui.div { id = "pad", w = 200, h = 100,
+                    on_wheel = function(e)
+                        said:set(said:peek() .. string.format("wheel %.0f;", e.dy))
+                        return true
+                    end },
+                ui.div { id = "knob", w = 40, h = 40 },
+                ui.row { ui.div { w = 100, h = 40 },
+                    ui.div { id = "tab", w = 100, h = 40,
+                        on_drag = function() return "t" end,
+                        on_drag_outside = function(_, e)
+                            said:set(said:peek() .. string.format("grab %.0f;", e.grab_x))
+                        end } } } } }"##,
+    );
+    h.frames(2);
+    let middle = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        let b = h.ui.scene.borrow().transformed_bounds(node);
+        (b.x + b.width / 2., b.y + b.height / 2., b)
+    };
+    let (x, y, _) = middle(&mut h, "pad");
+    h.ui.dispatch(InputEvent::PointerMove { x, y });
+    h.ui.dispatch(InputEvent::Scroll {
+        x,
+        y,
+        delta_x: 0.,
+        delta_y: 25.,
+    });
+    // A new gesture: the last stays latched to the pad for 300 ms.
+    std::thread::sleep(std::time::Duration::from_millis(350));
+    let (x, y, _) = middle(&mut h, "view");
+    h.ui.dispatch(InputEvent::Scroll {
+        x,
+        y,
+        delta_x: 0.,
+        delta_y: 30.,
+    });
+    h.frames(2);
+    assert_eq!(h.text("off"), "60", "30 points on screen are 60 of its own");
+    let (x, y, _) = middle(&mut h, "knob");
+    let button = PointerButton::Primary;
+    h.ui.dispatch(InputEvent::PointerDown { x, y, button });
+    h.ui.dispatch(InputEvent::PointerMove { x: x + 30., y });
+    h.ui.dispatch(InputEvent::PointerUp {
+        x: x + 30.,
+        y,
+        button,
+    });
+    h.frames(2);
+    let knob = h.find("knob").unwrap();
+    let moved = h.ui.scene.borrow().transform(knob).x;
+    assert!(
+        (moved - 60.).abs() < 0.5,
+        "it stays under the pointer: {moved}"
+    );
+    let (_, _, tab) = middle(&mut h, "tab");
+    h.ui.dispatch(InputEvent::PointerDown {
+        x: tab.x + 10.,
+        y: tab.y + 5.,
+        button,
+    });
+    h.ui.dispatch(InputEvent::PointerMove {
+        x: tab.x + 40.,
+        y: tab.y + 15.,
+    });
+    h.ui.input.end_drag_elsewhere(&h.ui.scene, false, true);
+    h.frames(2);
+    assert_eq!(h.text("said"), "wheel 50;grab 10;");
+}
+
+/// `ui.window_rect(el)` is where it shows, in window points, through a zoom;
+/// `el.x` and `el.width` stay as laid out.
+#[test]
+fn a_refs_window_rect_is_where_it_shows() {
+    let mut h = Harness::inline(
+        r##"local card = ui.ref()
+        local said = ui.state("said", "")
+        ui.after(10, function()
+            local el = card:peek()
+            local r = ui.window_rect(el)
+            said:set(string.format("%.0f %.0f %.0f %.0f | %.0f %.0f", r.x, r.y, r.width, r.height, el.x, el.width))
+        end)
+        return ui.column { ui.text { id = "said", said },
+            ui.div { zoom = 0.5, w = 800, h = 400, ui.row {
+                ui.div { w = 100, h = 40 },
+                ui.div { ref = card, w = 200, h = 80 } } } }"##,
+    );
+    h.frames(2);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    h.frames(2);
+    let said = h.text("said");
+    let parts: Vec<&str> = said.split(" | ").collect();
+    let window: Vec<f32> = parts[0].split(' ').map(|v| v.parse().unwrap()).collect();
+    let own: Vec<f32> = parts[1].split(' ').map(|v| v.parse().unwrap()).collect();
+    assert_eq!((window[2], window[3]), (100., 40.), "shown at half: {said}");
+    assert_eq!(own[1], 200., "laid out at its own size: {said}");
+    assert_eq!(
+        window[0], 50.,
+        "its x shows at half its laid-out 100: {said}"
+    );
+    assert_eq!(own[0], 100., "{said}");
+}

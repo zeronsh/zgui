@@ -139,6 +139,26 @@ pub(crate) fn install(
     windows: Rc<Windows>,
     shared: &Rc<Store>,
 ) -> mlua::Result<()> {
+    // Where an element shows in the window, through every zoom and
+    // transform around it (its own included): `{ x, y, width, height }` in
+    // the window's points, as a pointer's `x` and `y` are; nil if it is not
+    // laid out. An element's `x`, `y`, `width`, `height` are as laid out.
+    // Here, not a method: one more on every element's metatable costs each
+    // method lookup.
+    ui.set(
+        "window_rect",
+        lua.create_function(|lua, el: mlua::UserDataRef<crate::element::ElementUd>| {
+            let Some(rect) = el.0.read(|s, id| s.transformed_bounds(id)) else {
+                return Ok(None);
+            };
+            let t = lua.create_table()?;
+            t.set("x", rect.x)?;
+            t.set("y", rect.y)?;
+            t.set("width", rect.width)?;
+            t.set("height", rect.height)?;
+            Ok(Some(t))
+        })?,
+    )?;
     let window = lua.create_table()?;
     // The app's own window's title bar: the app's, not a plugin's to read
     // or to move.

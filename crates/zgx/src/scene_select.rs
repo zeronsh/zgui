@@ -530,6 +530,18 @@ impl Scene {
         let (x, y) = self.point_in(id, x, y).unwrap_or((x, y));
         (x - bounds.x, y - bounds.y)
     }
+    /// A movement of (`dx`, `dy`) window points at window point (`x`, `y`),
+    /// in `id`'s own points: a wheel's or a drag's, which a zoomed or scaled
+    /// box takes as larger or smaller. Without transforms, itself.
+    pub fn local_delta(&self, id: NodeId, (x, y): (f32, f32), (dx, dy): (f32, f32)) -> (f32, f32) {
+        if self.transformed == 0 {
+            return (dx, dy);
+        }
+        match (self.point_in(id, x, y), self.point_in(id, x + dx, y + dy)) {
+            (Some(from), Some(to)) => (to.0 - from.0, to.1 - from.1),
+            _ => (dx, dy),
+        }
+    }
     /// Order `a` and `b` as a document would: an ancestor before what it
     /// holds, siblings as their parent orders them. Both must be in the
     /// scene.
