@@ -21,5 +21,6 @@ polling = "3"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# The shell's foreground descendant (Toolhelp snapshots).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
+# The shell's foreground descendant (Toolhelp snapshots), and Ctrl+C handling
+# restored for it.
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp"] }
