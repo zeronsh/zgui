@@ -1273,46 +1273,48 @@ pub(crate) fn view(
             let options = TabsOptions {
                 reorderable: *reorderable,
                 on_close,
-                keep: *keep,
-                group: group.clone(),
-                on_move: on_move.clone().map(|f| {
-                    let vm = vm.clone();
-                    let told: MoveTab = Rc::new(move |id: &str, to: &str| {
-                        if let Err(error) = vm.call::<()>(&f, (id, to)) {
-                            vm.report(error);
-                        }
-                    });
-                    told
-                }),
-                // Told with where, as `on_drag_outside` is.
-                on_tear_off: on_tear_off.clone().map(|f| {
-                    let vm = vm.clone();
-                    let told: TearOffTab = Rc::new(move |id: &str, event| {
-                        let at = vm.lua.create_table().and_then(|at| {
-                            at.set("x", event.x)?;
-                            at.set("y", event.y)?;
-                            at.set("grab_x", event.grab_x)?;
-                            at.set("grab_y", event.grab_y)?;
-                            Ok(at)
-                        });
-                        // `false` keeps the tab: anything else tears it off.
-                        match at.and_then(|at| vm.call::<mlua::Value>(&f, (id, at))) {
-                            Ok(said) => !matches!(said, mlua::Value::Boolean(false)),
-                            Err(error) => {
-                                vm.report(error);
-                                false
-                            }
-                        }
-                    });
-                    told
-                }),
             };
+            let mut more = TabsMore::default();
+            more.keep = *keep;
+            more.group = group.clone();
+            more.on_move = on_move.clone().map(|f| {
+                let vm = vm.clone();
+                let told: MoveTab = Rc::new(move |id: &str, to: &str| {
+                    if let Err(error) = vm.call::<()>(&f, (id, to)) {
+                        vm.report(error);
+                    }
+                });
+                told
+            });
+            // Told with where, as `on_drag_outside` is.
+            more.on_tear_off = on_tear_off.clone().map(|f| {
+                let vm = vm.clone();
+                let told: TearOffTab = Rc::new(move |id: &str, event| {
+                    let at = vm.lua.create_table().and_then(|at| {
+                        at.set("x", event.x)?;
+                        at.set("y", event.y)?;
+                        at.set("grab_x", event.grab_x)?;
+                        at.set("grab_y", event.grab_y)?;
+                        Ok(at)
+                    });
+                    // `false` keeps the tab: anything else tears it off.
+                    match at.and_then(|at| vm.call::<mlua::Value>(&f, (id, at))) {
+                        Ok(said) => !matches!(said, mlua::Value::Boolean(false)),
+                        Err(error) => {
+                            vm.report(error);
+                            false
+                        }
+                    }
+                });
+                told
+            });
             let (panel, vm, low) = (panel.clone(), vm.clone(), low.clone());
-            tabs(
+            tabs_with(
                 label.clone(),
                 tabs_signal,
                 selected,
                 options,
+                more,
                 move |id, _| match vm.call::<mlua::Value>(&panel, id) {
                     Ok(mlua::Value::UserData(ud)) if ud.is::<crate::node::NodeUd>() => {
                         match ud.borrow::<crate::node::NodeUd>() {
