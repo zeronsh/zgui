@@ -17,7 +17,8 @@
 //! images and polylines: quads, text and clip regions, kept frames, scroll
 //! copies and catch-up, layers drawn into textures of their own and
 //! composited, images (gradients' ramps, canvases and SVGs among them) the
-//! CPU wrote, and canvases' polyline strokes and filled areas. A frame
+//! CPU wrote, canvases' polyline strokes and filled areas, and radial
+//! gradients (`bg_radial`, zgx's shader fill). A frame
 //! needing more fails, naming what it lacks: there is no Direct3D 12 to
 //! fall back to.
 //!
@@ -29,9 +30,11 @@
 //! the DXBC in `dxbc/`:
 //! `translated_hlsl_matches` keeps all of them current. FXC runs on Windows
 //! alone: `python scripts/d3d11_shaders.py` there writes them again and
-//! prints their hashes.
+//! prints their hashes. zgx's own shader fill (`bg_radial`, fill_radial.hlsl)
+//! is compiled ahead with them; an app's fills draw nothing yet
+//! (`Device::prepare_fill`).
 use crate::{GpuError, Scissor, ScrollCopy, Shading};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use windows::{
     Win32::{
         Foundation::{HMODULE, RECT},
@@ -73,6 +76,8 @@ const COPY_VS: &[u8] = include_bytes!("dxbc/copy_offset_vs.dxbc");
 const COPY_FS: &[u8] = include_bytes!("dxbc/copy_offset_fs.dxbc");
 const POLYLINE_VS: &[u8] = include_bytes!("dxbc/polyline_vs.dxbc");
 const POLYLINE_FS: &[u8] = include_bytes!("dxbc/polyline_fs_polyline.dxbc");
+/// `bg_radial`'s fill (`zgx::decoration::radial_shader`), after draw.wgsl.
+const RADIAL_FS: &[u8] = include_bytes!("dxbc/fill_radial_zgx_fill.dxbc");
 
 /// Registers the HLSL is written with (`translate`): the sampled texture
 /// (the atlas, or the shown buffer for copies) in t0, the clip regions in
@@ -117,6 +122,11 @@ pub(crate) struct Device {
     no_regions: ID3D11ShaderResourceView,
     /// The query `wait_idle` ends and waits for.
     idle: ID3D11Query,
+    /// Shader fills by shader id, as each first draws (`prepare_fill`):
+    /// zgx's own with their pixel shaders, an app's with none.
+    fills: RefCell<rustc_hash::FxHashMap<u64, Option<ID3D11PixelShader>>>,
+    /// The radial fill's pixel shader, made as the first one draws.
+    radial: std::cell::OnceCell<Option<ID3D11PixelShader>>,
 }
 
 /// A `Device` made on another thread (`GpuContext::prepare`), handed over.
@@ -299,7 +309,55 @@ impl Device {
             sampler,
             no_regions,
             idle,
+            fills: RefCell::default(),
+            radial: std::cell::OnceCell::new(),
         })
+    }
+
+    /// Shader fill `id`'s pixel shader if not yet looked up, from its user
+    /// source (`FillShader::source`); whether it draws. zgx's own fills
+    /// (`bg_radial`) are compiled ahead with zgx's other shaders. An app's
+    /// would compile at run time, and FXC can overflow its stack on a
+    /// module, which no thread survives: until that compile runs where a
+    /// crash can't reach the app, an app's fill draws nothing here, said
+    /// once.
+    pub(crate) fn prepare_fill(&self, id: u64, source: &str) -> bool {
+        if let Some(found) = self.fills.borrow().get(&id) {
+            return found.is_some();
+        }
+        let shader = if source == zgx::decoration::radial_shader().source() {
+            self.radial
+                .get_or_init(|| {
+                    let mut shader = None;
+                    // SAFETY: DXBC compiled by FXC (`translated_hlsl_matches`).
+                    unsafe {
+                        self.device
+                            .CreatePixelShader(RADIAL_FS, None, Some(&mut shader))
+                    }
+                    .ok()?;
+                    shader
+                })
+                .clone()
+        } else {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| {
+                eprintln!(
+                    "zgx: Direct3D 11 does not draw an app's own shader fills yet (ZGX_D3D11): \
+                     they draw nothing"
+                )
+            });
+            None
+        };
+        let drawn = shader.is_some();
+        self.fills.borrow_mut().insert(id, shader);
+        drawn
+    }
+    /// Let go of the fills `keep` no longer holds (shaders trimmed).
+    pub(crate) fn trim_fills(&self, keep: impl Fn(u64) -> bool) {
+        self.fills.borrow_mut().retain(|id, _| keep(*id));
+    }
+    pub(crate) fn fill_count(&self) -> usize {
+        self.fills.borrow().len()
     }
 
     /// Wait until the GPU has run everything given it so far.
@@ -1115,13 +1173,28 @@ impl Frame<'_> {
     /// Draw `instances` quads of `shading`; `clear` for the pipeline that
     /// replaces rather than blends (a region's background).
     pub(crate) fn quads(&mut self, shading: Shading, clear: bool, instances: std::ops::Range<u32>) {
+        if let (Shading::Fill(id), false) = (shading, clear) {
+            // draw.wgsl's stage, layout and blending, the fill's pixels.
+            let fills = self.device.fills.borrow();
+            let Some(Some(pixel)) = fills.get(&id) else {
+                return;
+            };
+            self.bind(Bound::Full);
+            // SAFETY: A pixel shader of this device's.
+            unsafe { self.device.context.PSSetShader(pixel, None) };
+            drop(fills);
+            // The next draw binds its own pixel shader again.
+            self.current = None;
+            self.draw(instances);
+            return;
+        }
         let bound = match (shading, clear) {
             (Shading::Basic | Shading::Opaque, true) => Bound::Opaque,
             (_, true) => Bound::FullClear,
             (Shading::Basic, false) => Bound::Basic,
             (Shading::Opaque, false) => Bound::Opaque,
             (Shading::Polyline, false) => Bound::Polyline,
-            // The proof draws nothing else (`GpuRenderer::d3d11_lacks`).
+            // Nothing else draws here (`GpuRenderer::d3d11_lacks`).
             (_, false) => Bound::Full,
         };
         self.bind(bound);
@@ -1297,6 +1370,27 @@ fn compile(hlsl: &str, entry: &str, target: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
+    /// zgx's radial fill draws with its pixel shader compiled ahead; an
+    /// app's fill draws nothing (no FXC at run time); each looked up once,
+    /// and let go as the renderer trims it.
+    #[test]
+    fn zgx_fills_draw_and_an_apps_do_not_yet() {
+        let device = Device::new().unwrap();
+        let radial = zgx::decoration::radial_shader();
+        assert!(device.prepare_fill(1, radial.source()));
+        assert!(!device.prepare_fill(
+            2,
+            "fn fill(input: FillInput) -> vec4<f32> { return vec4(1.0); }"
+        ));
+        assert!(
+            !device.prepare_fill(2, radial.source()),
+            "looked up once, by id"
+        );
+        assert_eq!(device.fill_count(), 2);
+        device.trim_fills(|id| id == 1);
+        assert_eq!(device.fill_count(), 1);
+    }
+
     #[test]
     fn translated_hlsl_matches() {
         let bless = std::env::var_os("ZGX_BLESS").is_some_and(|v| v != "0");
@@ -1333,6 +1427,12 @@ mod tests {
                     ("vs", "vs_5_0", POLYLINE_VS),
                     ("fs_polyline", "ps_5_0", POLYLINE_FS),
                 ][..],
+            ),
+            (
+                crate::fill_source(zgx::decoration::radial_shader().source()).as_str(),
+                false,
+                "fill_radial",
+                &[("zgx_fill", "ps_5_0", RADIAL_FS)][..],
             ),
         ] {
             let (hlsl, names) = translate(wgsl, copies).unwrap();

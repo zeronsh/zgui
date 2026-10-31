@@ -9205,8 +9205,15 @@ impl GpuRenderer {
                 (TextureSource::Image(_), _) if self.d3d11_texture(draw.source).is_none() => {
                     Some("GPU-drawn image")
                 }
-                (_, Shading::Full | Shading::Basic | Shading::Opaque | Shading::Polyline) => None,
-                _ => Some("shader fill, layer shader, blend mode or image effect"),
+                (
+                    _,
+                    Shading::Full
+                    | Shading::Basic
+                    | Shading::Opaque
+                    | Shading::Polyline
+                    | Shading::Fill(_),
+                ) => None,
+                _ => Some("layer shader, blend mode or image effect"),
             })
     }
     /// What a batch of `source` samples with Direct3D 11: the glyph atlas,
@@ -9245,6 +9252,18 @@ impl GpuRenderer {
         let (width, height) = (self.width, self.height);
         let state = self.d3d11.as_mut().expect("checked by the caller");
         let device = state.device.clone();
+        // Shader fills' pixel shaders, looked up as they first draw; those
+        // trimmed let go.
+        if device.fill_count() > self.fill_pipelines.len() {
+            device.trim_fills(|id| self.fill_pipelines.contains_key(&id));
+        }
+        for draw in &draws {
+            if let Shading::Fill(id) = draw.shading
+                && let Some(shader) = self.fill_shaders.get(&id)
+            {
+                device.prepare_fill(id, shader.source());
+            }
+        }
         let parts = [bytemuck::cast_slice(&quads)];
         let (vertices, allocated) = match &self.kept_upload {
             Some((kept, bytes)) => {
@@ -14425,6 +14444,16 @@ pub fn shader_modules() -> Vec<(&'static str, String)> {
         (
             "layer shader",
             filter_source("fn layer(input:LayerInput)->vec4<f32> { return input.color; }"),
+        ),
+        // zgx's own: every app with a radial gradient or a CSS colour
+        // filter compiles them, so FXC must as any built-in.
+        (
+            "radial fill",
+            fill_source(zgx::decoration::radial_shader().source()),
+        ),
+        (
+            "colour filter",
+            filter_source(zgx::decoration::color_filter_shader().source()),
         ),
         ("blur", include_str!("blur.wgsl").to_owned()),
         (

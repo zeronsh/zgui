@@ -5,7 +5,8 @@
 //! continuous geometry (bars and a progress bar with fractional edges),
 //! isolated layers (translucent, nested, and turning inside), and images
 //! (a picture with straight alpha and a gradient's ramp), and canvas
-//! polylines (a moving sparkline, a translucent stroke over itself), at
+//! polylines (a moving sparkline, a translucent stroke over itself), a
+//! radial gradient (zgx's shader fill), at
 //! 1×, 1.5× and 2×, byte for byte: both compile the same HLSL with FXC
 //! (Direct3D 12 pinned to it, docs/windows.md). `ZGX_D3D11` is read once a
 //! process, so the test runs itself again with it and compares that run's
@@ -247,6 +248,47 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
     .ml(12.)
     .mt(36.)
     .size(100., 50.);
+    // zgx's shader fill: radial gradients, three stops and two (translucent),
+    // rounded, one bordered.
+    let shaded = div()
+        .absolute()
+        .ml(250.)
+        .mt(150.)
+        .flex_row()
+        .gap(8.)
+        .child(
+            div().size(60., 60.).rounded(14.).bg_radial(
+                (0.3, 0.4),
+                1.,
+                [
+                    (0., Color(255, 210, 90, 255)),
+                    (0.5, Color(220, 60, 120, 255)),
+                    (1., Color(30, 20, 60, 255)),
+                ]
+                .map(|(offset, color)| zgx::canvas::GradientStop { offset, color }),
+            ),
+        )
+        .child(
+            div()
+                .size(60., 60.)
+                .rounded(10.)
+                .border(2.)
+                .border_color(Color(255, 255, 255, 200))
+                .bg_radial(
+                    (0.5, 0.5),
+                    0.8,
+                    [
+                        zgx::canvas::GradientStop {
+                            offset: 0.,
+                            color: Color(120, 220, 255, 255),
+                        },
+                        zgx::canvas::GradientStop {
+                            offset: 1.,
+                            color: Color(20, 40, 90, 160),
+                        },
+                    ],
+                ),
+        );
     div()
         .w(SIZE.0)
         .h(SIZE.1)
@@ -258,6 +300,7 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .child(layered)
         .child(pictured)
         .child(lines)
+        .child(shaded)
 }
 
 /// Each frame's pixels, RGBA, as this process draws them at `scale`.

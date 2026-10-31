@@ -97,8 +97,9 @@ an RTX 4090, the lab scene's first text, medians of 5 launches:
 | DXC (Windows SDK's 1.8.2502) | 437 ms | to measure with the cache |
 
 `WGPU_DX12_COMPILER` (`fxc`, `dxc`) chooses one alone, the DLL found by
-name. Direct3D 11 (`ZGX_D3D11`) takes its shaders compiled ahead of time
-and never compiles at run time. Shipping DXC is described below.
+name. Direct3D 11 (`ZGX_D3D11`) takes its shaders compiled ahead of time and
+never compiles at run time, so an app's own shader fills (`bg_shader`) draw
+nothing there yet; zgx's (`bg_radial`) are compiled ahead with the rest. Shipping DXC is described below.
 
 Most of the rest is the GPU driver opening its device (about 160 ms for a
 Direct3D 11 device and 180 ms for Direct3D 12, alone in a process), a floor
