@@ -169,6 +169,13 @@ impl Font {
                 .location([(Tag::new(b"wght"), weight.0 as f32)])
         };
         let metrics = font_ref.metrics(Size::unscaled(), &location);
+        // zgx patch: a face without units per em (a bitmap-only font such
+        // as macOS's GB18030Bitmap, which has no `head` table) lays every
+        // glyph out infinitely wide: it can't be shaped, so it is no font
+        // (fallback passes it by).
+        if metrics.units_per_em == 0 {
+            return None;
+        }
 
         let monospace_fallback = if cfg!(feature = "monospace_fallback") {
             (|| {

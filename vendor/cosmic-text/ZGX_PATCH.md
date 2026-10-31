@@ -181,3 +181,13 @@ font has, to the same glyphs from the same fonts as each alone.
 every `TRIM_PERIOD` ages (above), so it cannot drop runs shaped with a font
 that was just replaced; zgx-gpu's `FontData::replace_in` clears it, and its
 `font_replace` test checks a replaced font measures and draws as a fresh one.
+
+## A font without units per em is no font
+
+macOS has a bitmap-only face, GB18030Bitmap, with no `head` table: its units
+per em read as 0, so every advance it gave divided by zero. Monospaced text
+fell back to it for CJK (it is marked monospaced), and the line took
+infinite width: nothing after the first CJK character showed, and the
+text's box broke its layout. `Font::new_at` now gives no font for a face
+without units per em, so fallback passes it by (to Arial Unicode MS, or
+PingFang). zgx-gpu's `cjk_in_monospaced_text_takes_finite_room` checks it.
