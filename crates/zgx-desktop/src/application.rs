@@ -720,6 +720,12 @@ impl WindowContext {
             clipboard: self.windows.clipboard.clone(),
             dialogs: self.dialogs.clone(),
         }));
+        // Pages as images of WebKitGTK's (`web_view` asks it first).
+        #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+        let view = zgx::compose::provide(
+            crate::native_host::webkitgtk::page_views(self.windows.clipboard.clone()),
+            view,
+        );
         self.ui.render(zgx::compose::provide(
             self.frames.clone(),
             zgx::compose::provide(
@@ -2072,7 +2078,15 @@ impl Host {
         // Update native permission before event delivery and before hidden-window
         // drawing gates. Read-only editors retain logical focus but no IME context.
         let editor = crate::native_ime::editable_editor(&self.context.ui, self.native_focused);
-        let target = editor.as_ref().map(|editor| editor.node);
+        // A page's editable, where no editor of zgx's has focus: the page's
+        // box takes the input method (`webkitgtk::ime_page`).
+        #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+        let page = (editor.is_none() && self.native_focused)
+            .then(|| crate::native_host::webkitgtk::ime_page(&self.context.ui))
+            .flatten();
+        #[cfg(not(all(target_os = "linux", feature = "webkitgtk")))]
+        let page: Option<NodeId> = None;
+        let target = editor.as_ref().map(|editor| editor.node).or(page);
         // What kind of text it takes, for the input method (Wayland's content
         // purpose; Windows' input scope through the framework, `tsf.rs`).
         let purpose = crate::native_ime::ime_purpose(
@@ -2138,13 +2152,15 @@ impl Host {
             }
             self.ime_target = target;
         }
-        if self.ime_cancellation.sync(
-            &self.context.ui,
-            self.native_focused,
-            self.ime_target,
-            &mut self.ime_restart,
-            &mut self.ime_active,
-        ) {
+        if page.is_none()
+            && self.ime_cancellation.sync(
+                &self.context.ui,
+                self.native_focused,
+                self.ime_target,
+                &mut self.ime_restart,
+                &mut self.ime_active,
+            )
+        {
             self.ime_geometry = None;
             if let Some(window) = &self.window {
                 window.set_ime_allowed(false);
@@ -2668,6 +2684,8 @@ impl Host {
         // show (zoomed too): where its candidates go, as under a native
         // field's marked text.
         let caret = editor.as_ref().map(|editor| editor.input_method_area());
+        #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+        let caret = caret.or_else(|| crate::native_host::webkitgtk::ime_area(ui));
         // Wayland's text input: a new area committed while an input method's
         // updates are in flight moves the state serial on, so the compositor
         // takes those updates as stale and drops them (a burst of typing
@@ -4325,6 +4343,18 @@ impl Host {
                     caption.sync(&mut self.context.ui);
                 }
             }
+            // Composing into a page's editable: the page has it.
+            #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+            WindowEvent::Ime(event)
+                if crate::native_host::webkitgtk::page_ime(
+                    &self.context.ui,
+                    self.ime_target,
+                    &event,
+                ) =>
+            {
+                self.ime_active =
+                    matches!(&event, winit::event::Ime::Preedit(text, _) if !text.is_empty());
+            }
             WindowEvent::Ime(event) => {
                 if self.ime_restart.accepts(&event)
                     && let Some(composing) = crate::native_ime::dispatch(
@@ -4355,68 +4385,92 @@ impl Host {
                     }
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                let key = map_key(&event.logical_key)
-                    .map(|key| shortcut_key(key, event.physical_key, self.modifiers));
-                let mut prevented = false;
-                if let Some(key) = key
-                    && !self.ime_active
-                {
-                    // The physical key, as the DOM's `KeyboardEvent.code`.
-                    self.context
-                        .ui
-                        .input
-                        .set_key_code(match event.physical_key {
-                            PhysicalKey::Code(KeyCode::SuperLeft) => Some("MetaLeft".into()),
-                            PhysicalKey::Code(KeyCode::SuperRight) => Some("MetaRight".into()),
-                            PhysicalKey::Code(code) => Some(format!("{code:?}").into()),
-                            PhysicalKey::Unidentified(_) => None,
-                        });
-                    if event.state == ElementState::Pressed {
-                        // Windows' Shift+Delete cuts a selection, before the
-                        // editor would only delete it.
-                        #[cfg(windows)]
-                        let cut = windows_clipboard_alias(&key, self.modifiers) == Some("x")
-                            && self.clipboard_key(&key);
-                        #[cfg(not(windows))]
-                        let cut = false;
-                        prevented = cut
-                            || self.dispatch_prevented(InputEvent::KeyDown {
-                                key: key.clone(),
-                                modifiers: self.modifiers,
-                                repeat: event.repeat,
-                            })?;
-                        if !prevented {
-                            prevented = self.clipboard_key(&key);
-                        }
-                        #[cfg(target_os = "macos")]
-                        if !prevented {
-                            prevented = self.look_up_key(&key);
-                        }
-                        #[cfg(target_os = "linux")]
-                        self.publish_editor_primary();
-                    } else {
-                        self.dispatch(InputEvent::KeyUp {
-                            key,
-                            modifiers: self.modifiers,
-                        })?;
-                    }
-                    self.context.ui.input.set_key_code(None);
-                }
-                if event.state == ElementState::Pressed
-                    && (!prevented || self.context.ui.input.has_pending_keys())
-                    && !self.modifiers.control
-                    && !self.modifiers.meta
-                    && !self.ime_active
-                    && let Some(text) = event.text
-                    && !text.chars().any(char::is_control)
-                {
-                    self.dispatch(InputEvent::Text(text.to_string()))?;
-                }
-            }
+            WindowEvent::KeyboardInput { event, .. } => self.key_input(event, true)?,
             _ => {}
         }
 
+        Ok(())
+    }
+    /// A key from the window: to the page whose box has focus first, unless
+    /// `to_page` is off (a key a page left alone, come back for the app's
+    /// shortcuts), then to zgx.
+    fn key_input(
+        &mut self,
+        event: winit::event::KeyEvent,
+        to_page: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        let key = map_key(&event.logical_key)
+            .map(|key| shortcut_key(key, event.physical_key, self.modifiers));
+        // A page whose box has focus has keys before zgx does, but for
+        // those the app reserves; those it leaves alone come back.
+        #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+        if to_page && !self.ime_active {
+            self.context
+                .ui
+                .input
+                .set_key_code(key_code(event.physical_key));
+            let taken = crate::native_host::webkitgtk::page_key(
+                &self.context.ui,
+                &event,
+                self.modifiers,
+                key.as_ref(),
+            );
+            self.context.ui.input.set_key_code(None);
+            if taken {
+                return Ok(());
+            }
+        }
+        #[cfg(not(all(target_os = "linux", feature = "webkitgtk")))]
+        let _ = to_page;
+        let mut prevented = false;
+        if let Some(key) = key
+            && !self.ime_active
+        {
+            self.context
+                .ui
+                .input
+                .set_key_code(key_code(event.physical_key));
+            if event.state == ElementState::Pressed {
+                // Windows' Shift+Delete cuts a selection, before the
+                // editor would only delete it.
+                #[cfg(windows)]
+                let cut = windows_clipboard_alias(&key, self.modifiers) == Some("x")
+                    && self.clipboard_key(&key);
+                #[cfg(not(windows))]
+                let cut = false;
+                prevented = cut
+                    || self.dispatch_prevented(InputEvent::KeyDown {
+                        key: key.clone(),
+                        modifiers: self.modifiers,
+                        repeat: event.repeat,
+                    })?;
+                if !prevented {
+                    prevented = self.clipboard_key(&key);
+                }
+                #[cfg(target_os = "macos")]
+                if !prevented {
+                    prevented = self.look_up_key(&key);
+                }
+                #[cfg(target_os = "linux")]
+                self.publish_editor_primary();
+            } else {
+                self.dispatch(InputEvent::KeyUp {
+                    key,
+                    modifiers: self.modifiers,
+                })?;
+            }
+            self.context.ui.input.set_key_code(None);
+        }
+        if event.state == ElementState::Pressed
+            && (!prevented || self.context.ui.input.has_pending_keys())
+            && !self.modifiers.control
+            && !self.modifiers.meta
+            && !self.ime_active
+            && let Some(text) = event.text
+            && !text.chars().any(char::is_control)
+        {
+            self.dispatch(InputEvent::Text(text.to_string()))?;
+        }
         Ok(())
     }
     /// The window's drag moved: a preview in a window of its own moves with
@@ -4829,6 +4883,8 @@ impl Host {
     fn update(&mut self) -> Result<bool, Box<dyn Error>> {
         // Native views' reports (navigation, script replies), and keyboard
         // focus they took or gave back, at this safe point.
+        #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+        crate::native_host::webkitgtk::deliver_pages();
         zgx::native_view::deliver_posted();
         // Moves zgx heard through the native views' pointer monitor.
         if let Some(pointer) = self.native.take_unheard_pointer() {
@@ -4836,6 +4892,14 @@ impl Host {
             self.pointer_inside = true;
         }
         self.native.sync_focus(&self.context.ui);
+        #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+        {
+            crate::native_host::webkitgtk::sync_focus(&self.context.ui);
+            // Keys pages left alone: the app's shortcuts have them now.
+            for event in crate::native_host::webkitgtk::take_unhandled_keys(&self.context.ui) {
+                self.key_input(event, false)?;
+            }
+        }
         self.poll_frame_deadline(std::time::Instant::now());
         // A paced accessibility update falling due between frames goes out
         // now (frames send theirs as they draw): its deadline past, the
@@ -6829,6 +6893,15 @@ fn shortcut_key(key: Key, physical: PhysicalKey, modifiers: zgx::input::Modifier
         _ => return key,
     };
     Key::Character(us.into())
+}
+/// The physical key, as the DOM's `KeyboardEvent.code`.
+fn key_code(key: PhysicalKey) -> Option<std::rc::Rc<str>> {
+    match key {
+        PhysicalKey::Code(KeyCode::SuperLeft) => Some("MetaLeft".into()),
+        PhysicalKey::Code(KeyCode::SuperRight) => Some("MetaRight".into()),
+        PhysicalKey::Code(code) => Some(format!("{code:?}").into()),
+        PhysicalKey::Unidentified(_) => None,
+    }
 }
 fn map_key(key: &WKey) -> Option<Key> {
     Some(match key {

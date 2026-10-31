@@ -39,6 +39,11 @@ terminal-bundle = ["dep:zgx-script"]
 # webview2.rs).
 # Needs the WebView2 runtime, which Windows 11 ships.
 webview2 = ["dep:webview2-com", "zgx-gpu/composition", "windows/Win32_Graphics_DirectComposition", "windows/Win32_Graphics_Gdi", "windows/Win32_System_Com", "windows/Win32_System_Com_StructuredStorage", "windows/Win32_System_Ole"]
+# Web views (`zgx::web_view`) on Linux as WebKitGTK pages drawn offscreen
+# and shown as images (src/native_host/webkitgtk.rs). WebKitGTK 4.1
+# (libwebkit2gtk-4.1-0) is opened at run time: building needs none of it,
+# and where it is missing pages are placeholders.
+webkitgtk = []
 # mimalloc as the program's allocator, in place of the system's: 1-10%
 # fewer cycles in zgx's headless scenes (text 7%, layout 6%, animation
 # 9%), for up to 3 MB more resident memory. A program has one allocator:
@@ -124,6 +129,10 @@ required-features = ["ghostty"]
 [[example]]
 name = "terminal"
 required-features = ["ghostty"]
+
+[[example]]
+name = "web_view_probe"
+required-features = ["webkitgtk"]
 
 [build-dependencies]
 # `terminal-bundle`: compiles the terminal example's scripts (build.rs).

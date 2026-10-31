@@ -13,3 +13,26 @@ The reference CPU rasterizer omits native surfaces; it does not silently read th
 The [macOS continuation packet](platform-validation/macos-continuation/README.md) records execution on macOS 26.4 / Apple M5 Max: the complete Metal suite passed, including `metal_imports_native_bgra_and_nv12_reuses_frames_and_releases_on_teardown` and the retained component fitting/binding test. The native `native_surfaces --smoke-test` window also alternated four BGRA/NV12 frames successfully. These establish real imported pixels, frame reuse and ownership/teardown behavior; they are not inferred from the earlier ARM cross-check or Linux WGSL validation. They do not establish video playback throughput, presentation cadence or hardware performance rankings.
 
 The Mac validation bundle runs the complete GPU rendering suite, including native surfaces, before native window probes. Its interactive checklist also covers layout/media painting, clipboard exchange, editing and three separate native IME scenarios. The IME fixture has a 20-second lifetime per launch. Each operator case keeps a separate log; FAIL exits unsuccessfully, while skipped or unrecognized answers remain pending. CI runs the automated subset and preserves the pending manual checklist.
+
+# Web views by platform
+
+A web view (`zgx::web_view`, `ui.webview`) is the platform's own page, laid out as a node. How each platform shows it, and what that leaves out:
+
+| | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Engine | WKWebView | WebView2 (`webview2` feature) | WebKitGTK 4.1 (`webkitgtk` feature; zgx-run has it) |
+| Shown as | a native view between zgx's base and overlay planes, one Core Animation transaction | a DirectComposition visual between the planes, one commit | an image: drawn offscreen (`GtkOffscreenWindow`), uploaded into a GPU view's texture, composited with zgx's paint |
+| Clip, rounded corners, opacity, transforms | yes | yes | yes |
+| zgx content over the page | overlay plane | overlay plane | ordinary paint |
+| Glass over the page | blurs the page | tint only | blurs the page |
+| Pixels per frame | none copied | none copied | two CPU copies of the damaged part |
+| Keys, reserved shortcuts, fall-through | yes | yes | yes |
+| Input method | AppKit's | the Text Services Framework | the window's (XIM, text-input-v3), through a WebKit input method context of zgx's |
+| `<select>` popups | WebKit's | WebView2's | a zgx menu |
+| Clipboard | the system's | the system's | X11 the system's; Wayland through zgx's, as text |
+| Cursor | the page's | the page's | named CSS cursors; image cursors show the arrow |
+| Page accessibility | the platform's | the platform's | not in the window's tree (AT-SPI) |
+| Drags out of the page, files dropped on it | the platform's | the platform's | no |
+| Missing engine | — | placeholder | placeholder (the library is opened as the first page shows) |
+
+Linux's choice: Wayland cannot embed another client's surface, an X11 child window can't be faded or rounded smoothly or covered by translucent zgx content, and WPE WebKit isn't packaged on Ubuntu 24.04; drawing offscreen behaves the same on X11 and Wayland. See [the Linux notes](linux.md#web-views).

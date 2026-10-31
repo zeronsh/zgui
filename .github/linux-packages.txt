@@ -17,6 +17,7 @@ libdbus-1-dev
 libenchant-2-2
 libfontconfig1-dev
 libwayland-dev
+libwebkit2gtk-4.1-0
 libxcb1-dev
 libxkbcommon-dev
 libxrandr-dev

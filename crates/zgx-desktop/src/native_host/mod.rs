@@ -8,11 +8,16 @@
 //! backdrops under overlay glass in one Core Animation transaction (macOS)
 //! or DirectComposition commit (Windows, with the `webview2` feature), so
 //! they never drift a frame apart. A window without native views does none
-//! of it.
+//! of it. On Linux (the `webkitgtk` feature) pages are images in the
+//! window's own paint instead (`webkitgtk.rs`), and none of this applies.
 #[cfg(all(windows, feature = "webview2"))]
 mod dcomp;
 #[cfg(all(target_os = "macos", feature = "ghostty"))]
 mod ghostty;
+#[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+mod gtk;
+#[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+pub(crate) mod webkitgtk;
 #[cfg(all(target_os = "macos", feature = "ghostty"))]
 pub(crate) use ghostty::processes_changed;
 #[cfg(target_os = "macos")]
@@ -97,10 +102,14 @@ pub(crate) struct NativeHost {
     )]
     input: zgx::input::InputDispatcher,
     _waker: zgx::native_view::WakerGuard,
+    /// Wakes the window when WebKitGTK's thread has something for it.
+    #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+    _pages_waker: webkitgtk::WakerGuard,
 }
 
 impl NativeHost {
-    pub fn new(ui: &Ui, wake: impl Fn() + 'static) -> Self {
+    pub fn new(ui: &Ui, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        let wake = std::sync::Arc::new(wake);
         let natives = NativeViews::new();
         // Pages go in DirectComposition visuals, which only Direct3D 12
         // presents into: a `WGPU_BACKEND` without it leaves them placeholders.
@@ -136,7 +145,9 @@ impl NativeHost {
             pending: false,
             scene: Rc::downgrade(&ui.scene),
             input: ui.input.clone(),
-            _waker: zgx::native_view::set_waker(wake),
+            #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
+            _pages_waker: webkitgtk::add_waker(wake.clone()),
+            _waker: zgx::native_view::set_waker(move || wake()),
         }
     }
     /// The window's renderer, sharing `context` when given. On Windows with
