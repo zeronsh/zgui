@@ -1843,6 +1843,8 @@ struct ColdMaps {
     /// How many children of each parent do: a parent with some lays out
     /// with taffy, its children's children as its own.
     flat_parents: NodeMap<u32>,
+    /// Images sampled other than smoothly (`set_image_rendering`).
+    image_rendering: NodeMap<crate::image::ImageRendering>,
 }
 /// Where a node takes hits while an animation moves it: the place it's
 /// going, not the place it shows (Core Animation's model layer against its
@@ -6317,6 +6319,7 @@ impl Scene {
                 || cold.hit_targets.contains_key(&id)
                 || cold.flat.contains_key(&id)
                 || cold.flat_parents.contains_key(&id)
+                || cold.image_rendering.contains_key(&id)
         }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
@@ -6729,6 +6732,7 @@ impl Scene {
             maps.hit_targets.remove(&id);
             maps.flat.remove(&id);
             maps.flat_parents.remove(&id);
+            maps.image_rendering.remove(&id);
         }
     }
     /// Hit `id` and what it holds where an animation is taking it, not

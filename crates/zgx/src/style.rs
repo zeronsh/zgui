@@ -741,6 +741,8 @@ pub(crate) struct ColdStyles {
     pub(crate) object_position: Option<(f32, f32)>,
     /// `Styled::text_shadow` and `text_shadows`.
     pub(crate) text_shadows: Option<std::sync::Arc<[crate::scene::TextShadow]>>,
+    /// `Styled::image_rendering`.
+    pub(crate) image_rendering: Option<crate::image::ImageRendering>,
     /// `Styled::w_calc` and the like.
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
     /// `Styled::text_balance`.
@@ -934,6 +936,9 @@ impl RareStyles {
             }
             if theirs.text_shadows.is_some() {
                 mine.text_shadows = theirs.text_shadows.clone();
+            }
+            if theirs.image_rendering.is_some() {
+                mine.image_rendering = theirs.image_rendering;
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -2218,6 +2223,17 @@ pub trait Styled: Sized {
     /// negative draws it over the box's edge.
     fn outline_offset(mut self, offset: f32) -> Self {
         self.styles_mut().rare_mut().outline_offset = Some(offset);
+        self
+    }
+    /// How its image, or its background image, is sampled drawn larger or
+    /// smaller (CSS's `image-rendering`): `ImageRendering::Pixelated`, the
+    /// nearest pixel, for pixel art.
+    fn image_rendering(mut self, rendering: crate::image::ImageRendering) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .image_rendering = Some(rendering);
         self
     }
     /// No outline.

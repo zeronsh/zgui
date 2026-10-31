@@ -1673,6 +1673,10 @@ export type Styles = {
 	-- { 0.5, 0 } keeps a portrait's top under fit = "cover".
 	object_position: { number }?,
 	fit: Fit?,
+	-- How an image (or a background image) is sampled drawn larger or
+	-- smaller (CSS's `image-rendering`): "pixelated", the nearest pixel, its
+	-- edges hard (pixel art, a QR code); "auto", smooth.
+	image_rendering: ("auto" | "pixelated")?,
 	tint: Color?,
 	-- When its file decodes (HTML's `decoding`): "auto", where a picture up
 	-- to 256 by 256 decodes as it is first drawn and a larger one off the
@@ -1856,6 +1860,7 @@ export type StyleProps = {
 	layer: Reactive<boolean>?,
 	object_position: Reactive<{ number }>?,
 	fit: Reactive<Fit>?,
+	image_rendering: ("auto" | "pixelated")?,
 	tint: Reactive<Color>?,
 	decode: ("auto" | "sync" | "async")?,
 	dither: number?,

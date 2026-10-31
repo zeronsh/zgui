@@ -968,9 +968,64 @@ fn input_after_idle_wakes_the_gpu_once() {
     assert_eq!(window.gpu.debug_warms(), 2, "the next idle");
 }
 
+/// A pixelated image presented through the Metal frame's own pipelines
+/// (`metal_frame`, its inline sampler nearest): a 2 by 2 checker drawn at
+/// 100 points is black or white, where a smooth one blends along the middle.
+#[cfg(target_os = "macos")]
+fn pixelated_images_through_metal_frames_take_the_nearest_pixel() {
+    use std::sync::Arc;
+    use zgx::image::{ImageData, ImageRendering};
+    use zgx::scene::{Layout, NodeKind, Scene, Style};
+    let checker = Arc::new(
+        ImageData::new(
+            2,
+            2,
+            vec![
+                0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255,
+            ],
+        )
+        .unwrap(),
+    );
+    let greys = |rendering: ImageRendering| {
+        let mut scene = Scene::new(100., 100.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let node = scene.append(
+            scene.root(),
+            NodeKind::Image(checker.clone()),
+            Style {
+                width: Some(100.),
+                height: Some(100.),
+                ..Default::default()
+            },
+        );
+        scene.set_image_rendering(node, rendering);
+        let host = objc2_quartz_core::CALayer::new();
+        let mut gpu = GpuRenderer::debug_for_layer(host.clone(), 200, 200).unwrap();
+        gpu.set_scale_factor(2.);
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap();
+        gpu.present().unwrap();
+        let (width, _, pixels) = gpu.shown_pixels().expect("a surface shown");
+        let width = width as usize;
+        (0..width)
+            .map(|x| pixels[(50 * width + x) * 4])
+            .filter(|v| (8..248).contains(v))
+            .count()
+    };
+    let smooth = greys(ImageRendering::Auto);
+    assert!(smooth > 20, "smooth blends: {smooth} greys");
+    assert_eq!(
+        greys(ImageRendering::Pixelated),
+        0,
+        "pixelated: black or white"
+    );
+}
+
 fn main() {
     #[cfg(target_os = "macos")]
     {
+        pixelated_images_through_metal_frames_take_the_nearest_pixel();
+        println!("layer_frames: pixelated images through Metal frames take the nearest pixel");
         scattered_damage_presented_through_surfaces_matches_drawing_whole();
         println!("layer_frames: scattered damage through surfaces matches drawing whole");
         plain_frames_flip_tiles_whose_contents_are_set_once();

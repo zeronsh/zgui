@@ -65,6 +65,18 @@ pub enum Decoding {
     /// Off the main thread, whatever its size.
     Async,
 }
+/// How an image's pixels are sampled where it is drawn larger or smaller
+/// than they are (CSS's `image-rendering`; `Scene::set_image_rendering`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ImageRendering {
+    /// Smooth: each point blends the pixels around it.
+    #[default]
+    Auto,
+    /// Each point takes the nearest pixel, its edges hard: pixel art, a
+    /// magnified screenshot, a QR code.
+    Pixelated,
+}
 /// The most pixels `Decoding::Auto` decodes on the thread drawing.
 pub const SYNC_PIXELS: u64 = 256 * 256;
 /// How a kept file decodes: its straight-alpha RGBA8 pixels, at its size.

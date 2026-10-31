@@ -318,6 +318,22 @@ fn outlines_take_width_colour_and_offset() {
     );
 }
 
+/// `image_rendering = "pixelated"` reaches the scene; unsaid, smooth.
+#[test]
+fn image_rendering_reaches_the_scene() {
+    use zgx::image::ImageRendering;
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.div { id = "pixelated", w = 20, h = 20, image_rendering = "pixelated" },
+            ui.div { id = "smooth", w = 20, h = 20 } }"##,
+    );
+    h.ui.prepare_frame();
+    let (pixelated, smooth) = (h.find("pixelated").unwrap(), h.find("smooth").unwrap());
+    let scene = h.ui.scene.borrow();
+    assert_eq!(scene.image_rendering(pixelated), ImageRendering::Pixelated);
+    assert_eq!(scene.image_rendering(smooth), ImageRendering::Auto);
+}
+
 #[test]
 fn a_closed_modal_in_an_overlay_blocks_no_clicks() {
     let mut h = Harness::inline(

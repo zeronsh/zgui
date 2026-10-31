@@ -2036,6 +2036,10 @@ type Backdrop = (Rect, zgx::scene::Effects, [f32; 4]);
 enum TextureSource {
     Atlas,
     Image(u64),
+    /// An image sampled pixelated (`Scene::image_rendering`): its nearest
+    /// texel, through a sampler of its own (`NearestBinds`; Metal's and
+    /// Direct3D 11's frames bind theirs).
+    Pixelated(u64),
     Layer(NodeId),
 }
 #[derive(Clone)]
@@ -3838,6 +3842,9 @@ pub struct GpuRenderer {
     #[cfg(own_surfaces)]
     copy_offset: Option<wgpu::RenderPipeline>,
     canvases: canvas::CanvasCache,
+    /// Pixelated images' nearest samplers (`image_source`): none until one
+    /// draws.
+    nearest: Option<Box<NearestBinds>>,
     svgs: svg::SvgCache,
     /// Small untransformed SVG rasters packed into the glyph atlas by image
     /// id, so icons batch with text instead of binding a texture each.
@@ -4412,6 +4419,7 @@ impl GpuRenderer {
             #[cfg(target_os = "macos")]
             wide_until: None,
             canvases: Default::default(),
+            nearest: None,
             svgs: Default::default(),
             blur_pipelines: None,
             image_cells: FxHashMap::default(),
@@ -5256,6 +5264,13 @@ impl GpuRenderer {
             }
         }
         self.canvases.retain(scene);
+        // Pixelated images' bind groups go with their textures; with the last, all.
+        if let Some(nearest) = &mut self.nearest {
+            nearest.binds.retain(|id, _| self.images.contains_key(id));
+            if nearest.binds.is_empty() {
+                self.nearest = None;
+            }
+        }
         self.svgs.retain(scene);
         if !self.images.is_empty() {
             let mut live_images: std::collections::HashSet<u64> = scene
@@ -8279,9 +8294,9 @@ impl GpuRenderer {
                         clip: draw_clip,
                         bounds: drawn,
                         source: if let Some(image) = canvas_image {
-                            TextureSource::Image(image)
+                            self.image_source(scene, item.id, image)
                         } else if let NodeKind::Image(image) = item.kind {
-                            TextureSource::Image(image.id())
+                            self.image_source(scene, item.id, image.id())
                         } else {
                             TextureSource::Atlas
                         },
@@ -8507,7 +8522,7 @@ impl GpuRenderer {
                 .all(|draw| match draw.source {
                 TextureSource::Atlas => true,
                 TextureSource::Layer(id) => self.layers.contains_key(&id),
-                TextureSource::Image(id) => {
+                TextureSource::Image(id) | TextureSource::Pixelated(id) => {
                     self.images.get(&id).is_some_and(|image| image.2.is_some())
                 }
             })
@@ -9046,8 +9061,9 @@ impl GpuRenderer {
                             return;
                         };
                         if batch.source != sampled {
+                            pass.nearest(matches!(batch.source, TextureSource::Pixelated(_)));
                             let texture = match batch.source {
-                                TextureSource::Image(image) => {
+                                TextureSource::Image(image) | TextureSource::Pixelated(image) => {
                                     self.images.get(&image).and_then(|image| image.2.as_ref())
                                 }
                                 TextureSource::Layer(layer) => {
@@ -9113,8 +9129,9 @@ impl GpuRenderer {
                             return;
                         };
                         if batch.source != sampled {
+                            pass.nearest(matches!(batch.source, TextureSource::Pixelated(_)));
                             let texture = match batch.source {
-                                TextureSource::Image(image) => {
+                                TextureSource::Image(image) | TextureSource::Pixelated(image) => {
                                     self.images.get(&image).and_then(|image| image.2.as_ref())
                                 }
                                 TextureSource::Layer(layer) => {
@@ -9211,7 +9228,9 @@ impl GpuRenderer {
             .iter()
             .find_map(|draw| match (draw.source, draw.shading) {
                 // Drawn by the GPU, not written by the CPU: a GPU view's.
-                (TextureSource::Image(_), _) if self.d3d11_texture(draw.source).is_none() => {
+                (TextureSource::Image(_) | TextureSource::Pixelated(_), _)
+                    if self.d3d11_texture(draw.source).is_none() =>
+                {
                     Some("GPU-drawn image")
                 }
                 (_, Shading::Full | Shading::Basic | Shading::Opaque | Shading::Polyline) => None,
@@ -9229,7 +9248,9 @@ impl GpuRenderer {
         let surface = match source {
             TextureSource::Atlas => state.atlas.as_ref(),
             TextureSource::Layer(id) => state.layers.get(&self.layers.get(&id)?.texture),
-            TextureSource::Image(id) => state.textures.get(self.images.get(&id)?.2.as_ref()?),
+            TextureSource::Image(id) | TextureSource::Pixelated(id) => {
+                state.textures.get(self.images.get(&id)?.2.as_ref()?)
+            }
         };
         surface?.srv.as_ref()
     }
@@ -9355,6 +9376,7 @@ impl GpuRenderer {
                         return;
                     };
                     frame.texture(view);
+                    frame.nearest(matches!(batch.source, TextureSource::Pixelated(_)));
                     sampled = batch.source;
                 }
                 frame.scissor(rect);
@@ -10152,6 +10174,13 @@ impl GpuRenderer {
         match source {
             TextureSource::Atlas => &self.bind,
             TextureSource::Image(id) => self.images.get(&id).map_or(&self.bind, |entry| &entry.0),
+            TextureSource::Pixelated(id) => self
+                .nearest
+                .as_ref()
+                .and_then(|nearest| nearest.binds.get(&id))
+                .map(|(bind, _)| bind)
+                .or_else(|| self.images.get(&id).map(|entry| &entry.0))
+                .unwrap_or(&self.bind),
             TextureSource::Layer(id) => {
                 self.layers.get(&id).map_or(&self.bind, |layer| &layer.bind)
             }
@@ -10497,6 +10526,66 @@ impl GpuRenderer {
         {
             self.images.remove(&old);
         }
+    }
+    /// What node `id`'s draw of `image` samples: the image, or, pixelated
+    /// (`Scene::image_rendering`), its nearest texel (`Pixelated`), with a
+    /// bind group of its own for wgpu (`nearest_bind`). An image of no
+    /// texture (a GPU view's frame) samples as it does.
+    #[inline(always)]
+    fn image_source(&mut self, scene: &Scene, id: NodeId, image: u64) -> TextureSource {
+        if scene.has_image_rendering()
+            && scene.image_rendering(id) == zgx::image::ImageRendering::Pixelated
+            && self.nearest_bind(image)
+        {
+            return TextureSource::Pixelated(image);
+        }
+        TextureSource::Image(image)
+    }
+    /// A bind group sampling `image`'s texture at its nearest texel, made
+    /// for it once and again when its texture is replaced; `false` when it
+    /// has no texture.
+    #[cold]
+    #[inline(never)]
+    fn nearest_bind(&mut self, image: u64) -> bool {
+        let Some(texture) = self.images.get(&image).and_then(|entry| entry.2.clone()) else {
+            return false;
+        };
+        let device = self.device.clone();
+        let nearest = self.nearest.get_or_insert_with(|| {
+            Box::new(NearestBinds {
+                sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("pixelated images"),
+                    mag_filter: wgpu::FilterMode::Nearest,
+                    min_filter: wgpu::FilterMode::Nearest,
+                    ..Default::default()
+                }),
+                binds: FxHashMap::default(),
+            })
+        });
+        if nearest
+            .binds
+            .get(&image)
+            .is_some_and(|(_, made)| *made == texture)
+        {
+            return true;
+        }
+        let view = texture.create_view(&Default::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pixelated image"),
+            layout: &self.context.inner.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&nearest.sampler),
+                },
+            ],
+        });
+        nearest.binds.insert(image, (bind, texture));
+        true
     }
     /// The texture of `node`'s canvas raster, uploaded if it is new; the
     /// cache then keeps no pixels. A lost texture rasterizes again.
@@ -13455,6 +13544,12 @@ fn background_quad(
         border: decoration::shadow_corners(style, bounds.width, bounds.height, 0.),
         mask: NO_MASK,
     })
+}
+/// Pixelated images' sampler and bind groups (`GpuRenderer::nearest_bind`),
+/// each with the texture it was made for.
+struct NearestBinds {
+    sampler: wgpu::Sampler,
+    binds: FxHashMap<u64, (wgpu::BindGroup, wgpu::Texture)>,
 }
 /// `outline` around a box of `style` at `bounds`: a ring of its width
 /// between the box grown by its offset and by its offset and width, each
