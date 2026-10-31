@@ -29,6 +29,7 @@ A web view (`zgx::web_view`, `ui.webview`) is the platform's own page, laid out 
 | Keys, reserved shortcuts, fall-through | yes | yes | yes |
 | Input method | AppKit's | the Text Services Framework | the window's (XIM, text-input-v3), through a WebKit input method context of zgx's |
 | `<select>` popups | WebKit's | WebView2's | a zgx menu |
+| Video and audio | the platform's | the platform's | WebKit's GStreamer (WebM and Ogg as packaged; H.264 with `gstreamer1.0-libav`) |
 | Clipboard | the system's | the system's | X11 the system's; Wayland through zgx's, as text |
 | Cursor | the page's | the page's | named CSS cursors; image cursors show the arrow |
 | Page accessibility | the platform's | the platform's | in the window's tree: the page's own (AT-SPI), under its box |
