@@ -952,6 +952,24 @@ struct Loaded {
     lowering: Rc<lower::Lowering>,
 }
 
+/// The framework's issues a host heard (`ScriptHost::issues`), and who
+/// hears them by kind (`ScriptHost::on_issue`).
+#[derive(Default)]
+struct IssueLog {
+    last: std::collections::VecDeque<(zgx::issues::IssueKind, String)>,
+    hooks: Vec<IssueHook>,
+}
+type IssueHook = Rc<dyn Fn(zgx::issues::IssueKind, &str)>;
+impl IssueLog {
+    /// Keep `issue`; the hooks to tell, outside the borrow.
+    fn hear(&mut self, kind: zgx::issues::IssueKind, issue: &str) -> Vec<IssueHook> {
+        if self.last.len() == 16 {
+            self.last.pop_front();
+        }
+        self.last.push_back((kind, issue.to_string()));
+        self.hooks.clone()
+    }
+}
 type ErrorHooks = Rc<RefCell<Vec<Rc<dyn Fn(&str)>>>>;
 struct Inner {
     runtime: Runtime,
@@ -986,6 +1004,9 @@ struct Inner {
     show_errors: bool,
     /// What hears each script error (`on_error`), and what follows them.
     error_hooks: ErrorHooks,
+    /// The framework's last issues, with their kinds (`ScriptHost::issues`),
+    /// and who hears each (`ScriptHost::on_issue`).
+    issues: Rc<RefCell<IssueLog>>,
     /// Tells `error_hooks` of what the framework reports (`zgx::issues`).
     _issues: zgx::issues::IssueListener,
     error_watch: RefCell<Option<Box<dyn std::any::Any>>>,
@@ -1126,6 +1147,7 @@ impl ScriptHost {
             w.design_forced = true;
         }
         let error_hooks = ErrorHooks::default();
+        let issues: Rc<RefCell<IssueLog>> = Rc::default();
         let host = Self(Rc::new(Inner {
             runtime: runtime.clone(),
             app,
@@ -1146,10 +1168,15 @@ impl ScriptHost {
             opens: Rc::default(),
             show_errors: cfg!(debug_assertions),
             error_hooks: error_hooks.clone(),
-            _issues: zgx::issues::on_issue(runtime, move |issue| {
+            issues: issues.clone(),
+            _issues: zgx::issues::on_issue_kind(runtime, move |kind, issue| {
                 let hooks: Vec<_> = error_hooks.borrow().clone();
                 for hook in hooks {
                     hook(issue);
+                }
+                let heard = issues.borrow_mut().hear(kind, issue);
+                for hook in heard {
+                    hook(kind, issue);
                 }
             }),
             error_watch: RefCell::default(),
@@ -1251,6 +1278,17 @@ impl ScriptHost {
     /// builds, off in release ones.
     pub fn error_banner(self, show: bool) -> Self {
         self.configure(|inner| inner.show_errors = show)
+    }
+    /// Calls `hook` with each issue the framework reports (`zgx::issues`),
+    /// with its kind: an error, or the renderer going on with less (a layer
+    /// coarser, an image softer), which `on_error` hears too, untagged.
+    pub fn on_issue(&self, hook: impl Fn(zgx::issues::IssueKind, &str) + 'static) {
+        self.0.issues.borrow_mut().hooks.push(Rc::new(hook));
+    }
+    /// The framework's last issues (at most 16), oldest first, with their
+    /// kinds: what `zgx inspect errors` lists.
+    pub fn issues(&self) -> Vec<(zgx::issues::IssueKind, String)> {
+        self.0.issues.borrow().last.iter().cloned().collect()
     }
     /// Call `hook` with each script error (a failed load, an error in a
     /// handler): for an app's log or crash reports.

@@ -722,6 +722,10 @@ impl Session {
                 {
                     lines.push(format!("layout: {warning}"));
                 }
+                // What the framework said (`zgx::issues`), by kind.
+                for (kind, issue) in host.issues() {
+                    lines.push(format!("{}: {issue}", kind.name()));
+                }
                 let text = if lines.is_empty() {
                     "none".to_string()
                 } else {
