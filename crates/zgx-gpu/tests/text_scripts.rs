@@ -651,3 +651,66 @@ fn an_app_language_decides_which_font_its_han_characters_take() {
     let found = families(&mut fonts, japanese);
     assert_eq!(han(&found), [kana_font(&found)], "no language: {found:?}");
 }
+
+/// The family each character of `buffer`'s text (shaped) is drawn from.
+#[cfg(target_os = "macos")]
+fn drawn(fonts: &cosmic_text::FontSystem, buffer: &cosmic_text::Buffer) -> Vec<(char, String)> {
+    let mut found = Vec::new();
+    for run in buffer.layout_runs() {
+        for glyph in run.glyphs {
+            let family = fonts
+                .db()
+                .face(glyph.font_id)
+                .and_then(|face| face.families.first().map(|(name, _)| name.clone()))
+                .unwrap_or_default();
+            for c in run.text[glyph.start..glyph.end].chars() {
+                found.push((c, family.clone()));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn chinese_text_on_macos_takes_the_systems_chinese_face_in_each_chinese() {
+    // A font system of its own: the others' language stays the system's.
+    let mut fonts = cosmic_text::FontSystem::new();
+    let has = |fonts: &cosmic_text::FontSystem, family: &str| {
+        (fonts.db().faces()).any(|face| face.families.iter().any(|(name, _)| name == family))
+    };
+    // PingFang, which macOS 26 keeps outside the font directories, where it
+    // is there; Heiti, in every macOS, otherwise.
+    let pingfang = has(&fonts, "PingFang SC");
+    let pingfang_kept = std::path::Path::new(
+        "/System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc",
+    )
+    .exists();
+    assert!(
+        pingfang || !pingfang_kept,
+        "PingFang is loaded where macOS keeps it"
+    );
+    for (language, face) in [("zh-CN", "SC"), ("zh-TW", "TC"), ("zh-HK", "HK")] {
+        fonts.set_language(Some(language));
+        let metrics = cosmic_text::Metrics::new(20., 24.);
+        let mut buffer = cosmic_text::Buffer::new(&mut fonts, metrics);
+        let attrs = cosmic_text::Attrs::new();
+        buffer.set_text("中文的句子。", &attrs, cosmic_text::Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut fonts, false);
+        let found = drawn(&fonts, &buffer);
+        let expected = if pingfang {
+            format!("PingFang {face}")
+        } else if face == "SC" {
+            "Heiti SC".into()
+        } else {
+            "Heiti TC".into()
+        };
+        let han = found
+            .iter()
+            .filter(|(c, _)| ('\u{4E00}'..='\u{9FFF}').contains(c));
+        assert!(
+            han.clone().count() == 5 && han.into_iter().all(|(_, family)| *family == expected),
+            "{language}: {found:?}, not {expected}"
+        );
+    }
+}

@@ -284,3 +284,16 @@ faces. The lists name Han's languages `ja`, `ko`, `zh-HK`, `zh-TW` and
 `zh-CN` (`han_unification`), which a system locale such as `ja-JP` never
 matched, so upstream gave a Japanese system Chinese Han; `han_locale`
 maps any locale onto them.
+
+## PingFang on macOS 26
+
+macOS 26 keeps PingFang (its simplified, traditional and Hong Kong Chinese
+faces) in `FontServices.framework`'s `Reserved` directory, where Core Text
+finds it, and not in the font directories `load_system_fonts` reads. The
+fallback lists named only PingFang, so Chinese Han drew in Arial Unicode MS
+whatever the Chinese. `load_pingfang` loads that file after the system's
+fonts if no PingFang face is loaded (another macOS has it in
+`/System/Library/Fonts`), and the lists name Heiti SC or TC after PingFang
+in case the file moves. zgx-gpu's
+`chinese_text_on_macos_takes_the_systems_chinese_face_in_each_chinese`
+checks both.
