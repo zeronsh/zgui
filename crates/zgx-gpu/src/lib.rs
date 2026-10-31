@@ -13062,6 +13062,9 @@ fn canvas_quads_of(
         match command {
             // Neither box nor circle: an area, if `zgx_area` draws it.
             Draw::Fill { path, brush, .. } if path.shape().is_none() => {
+                if !AREAS_ON_GPU {
+                    return None;
+                }
                 let quad = area_quad(path, brush, origin, zoom, points)?;
                 out.push(CanvasQuad::Polyline(quad));
             }
@@ -13612,15 +13615,76 @@ pub(crate) fn image_effect_source() -> String {
         include_str!("image_effects.wgsl")
     )
 }
+/// Every shader module the renderer compiles, named, composed as it
+/// composes them (a fill and a layer shader around a plain user part), for
+/// checks that each compiles on a backend: `tests/every_shader.rs`, which
+/// Windows CI runs through FXC with nothing cached.
+#[doc(hidden)]
+pub fn shader_modules() -> Vec<(&'static str, String)> {
+    let present = |srgb: bool, post_alpha: bool| {
+        format!(
+            "const OUTPUT_SRGB:bool={srgb};\nconst POST_ALPHA:bool={post_alpha};\n{}",
+            include_str!("blit.wgsl")
+        )
+    };
+    vec![
+        ("draw", include_str!("draw.wgsl").to_owned()),
+        ("polyline", polyline_source()),
+        ("image effects", image_effect_source()),
+        ("blend", blend_source()),
+        (
+            "fill",
+            fill_source(
+                "fn fill(input:FillInput)->vec4<f32> { return vec4(input.p/input.size,input.time,1.); }",
+            ),
+        ),
+        (
+            "layer shader",
+            filter_source("fn layer(input:LayerInput)->vec4<f32> { return input.color; }"),
+        ),
+        ("blur", include_str!("blur.wgsl").to_owned()),
+        (
+            "blur, dual-source",
+            format!(
+                "enable dual_source_blending;\n{}\n{BLUR_MIX}",
+                include_str!("blur.wgsl")
+            ),
+        ),
+        ("effects", include_str!("effects.wgsl").to_owned()),
+        ("copy both", include_str!("copy_both.wgsl").to_owned()),
+        ("copy offset", include_str!("copy_offset.wgsl").to_owned()),
+        (
+            "texture upload",
+            include_str!("texture_upload.wgsl").to_owned(),
+        ),
+        (
+            "native surface",
+            include_str!("native_surface.wgsl").to_owned(),
+        ),
+        ("present", present(false, false)),
+        ("present, sRGB, alpha after", present(true, true)),
+    ]
+}
 /// The polyline strokes' module: the quad shader (draw.wgsl), whose vertex
-/// stage and clip regions they share, and polyline.wgsl.
+/// stage and clip regions they share, polyline.wgsl, and its filled areas
+/// (area.wgsl) where they draw on the GPU (`AREAS_ON_GPU`).
 fn polyline_source() -> String {
     format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         include_str!("draw.wgsl"),
-        include_str!("polyline.wgsl")
+        include_str!("polyline.wgsl"),
+        if AREAS_ON_GPU {
+            include_str!("area.wgsl")
+        } else {
+            include_str!("area_stub.wgsl")
+        }
     )
 }
+/// Whether a canvas's filled areas draw as quads (area.wgsl). Not on
+/// Windows: FXC's optimizer recursed on area.wgsl until it overflowed any
+/// stack, which crashed an app at its first canvas stroke. A canvas holding
+/// an area rasterizes there, as one too dense for a quad does.
+const AREAS_ON_GPU: bool = !cfg!(windows);
 /// The polyline strokes' pipeline: into the retained target, with
 /// `drawable` also into that in the same pass (`fs_polyline_both`), or into
 /// it `alone` (`Deferred::direct`).

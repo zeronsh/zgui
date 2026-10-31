@@ -412,6 +412,12 @@ jobs:
       # what it can of the build above.
       - run: cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target --locked -- heading cell_name find_text
       # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
-      # D3D shader compiler alone gets wrong (coarse derivatives, #38), and
-      # the device on DXGI's first low-power adapter (`adapter`, #217).
-      - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --locked
+      # D3D shader compiler alone gets wrong (coarse derivatives, #38), the
+      # device on DXGI's first low-power adapter (`adapter`, #217), every
+      # shader module compiled by FXC optimizing as a release build does
+      # (`every_shader`), and canvas strokes drawn: FXC once overflowed its
+      # stack on the polyline module, which crashed apps on first draw. With
+      # an empty folder for the shader cache, every shader compiles.
+      - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --test every_shader --test canvas --test box_model --locked
+        env:
+          LOCALAPPDATA: ${{ runner.temp }}\zgx-cold
