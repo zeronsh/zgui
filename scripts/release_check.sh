@@ -23,6 +23,11 @@
 #    packaged and runs a script headless: zgx's own lockfile holds its
 #    dependencies where they were tested, which a new app's does not
 #    (luau0-src 0.22.1 failed every Luau app at start, unseen by 1 and 2).
+#    Another builds every published crate's features that this platform has
+#    from those packages: 2 builds default features alone, and a feature's
+#    files left out of a package, or code only it compiles, would otherwise
+#    first fail for an app turning it on. Ghostty's terminals need Zig 0.16,
+#    as a user's build does (zgx-ghostty-sys).
 # 4. The previous release's zgx-desktop and zgx-gpu, as crates.io has them,
 #    build against the zgx 2 packaged: an app on them that runs
 #    `cargo update -p zgx` gets this zgx, and they call it in places a
@@ -119,6 +124,63 @@ return ui.column {
 }
 RUST
 cargo run --manifest-path "$app/Cargo.toml" --target-dir "$target"
+echo "== every published feature this platform has, built from its package"
+case "$(uname -s)" in
+    Darwin) platform=macos ;;
+    Linux) platform=linux ;;
+    *) platform=windows ;;
+esac
+features="$target/features-app"
+rm -rf "$features"
+mkdir -p "$features/src"
+"$python" - "$platform" "$zgx" $forks > "$features/Cargo.toml" <<'PY'
+import json, re, subprocess, sys
+platform, zgx, forks = sys.argv[1], sys.argv[2], sys.argv[3:]
+# Features for some platforms alone, and which. Every other feature of a
+# published crate is built everywhere: a new one is covered unless it says
+# here where it isn't.
+ONLY = {
+    "zgx-desktop/webview2": {"windows"},
+    "zgx-desktop/d3d11": {"windows"},
+    "zgx-gpu/d3d11": {"windows"},
+    "zgx-gpu/composition": {"windows"},
+    "zgx-desktop/vulkan": {"linux", "windows"},
+    "zgx-gpu/vulkan": {"linux", "windows"},
+    "zgx-script/vulkan": {"linux", "windows"},
+    "zgx-desktop/ghostty": {"macos"},
+    # Turned on through zgx-desktop/ghostty, which gives it what it links to.
+    "zgx-ghostty-sys/link": set(),
+}
+metadata = json.loads(subprocess.check_output(
+    ["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked"]))
+published = [p for p in metadata["packages"] if p["publish"] is None and p["name"].startswith("zgx")
+             and p["manifest_path"].replace("\\", "/").split("/")[-3] == "crates"]
+print('[package]\nname = "zgx-features-app"\nversion = "0.0.0"\nedition = "2024"\npublish = false\n')
+print("[workspace]\n\n[dependencies]")
+for package in sorted(published, key=lambda p: p["name"]):
+    name = package["name"]
+    turned = sorted(f for f in package["features"]
+                    if f != "default" and platform in ONLY.get(f"{name}/{f}", {platform}))
+    print(f'{name} = {{ version = "={zgx}", features = {json.dumps(turned)} }}')
+print("\n[patch.crates-io]")
+for package in sorted(published, key=lambda p: p["name"]):
+    print(f'{package["name"]} = {{ path = "../package/{package["name"]}-{zgx}" }}')
+for fork in forks:
+    manifest = open(f"vendor/{fork}/Cargo.toml").read()
+    version = re.search(r'(?m)^version = "([^"]+)"', manifest)[1]
+    print(f'zgx-{fork} = {{ path = "../package/zgx-{fork}-{version}" }}')
+PY
+grep -E '^zgx[a-z0-9-]* = \{ version' "$features/Cargo.toml"
+"$python" - "$features/Cargo.toml" > "$features/src/main.rs" <<'PY'
+import re, sys
+for name in re.findall(r'^(zgx[a-z0-9-]*) = \{ version', open(sys.argv[1]).read(), re.M):
+    print(f"use {name.replace('-', '_')} as _;")
+print("fn main() {}")
+PY
+# Ghostty fetched and built as a user's first build does, not from the
+# machine's shared cache (zgx-ghostty-sys keys it by commit, patch and Zig).
+ZGX_GHOSTTY_CACHE="$(cd "$target" && pwd)/ghostty-cache" cargo build --manifest-path "$features/Cargo.toml" --target-dir "$target"
+echo "every published feature for $platform built from its package"
 echo "== the previous release's zgx-desktop and zgx-gpu against this zgx"
 # The newest zgx-desktop on crates.io below this version.
 previous=$(curl -sfL -A zgx-release-check https://index.crates.io/zg/x-/zgx-desktop |
