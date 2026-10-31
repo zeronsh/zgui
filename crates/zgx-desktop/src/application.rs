@@ -806,9 +806,21 @@ impl WindowContext {
     pub fn on_close_requested(&mut self, handler: impl FnMut() -> bool + 'static) {
         self.close_requested = Some(Box::new(handler));
     }
-    /// Called once before UI state is disposed. Pending tasks are cancelled on closure.
+    /// Called once before UI state is disposed. Pending tasks are cancelled
+    /// on closure. Each handler given runs, in the order given: a second
+    /// doesn't replace the first.
     pub fn on_closed(&mut self, handler: impl FnOnce() + 'static) {
-        self.closed = Some(Box::new(handler));
+        self.closed = Some(then(self.closed.take(), handler));
+    }
+}
+/// `first`, if there is one, then `next`.
+fn then(first: Option<Box<dyn FnOnce()>>, next: impl FnOnce() + 'static) -> Box<dyn FnOnce()> {
+    match first {
+        Some(first) => Box::new(move || {
+            first();
+            next();
+        }),
+        None => Box::new(next),
     }
 }
 /// A desktop application: its fonts, first window, menus and native
@@ -7633,6 +7645,18 @@ impl WindowCursor {
 
 #[cfg(test)]
 mod tests {
+    /// Every `on_closed` handler runs, in order: a window's own state and
+    /// its `open` state each had one, and the second dropped the first.
+    #[test]
+    fn closing_runs_every_handler_given_in_order() {
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (a, b, c) = (ran.clone(), ran.clone(), ran.clone());
+        let handler = super::then(None, move || a.borrow_mut().push(1));
+        let handler = super::then(Some(handler), move || b.borrow_mut().push(2));
+        let handler = super::then(Some(handler), move || c.borrow_mut().push(3));
+        handler();
+        assert_eq!(*ran.borrow(), [1, 2, 3]);
+    }
     use super::*;
 
     /// `wayland-popups` on a loaded runner: a press on a menu's trigger opens

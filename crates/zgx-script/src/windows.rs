@@ -150,6 +150,9 @@ pub(crate) struct Windows {
     /// The published windows' content, by id.
     pub content: RefCell<HashMap<String, Rc<Node>>>,
     pub list: Signal<Vec<Window>>,
+    /// Each window's own state (`win`), by id: the same across loads, as
+    /// the host bound it when the window opened.
+    states: RefCell<HashMap<String, WindowState>>,
 }
 impl Windows {
     pub fn new(runtime: &Runtime) -> Self {
@@ -161,7 +164,22 @@ impl Windows {
             first_errors: RefCell::default(),
             content: RefCell::default(),
             list: runtime.signal(Vec::new()),
+            states: RefCell::default(),
         }
+    }
+    /// Window `id`'s own state: the one it had, if a load before made it.
+    fn state(&self, id: &str) -> WindowState {
+        self.states
+            .borrow_mut()
+            .entry(id.to_owned())
+            .or_insert_with(|| WindowState::new(&self.runtime))
+            .clone()
+    }
+    /// The windows published: only theirs keep a state.
+    fn keep_states(&self, list: &[Window]) {
+        self.states
+            .borrow_mut()
+            .retain(|id, _| list.iter().any(|w| &w.id == id));
     }
     /// A load begins: what it declares replaces what is published.
     pub fn begin(&self) {
@@ -184,6 +202,7 @@ impl Windows {
         *self.content.borrow_mut() = content;
         self.following.borrow_mut().take();
         if groups.is_empty() {
+            self.keep_states(&fixed);
             if self.list.with_untracked(|old| *old != fixed) {
                 self.list.set(fixed);
             }
@@ -213,7 +232,7 @@ impl Windows {
                     };
                     seen.insert(id.clone());
                     if !built[n].contains_key(&id) {
-                        let made = runtime.untracked(|| build(&vm, group, &id, item));
+                        let made = runtime.untracked(|| build(&vm, &windows, group, &id, item));
                         match made {
                             Ok((window, node)) => {
                                 built[n].insert(
@@ -264,6 +283,7 @@ impl Windows {
                 all.retain(|id, _| fixed.iter().any(|w| &w.id == id));
                 all.extend(content);
             }
+            windows.keep_states(&list);
             if windows.list.with_untracked(|old| *old != list) {
                 windows.list.set(list);
             }
@@ -294,12 +314,13 @@ fn key_of(vm: &crate::Vm, group: &Group, n: usize, item: &Value) -> Option<Strin
 /// `build(item)`'s window, as `ui.window`'s options give one.
 fn build(
     vm: &crate::Vm,
+    windows: &Windows,
     group: &Group,
     id: &str,
     item: &Value,
 ) -> mlua::Result<(Window, Rc<Node>)> {
-    // `win` made only for a build that takes it.
-    let state = (group.build.info().num_params >= 2).then(|| WindowState::new(&vm.runtime));
+    // `win` only for a build that takes it: the window's own, across loads.
+    let state = (group.build.info().num_params >= 2).then(|| windows.state(id));
     let table: Table = match &state {
         Some(state) => vm.call(&group.build, (item.clone(), state.table(&vm.lua)?))?,
         None => vm.call(&group.build, item.clone())?,
@@ -317,15 +338,15 @@ fn window_of(
     id: String,
     open: Signal<Value>,
     declared: bool,
-    runtime: Option<(&Lua, &Runtime)>,
+    runtime: Option<(&Lua, &Windows)>,
     signals: &Runtime,
 ) -> mlua::Result<(Window, Rc<Node>)> {
     let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
     // `ui.window`'s content may be `function(win)`: the window's own state.
     let mut state = None;
     let content = match (table.get::<mlua::Value>(1)?, runtime) {
-        (mlua::Value::Function(f), Some((lua, runtime))) => {
-            let made = WindowState::new(runtime);
+        (mlua::Value::Function(f), Some((lua, windows))) => {
+            let made = windows.state(&id);
             let node = f.call::<mlua::Value>(made.table(lua)?)?;
             state = Some(made);
             node
@@ -525,7 +546,7 @@ pub(crate) fn install(
             let open = expect_state(&table.get::<mlua::Value>("open")?, &what("open"))?;
             let runtime = crate::node::env(lua)?.runtime.clone();
             let (window, node) =
-                window_of(&table, id, open, true, Some((lua, &runtime)), &runtime)?;
+                window_of(&table, id, open, true, Some((lua, &windows)), &runtime)?;
             let mut pending = windows.pending.borrow_mut();
             if pending.iter().any(|(w, _)| w.id == window.id) {
                 return Err(mlua::Error::runtime(format!(

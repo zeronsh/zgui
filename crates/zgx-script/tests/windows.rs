@@ -414,3 +414,63 @@ fn a_window_reads_its_own_state_and_no_other() {
     vs.prepare_frame();
     assert!(texts(&vs).contains(&"settings shown".to_owned()));
 }
+
+/// A window's own state is the same across reloads: the host binds it once,
+/// as the window opens, and a reload (hot, or devtools starting to record)
+/// builds the window's content again with that state, not a new one no host
+/// sets.
+#[test]
+fn a_windows_own_state_survives_a_reload() {
+    let h = Harness::inline(
+        r##"local items = ui.state("items", { { id = "a" } })
+        local settings = ui.state("settings", true)
+        ui.windows(items, function(item, win)
+            return { title = item.id,
+                ui.text { function() return `{item.id} {if win.active:get() then "front" else "back"}` end } }
+        end)
+        ui.window { id = "settings", open = settings, function(win)
+            return ui.text { function() return if win.shown:get() then "settings shown" else "settings hidden" end }
+        end }
+        return ui.text { "app" }"##,
+    );
+    h.frames(2);
+    let bound = |title: &str| {
+        h.host
+            .windows()
+            .get()
+            .iter()
+            .find(|w| w.title == title)
+            .unwrap()
+            .clone()
+    };
+    // As a host bound them when the windows opened.
+    let (a, settings) = (bound("a"), bound("settings"));
+    h.host.reload().unwrap();
+    h.frames(1);
+    let view = |id: &str| {
+        let mut other = Ui::with_runtime(h.ui.runtime.clone(), 300., 200.);
+        other.mount(h.host.window_view(id));
+        other.prepare_frame();
+        other
+    };
+    let (va, vs) = (view(&a.id), view(&settings.id));
+    a.state.unwrap().active.set(zgx_script::Value::Bool(true));
+    settings
+        .state
+        .unwrap()
+        .shown
+        .set(zgx_script::Value::Bool(true));
+    h.frames(1);
+    va.prepare_frame();
+    vs.prepare_frame();
+    assert!(
+        texts(&va).contains(&"a front".to_owned()),
+        "{:?}",
+        texts(&va)
+    );
+    assert!(
+        texts(&vs).contains(&"settings shown".to_owned()),
+        "{:?}",
+        texts(&vs)
+    );
+}
