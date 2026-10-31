@@ -530,7 +530,7 @@ fn a_textarea_scrolls_to_a_line_and_says_which_is_on_top() {
         local box = ui.ref()
         local function go(line: number, align: string?)
             local el = box:peek()
-            if el then el:scroll_to_line(line, { align = align } :: any) end
+            if el then ui.editor.scroll_to_line(el, line, { align = align } :: any) end
         end
         ui.command { id = "start", title = "s", run = function() go(100, "start") end }
         ui.command { id = "center", title = "c", run = function() go(100, "center") end }

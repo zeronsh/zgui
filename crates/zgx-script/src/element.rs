@@ -1119,6 +1119,40 @@ pub(crate) fn install_editor(lua: &mlua::Lua, ui: &mlua::Table) -> mlua::Result<
             Ok(editor_of(&e).and_then(|editor| editor.offset_at(x, y)))
         })?,
     )?;
+    // `ui.editor.scroll_to_line(el, n, { align })`: line `n` from 1 at that
+    // place in the view, its caret left where it is.
+    table.set(
+        "scroll_to_line",
+        lua.create_function(
+            move |lua, (e, line, options): (El, f64, Option<mlua::Table>)| {
+                use zgx::compose::RowAlign;
+                let align = match options {
+                    Some(options) => options.get::<Option<String>>("align")?,
+                    None => None,
+                };
+                let align = match align.as_deref() {
+                    None | Some("nearest") => RowAlign::Nearest,
+                    Some("start") => RowAlign::Start,
+                    Some("center") => RowAlign::Center,
+                    Some("end") => RowAlign::End,
+                    Some(other) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "scroll_to_line's align is \"start\", \"center\", \"end\" or \"nearest\", not `{other}`"
+                        )));
+                    }
+                };
+                settle(lua);
+                let Some(editor) = editor_of(&e) else {
+                    return Ok(false);
+                };
+                if !(line.is_finite() && line >= 1.) {
+                    return Ok(false);
+                }
+                off_clock(lua, |_| editor.scroll_to_line(line as usize - 1, align));
+                Ok(true)
+            },
+        )?,
+    )?;
     table.set_readonly(true);
     ui.set("editor", table)
 }
@@ -1167,38 +1201,6 @@ impl UserData for ElementUd {
                     .handle
                     .get()
                     .is_some_and(|list| list.scroll_to_row(row, align)))
-            },
-        );
-        // A textarea's line in view: `el:scroll_to_line(n, { align = "start" })`,
-        // `n` from 1, `align` as `scroll_to_row`'s. Its caret stays.
-        methods.add_method(
-            "scroll_to_line",
-            |lua, e, (line, options): (f64, Option<mlua::Table>)| {
-                use zgx::compose::RowAlign;
-                let align = match options {
-                    Some(options) => options.get::<Option<String>>("align")?,
-                    None => None,
-                };
-                let align = match align.as_deref() {
-                    None | Some("nearest") => RowAlign::Nearest,
-                    Some("start") => RowAlign::Start,
-                    Some("center") => RowAlign::Center,
-                    Some("end") => RowAlign::End,
-                    Some(other) => {
-                        return Err(mlua::Error::runtime(format!(
-                            "scroll_to_line's align is \"start\", \"center\", \"end\" or \"nearest\", not `{other}`"
-                        )));
-                    }
-                };
-                settle(lua);
-                let Some(editor) = e.0.handle.get().and_then(NodeHandle::editor) else {
-                    return Ok(false);
-                };
-                if !(line.is_finite() && line >= 1.) {
-                    return Ok(false);
-                }
-                off_clock(lua, |_| editor.scroll_to_line(line as usize - 1, align));
-                Ok(true)
             },
         );
         // An input's selection, in characters (Unicode code points, from

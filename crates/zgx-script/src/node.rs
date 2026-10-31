@@ -4447,8 +4447,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     },
                     line_numbers: table.get::<Option<bool>>("line_numbers")?.unwrap_or(false),
                     code: {
-                        let highlight = table.get::<Option<Function>>("highlight")?;
-                        let decorations = match table.get::<mlua::Value>("decorations")? {
+                        let highlight = table.raw_get::<Option<Function>>("highlight")?;
+                        let decorations = match table.raw_get::<mlua::Value>("decorations")? {
                             mlua::Value::Nil => None,
                             mlua::Value::Function(f) => Some(Readable::Function(f)),
                             v => Some(Readable::State(state_of(&v).ok_or_else(|| {
@@ -4457,7 +4457,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                                 )
                             })?)),
                         };
-                        let underlines = match table.get::<mlua::Value>("underlines")? {
+                        let underlines = match table.raw_get::<mlua::Value>("underlines")? {
                             mlua::Value::Nil => None,
                             mlua::Value::Function(f) => Some(Readable::Function(f)),
                             v => Some(Readable::State(state_of(&v).ok_or_else(|| {
@@ -4467,10 +4467,10 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             })?)),
                         };
                         let current_line = optional("current_line", Ty::Color)?;
-                        let tab = table.get::<Option<String>>("tab")?;
-                        let on_caret = table.get::<Option<Function>>("on_caret")?;
-                        let on_top_line = table.get::<Option<Function>>("on_top_line")?;
-                        let find = match table.get::<Option<Table>>("find")? {
+                        let tab = table.raw_get::<Option<String>>("tab")?;
+                        let on_caret = table.raw_get::<Option<Function>>("on_caret")?;
+                        let on_top_line = table.raw_get::<Option<Function>>("on_top_line")?;
+                        let find = match table.raw_get::<Option<Table>>("find")? {
                             None => None,
                             Some(find) => {
                                 let get = |key: &str, ty: Ty| -> mlua::Result<Option<Source>> {
