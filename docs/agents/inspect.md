@@ -103,7 +103,8 @@ What the running app holds, measured when asked, with nothing to build or switch
 | --- | --- |
 | `process` | `footprint` (macOS, what Activity Monitor shows), `resident` (Linux) or `private` (Windows) |
 | `heap` | mimalloc's memory committed, at its peak and in use (the gap is what it keeps for later); or the system allocator's in use and free |
-| `gpu` | the glyph atlas, image textures, layers, canvases, SVGs, vertex buffers, and the device's allocations where wgpu counts them |
+| `gpu` | the glyph atlas, image textures, layers (allocated, and `layers live`: what their content takes of that), canvases, SVGs, vertex buffers, and the device's allocations where wgpu counts them |
+| `gpu layer` | each isolated layer, largest first: `@n #id`, its content's pixels, its scale, its live MiB, and whether it is transformed or parked; its bytes are what its texture allocates |
 | `text` | shaped nodes, prepared lines, measures, shaped runs, rasterized glyphs and outlines |
 | `scene` | nodes mounted, nodes removed and not yet freed, slots |
 | `devtools` | the frame log and the effect names it keeps (`--inspect` only) |

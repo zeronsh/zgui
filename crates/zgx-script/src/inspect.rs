@@ -1026,6 +1026,23 @@ impl Session {
                     ui.scene.borrow().memory(&mut report);
                     zgx::trace::memory(&mut report);
                     session.0.host.memory(&mut report);
+                    // Each layer by its node's `id` too, beside its `@n`.
+                    let ids = session.0.handle.ids();
+                    for line in report
+                        .lines
+                        .iter_mut()
+                        .filter(|line| line.area == "gpu layer")
+                    {
+                        let number = line.name.strip_prefix('@').and_then(|rest| {
+                            rest.split(' ').next().and_then(|n| n.parse::<u32>().ok())
+                        });
+                        if let Some(id) = number
+                            .and_then(|number| ids.iter().find(|(node, _)| node.number() == number))
+                        {
+                            let at = line.name.find(' ').unwrap_or(line.name.len());
+                            line.name.insert_str(at, &format!(" #{}", id.1));
+                        }
+                    }
                     let (text, data) = memory_answer(&report);
                     ok(text, data)
                 }));

@@ -1305,6 +1305,13 @@ struct LayerCache {
     /// drawing it (hidden, culled) ends that.
     watched: Option<Rect>,
 }
+impl LayerCache {
+    /// The bytes its content takes of its texture (`bytes`: all it holds).
+    fn live_bytes(&self) -> usize {
+        let (w, h) = (self.texture.width() as f32, self.texture.height() as f32);
+        (w * self.uv[0]).round() as usize * (h * self.uv[1]).round() as usize * 4
+    }
+}
 /// How a layer of the window's own shows there (`GpuRenderer::shown`).
 #[derive(Clone, Copy)]
 struct Shown<'a> {
@@ -1351,11 +1358,12 @@ fn add_layer_stats(stats: &mut GpuStats, result: &GpuStats) {
 /// repainting into a new allocation. The scene keeps counting the node's
 /// layer revision meanwhile, so the pixels are known current.
 const LAYER_PARK_FRAMES: u64 = 60;
-/// The bytes of all isolated layers' textures, and of any one of them.
+/// The least the isolated layers' textures may take together (`layer_budget`).
 const LAYER_BUDGET: usize = 64 * 1024 * 1024;
-const LAYER_ROOM: usize = 16 * 1024 * 1024;
-const LAYER_COARSER: &str = "isolated layers past their 64 MiB budget or the GPU's texture \
-                             size: they rasterize coarser until they fit";
+/// A layer's first try: no room of its own, only what the budget leaves (a
+/// retry passes what is left).
+const LAYER_ROOM: usize = usize::MAX;
+const MB: f32 = 1024. * 1024.;
 /// Raster scales a layer renders at, in √2 steps from the device's: half
 /// to four times. Beyond, a texture grows faster than detail shows.
 const RASTER_STEPS: std::ops::RangeInclusive<i32> = -2..=4;
@@ -4337,6 +4345,33 @@ impl GpuRenderer {
             Some(stats.layer_textures),
             Some(stats.layer_bytes),
         );
+        // Each layer: its node, its content's pixels and scale, and whether
+        // it is still one (`zgx inspect memory` names the node).
+        let live: usize = self.layers.values().map(LayerCache::live_bytes).sum();
+        report.add("gpu", "layers live", Some(self.layers.len()), Some(live));
+        let mut layers: Vec<_> = self.layers.iter().collect();
+        layers.sort_by_key(|(_, layer)| std::cmp::Reverse(layer.bytes));
+        for (id, layer) in layers {
+            let (w, h) = (layer.texture.width() as f32, layer.texture.height() as f32);
+            let state = match (layer.parked, layer.transformed) {
+                (true, _) => ", parked",
+                (false, true) => ", transformed",
+                (false, false) => "",
+            };
+            report.add(
+                "gpu layer",
+                format!(
+                    "@{} {}x{} px at {:.2}x, {:.1} MiB live{state}",
+                    id.number(),
+                    (w * layer.uv[0]).round(),
+                    (h * layer.uv[1]).round(),
+                    self.scale * f32::from_bits(layer.factor),
+                    layer.live_bytes() as f32 / MB,
+                ),
+                None,
+                Some(layer.bytes),
+            );
+        }
         report.add("gpu", "canvases", None, Some(stats.canvas_raster_bytes));
         report.add("gpu", "svgs", None, Some(stats.svg_raster_bytes));
         report.add(
@@ -4716,6 +4751,23 @@ impl GpuRenderer {
     /// these on (`zgx::issues::report`). Frames don't fail over them.
     pub fn take_issues(&mut self) -> Vec<String> {
         std::mem::take(&mut self.issues)
+    }
+    /// `warn` for what is said once per `key` (a layer's number), whatever
+    /// numbers its message gives as they change.
+    #[cold]
+    fn warn_keyed(&mut self, key: (&str, u32), issue: String) {
+        let key = format!("{}@{}", key.0, key.1);
+        if !self.warned.contains(&key) {
+            self.warned.push(key);
+            self.issues.push(issue);
+        }
+    }
+    /// The bytes isolated layers' textures may take together: four of the
+    /// window's frames, and at least `LAYER_BUDGET`. A layer as large as the
+    /// window is a frame, so a window of them (an intro's outgoing and
+    /// incoming pages, each its own layer) fits.
+    fn layer_budget(&self) -> usize {
+        (self.width as usize * self.height as usize * 4 * 4).max(LAYER_BUDGET)
     }
     #[cold]
     fn warn(&mut self, issue: &str) {
@@ -5140,6 +5192,10 @@ impl GpuRenderer {
         }
         let content = scene.layer_bounds(id);
         let limit = self.device.limits().max_texture_dimension_2d;
+        let budget = self.layer_budget();
+        // No room of its own: one layer as large as the window takes what it
+        // needs, as long as the budget holds it.
+        let room = room.min(budget);
         // Magnified past what the texture limits or the budget allow, a
         // layer renders at the finest scale that fits.
         let pixels = |factor: f32| {
@@ -5168,7 +5224,23 @@ impl GpuRenderer {
             }
         }
         if coarser {
-            self.warn(LAYER_COARSER);
+            let pixels = pixels(1.) * 4.;
+            self.warn_keyed(
+                ("layer coarser", id.number()),
+                format!(
+                    "isolated layer @{} ({:.1} MiB at the device's scale) is past {}: it \
+                     rasterizes coarser",
+                    id.number(),
+                    pixels / MB,
+                    match pixels as usize > budget {
+                        true => format!(
+                            "the budget of isolated layers ({:.0} MiB)",
+                            budget as f32 / MB
+                        ),
+                        false => "the GPU's texture size".to_string(),
+                    },
+                ),
+            );
         }
         let device_scale = self.scale;
         let scale = device_scale * factor;
@@ -5289,7 +5361,11 @@ impl GpuRenderer {
             stats.layer_partial_repaints += 1;
             return Ok(());
         }
-        let bytes = width as usize * height as usize * 4;
+        // What its texture takes: rounded up as allocations are, not just
+        // its pixels (the budget counts what is allocated).
+        let bytes = width.next_multiple_of(64).min(limit) as usize
+            * height.next_multiple_of(64).min(limit) as usize
+            * 4;
         let mut existing = self.layers.get(&id).map_or(0, |l| l.bytes);
         let mut used: usize = self.layers.values().map(|l| l.bytes).sum();
         let over = |count: usize, used: usize, existing: usize, known: bool| {
@@ -5312,13 +5388,29 @@ impl GpuRenderer {
         }
         // Past the budget or the texture limits: again, in the room left,
         // coarser. Once: a texture of one texel still takes its 64 by 64.
-        if (used - existing + bytes > LAYER_BUDGET || width > limit || height > limit)
-            && room == LAYER_ROOM
-        {
-            self.warn(LAYER_COARSER);
-            let room = LAYER_BUDGET
-                .saturating_sub(used - existing)
-                .min(LAYER_ROOM - 1);
+        if (used - existing + bytes > budget || width > limit || height > limit) && room == budget {
+            let others = self.layers.len() - usize::from(existing > 0);
+            let live: usize = (self.layers.iter())
+                .filter(|(other, _)| **other != id)
+                .map(|(_, layer)| layer.live_bytes())
+                .sum();
+            self.warn_keyed(
+                ("layer past the budget", id.number()),
+                format!(
+                    "isolated layer @{} ({}x{} px, {:.1} MiB) is past the budget of isolated \
+                     layers ({:.0} MiB): {} others hold {:.1} MiB allocated, {:.1} MiB of it \
+                     live; it rasterizes coarser",
+                    id.number(),
+                    width,
+                    height,
+                    bytes as f32 / MB,
+                    budget as f32 / MB,
+                    others,
+                    (used - existing) as f32 / MB,
+                    live as f32 / MB,
+                ),
+            );
+            let room = budget.saturating_sub(used - existing).min(budget - 1);
             return self.prepare_layer(scene, id, magnified, exact_around, shown, stats, room);
         }
         // Animated layers change size every frame: round allocations up and
