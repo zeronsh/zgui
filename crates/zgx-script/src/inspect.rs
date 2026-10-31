@@ -403,7 +403,10 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   memory                                         what the app holds, by what holds it: a line each
   wait    target [text] [gone] [timeout_ms=3000] until it shows (the text), or is gone
   sleep   ms                                     let the app run
-targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b (inside)";
+  windows                                        the app's windows, their sizes and popups open
+targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b (inside)
+window: any command takes `window` (an id from `windows`, or an item's key in ui.windows): it
+        answers for that window; popups answer for the window they open from";
 
 impl Session {
     /// The session of a window's interface `ui`, the script view mounted
@@ -434,11 +437,25 @@ impl Session {
         }))
     }
 
-    /// The answer to one request (a JSON object, a line).
+    /// The answer to one request (a JSON object, a line). With `window`
+    /// (another window's id, or an item's key in `ui.windows`), that
+    /// window's.
     pub fn answer(&self, request: &str) -> Reply {
         let Some(request) = Value::from_json(request.trim()) else {
             return Reply::Now(failed("a request is one JSON object: {\"cmd\":\"tree\"}"));
         };
+        let window = request.field("window").map(Value::to_string);
+        match window.as_deref() {
+            None | Some("") | Some("main") => self.answer_here(request),
+            Some(name) => match window_session(name) {
+                Ok(session) => session.answer_here(request),
+                Err(error) => Reply::Now(failed(error)),
+            },
+        }
+    }
+
+    /// The answer to `request`, this window's.
+    fn answer_here(&self, request: Value) -> Reply {
         let Some(mut ui) = self.0.ui.upgrade() else {
             return Reply::Now(failed("the window has closed"));
         };
@@ -476,6 +493,7 @@ impl Session {
         };
         let answer = match cmd.as_str() {
             "help" => Ok((HELP.to_string(), Value::Nil)),
+            "windows" => Ok(windows(self)),
             "tree" => (|| {
                 let from = match text("target") {
                     Some(t) => Some(driver::find(&ui, &self.0.handle, &t)?),
@@ -1069,6 +1087,20 @@ impl Session {
         })
     }
 
+    /// This window's size, and its popups open (`windows`).
+    fn about(&self) -> Option<(zgx::scene::Rect, Vec<String>)> {
+        let ui = self.0.ui.upgrade()?;
+        let scene = ui.scene.borrow();
+        let size = scene.bounds(scene.root());
+        let popups = scene.popups().to_vec();
+        drop(scene);
+        let popups = popups
+            .into_iter()
+            .map(|popup| driver::describe(&ui, popup))
+            .collect();
+        Some((size, popups))
+    }
+
     /// Find in page's answer: how many matches, which is current, and the
     /// first `n` (all with `all`), each where it is, its text around it and
     /// its box if it shows.
@@ -1517,6 +1549,79 @@ impl Queue {
 }
 
 pub use crate::inspect_client::socket_dir;
+
+thread_local! {
+    /// The app's other windows' sessions (`ui.window`, `ui.windows`), by
+    /// id and title, while they are open: `window` routes a request to one,
+    /// `windows` lists them.
+    static WINDOWS: std::cell::RefCell<Vec<(String, String, Session)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+/// Make window `id`'s session (titled `title`) reachable from devtools,
+/// until [`forget_window`]: a host opening the app's other windows calls it.
+pub fn register_window(id: &str, title: &str, session: Session) {
+    WINDOWS.with_borrow_mut(|windows| {
+        windows.retain(|(other, _, _)| other != id);
+        windows.push((id.to_owned(), title.to_owned(), session));
+    });
+}
+/// Window `id` closed: devtools reach it no more.
+pub fn forget_window(id: &str) {
+    WINDOWS.with_borrow_mut(|windows| windows.retain(|(other, _, _)| other != id));
+}
+/// The session of window `name`: its id, or an item's key in `ui.windows`
+/// (whose window's id is its group's and the key).
+fn window_session(name: &str) -> Result<Session, String> {
+    WINDOWS.with_borrow(|windows| {
+        if let Some((_, _, session)) = windows.iter().find(|(id, _, _)| id == name) {
+            return Ok(session.clone());
+        }
+        let mut items = windows.iter().filter(|(id, _, _)| {
+            id.split_once(':')
+                .is_some_and(|(group, key)| group.starts_with("windows") && key == name)
+        });
+        match (items.next(), items.next()) {
+            (Some((_, _, session)), None) => Ok(session.clone()),
+            (Some(_), Some(_)) => Err(format!(
+                "two lists' windows hold an item `{name}`: name it by its window's id (`windows`)"
+            )),
+            (None, _) => Err(format!("no window `{name}` open (`windows` lists them)")),
+        }
+    })
+}
+/// `windows`: the main window and the app's others, each with its size and
+/// its popups open (menus, popovers past the window: targets inside reach
+/// them, as the window's own nodes).
+fn windows(main: &Session) -> (String, Value) {
+    let mut lines = Vec::new();
+    let mut data = Vec::new();
+    let others = WINDOWS.with_borrow(|windows| windows.clone());
+    let all = std::iter::once(("main".to_owned(), String::new(), main.clone())).chain(others);
+    for (id, title, session) in all {
+        let Some((size, popups)) = session.about() else {
+            continue;
+        };
+        let mut line = format!("{id}  {}x{}", size.width.round(), size.height.round());
+        if !title.is_empty() {
+            line.push_str(&format!("  \"{title}\""));
+        }
+        for popup in &popups {
+            line.push_str(&format!("\n  popup {popup}"));
+        }
+        lines.push(line);
+        data.push(Value::record([
+            ("id", Value::from(id.as_str())),
+            ("title", Value::from(title.as_str())),
+            ("width", Value::Num(size.width.round() as f64)),
+            ("height", Value::Num(size.height.round() as f64)),
+            (
+                "popups",
+                Value::List(popups.iter().map(|p| Value::from(p.as_str())).collect()),
+            ),
+        ]));
+    }
+    (lines.join("\n"), Value::List(data.into()))
+}
 
 /// A socket answering a session: it serves while this lives.
 pub struct Server {

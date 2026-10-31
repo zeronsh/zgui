@@ -809,3 +809,69 @@ return ui.column {
         "said = \"near\""
     );
 }
+
+/// Devtools reach every window: `windows` lists the app's, with their sizes
+/// and popups, and any request with `window` (an id, or an item's key in
+/// `ui.windows`) answers for that one, as a host registers each it opens.
+#[test]
+fn every_window_is_listed_and_any_request_can_target_one() {
+    let app = TestApp::new(|runtime| {
+        ScriptHost::inline(
+            runtime,
+            "app",
+            r##"
+local photos = ui.state("photos", { { id = "p1" } })
+local said = ui.state("said", "")
+ui.windows(photos, function(p)
+    return { title = "Photo " .. p.id, width = 240, height = 160, ui.column {
+        ui.text { id = "title", "Photo " .. p.id },
+        ui.button { id = "like", "Like", on_click = function() said:set("liked " .. p.id) end },
+    } }
+end)
+return ui.text { id = "main", "main" }
+"##,
+        )
+    });
+    let session = Session::new(&app.ui, app.handle.clone(), &app.host, None);
+    let id = app.host.windows().with_untracked(|list| list[0].id.clone());
+    let photo = app.window(&id).expect("its window");
+    zgx_script::inspect::register_window(
+        &id,
+        "Photo p1",
+        Session::new(&photo.ui, photo.handle.clone(), &app.host, None),
+    );
+    let listed = text(&ask(&app, &session, r#"{"cmd":"windows"}"#));
+    assert!(listed.starts_with("main  "), "{listed}");
+    assert!(
+        listed.contains(&format!("{id}  240x160  \"Photo p1\"")),
+        "{listed}"
+    );
+    // By its key, and by its id.
+    let found = text(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"find","target":"#title","window":"p1"}"##,
+    ));
+    assert!(found.contains("Photo p1"), "{found}");
+    let request = format!(r##"{{"cmd":"click","target":"#like","window":"{id}"}}"##);
+    text(&ask(&app, &session, &request));
+    photo.settle();
+    assert_eq!(
+        text(&ask(&app, &session, r#"{"cmd":"state","name":"said"}"#)),
+        "said = \"liked p1\""
+    );
+    // The main window's own nodes aren't the photo's.
+    assert!(
+        error(&ask(
+            &app,
+            &session,
+            r##"{"cmd":"find","target":"#main","window":"p1"}"##
+        ))
+        .contains("main")
+    );
+    let missing = error(&ask(&app, &session, r#"{"cmd":"tree","window":"nowhere"}"#));
+    assert!(missing.contains("no window `nowhere` open"), "{missing}");
+    zgx_script::inspect::forget_window(&id);
+    let listed = text(&ask(&app, &session, r#"{"cmd":"windows"}"#));
+    assert!(!listed.contains(&id), "{listed}");
+}

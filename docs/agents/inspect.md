@@ -156,6 +156,18 @@ A select's options are `menuitemradio`, as AppKit's pop-up button has them; a co
 
 On macOS a popup is a window of its own and may lie past the main window's edge. Its boxes are in the main window's points all the same, so clicks and targets reach it. `snapshot` pictures it from its own surface, and `memory` counts its renderers as `gpu popup windows`. A popup opens in the scene first and gets its window at the next frame, so a reading taken between the two says `popup windows not yet drawn`.
 
+## The app's other windows
+
+`windows` lists the main window and the windows the app declares (`ui.window`, an item of `ui.windows`), each with its id, size, title and popups open. Any command takes `window` (`--window` on the CLI, `window` on every MCP tool) and answers for that window: an id from `windows`, or an item's key, which names its window as `zgx test`'s `app:window` does. Without it, the main window answers. A window answers while it is open; one that closes is gone from `windows`. Popups answer for the window they open from, as above.
+
+```sh
+zgx inspect windows                       # main  1100x720
+                                          # windows0:img01.png  420x360  "img01.png"
+zgx inspect --window img01.png tree       # the detail window's interface
+zgx inspect --window img01.png click '#favorite'
+zgx inspect --window windows1:shots state # states are the app's, from any window
+```
+
 ## Gestures: record once, replay
 
 `scroll` sends one wheel event straight to the interface. A real gesture is more: a trackpad's fingers and then its momentum, as the platform reports them over a second or two, which the window resamples to its refreshes and which stretches an edge. To see how that feels, record one and play it back through the window's own input path:
@@ -199,7 +211,7 @@ zgx inspect switch scroll_copy on
 
 ## As MCP tools
 
-`zgx inspect mcp` serves the same commands as MCP tools on stdio (`zgx_tree`, `zgx_node`, `zgx_find`, `zgx_state`, `zgx_set_state`, `zgx_click`, `zgx_type`, `zgx_key`, `zgx_scroll`, `zgx_command`, `zgx_errors`, `zgx_lint`, `zgx_frames`, `zgx_mark`, `zgx_switch`, `zgx_search`, `zgx_snapshot`, `zgx_record`, `zgx_replay`, `zgx_wait`, `zgx_sleep`, `zgx_apps`), each answering the text the CLI prints, with `isError` when it failed. Every tool takes an optional `app` (a pid) for when several apps run.
+`zgx inspect mcp` serves the same commands as MCP tools on stdio (`zgx_windows`, `zgx_tree`, `zgx_node`, `zgx_find`, `zgx_state`, `zgx_set_state`, `zgx_click`, `zgx_type`, `zgx_key`, `zgx_scroll`, `zgx_command`, `zgx_errors`, `zgx_lint`, `zgx_frames`, `zgx_mark`, `zgx_switch`, `zgx_search`, `zgx_snapshot`, `zgx_record`, `zgx_replay`, `zgx_wait`, `zgx_sleep`, `zgx_apps`), each answering the text the CLI prints, with `isError` when it failed. Every tool takes an optional `app` (a pid) for when several apps run, and an optional `window` (an id from `zgx_windows`, or an item's key) for another of the app's windows.
 
 ```sh
 claude mcp add zgx -- zgx inspect mcp      # Claude Code; any MCP client runs the same command

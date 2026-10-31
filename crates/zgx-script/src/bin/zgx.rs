@@ -410,12 +410,14 @@ fn lint(args: Vec<String>) -> ExitCode {
     }
 }
 
-const INSPECT_USAGE: &str = "usage: zgx inspect [--app PID] [--json] <command> [args]
+const INSPECT_USAGE: &str = "usage: zgx inspect [--app PID] [--window W] [--json] <command> [args]
 
 Asks a running app serving devtools (`zgx-run --inspect`, or
-ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
+ZGX_INSPECT_SOCKET=1): with one running, --app is not needed. --window asks
+another of its windows (an id from `windows`, or an item's key in ui.windows).
 
   list                                   apps serving devtools
+  windows                                the app's windows, sizes and popups open
   tree [target] [--depth N] [--budget N] [--all]
   node <target>        find <target>
   state [name] [--full]                  set <name> <json>
@@ -445,6 +447,8 @@ Text by default, compact; --json prints the answer as JSON.";
 fn inspect(args: Vec<String>) -> ExitCode {
     use zgx_script::{Value, inspect_client};
     let mut app: Option<u32> = None;
+    // Which of the app's windows answers (`windows` lists them).
+    let mut window: Option<String> = None;
     let mut json = false;
     let mut human = false;
     let mut words: Vec<String> = Vec::new();
@@ -458,6 +462,13 @@ fn inspect(args: Vec<String>) -> ExitCode {
                 Some(pid) => app = Some(pid),
                 None => {
                     eprintln!("zgx inspect: --app takes a process id");
+                    return ExitCode::from(2);
+                }
+            },
+            "--window" => match args.next() {
+                Some(name) => window = Some(name),
+                None => {
+                    eprintln!("zgx inspect: --window takes a window's id or an item's key");
                     return ExitCode::from(2);
                 }
             },
@@ -503,6 +514,9 @@ fn inspect(args: Vec<String>) -> ExitCode {
     }
     let arg = |i: usize| words.get(i).cloned();
     let mut fields: Vec<(String, Value)> = vec![("cmd".into(), Value::from(cmd.as_str()))];
+    if let Some(window) = &window {
+        fields.push(("window".into(), Value::from(window.as_str())));
+    }
     let mut put = |k: &str, v: Option<String>| {
         if let Some(v) = v {
             fields.push((k.into(), Value::from(v.as_str())));
@@ -673,6 +687,12 @@ const TOOLS: &[Tool] = &[
         "list",
         &[],
         "The running zgx apps serving devtools: pid and script.",
+    ),
+    (
+        "zgx_windows",
+        "windows",
+        &[],
+        "The app's windows: the main one and those it declares (ui.window, ui.windows), each with its id, size, title and popups open. Any tool's `window` argument then targets one.",
     ),
     (
         "zgx_tree",
@@ -933,6 +953,7 @@ fn mcp() -> ExitCode {
                                 })
                                 .collect();
                             properties.push(("app", Value::record([("type", Value::from("number")), ("description", Value::from("the app's pid, when several run"))])));
+                            properties.push(("window", Value::record([("type", Value::from("string")), ("description", Value::from("which of the app's windows answers: an id from zgx_windows, or an item's key in ui.windows (the main window if not given)"))])));
                             let required: Vec<Value> = args.iter().filter(|a| a.2).map(|a| Value::from(a.0)).collect();
                             Value::record([
                                 ("name", Value::from(*name)),
@@ -958,6 +979,9 @@ fn mcp() -> ExitCode {
                     Some((_, "list", _, _)) => Ok(inspect_client::apps().iter().map(|a| format!("{} {}", a.pid, a.app)).collect::<Vec<_>>().join("\n")),
                     Some((_, cmd, params, _)) => {
                         let mut fields: Vec<(String, Value)> = vec![("cmd".into(), Value::from(*cmd))];
+                        if let Some(window) = args.field("window") {
+                            fields.push(("window".into(), window.clone()));
+                        }
                         let mut read: Result<(), String> = Ok(());
                         for (arg, _, _) in params.iter() {
                             match (*arg, args.field(arg)) {
