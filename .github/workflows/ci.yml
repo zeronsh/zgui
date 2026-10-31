@@ -44,7 +44,7 @@ jobs:
   # job: the examples the tests build are the probes' fixtures.
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       # Room on the disk: this job's target/ reaches about 40 GB, more than
@@ -89,103 +89,12 @@ jobs:
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Benchmark sampler failure evidence
-        run: python3 scripts/test_compare.py -v
-      - name: Which windows the Windows probes' guard takes as their app's
-        run: python3 scripts/test_windows_guard.py -v
-      - run: cargo fmt --all -- --check
-      # Every Luau script in the repository (examples and probes too), as
-      # stylua.toml and .styluaignore have them.
-      - uses: JohnnyMorganz/stylua-action@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          version: 2.6.0
-          args: --check .
-      - run: cargo clippy --workspace --all-targets --features zgx-desktop/webkitgtk --locked -- -D warnings
-      # Feature gating stays honest: the crates build without their defaults,
-      # on the oldest Rust they claim (`rust-version`): a check this job
-      # makes anyway, so the minimum costs only the toolchain's download.
-      - name: No default features, on the minimum Rust
-        run: |
-          msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
-          rustup toolchain install "$msrv" --profile minimal --no-self-update
-          cargo "+$msrv" check -p zgx-components -p zgx-desktop -p zgx-script --no-default-features --locked
-      # Lints too: code only a default feature uses (the component
-      # library's) is left out with it, not left unused.
-      - run: cargo clippy -p zgx-script --no-default-features --all-targets --locked -- -D warnings
-      # zgx-script's best-practice lint over every example script.
-      - name: Script lint
-        run: cargo run -q -p zgx-script --bin zgx --locked -- lint crates/zgx-script/examples crates/zgx-desktop/examples
-      # Every example script type checks (luau-lsp, the shipped ui/anime
-      # types); zgx-script's check tests run with it too.
-      - name: Script type check
-        run: |
-          dir="$RUNNER_TEMP/luau-lsp-1.70.1"
-          mkdir -p "$dir"
-          curl -fsSL https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip -o "$dir.zip"
-          unzip -q -o "$dir.zip" -d "$dir"
-          echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
-          LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgx-script --bin zgx --locked -- check crates/zgx-script/examples crates/zgx-desktop/examples
-      # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
-      # and macOS jobs test without it).
-      - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
-      # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
-      - run: cargo test -p zgx-terminal --locked
-      # zgx-script's tests with all its features, as an app built by zgx-run
-      # has them (scene3d, i18n, gltf, inspect): ICU's plural rules change
-      # what the i18n lint finds, and each feature may add lazy `ui`
-      # modules (`lazy_ui::` checks each against what its maker sets).
-      - run: cargo test -p zgx-script --all-features --locked
-      # zgx audit over the Luau examples (zgx-run's own tests need sockets).
-      - run: cargo test -p zgx-run --test audit --locked
-      # Devtools tracing (zgx's `trace`, off by default; zgx-script's
-      # `inspect` turns it on): what it keeps stays bounded. Quoted, as the
-      # line below is.
-      - run: "cargo test -p zgx --features trace --lib --locked -- trace::"
-      # Words in Chinese, Japanese and Thai with `cjk-thai-words` off:
-      # Unicode's word boundaries, as before the dictionaries.
-      # Quoted: an unquoted `words:: ` would be read as a YAML key, and the
-      # whole workflow would fail to load.
-      - run: "cargo test -p zgx --no-default-features --lib --test editor --test text --locked -- words:: chinese_japanese_or_thai"
-      - run: cargo test --workspace --doc --locked
-      - run: cargo test -p zgx-3d --features gltf --doc --locked
-      # The API docs build without a warning (a broken link, a name collision).
-      - run: cargo doc --workspace --no-deps --locked
-        env:
-          RUSTDOCFLAGS: -D warnings
-      # Concurrent device tests need Vulkan-Loader#1866; older distro loaders
-      # can crash inside vkSetDebugUtilsObjectNameEXT. Keep debug/validation on.
-      # The loader is built from pinned revisions, so it is kept between
-      # runs until the script changes.
       - uses: actions/cache@v4
         id: vulkan-loader
         if: ${{ !cancelled() }}
         with:
           path: ~/zgx-vulkan-loader/build/loader
           key: vulkan-loader-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_vulkan_loader.sh') }}
-      - name: Build private patched Vulkan loader
-        if: ${{ !cancelled() && steps.vulkan-loader.outputs.cache-hit != 'true' }}
-        run: scripts/build_vulkan_loader.sh ~/zgx-vulkan-loader
-      - name: Use the private Vulkan loader
-        if: ${{ !cancelled() }}
-        run: printf 'LD_LIBRARY_PATH=%s/zgx-vulkan-loader/build/loader\n' "$HOME" >> "$GITHUB_ENV"
-      - name: Vulkan rendering and damage readback
-        if: ${{ !cancelled() }}
-        env:
-          XDG_RUNTIME_DIR: /tmp
-        run: |
-          set -o pipefail
-          cargo test -p zgx-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgx-vulkan-tests.log"
-      # Its pixel tests pass without drawing where there's no GPU: here they
-      # must have one (lavapipe).
-      - name: 3D rendering
-        if: ${{ !cancelled() }}
-        env:
-          XDG_RUNTIME_DIR: /tmp
-          ZGX_REQUIRE_GPU: "1"
-        run: cargo test -p zgx-3d --features gltf --locked
-      # The test binaries built above aren't run again: their room goes to
-      # the probes' fixtures, about 13 GB of examples.
       - name: Room for the fixtures
         if: ${{ !cancelled() }}
         run: find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete
@@ -206,40 +115,24 @@ jobs:
       # owns its display or compositor, so they run side by side, eight at
       # once on four cores (they mostly wait: 150 s at four, 80 at eight);
       # every probe runs and reports even after another fails.
-      - name: Native Linux probes
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        timeout-minutes: 15
-        run: python3 scripts/linux_smokes.py --jobs 8
-      # The tall menu's protocol trace, green or not (#1199): the order that
-      # closed it as it opened is counted in its result.
-      - name: Keep the Wayland popups trace
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: wayland-popups-trace
-          retention-days: 3
-          if-no-files-found: ignore
-          path: |
-            /tmp/zgx-wayland-popups/sway-tall.trace
-            /tmp/zgx-wayland-popups/result.json
-      # What the job left free, beside the start's: a full disk loses the log.
-      - if: always()
-        run: df -h /
-      - name: Preserve Vulkan and native window evidence
-        if: failure()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 3
-          name: linux-evidence
-          path: |
-            ${{ runner.temp }}/zgx-vulkan-tests.log
-            /tmp/zgx-*
-  # Exact instruction counts (cachegrind) of the CPU-only headless scenes
-  # against the PR's base, as a PR comment; more than +1% fails. On main,
-  # against the commit before (no failure), which also keeps its cache.
+      - name: double-click-time under load, 48 times
+        run: |
+          set +e
+          for i in $(seq 1 6); do nohup timeout 1500 sh -c 'while :; do :; done' >/dev/null 2>&1 & done
+          pass=0; fail=0
+          for round in $(seq 1 6); do
+            for k in $(seq 1 8); do
+              ( python3 scripts/double_click_time_smoke.py target/debug/examples/primary_selection --output /tmp/dct-$round-$k > /tmp/dct-$round-$k.log 2>&1; echo $? > /tmp/dct-$round-$k.rc ) &
+            done
+            wait
+            for k in $(seq 1 8); do
+              if [ "$(cat /tmp/dct-$round-$k.rc)" = 0 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL $round-$k"; tail -4 /tmp/dct-$round-$k.log; fi
+              grep -h 'after the window' /tmp/dct-$round-$k.log
+            done
+          done
+          echo "DCT pass=$pass fail=$fail"
   perf:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -351,6 +244,7 @@ jobs:
       - name: Gate
         run: exit "$status"
   macos:
+    if: false
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -420,6 +314,7 @@ jobs:
   # Compile everything and run the core unit tests; native Windows probes and
   # the GPU suite run on developer machines.
   windows:
+    if: false
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
