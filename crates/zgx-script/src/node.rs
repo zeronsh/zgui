@@ -480,6 +480,10 @@ pub(crate) struct LayoutAnim {
     pub enter: bool,
     /// Clips the content to the animated size.
     pub clip: bool,
+    /// `hit = "target"`: while an animation moves it, it takes hits where
+    /// it's going (`Scene::set_hit_target`). Read late (`late_field`) and
+    /// kept here, where nodes without `layout` lower past it.
+    pub hit: bool,
 }
 impl Node {
     /// The hook the app declares here (`hook = "name"`), if any.
@@ -2895,6 +2899,7 @@ const WIDGET_FIELDS: &[&str] = &[
 /// added here costs them nothing (a test checks none is a property).
 #[cfg(test)]
 const LATE_FIELDS: &[&str] = &[
+    "hit",
     "inputmode",
     "caret_color",
     "caret_width",
@@ -2946,6 +2951,26 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
                 let width: f64 = lua.unpack(value)?;
                 rare.get_or_insert_default().caret_width = Some(width as f32);
             }
+        }
+        "hit" => {
+            let at: String = lua.unpack(value)?;
+            let target = at == "target";
+            if !target && at != "shown" {
+                return Err(mlua::Error::runtime(
+                    "`hit` takes \"target\" (where an animation is taking it) or \"shown\"",
+                ));
+            }
+            let layout = node.layout.get_or_insert(LayoutAnim {
+                width: false,
+                height: false,
+                position: false,
+                duration: None,
+                ease: None,
+                enter: false,
+                clip: false,
+                hit: false,
+            });
+            layout.hit = target;
         }
         "inputmode" => {}
         // `ui.each`'s reorder, read by `ui.each` itself.
@@ -3477,11 +3502,12 @@ fn fill_from(
                     ease: None,
                     enter: false,
                     clip: false,
+                    hit: false,
                 });
                 layout.width = width;
                 layout.height = height;
                 layout.position = position;
-                if !width && !height && !position {
+                if !width && !height && !position && !layout.hit {
                     node.layout = None;
                 }
             }
@@ -3494,6 +3520,7 @@ fn fill_from(
                     ease: None,
                     enter: false,
                     clip: false,
+                    hit: false,
                 });
                 if key == "layout_enter" {
                     layout.enter = lua.unpack::<bool>(value)?;

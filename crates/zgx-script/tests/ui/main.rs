@@ -21,6 +21,8 @@ mod failures;
 mod file_drop;
 #[path = "../grid_tracks.rs"]
 mod grid_tracks;
+#[path = "../hit_target.rs"]
+mod hit_target;
 #[path = "../i18n_script.rs"]
 mod i18n_script;
 #[path = "../idle_gc.rs"]

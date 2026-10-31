@@ -469,7 +469,9 @@ impl TestApp {
     /// transforms and zooms it lies under, as a pointer reaches it.
     fn on_screen(&mut self, id: &str) -> Rect {
         let node = self.node(id);
-        self.ui.scene.borrow().transformed_bounds(node)
+        // Where it takes clicks: where an animation is taking it, with
+        // `hit = "target"`.
+        self.ui.scene.borrow().hit_bounds(node)
     }
     /// The text of node `id`, or of the first text inside it.
     pub fn text(&mut self, id: &str) -> String {

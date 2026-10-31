@@ -574,7 +574,15 @@ pub fn reach(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<(NodeId, Rect
             None => format!("`{target}` doesn't show: {}", describe(ui, node)),
         });
     };
-    let (x, y) = middle(shown);
+    // Where it takes clicks: where an animation is taking it, with
+    // `hit = "target"`.
+    let off = scene.hit_offset(node);
+    let (x, y) = middle(Rect::new(
+        shown.x + off.x,
+        shown.y + off.y,
+        shown.width,
+        shown.height,
+    ));
     // What a press there lands on, as input finds it: nothing that listens
     // is nothing in the way.
     let hit = ui.input.pointer_target(&scene, x, y);
@@ -1016,6 +1024,14 @@ pub fn node(
         out.push(("focused".into(), "yes".into()));
     }
     out.push(("box".into(), rect(scene.bounds(node))));
+    // Where it takes clicks, if an animation is taking it elsewhere
+    // (`hit = "target"`).
+    let off = scene.hit_offset(node);
+    if off != zgx::scene::Transform::default() {
+        let b = scene.bounds(node);
+        let at = Rect::new(b.x + off.x, b.y + off.y, b.width, b.height);
+        out.push(("hit box".into(), rect(at)));
+    }
     // Its own text, else the first inside (a text's box).
     if let Some(text) = first_text(&scene, node) {
         out.push(("text".into(), clip(&text, 400)));

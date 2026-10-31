@@ -426,8 +426,10 @@ impl AccessibilityTree {
                 || scene
                     .ancestors(id)
                     .any(|ancestor| semantics.get(ancestor).is_some_and(|s| s.disabled));
-            // Assistive bounds: the box around where it shows.
-            let r = scene.transformed_bounds(id);
+            // Assistive bounds: the box around where it shows, or where an
+            // animation is taking it with `hit = "target"` (as Core
+            // Animation's model layer): a reader's highlight goes ahead.
+            let r = scene.hit_bounds(id);
             let revision = semantics
                 .node_revision(id)
                 .expect("projected semantic node");

@@ -64,6 +64,48 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `z` | `number` | `0` | paint and hit it over siblings with a lower `z`, under those with a higher; equal stays in document order (see [Stacking](#stacking)) |
 | `sticky_top` | `number` | none | inside a scroll view, hold this far below its top as it scrolls past, inside the parent ([sticky](#sticky)) |
 
+### Hit at target
+
+With `hit = "target"`, an element that an animation is moving takes clicks and hover where the animation is taking it, not where it shows. Clicking fast on something still moving lands on what will be there, as Core Animation hits its model layer while its presentation plays. What it holds goes with it.
+
+```lua
+local photos = ui.state("photos", { 1, 2, 3, 4 })
+local function remove(photo)
+	photos:update(function(list)
+		local kept = {}
+		for _, p in list do
+			if p ~= photo then
+				table.insert(kept, p)
+			end
+		end
+		return kept
+	end)
+end
+return ui.row {
+	gap = 10,
+	ui.each(photos, function(photo)
+		return ui.div { w = 80, h = 60, bg = "$surface.raised", hit = "target", on_click = function()
+			remove(photo)
+		end }
+	end, {
+		key = function(photo)
+			return photo
+		end,
+		animate = { duration = 400 },
+		exit = { opacity = 0, duration = 200 },
+	}),
+}
+```
+
+Clicking one spot as fast as you like removes the photos in order, though none has finished sliding.
+
+- Where it's going: `x`, `y`, `scale`, `rotate`, `skew` and `opacity` bound to `ui.tween` or `ui.spring` use the state they follow; a layout animation (`each`'s `animate`, `layout = "position"`) uses the place layout gave it; an absolute element's `left` and `top` in points use their goal. Going to opacity 0, it takes no clicks.
+- **`w` and `h` animating aren't laid out at their goal:** its children take clicks where they show inside it. Animate `scale`, or let a layout animation size it, to hit at the end size.
+- `anime` animations aren't followed yet: an element `anime` moves takes clicks where its style puts it.
+- Painting, scroll copies and `zgx inspect`'s `box` stay where it shows; `zgx inspect` adds a `hit box` while they differ. `zgx test` clicks by id land where it takes clicks.
+- Assistive technology reads it where it's going, so a screen reader's highlight jumps ahead of the motion.
+- Elements without `hit = "target"` hit where they show, as before.
+
 ### Size math
 
 `w`, `h`, `min_w`, `max_w`, `min_h` and `max_h` take `calc(…)`, `min(…)`, `max(…)` and `clamp(…)`, worked out from the containing block as CSS's are. Layout does the work as sizes change, so a size like these needs no `on_resize` writing state.
@@ -353,6 +395,7 @@ return ui.scroll {
 | `ref` | `Ref \| { Ref }` | | see [State](state.md#refs) |
 | `focusable` | `boolean` | controls: `true` | takes keyboard focus |
 | `pointer_events` | `"none"`, `"auto"`, `boolean`, or a state or function of one | `"auto"` | `"none"` or `false` lets the pointer pass through to what is under the node (presses, hover, the wheel, drops, and a web view or terminal, even where the node paints over it); descendants with their own handlers still receive input |
+| `hit` | `"target"`, `"shown"` | `"shown"` | `"target"`: while an animation moves it, it takes clicks and hover where it's going ([hit at target](#hit-at-target)) |
 
 ## Accessibility
 
