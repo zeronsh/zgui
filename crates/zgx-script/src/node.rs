@@ -2868,6 +2868,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "keep",
     "group",
     "on_move",
+    "on_tear_off",
     "on_close",
     "panel",
     "text",
