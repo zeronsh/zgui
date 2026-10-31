@@ -99,8 +99,8 @@ struct ModelSkin {
     inverse_binds: Vec<crate::Mat4>,
 }
 
-/// A mesh's textures, in `Map::ALL`'s order.
-type Maps = [Option<Texture>; crate::texture::MAPS];
+/// A mesh's textures, in `MODEL_MAPS`' order.
+type Maps = [Option<Texture>; MODEL_MAPS.len()];
 /// Where they sit on it, in the same order.
 type Placements = [MapPlacement; crate::texture::MAPS];
 /// A material, read.
@@ -193,7 +193,8 @@ impl Model {
                         })
                         .clone()
                 });
-                let placements = MAP_TEXTURES.map(|path| map_placement(&doc, value, path));
+                let placements: Placements =
+                    std::array::from_fn(|i| map_placement(&doc, value, MAP_TEXTURES[i]));
                 let through = transmission(value);
                 (material(value), maps, surface(value), placements, through)
             })
@@ -397,7 +398,7 @@ impl World {
                 if through.is_some() {
                     self.set_transmission(mesh, *through);
                 }
-                for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
+                for (map, texture) in MODEL_MAPS.into_iter().zip(maps) {
                     if texture.is_some() {
                         self.set_map(mesh, map, texture.clone());
                     }
@@ -684,7 +685,7 @@ const BLENDED_BY_TEXTURE: f32 = 0.9999;
 /// opaque, its colour's alpha 1 here).
 /// How light passes through a material: `KHR_materials_transmission`'s
 /// factor, `KHR_materials_ior`'s index and `KHR_materials_volume`'s depth
-/// and attenuation (their textures not read yet). `None` without the first,
+/// and attenuation (their textures are maps: `MAP_TEXTURES`). `None` without the first,
 /// or with nothing passing.
 fn transmission(value: &Value) -> Option<crate::Transmission> {
     let extensions = value.get("extensions")?;
@@ -731,13 +732,30 @@ fn surface(value: &Value) -> Surface {
     }
 }
 
-/// Where a material names each of its maps' textures (`Map::ALL`'s order).
-const MAP_TEXTURES: [&[&str]; crate::texture::MAPS] = [
+/// The maps a model's meshes may have: `Map::ALL`'s, then light passing
+/// through's.
+const MODEL_MAPS: [crate::Map; 7] = [
+    crate::Map::BaseColour,
+    crate::Map::MetalRoughness,
+    crate::Map::Normal,
+    crate::Map::Emission,
+    crate::Map::Occlusion,
+    crate::Map::Transmission,
+    crate::Map::Thickness,
+];
+/// Where a material names each of its maps' textures (`MODEL_MAPS`' order).
+const MAP_TEXTURES: [&[&str]; MODEL_MAPS.len()] = [
     &["pbrMetallicRoughness", "baseColorTexture"],
     &["pbrMetallicRoughness", "metallicRoughnessTexture"],
     &["normalTexture"],
     &["emissiveTexture"],
     &["occlusionTexture"],
+    &[
+        "extensions",
+        "KHR_materials_transmission",
+        "transmissionTexture",
+    ],
+    &["extensions", "KHR_materials_volume", "thicknessTexture"],
 ];
 /// The image of the texture `material` names at `path`, if it has one.
 fn material_image(doc: &Value, material: &Value, path: &[&str]) -> Option<usize> {
@@ -2099,6 +2117,36 @@ mod tests {
         let placed = world.place_model(&model);
         let mesh = placed.meshes[0][0];
         assert_eq!(world.transmission(mesh), Some(crate::Transmission::new(1.)));
+    }
+
+    #[test]
+    fn transmission_and_thickness_textures_are_maps() {
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["materials"][0]["extensions"] = json!({
+                "KHR_materials_transmission": {
+                    "transmissionFactor": 1.0,
+                    "transmissionTexture": { "index": 0 },
+                },
+                "KHR_materials_volume": {
+                    "thicknessFactor": 0.5,
+                    "thicknessTexture": { "index": 0 },
+                },
+            });
+            doc["textures"] = json!([{ "source": 0 }]);
+            doc["images"] = json!([{ "uri": format!("data:image/png;base64,{RED_BLUE}") }]);
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let mesh = world.place_model(&model).meshes[0][0];
+        let id = |map| world.map(mesh, map).map(|t| t.id());
+        let through = id(crate::Map::Transmission);
+        assert!(through.is_some());
+        assert_eq!(
+            id(crate::Map::Thickness),
+            through,
+            "one image, decoded once"
+        );
+        assert_eq!(id(crate::Map::BaseColour), None);
     }
 
     #[test]

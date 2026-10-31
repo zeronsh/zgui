@@ -165,7 +165,9 @@ pub struct ObjectId {
 /// How light passes through a mesh (`World::set_transmission`): glass,
 /// water, thin plastic. What is behind it shows through, bent by its index
 /// of refraction, blurred by its roughness and tinted by its colour, and
-/// in a volume by how far the light goes through it.
+/// in a volume by how far the light goes through it. How much passes and
+/// how thick it is can vary across it by maps (`Map::Transmission`,
+/// `Map::Thickness`).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transmission {
@@ -349,8 +351,8 @@ pub(crate) struct Inner {
     /// the generation they were set for.
     morph_weights: ByIndex<(u32, Vec<f32>)>,
     /// What few meshes have: their maps' placements
-    /// (`World::set_map_placement`) and transmission
-    /// (`World::set_transmission`), by index, with the generation they were
+    /// (`World::set_map_placement`), transmission
+    /// (`World::set_transmission`) and its maps, by index, with the generation they were
     /// set for. One table, so a mesh's frame looks once.
     extras: ByIndex<(u32, Extras)>,
     /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
@@ -427,11 +429,14 @@ struct Posed {
     weights: Option<std::ops::Range<usize>>,
 }
 /// What few meshes have, kept apart (see `Inner::extras`).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Extras {
     /// Its maps' placements: all as they are if it has none.
     placements: Placements,
     pub(crate) transmission: Option<Transmission>,
+    /// Its maps of light passing through (`Map::Transmission`'s,
+    /// `Map::Thickness`'s).
+    pub(crate) glass_maps: [Option<crate::Texture>; crate::texture::GLASS_MAPS],
 }
 impl Extras {
     /// Its maps' placements, if any is set.
@@ -623,6 +628,17 @@ impl Inner {
             *extras = Extras::default();
         }
         extras
+    }
+    /// Object `id`'s `i`th map of light passing through (`Map::glass`), and
+    /// whether that changed it. Rare: out of `set_map`'s code.
+    #[cold]
+    #[inline(never)]
+    fn set_glass_map(&mut self, id: ObjectId, i: usize, texture: Option<crate::Texture>) -> bool {
+        let id_of = texture.as_ref().map(crate::Texture::id);
+        let extras = self.extras_mut(id.index, id.generation);
+        let before = std::mem::replace(&mut extras.glass_maps[i], texture);
+        self.tidy_extras(id.index);
+        before.as_ref().map(crate::Texture::id) != id_of
     }
     /// Its extras dropped if nothing is left in them.
     fn tidy_extras(&mut self, index: u32) {
@@ -948,6 +964,9 @@ impl World {
             if inner.live(id.index, id.generation).is_none() {
                 return false;
             }
+            if let Some(i) = map.glass() {
+                return inner.set_glass_map(id, i, texture);
+            }
             let (_, maps) = inner
                 .textures
                 .entry(id.index)
@@ -984,6 +1003,10 @@ impl World {
     pub fn map(&self, id: ObjectId, map: crate::Map) -> Option<crate::Texture> {
         let inner = self.inner.borrow();
         inner.live(id.index, id.generation)?;
+        if let Some(i) = map.glass() {
+            let extras = inner.extras(id.index as usize, id.generation)?;
+            return extras.glass_maps[i].clone();
+        }
         inner.maps(id.index as usize, id.generation)[map as usize].cloned()
     }
     /// Change object `id` with `f` (nothing if it is gone). The view draws a
@@ -1134,13 +1157,18 @@ impl World {
     pub fn map_placement(&self, id: ObjectId, map: crate::Map) -> Option<crate::MapPlacement> {
         let inner = self.inner.borrow();
         inner.live(id.index, id.generation)?;
+        if map.glass().is_some() {
+            return None;
+        }
         let placed = inner.placement(id.index as usize, id.generation)?[map as usize];
         (placed != crate::MapPlacement::default()).then_some(placed)
     }
     /// Where object `id`'s `map` sits on it (`None`: its first texture
     /// coordinates as they are, repeating). A mesh whose maps read anywhere
     /// else draws with a pipeline of its own, a wrap alone only with another
-    /// sampler; others pay nothing.
+    /// sampler; others pay nothing. Maps of light passing through
+    /// (`Map::Transmission`, `Map::Thickness`) aren't placed: nothing
+    /// changes.
     pub fn set_map_placement(
         &self,
         id: ObjectId,
@@ -1148,7 +1176,7 @@ impl World {
         placement: Option<crate::MapPlacement>,
     ) {
         self.change(|inner| {
-            if inner.live(id.index, id.generation).is_none() {
+            if inner.live(id.index, id.generation).is_none() || map.glass().is_some() {
                 return false;
             }
             let placement = placement.unwrap_or_default();
