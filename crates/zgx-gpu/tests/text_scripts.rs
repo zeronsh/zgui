@@ -495,3 +495,85 @@ fn chinese_and_japanese_never_break_before_closing_or_after_opening_punctuation(
         }
     }
 }
+
+/// The family each character of `text` is drawn from, in order.
+fn families(text: &str) -> Vec<(char, String)> {
+    let fonts = fonts();
+    let mut fonts = fonts.borrow_mut();
+    let metrics = cosmic_text::Metrics::new(20., 24.);
+    let mut buffer = cosmic_text::Buffer::new(&mut fonts, metrics);
+    buffer.set_text(
+        text,
+        &cosmic_text::Attrs::new(),
+        cosmic_text::Shaping::Advanced,
+        None,
+    );
+    buffer.shape_until_scroll(&mut fonts, false);
+    let mut found = Vec::new();
+    for run in buffer.layout_runs() {
+        for glyph in run.glyphs {
+            let family = fonts
+                .db()
+                .face(glyph.font_id)
+                .map_or(String::new(), |face| {
+                    face.families
+                        .first()
+                        .map_or(String::new(), |(name, _)| name.clone())
+                });
+            for c in text[glyph.start..glyph.end].chars() {
+                found.push((c, family.clone()));
+            }
+        }
+    }
+    found
+}
+
+/// Japanese fonts each platform has: a line's kana come from one.
+const JAPANESE_FONTS: &[&str] = &[
+    "Yu Gothic",
+    "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN",
+    "Noto Sans CJK JP",
+];
+
+#[test]
+fn kanji_in_a_japanese_line_come_from_its_kana_font_whatever_the_system_language() {
+    if !has_font(JAPANESE_FONTS) {
+        return;
+    }
+    let is_han = |c: char| ('\u{4E00}'..='\u{9FFF}').contains(&c);
+    let is_kana = |c: char| ('\u{3040}'..='\u{30FF}').contains(&c);
+    // Chinese first, then Japanese, then Chinese again: the run cache keeps
+    // each line's kanji as its own (日本 is in both).
+    let chinese = "这是中文的句子，日本也是。";
+    let japanese = "日本語の文章です。";
+    let han_of = |text: &str| -> Vec<String> {
+        let found = families(text);
+        let mut fonts: Vec<String> = found
+            .iter()
+            .filter(|(c, _)| is_han(*c))
+            .map(|(_, f)| f.clone())
+            .collect();
+        fonts.dedup();
+        fonts
+    };
+    let before = han_of(chinese);
+    let found = families(japanese);
+    let kana: Vec<&String> = found
+        .iter()
+        .filter(|(c, _)| is_kana(*c))
+        .map(|(_, f)| f)
+        .collect();
+    let kanji: Vec<&String> = found
+        .iter()
+        .filter(|(c, _)| is_han(*c))
+        .map(|(_, f)| f)
+        .collect();
+    assert!(!kana.is_empty() && !kanji.is_empty(), "{found:?}");
+    assert!(
+        kanji.iter().all(|f| *f == kana[0]),
+        "a Japanese line's kanji from its kana's font, {}: {found:?}",
+        kana[0]
+    );
+    assert_eq!(han_of(chinese), before, "a Chinese line's as before");
+}

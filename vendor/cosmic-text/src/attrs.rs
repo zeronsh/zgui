@@ -177,10 +177,25 @@ impl FontFeatures {
     /// vendors' private ones uppercase letters, neither with an underscore.
     pub const HYPHENS: FeatureTag = FeatureTag::new(b"_hyp");
 
+    /// zgx: the language a line's Han characters are in, by its own kana
+    /// (1, Japanese) or hangul (2, Korean): `ShapeLine::build` sets it on
+    /// such a line's copy of its attributes, so its Han characters take that
+    /// language's fallback fonts and the run cache keeps its runs apart. No
+    /// font can have it, as `HYPHENS`.
+    pub const HAN: FeatureTag = FeatureTag::new(b"_han");
+
     pub const fn new() -> Self {
         Self {
             features: Vec::new(),
         }
+    }
+
+    /// zgx: the language these say their Han characters are in (`HAN`): 0
+    /// none, 1 Japanese, 2 Korean.
+    pub fn han(&self) -> u32 {
+        (self.features.iter())
+            .find(|feature| feature.tag == Self::HAN)
+            .map_or(0, |feature| feature.value)
     }
 
     /// zgx: whether these ask for hyphenation (`HYPHENS`).

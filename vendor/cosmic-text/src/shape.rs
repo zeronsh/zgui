@@ -4,8 +4,9 @@
 
 use crate::fallback::FontFallbackIter;
 use crate::{
-    math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics, DecorationSpan,
-    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, Hinting,
+    math, Align, Attrs, AttrsList, AttrsOwned, CacheKeyFlags, Color, DecorationMetrics,
+    DecorationSpan, Ellipsize, EllipsizeHeightLimit, Family, Font, FontFeatures, FontSystem,
+    GlyphDecorationData, Hinting,
     LayoutGlyph, LayoutLine, Metrics, Wrap,
 };
 #[cfg(not(feature = "std"))]
@@ -307,14 +308,26 @@ fn shape_fallback(
 /// and Inherited, added to `scripts`; whether a cluster in it asks for
 /// emoji presentation (U+FE0F after it, or a keycap's U+20E3, both
 /// Inherited).
+///
+/// Han goes as the line's attributes say (`FontFeatures::HAN`, from its
+/// kana or hangul): a Japanese line's kanji in a Japanese font, not the
+/// system language's Chinese one.
 #[inline(never)]
-fn run_scripts(run: &str, scripts: &mut Vec<Script>) -> bool {
+fn run_scripts(run: &str, scripts: &mut Vec<Script>, attrs_list: &AttrsList, start: usize) -> bool {
     let mut emoji = false;
     for c in run.chars() {
         match c.script() {
             Script::Inherited if matches!(c, '\u{FE0F}' | '\u{20E3}') => emoji = true,
             Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
             script => {
+                let script = match script {
+                    Script::Han => match attrs_list.get_span(start).font_features.han() {
+                        HAN_JAPANESE => Script::Hiragana,
+                        HAN_KOREAN => Script::Hangul,
+                        _ => script,
+                    },
+                    _ => script,
+                };
                 if !scripts.contains(&script) {
                     scripts.push(script);
                 }
@@ -322,6 +335,135 @@ fn run_scripts(run: &str, scripts: &mut Vec<Script>) -> bool {
         }
     }
     emoji
+}
+
+/// zgx: `attrs_list` with the language `line`'s Han characters are in
+/// (`FontFeatures::HAN`), where its kana or hangul say: on its defaults and
+/// each span. None elsewhere, as for most text.
+#[inline(never)]
+fn hinted(attrs_list: &AttrsList, line: &str) -> Option<AttrsList> {
+    let han = han_hint(line);
+    if han == HAN_NONE {
+        return None;
+    }
+    let with = |attrs: &AttrsOwned| {
+        let mut features = attrs.font_features.clone();
+        features.set(FontFeatures::HAN, han);
+        AttrsOwned::new(&attrs.as_attrs().font_features(features))
+    };
+    let mut list = AttrsList::new(&with(attrs_list.defaults_owned()).as_attrs());
+    for (range, attrs) in attrs_list.spans_iter() {
+        list.add_span(range.clone(), &with(attrs).as_attrs());
+    }
+    Some(list)
+}
+
+/// zgx: how a line not all ASCII is built (`line_kind`).
+enum LineKind {
+    /// Again, with attributes saying what language its Han characters are
+    /// in (`hinted`).
+    Hinted,
+    /// As one left-to-right span, as ASCII is: nothing in it is right to
+    /// left, a bidi control or a paragraph separator.
+    LeftToRight,
+    /// By the bidi analysis.
+    Bidi,
+}
+
+/// zgx: how `line` (not all ASCII) is built, by one look at its bytes
+/// (`classify`).
+#[inline(never)]
+fn line_kind(attrs_list: &AttrsList, line: &str) -> LineKind {
+    let found = classify(line.as_bytes());
+    if found & MAY_HINT != 0 && wants_hint(attrs_list, line) {
+        LineKind::Hinted
+    } else if found & MAY_RTL == 0 {
+        LineKind::LeftToRight
+    } else {
+        LineKind::Bidi
+    }
+}
+
+/// zgx: `classify` found what may need the bidi analysis.
+const MAY_RTL: u8 = 1;
+/// zgx: `classify` found what may be kana or hangul (`han_hint`).
+const MAY_HINT: u8 = 2;
+
+/// zgx: what a line not all ASCII may hold, by its bytes: `MAY_RTL` where
+/// it may need the bidi analysis (a right-to-left letter or number, a bidi
+/// control, a paragraph separator: U+0580–U+08FF, U+F000–U+FFFF,
+/// U+10000–U+10FFF, U+1E000–U+1EFFF, LRM, RLM, the embeddings and isolates,
+/// U+2029, NEL, line breaks), and `MAY_HINT` where kana or hangul may say
+/// what language its Han characters are in (U+1000–U+1FFF, U+3000–U+3FFF,
+/// U+A000–U+DFFF, U+F000–U+FFFF). Erring only toward finding.
+#[inline(never)]
+fn classify(line: &[u8]) -> u8 {
+    let mut found = 0;
+    for (i, &b) in line.iter().enumerate() {
+        let next = |n: usize| line.get(i + n).copied().unwrap_or(0);
+        found |= match b {
+            b'\n' | b'\r' | 0x1C..=0x1E | 0xD6..=0xDF => MAY_RTL,
+            0xC2 if next(1) == 0x85 => MAY_RTL,
+            0xE0 if matches!(next(1), 0xA0..=0xA3) => MAY_RTL,
+            0xE2 => match (next(1), next(2)) {
+                (0x80, 0x8E | 0x8F | 0xA9..=0xAE) | (0x81, 0xA6..=0xA9) => MAY_RTL,
+                _ => 0,
+            },
+            0xEF => MAY_RTL | MAY_HINT,
+            0xF0 if matches!(next(1), 0x90 | 0x9E) => MAY_RTL,
+            0xE1 | 0xE3 | 0xEA..=0xED => MAY_HINT,
+            _ => 0,
+        };
+        if found == MAY_RTL | MAY_HINT {
+            break;
+        }
+    }
+    found
+}
+
+/// zgx: whether `line` (not all ASCII) is to be built with attributes
+/// saying what language its Han characters are in (`hinted`): it has kana
+/// or hangul, and `attrs_list` doesn't say so already.
+#[inline(never)]
+fn wants_hint(attrs_list: &AttrsList, line: &str) -> bool {
+    attrs_list.defaults_owned().font_features.han() == HAN_NONE && han_hint(line) != HAN_NONE
+}
+
+/// zgx: no kana or hangul in the line (`FontFeatures::HAN`).
+const HAN_NONE: u32 = 0;
+/// zgx: the line has kana: its Han characters are Japanese.
+const HAN_JAPANESE: u32 = 1;
+/// zgx: the line has hangul: its Han characters are Korean.
+const HAN_KOREAN: u32 = 2;
+
+/// zgx: the language `line`'s Han characters are in, by its first kana
+/// (Japanese) or hangul (Korean), as browsers guess a text's when nothing
+/// names it. A line without the lead bytes of either (U+1000–U+1FFF,
+/// U+3000–U+FFFF less U+F000's private use, near enough) is passed by a
+/// byte at a time, as the punctuation, Latin, Hebrew, Arabic and emoji of
+/// most text are.
+#[inline(never)]
+fn han_hint(line: &str) -> u32 {
+    let lead = |b: u8| b == 0xE1 || (0xE3..=0xEF).contains(&b);
+    let any = line
+        .as_bytes()
+        .chunks(32)
+        .any(|chunk| chunk.iter().fold(false, |any, &b| any | lead(b)));
+    if !any {
+        return HAN_NONE;
+    }
+    for c in line.chars() {
+        match c {
+            '\u{3040}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF66}'..='\u{FF9F}' => {
+                return HAN_JAPANESE;
+            }
+            '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}' => {
+                return HAN_KOREAN;
+            }
+            _ => {}
+        }
+    }
+    HAN_NONE
 }
 
 /// zgx: the clusters of `glyphs` asking for emoji presentation, added to
@@ -358,7 +500,7 @@ fn shape_run(
     // zgx patch: ASCII is all Common or Latin; only other text is looked up,
     // and whether a cluster asks for emoji presentation with it.
     let run = &line[start_run..end_run];
-    let emoji = !run.is_ascii() && run_scripts(run, &mut scripts);
+    let emoji = !run.is_ascii() && run_scripts(run, &mut scripts, attrs_list, start_run);
 
     log::trace!("      Run {:?}: '{}'", &scripts, &line[start_run..end_run],);
 
@@ -1613,6 +1755,28 @@ impl ShapeLine {
     /// # Panics
     ///
     /// Will panic if `line` contains multiple paragraphs that do not have matching direction
+    /// zgx: `build`, with `attrs_list` saying what language the line's Han
+    /// characters are in (`hinted`).
+    #[cold]
+    #[inline(never)]
+    fn build_hinted(
+        &mut self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+        tab_width: u16,
+    ) {
+        let hinted = hinted(attrs_list, line);
+        self.build(
+            font_system,
+            line,
+            hinted.as_ref().unwrap_or(attrs_list),
+            shaping,
+            tab_width,
+        );
+    }
+
     pub fn build(
         &mut self,
         font_system: &mut FontSystem,
@@ -1620,6 +1784,58 @@ impl ShapeLine {
         attrs_list: &AttrsList,
         shaping: Shaping,
         tab_width: u16,
+    ) {
+        // zgx patch: ASCII without paragraph separators is one left-to-right
+        // paragraph at one level, as the bidi analysis would find: one span.
+        // Any other line goes apart (`build_mixed`), so ASCII's path has
+        // none of the analysis or what else a line beyond it may need.
+        let simple = line
+            .bytes()
+            .all(|b| b.is_ascii() && !matches!(b, b'\n' | b'\r' | 0x1C..=0x1E));
+        if simple {
+            self.build_spans(font_system, line, attrs_list, shaping, tab_width, None);
+        } else {
+            self.build_mixed(font_system, line, attrs_list, shaping, tab_width);
+        }
+    }
+
+    /// zgx: `build` for a line not all ASCII, as `line_kind` says: again
+    /// with attributes saying what language its Han characters are in, as
+    /// one left-to-right span without the bidi analysis, or by the analysis.
+    #[inline(never)]
+    fn build_mixed(
+        &mut self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+        tab_width: u16,
+    ) {
+        match line_kind(attrs_list, line) {
+            LineKind::Hinted => self.build_hinted(font_system, line, attrs_list, shaping, tab_width),
+            LineKind::LeftToRight => {
+                self.build_spans(font_system, line, attrs_list, shaping, tab_width, None);
+            }
+            LineKind::Bidi => {
+                let bidi = unicode_bidi::BidiInfo::new(line, None);
+                self.build_spans(font_system, line, attrs_list, shaping, tab_width, Some(bidi));
+            }
+        }
+    }
+
+    /// zgx: `build`'s spans and their tab stops, by `bidi`'s levels, or as
+    /// one left-to-right span without it (ASCII, and a line `line_kind`
+    /// finds nothing right to left in). Inlined into each caller: `build`'s
+    /// copy for ASCII, whose `bidi` is none, keeps none of the analysis.
+    #[inline(always)]
+    fn build_spans(
+        &mut self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+        tab_width: u16,
+        bidi: Option<unicode_bidi::BidiInfo<'_>>,
     ) {
         // Clear stale ellipsis span so it gets recomputed with the current attrs.
         // Without this, reusing a ShapeLine from a previous text (via Cached::Unused)
@@ -1637,16 +1853,6 @@ impl ShapeLine {
         cached_spans.clear();
         cached_spans.extend(spans.drain(..).rev());
 
-        // zgx patch: ASCII without paragraph separators is one left-to-right
-        // paragraph at one level, as the bidi analysis would find: one span.
-        let simple = line
-            .bytes()
-            .all(|b| b.is_ascii() && !matches!(b, b'\n' | b'\r' | 0x1C..=0x1E));
-        let bidi = if simple {
-            None
-        } else {
-            Some(unicode_bidi::BidiInfo::new(line, None))
-        };
         let rtl = match &bidi {
             Some(bidi) if !bidi.paragraphs.is_empty() => bidi.paragraphs[0].level.is_rtl(),
             _ => false,
@@ -1654,7 +1860,7 @@ impl ShapeLine {
 
         log::trace!("Line {}: '{}'", if rtl { "RTL" } else { "LTR" }, line);
 
-        if simple && !line.is_empty() {
+        if bidi.is_none() && !line.is_empty() {
             let mut span = cached_spans.pop().unwrap_or_else(ShapeSpan::empty);
             span.build(
                 font_system,
@@ -3613,5 +3819,47 @@ impl ShapeLine {
         scratch.cached_visual_lines = cached_visual_lines;
         scratch.glyph_sets = cached_glyph_sets;
         scratch.order = order;
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::{classify, MAY_HINT, MAY_RTL};
+    use unicode_bidi::{bidi_class, BidiClass};
+
+    /// Every character the bidi analysis treats otherwise than a left-to-right
+    /// paragraph's is found (`MAY_RTL`), and every kana and hangul is
+    /// (`MAY_HINT`): skipping the analysis, or the hint, is never wrong.
+    #[test]
+    fn classify_finds_every_character_that_needs_the_analysis_or_hints() {
+        let mut bytes = [0u8; 4];
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let encoded = c.encode_utf8(&mut bytes).as_bytes();
+            let found = classify(encoded);
+            let needs = matches!(
+                bidi_class(c),
+                BidiClass::R
+                    | BidiClass::AL
+                    | BidiClass::AN
+                    | BidiClass::B
+                    | BidiClass::LRE
+                    | BidiClass::RLE
+                    | BidiClass::LRO
+                    | BidiClass::RLO
+                    | BidiClass::PDF
+                    | BidiClass::LRI
+                    | BidiClass::RLI
+                    | BidiClass::FSI
+                    | BidiClass::PDI
+            );
+            assert!(!needs || found & MAY_RTL != 0, "{c:?} U+{:04X}", c as u32);
+            let hints = matches!(c,
+                '\u{3040}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF66}'..='\u{FF9F}'
+                | '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}');
+            assert!(!hints || found & MAY_HINT != 0, "{c:?} U+{:04X}", c as u32);
+        }
+        // Text of left-to-right scripts and common punctuation passes.
+        assert_eq!(classify("Résumé — naïve… ·×".as_bytes()), 0);
+        assert_eq!(classify("Привет, мир! Γειά σου".as_bytes()), 0);
     }
 }
