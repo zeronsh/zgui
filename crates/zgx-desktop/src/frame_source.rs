@@ -80,6 +80,28 @@ pub(crate) fn latch_wait(phase: Duration, period: Duration, holding: bool) -> Op
     }
 }
 
+/// When a frame no input asked for (a program's output, a value from the
+/// network) draws on Windows, `None` for at once: at rest at once, and
+/// soon after the last frame began drawing (`drawn_at`) once that is
+/// `UNASKED_SPACING` of a refresh past, the changes meanwhile drawn
+/// together. Presents there replace one another until the compositor takes
+/// the newest (`present_mode`), so nothing held them back: a terminal
+/// printing as fast as it could drew 800 to 1,200 frames a second, nearly
+/// all of them never shown. Short of a whole refresh, so a timer ticking at
+/// the display's rate, a little early or late, is never held a frame.
+#[cfg(any(windows, test))]
+pub(crate) fn unasked_frame_at(
+    drawn_at: Option<Instant>,
+    now: Instant,
+    interval: Duration,
+) -> Option<Instant> {
+    let next = drawn_at? + interval.mul_f64(UNASKED_SPACING);
+    (now < next).then_some(next)
+}
+/// The least time between frames no input asked for, in refreshes.
+#[cfg(any(windows, test))]
+const UNASKED_SPACING: f64 = 7. / 8.;
+
 pub(crate) fn interval_for(refresh_hz: Option<f64>) -> Duration {
     refresh_hz
         .filter(|hz| hz.is_finite() && *hz >= 1.)
@@ -1201,6 +1223,31 @@ mod tests {
             latch_wait(ms(0.3), REFRESH, false),
             Some(LATCH_AFTER - ms(0.3))
         );
+    }
+
+    #[test]
+    fn unasked_frames_draw_at_once_at_rest_and_about_once_a_refresh_while_changes_stream() {
+        let start = Instant::now();
+        let spacing = REFRESH.mul_f64(UNASKED_SPACING);
+        // Nothing drawn yet, or the last frame begun a refresh or more ago:
+        // at once. So is a timer at the display's rate ticking up to two
+        // milliseconds early.
+        assert_eq!(unasked_frame_at(None, start, REFRESH), None);
+        for after in [16.7, 15., 14.6, 40.] {
+            assert_eq!(
+                unasked_frame_at(Some(start), start + ms(after), REFRESH),
+                None,
+                "{after} ms after"
+            );
+        }
+        // Sooner: held until then, however many changes come meanwhile.
+        for after in [0., 0.5, 3., 14.] {
+            assert_eq!(
+                unasked_frame_at(Some(start), start + ms(after), REFRESH),
+                Some(start + spacing),
+                "{after} ms after"
+            );
+        }
     }
 
     #[test]
