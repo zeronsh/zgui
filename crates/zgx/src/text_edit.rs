@@ -808,6 +808,22 @@ impl TextEditor {
         };
         self.move_to(pos, extend);
     }
+    /// Left (`left`) or right as the text shows it, from the caret: as
+    /// `move_visually_at` from the place after the caret's byte, `caret`
+    /// giving a byte offset's caret. 0.1.6's form, kept for apps calling it.
+    pub fn move_visually(
+        &mut self,
+        word: bool,
+        extend: bool,
+        left: bool,
+        caret: impl Fn(usize) -> crate::scene::Rect,
+    ) {
+        let from = crate::text_layout::TextPosition {
+            byte_offset: self.selection.focus,
+            affinity: crate::text_layout::TextAffinity::After,
+        };
+        self.move_visually_at(word, extend, left, from, |p| caret(p.byte_offset));
+    }
     /// Left (`left`) or right as the text shows it, which right-to-left
     /// text runs the other way from its order: of the places before and
     /// after the caret (`from`, where it shows), the nearest whose caret
@@ -816,7 +832,7 @@ impl TextEditor {
     /// boundary has a place on each side (its affinities), and each is a
     /// stop: after a number ending a right-to-left run, as well as after the
     /// run. The place it goes, to draw the caret there.
-    pub fn move_visually(
+    pub fn move_visually_at(
         &mut self,
         word: bool,
         extend: bool,
@@ -1494,6 +1510,30 @@ mod tests {
         let end = editor.selection().focus;
         editor.set_selection(end, end);
         editor.insert(text);
+    }
+    /// 0.1.6's `move_visually`, which apps may call, still moves by what the
+    /// text shows: on a left-to-right line, as `move_right` and `move_left`
+    /// do, a selection collapsing to its edge that way.
+    #[test]
+    fn move_visually_keeps_its_0_1_6_form() {
+        let caret = |offset: usize| crate::scene::Rect {
+            x: offset as f32 * 10.,
+            y: 0.,
+            width: 1.,
+            height: 16.,
+        };
+        let mut editor = TextEditor::new("abc".to_owned());
+        editor.set_selection(1, 1);
+        editor.move_visually(false, false, false, caret);
+        assert_eq!(editor.selection().focus, 2);
+        editor.move_visually(false, false, true, caret);
+        assert_eq!(editor.selection().focus, 1);
+        editor.set_selection(0, 3);
+        editor.move_visually(false, false, true, caret);
+        assert_eq!(
+            (editor.selection().anchor, editor.selection().focus),
+            (0, 0)
+        );
     }
     /// A long text, held in chunks, edits, undoes and finds what a new
     /// value changed as a string does.
