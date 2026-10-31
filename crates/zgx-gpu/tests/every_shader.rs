@@ -119,6 +119,9 @@ fn every_shader_module_compiles_each_entry_point() {
             .filter(|e| e.stage == naga::ShaderStage::Vertex)
             .collect();
         for entry in &parsed.entry_points {
+            if std::env::var("EVERY_ENTRY").is_ok_and(|only| only != entry.name) {
+                continue;
+            }
             let label = format!("{name} `{}`", entry.name);
             // Named first: a compiler that overflows its stack ends the
             // process with no message of its own.
