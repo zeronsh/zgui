@@ -845,6 +845,10 @@ pub(crate) struct InputRare {
     /// `read_only = true` (or a state or function of one): selectable and
     /// focusable, the person's edits refused; `value` still sets it.
     pub(crate) read_only: Option<Source>,
+    /// `autocorrect = true` and `smart_punctuation = true`: the system's
+    /// substitutions as it is typed (`View::autocorrect`, `smart_punctuation`).
+    pub(crate) autocorrect: bool,
+    pub(crate) smart_punctuation: bool,
 }
 
 #[derive(Clone)]
@@ -2884,12 +2888,15 @@ const LATE_FIELDS: &[&str] = &[
     "overscroll",
     "read_only",
     "selection_radius",
+    "autocorrect",
+    "smart_punctuation",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
 /// it, so no style key compares against it: an input's caret (few set it,
 /// read only from those that do), whether plugins may target the node
-/// (`hook`, `private`), an input's `on_paste` and `active_descendant` and `read_only`, a
+/// (`hook`, `private`), an input's `on_paste`, `active_descendant`, `read_only`,
+/// `autocorrect` and `smart_punctuation`, a
 /// popover's `at_caret`; `inputmode` is read by `ui.input` itself, `on_end` and
 /// `end_distance` by `ui.list`. Any other key is unknown.
 #[cold]
@@ -2935,6 +2942,16 @@ fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlu
             if let Kind::Input { rare, .. } = &mut node.kind {
                 let read_only = source(lua, Ty::Bool, name, value)?;
                 rare.get_or_insert_default().read_only = Some(read_only);
+            }
+        }
+        "autocorrect" | "smart_punctuation" => {
+            if let Kind::Input { rare, .. } = &mut node.kind {
+                let on: bool = lua.unpack(value)?;
+                let rare = rare.get_or_insert_default();
+                match name {
+                    "autocorrect" => rare.autocorrect = on,
+                    _ => rare.smart_punctuation = on,
+                }
             }
         }
         "on_start" | "start_distance" | "at_end" => {

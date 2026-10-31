@@ -2399,6 +2399,15 @@ export type InputProps = Merge<Props, {
 	-- call it.
 	on_paste: ((e: { text: string?, files: { File } }) -> boolean?)?,
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Correct a misspelled word as it ends, and expand the person's text
+	-- replacements ("omw" to "On my way!"), as the system's own fields do
+	-- where the person has them on (macOS). Undo puts back what was typed.
+	-- Not in a password field.
+	autocorrect: boolean?,
+	-- Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’,
+	-- — for --), where the person has the system's smart quotes and dashes
+	-- on (macOS). Undo puts back what was typed. Off for code and data.
+	smart_punctuation: boolean?,
 	-- "contain": a wheel or trackpad gesture over it stays with it at its
 	-- edges (CSS's overscroll-behavior), the scroll views around it never
 	-- moving; "auto" (the default) hands what it can't scroll on to them.

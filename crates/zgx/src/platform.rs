@@ -105,6 +105,25 @@ pub trait Platform {
     fn ignore_spelling(&self, word: &str) {
         let _ = word;
     }
+    /// What the system's substitutions would change in `text`, of the
+    /// `kinds` asked for and the person has on (macOS's smart quotes and
+    /// dashes, and their text replacements, in System Settings): each a
+    /// UTF-8 byte range of `text` and what goes there. None changes nothing.
+    fn substitutions(
+        &self,
+        text: &str,
+        kinds: Substitutions,
+    ) -> Vec<(std::ops::Range<usize>, String)> {
+        let _ = (text, kinds);
+        Vec::new()
+    }
+    /// The system's autocorrection for the word at `word` (a UTF-8 byte
+    /// range of `text`, the rest its context), where the person has
+    /// spelling correction on. None corrects nothing.
+    fn correction(&self, text: &str, word: std::ops::Range<usize>) -> Option<String> {
+        let _ = (text, word);
+        None
+    }
     /// Whether the platform looks words up (`look_up`): macOS's dictionary
     /// panel. A context menu offers Look Up where it does.
     fn looks_up(&self) -> bool {
@@ -176,6 +195,17 @@ pub trait Platform {
         let _ = badge;
         false
     }
+}
+
+/// Which of the system's substitutions an editor asks for
+/// (`Platform::substitutions`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Substitutions {
+    /// Curly quotes and dashes for straight ones (`View::smart_punctuation`).
+    pub punctuation: bool,
+    /// The person's text replacements, "omw" for "On my way!"
+    /// (`View::autocorrect`).
+    pub replacements: bool,
 }
 
 /// The platform, as a service components find.

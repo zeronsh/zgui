@@ -908,6 +908,19 @@ impl EditorHandle {
         self.edited(changed, composing);
         changed
     }
+    /// `replace_text`, the caret staying where typing left it: the system's
+    /// substitution of what was typed (`View::autocorrect`).
+    pub(crate) fn substitute(&self, range: std::ops::Range<usize>, text: &str) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+        let changed = self
+            .editor
+            .borrow_mut()
+            .substitute(range, &normalize_text(text, self.multiline));
+        self.edited(changed, false);
+        changed
+    }
     /// After an edit (`composing`: a composition showed before it): the
     /// model told and the editor drawn again if its text changed, or drawn
     /// again alone if only its composition ended (the same text put in).
