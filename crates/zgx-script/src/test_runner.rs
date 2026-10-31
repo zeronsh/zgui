@@ -298,13 +298,18 @@ impl Mounted {
         app.ui.prepare_frame();
         crate::driver::find(&app.ui, &app.handle, target).map_err(mlua::Error::runtime)
     }
+    /// The same for an action: it must show, as a person can reach it.
+    fn reachable(app: &mut TestApp, target: &str) -> mlua::Result<zgx::scene::NodeId> {
+        app.ui.prepare_frame();
+        crate::driver::find_shown(&app.ui, &app.handle, target).map_err(mlua::Error::runtime)
+    }
 }
 
 impl UserData for Mounted {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("click", |_, m, target: String| {
             let mut app = m.app.borrow_mut();
-            let node = Self::node(&mut app, &target)?;
+            let node = Self::reachable(&mut app, &target)?;
             let bounds = app.ui.scene.borrow().bounds(node);
             crate::driver::click_at(&mut app.ui, bounds);
             app.settle();
@@ -334,7 +339,7 @@ impl UserData for Mounted {
         });
         methods.add_method("hover", |_, m, target: String| {
             let mut app = m.app.borrow_mut();
-            let node = Self::node(&mut app, &target)?;
+            let node = Self::reachable(&mut app, &target)?;
             let b = app.ui.scene.borrow().bounds(node);
             crate::driver::hover_at(&mut app.ui, (b.x + b.width / 2., b.y + b.height / 2.));
             app.settle();

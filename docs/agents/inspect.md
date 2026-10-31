@@ -135,6 +135,26 @@ zgx inspect sleep 500                                  # let the app run
 
 `cmd` is Command on macOS and Control elsewhere, as commands' keys are. A key goes where focus is: `type` or `click` an input first. After an action the interface is laid out again before the next command reads it, so `click` then `tree` shows the result; for what takes time (a fetch, a streamed reply, an animation), `wait` on what it will show rather than sleeping.
 
+## Popovers, menus and other popups
+
+A popover's, menu's, select's, date picker's, tooltip's, context menu's or modal's panel is in `tree` under the node that opens it, and targets reach inside it like anywhere else. A closed panel's content is kept, unseen: `find` lists it, marked `hidden`, and an action at it (`click`, `hover`, `scroll`, `snapshot`) fails with `doesn't show`, rather than landing on whatever is under it.
+
+Open it first, wait for it, then act inside:
+
+```sh
+zgx inspect click '#more'                 # the trigger
+zgx inspect wait '#share'                 # the panel shows a frame later
+zgx inspect click 'role:menuitem "Share"' # a submenu opens the same way
+zgx inspect click '#copy-link'
+zgx inspect right-click '#row' && zgx inspect wait 'role:menuitem "Cut"'
+zgx inspect hover '#save' && zgx inspect wait '"Save the file"'   # a tooltip, after its delay
+zgx inspect key Escape                    # closes the innermost
+```
+
+A select's options are `menuitemradio`, as AppKit's pop-up button has them; a combobox's are `option`; a date picker's month is a `grid`.
+
+On macOS a popup is a window of its own and may lie past the main window's edge. Its boxes are in the main window's points all the same, so clicks and targets reach it. `snapshot` pictures it from its own surface, and `memory` counts its renderers as `gpu popup windows`. A popup opens in the scene first and gets its window at the next frame, so a reading taken between the two says `popup windows not yet drawn`.
+
 ## Gestures: record once, replay
 
 `scroll` sends one wheel event straight to the interface. A real gesture is more: a trackpad's fingers and then its momentum, as the platform reports them over a second or two, which the window resamples to its refreshes and which stretches an edge. To see how that feels, record one and play it back through the window's own input path:

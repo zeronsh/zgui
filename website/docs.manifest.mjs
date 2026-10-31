@@ -181,6 +181,8 @@ export const sets = [
         description: 'zgx inspect memory: what a running app holds, a line for each holder.' },
       { slug: 'acting', src: 'docs/agents/inspect.md', title: 'Acting', sections: ['Acting'], unwrap: true,
         description: 'click, type, key, scroll, command, set, wait and sleep.' },
+      { slug: 'popups', src: 'docs/agents/inspect.md', title: 'Popovers and menus', sections: ['Popovers, menus and other popups'], unwrap: true,
+        description: 'Open a popover, menu or select, wait for it, and act inside; popups past the window included.' },
       { slug: 'gestures', src: 'docs/agents/inspect.md', title: 'Record and replay gestures', sections: ['Gestures'], unwrap: true,
         description: 'Record a trackpad gesture once, replay it through the window’s own input path, and read how its frames landed.' },
       { slug: 'switches', src: 'docs/agents/inspect.md', title: 'Switches', sections: ['Switches'], unwrap: true,

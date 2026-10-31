@@ -405,3 +405,51 @@ fn check_gives_the_test_globals_to_test_files_alone() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Inside a popover, a menu and a submenu, a test reaches what shows, and a
+/// click at a closed panel's button fails, saying what to open, rather than
+/// landing on whatever is under it.
+#[test]
+fn a_test_reaches_into_popovers_and_menus_and_not_closed_ones() {
+    let dir = app(
+        "popups",
+        &[(
+            "popups.test.luau",
+            r##"
+test("open, then reach inside", function()
+    local app = mount()
+    local closed = pcall(function() app:click("#inside") end)
+    expect(closed).to_be(false)
+    app:click("#open")
+    app:click("#inside")
+    expect(app:state("log")).to_be("inside")
+    app:click("#menu-open")
+    app:click('role:menuitem "Share"')
+    app:click("#copy")
+    expect(app:state("log")).to_be("copy")
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("app.luau"),
+        r##"local log = ui.state("log", "")
+local pop = ui.state("pop", false)
+local menu = ui.state("menu", false)
+local share = ui.state("share", false)
+return ui.row {
+    ui.popover { open = pop, w = 160,
+        anchor = ui.button { id = "open", on_click = ui.toggle(pop), "Open" },
+        ui.column { ui.button { id = "inside", on_click = function() log:set("inside") end, "In" } } },
+    ui.menu { open = menu, label = "More",
+        anchor = ui.button { id = "menu-open", on_click = ui.toggle(menu), "Menu" },
+        ui.submenu { open = share, label = "Share",
+            ui.menu_item { id = "copy", on_click = function() log:set("copy") end, "Copy" } } },
+}
+"##,
+    )
+    .unwrap();
+    let (code, text) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{text}");
+    std::fs::remove_dir_all(dir).unwrap();
+}

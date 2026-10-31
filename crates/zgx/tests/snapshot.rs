@@ -38,3 +38,45 @@ fn a_snapshot_is_the_hosts_picture_of_the_nodes_box() {
     ui.prepare_frame();
     assert!(ui.snapshot(card, 100).is_none());
 }
+
+/// A node in a popup is pictured from the popup's own surface where the
+/// host shows one (past the window's edge, it is the only place it shows),
+/// else from the window's.
+#[test]
+fn a_popups_node_is_pictured_from_its_own_surface() {
+    let mut ui = Ui::new(200., 100.);
+    // A host showing popups in windows of their own.
+    ui.set_popup_screens(vec![Rect::new(0., 0., 1000., 800.)]);
+    let open = ui.signal(true);
+    let view = ui.mount(
+        popover("Far", open, div().id("anchor").w(40.).h(20.))
+            .child(div().id("inside").w(300.).h(60.).bg(rgb(0x334455))),
+    );
+    ui.prepare_frame();
+    let inside = view.find("inside").unwrap();
+    let window: Rc<RefCell<usize>> = Rc::default();
+    let seen = window.clone();
+    ui.on_snapshot(move |_, _| {
+        *seen.borrow_mut() += 1;
+        Some(Arc::new(ImageData::new(1, 1, vec![1u8; 4]).unwrap()))
+    });
+    // No popup surfaces: the window's picture.
+    assert_eq!(ui.snapshot(inside, 50).unwrap().width(), 1);
+    let asked: Rc<RefCell<Vec<Rect>>> = Rc::default();
+    let log = asked.clone();
+    ui.on_popup_snapshot(move |_, rect, _| {
+        log.borrow_mut().push(rect);
+        Some(Arc::new(ImageData::new(3, 1, vec![2u8; 12]).unwrap()))
+    });
+    assert_eq!(
+        ui.snapshot(inside, 50).unwrap().width(),
+        3,
+        "the popup's own"
+    );
+    assert_eq!(asked.borrow().len(), 1);
+    assert_eq!(*window.borrow(), 1, "the window isn't asked");
+    // A node in no popup: the window's, the popups' host not asked.
+    let anchor = view.find("anchor").unwrap();
+    assert_eq!(ui.snapshot(anchor, 50).unwrap().width(), 1);
+    assert_eq!(asked.borrow().len(), 1);
+}

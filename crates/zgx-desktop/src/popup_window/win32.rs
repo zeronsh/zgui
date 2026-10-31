@@ -1244,6 +1244,10 @@ impl PopupHost {
         }
     }
     /// Hide every popup (the window closes or goes away).
+    pub fn memory(&self, report: &mut zgx::memory::Report) {
+        let renderers = self.shown.iter();
+        super::report_popups(renderers.filter_map(|(_, p)| p.renderer.as_ref()), report);
+    }
     pub fn hide_all(&mut self, _: &winit::window::Window) {
         for (_, panel) in self.shown.drain(..) {
             release(panel);

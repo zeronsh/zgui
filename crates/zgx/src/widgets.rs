@@ -1181,6 +1181,8 @@ impl EditorDrag {
 }
 /// The host's picture of a region of what the window last showed.
 type Snapshotter = Rc<dyn Fn(Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>>>;
+type PopupSnapshotter =
+    Rc<dyn Fn(NodeId, Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>>>;
 /// The host's recorder and player of wheel input (`Ui::on_wheel_tape`).
 type WheelTaper = Rc<dyn Fn(WheelTape) -> Result<String, String>>;
 /// What devtools ask of the host's wheel input (`Ui::wheel_tape`): to record
@@ -1225,6 +1227,7 @@ pub(crate) struct UiStorage {
     popup_soon_sent: Cell<bool>,
     /// The host's way to picture what the window last showed (`Ui::on_snapshot`).
     snapshotter: RefCell<Option<Snapshotter>>,
+    popup_snapshotter: RefCell<Option<PopupSnapshotter>>,
     /// The window's zoom (`zoom`), 1 at 100%.
     pub(crate) zoom: Cell<f64>,
     /// The app turned zoom off (`set_zoomable`).
@@ -1505,6 +1508,7 @@ impl Ui {
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
             snapshotter: RefCell::new(None),
+            popup_snapshotter: RefCell::new(None),
             zoom: Cell::new(1.),
             zoom_off: Cell::new(false),
             zoom_host: RefCell::new(Vec::new()),
@@ -2721,6 +2725,16 @@ impl Ui {
     ) {
         *self.storage.snapshotter.borrow_mut() = Some(Rc::new(take));
     }
+    /// How the host pictures a popup shown in a surface of its own: of
+    /// popup root `root`, `Rect` in the scene's points, as `on_snapshot`
+    /// does the window. `None` where it shows no such surface: the window's
+    /// picture has it then.
+    pub fn on_popup_snapshot(
+        &self,
+        take: impl Fn(NodeId, Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>> + 'static,
+    ) {
+        *self.storage.popup_snapshotter.borrow_mut() = Some(Rc::new(take));
+    }
     /// A picture of `node` as the window last showed it (a thumbnail of a
     /// pane, say): its box, at most `max_width` pixels wide. Native views
     /// in it (a page, a terminal) are the platform's to draw and show as
@@ -2741,6 +2755,21 @@ impl Ui {
         };
         if bounds.width <= 0. || bounds.height <= 0. {
             return None;
+        }
+        // In a popup past the window: what its own surface shows.
+        let root = {
+            let scene = self.scene.borrow();
+            scene
+                .popups()
+                .iter()
+                .copied()
+                .find(|root| scene.is_within(node, *root))
+        };
+        let popup = self.storage.popup_snapshotter.borrow().clone();
+        if let (Some(root), Some(popup)) = (root, popup)
+            && let Some(picture) = popup(root, bounds, max_width.max(1))
+        {
+            return Some(picture);
         }
         take(bounds, max_width.max(1))
     }

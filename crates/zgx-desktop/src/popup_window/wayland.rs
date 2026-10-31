@@ -453,6 +453,10 @@ impl Popups {
         });
         Ok(())
     }
+    /// Its popups' renderers, for a memory report.
+    pub fn renderers(&self) -> impl Iterator<Item = &zgx_gpu::GpuRenderer> {
+        self.shown.iter().map(|(_, popup)| &popup.renderer)
+    }
     pub fn hide_all(&mut self, parent: &Window) {
         let shown = std::mem::take(&mut self.shown);
         with_client(parent, |client| {

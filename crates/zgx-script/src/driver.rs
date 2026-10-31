@@ -19,11 +19,11 @@
 //!   (`#messages row 3`), and `[2]` picks the second of several matches.
 //!
 //! A target matching more than one node is an error naming them: an
-//! action never picks one silently. Nodes hidden from layout (`hidden`, or
-//! inside something hidden) match too, but where exactly one match shows,
-//! the target names it: a person can reach only that one. A modal's,
-//! popover's or menu's panel is under the node that owns it, wherever the
-//! scene puts it.
+//! action never picks one silently. Nodes that don't show (`hidden`, inside
+//! something hidden, or in a closed panel, kept but transparent) match too,
+//! but where exactly one match shows, the target names it: a person can
+//! reach only that one. A modal's, popover's or menu's panel is under the
+//! node that owns it, wherever the scene puts it.
 use std::{collections::HashMap, fmt::Write as _};
 use zgx::{
     compose::ViewHandle,
@@ -337,10 +337,19 @@ fn describe(ui: &Ui, node: NodeId) -> String {
     }
     let b = scene.bounds(node);
     let _ = write!(out, " {}", rect(b));
-    if !scene.layout_visible(node) {
+    if !shows(&scene, node) {
         out.push_str(" hidden");
     }
     out
+}
+
+/// Whether `node` shows: laid out, and neither it nor what holds it is
+/// transparent (a closed panel's content is kept, unseen and out of reach).
+pub fn shows(scene: &Scene, node: NodeId) -> bool {
+    scene.layout_visible(node)
+        && std::iter::once(node)
+            .chain(scene.ancestors(node))
+            .all(|node| scene.effects(node).opacity > 0.)
 }
 
 /// The nodes `target` names: all of them (an action wants one).
@@ -491,10 +500,7 @@ pub fn find(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, String
             // Only one of them shows: that is the one a person means.
             let shown: Vec<NodeId> = {
                 let scene = ui.scene.borrow();
-                many.iter()
-                    .copied()
-                    .filter(|n| scene.layout_visible(*n))
-                    .collect()
+                many.iter().copied().filter(|n| shows(&scene, *n)).collect()
             };
             if let [one] = shown[..] {
                 return Ok(one);
@@ -509,6 +515,19 @@ pub fn find(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, String
             message.push_str("\nnarrow it (a role, `>>`, `[n]`, or `@n`)");
             Err(message)
         }
+    }
+}
+
+/// `find`, for an action: what `target` names, if a person can reach it. A
+/// click at something closed would land on what is under it and say nothing.
+pub fn find_shown(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, String> {
+    let node = find(ui, handle, target)?;
+    match shows(&ui.scene.borrow(), node) {
+        true => Ok(node),
+        false => Err(format!(
+            "`{target}` doesn't show: {} (open what holds it first)",
+            describe(ui, node)
+        )),
     }
 }
 
@@ -684,6 +703,8 @@ pub struct Line {
     pub value: Option<String>,
     /// Its box, in window points.
     pub bounds: Rect,
+    /// It doesn't show (`shows`): hidden, or in a closed panel.
+    pub hidden: bool,
     /// It has the keyboard focus.
     pub focused: bool,
     /// It is disabled.
@@ -735,6 +756,7 @@ pub fn tree(
                         .filter(|s| s.role != Role::Label)
                         .and_then(|s| s.value.clone()),
                     bounds: scene.bounds(node),
+                    hidden: !shows(&scene, node),
                     focused: focused == Some(node),
                     disabled: s.is_some_and(|s| s.disabled),
                     checked: s.and_then(|s| s.checked),
@@ -826,6 +848,9 @@ pub fn tree_text(lines: &[Line], hidden: usize) -> String {
             let _ = write!(out, " ={:?}", clip(value, 40));
         }
         let _ = write!(out, " {}", rect(line.bounds));
+        if line.hidden {
+            out.push_str(" hidden");
+        }
         if line.focused {
             out.push_str(" focused");
         }
