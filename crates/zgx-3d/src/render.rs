@@ -7,7 +7,7 @@
 //! opaque meshes' depth as the sun sees them.
 use crate::{
     math::{Mat4, Vec3},
-    texture::MAPS,
+    texture::{GLASS_MAPS, MAPS},
     world::{Inner, Light, POINT_LIGHTS},
 };
 use std::{cell::RefCell, collections::HashMap, rc::Weak};
@@ -626,7 +626,15 @@ impl Viewport for Renderer {
                         [t.attenuation[0], t.attenuation[1], t.attenuation[2], 0.],
                     ];
                     let words = uniform("3D transmission", bytemuck::cast_slice(&words));
-                    (words, &behind.whole, &behind.sampler)
+                    // Its maps, uploaded for this binding alone (it keeps
+                    // them).
+                    let maps = d.extras.map(|e| &e.glass_maps);
+                    let glass_maps: [Option<wgpu::TextureView>; GLASS_MAPS] =
+                        std::array::from_fn(|i| {
+                            let texture = maps.and_then(|maps| maps[i].as_ref())?;
+                            upload(frame.device, frame.queue, texture, false)
+                        });
+                    (words, &behind.whole, &behind.sampler, glass_maps)
                 });
                 let layout = match (&glass, &rows) {
                     (Some(_), _) => {
@@ -637,9 +645,12 @@ impl Viewport for Renderer {
                     }
                     (None, None) => layout,
                 };
-                let glass = glass
-                    .as_ref()
-                    .map(|(words, view, sampler)| (words, *view, *sampler));
+                // White where it has none: all passing, as thick as its
+                // transmission says.
+                let glass = glass.as_ref().map(|(words, view, sampler, maps)| {
+                    let maps = maps.each_ref().map(|m| m.as_ref().unwrap_or(&stand_ins[1]));
+                    (words, *view, *sampler, maps)
+                });
                 (
                     map_binding(
                         frame.device,
@@ -1412,6 +1423,11 @@ fn map_set(d: &crate::world::Drawn) -> [u64; MAPS] {
         let key = numbers.iter().fold(0x8422_2325_cbf2_9ce4, |key, number| {
             (key ^ u64::from(*number)).wrapping_mul(0x0100_0000_01b3)
         });
+        // And its maps.
+        let key = extras.glass_maps.iter().fold(key, |key, map| {
+            let id = map.as_ref().map_or(0, crate::Texture::id);
+            (key ^ id).wrapping_mul(0x0100_0000_01b3)
+        });
         maps[0] = (maps[0] ^ key) | 1;
     }
     maps
@@ -1996,6 +2012,17 @@ fn map_layout(device: &wgpu::Device, placed: bool, glass: bool) -> wgpu::BindGro
                 count: None,
             },
         ]);
+        // Its maps: how much passes, how thick.
+        entries.extend((5..7).map(|binding| wgpu::BindGroupLayoutEntry {
+            binding: MAPS as u32 + binding,
+            visibility: fragment,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }));
     }
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("3D maps"),
@@ -2205,7 +2232,12 @@ fn map_binding(
     sampler: &wgpu::Sampler,
     maps: [&wgpu::TextureView; MAPS],
     placements: Option<&wgpu::Buffer>,
-    glass: Option<(&wgpu::Buffer, &wgpu::TextureView, &wgpu::Sampler)>,
+    glass: Option<(
+        &wgpu::Buffer,
+        &wgpu::TextureView,
+        &wgpu::Sampler,
+        [&wgpu::TextureView; GLASS_MAPS],
+    )>,
 ) -> wgpu::BindGroup {
     let entries: Vec<wgpu::BindGroupEntry> = maps
         .iter()
@@ -2222,22 +2254,34 @@ fn map_binding(
             binding: MAPS as u32 + 1,
             resource: buffer.as_entire_binding(),
         }))
-        .chain(glass.into_iter().flat_map(|(words, behind, sampler)| {
-            [
-                wgpu::BindGroupEntry {
-                    binding: MAPS as u32 + 2,
-                    resource: words.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MAPS as u32 + 3,
-                    resource: wgpu::BindingResource::TextureView(behind),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MAPS as u32 + 4,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ]
-        }))
+        .chain(
+            glass
+                .into_iter()
+                .flat_map(|(words, behind, sampler, [passing, thick])| {
+                    [
+                        wgpu::BindGroupEntry {
+                            binding: MAPS as u32 + 2,
+                            resource: words.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MAPS as u32 + 3,
+                            resource: wgpu::BindingResource::TextureView(behind),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MAPS as u32 + 4,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MAPS as u32 + 5,
+                            resource: wgpu::BindingResource::TextureView(passing),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MAPS as u32 + 6,
+                            resource: wgpu::BindingResource::TextureView(thick),
+                        },
+                    ]
+                }),
+        )
         .collect();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("3D maps"),
@@ -2415,6 +2459,8 @@ struct Frame {
 //G @group(1) @binding(7) var<uniform> glass: Glass;
 //G @group(1) @binding(8) var behind: texture_2d<f32>;
 //G @group(1) @binding(9) var behind_sampler: sampler;
+//G @group(1) @binding(10) var transmission_texture: texture_2d<f32>;
+//G @group(1) @binding(11) var thickness_texture: texture_2d<f32>;
 //G // What shows through at `world`, seen along `v`: what is behind, bent by
 //G // the index of refraction through the thickness (`scale` its mesh's),
 //G // blurred as rough as the surface, the light lost on the way taken out.
@@ -2688,6 +2734,8 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
 //T     bump = textureSample(normal_texture, map_sampler, uvs[2]).xyz;
 //T     glow = textureSample(emission_texture, map_sampler, uvs[3]).rgb;
 //T     occlusion = textureSample(occlusion_texture, map_sampler, uvs[4]).r;
+//G     let passing = textureSample(transmission_texture, map_sampler, in.uv).r;
+//G     let thick = textureSample(thickness_texture, map_sampler, in.uv).g;
 //T     let dpx = dpdx(in.world);
 //T     let dpy = dpdy(in.world);
 //T     let duvx = dpdx(uvs[2]);
@@ -2721,7 +2769,7 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
         let a = given * given;
         let roughness = sqrt(sqrt(clamp(a * a + widening, 0.0, 1.0)));
         // What passes through takes the place of its diffuse light.
-//G         let see_through = glass.a.x * (1.0 - metallic);
+//G         let see_through = glass.a.x * passing * (1.0 - metallic);
 //G         let tinted = base;
 //G         base *= 1.0 - see_through;
         var sun = frame.sun_color.rgb;
@@ -2762,7 +2810,7 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
         // What shows through, behind already mapped, less what reflects.
 //G         let facing_f0 = pow((glass.a.y - 1.0) / (glass.a.y + 1.0), 2.0);
 //G         let reflects = facing_f0 + (1.0 - facing_f0) * pow(1.0 - n_v, 5.0);
-//G         lit += through(in.world, n, v, roughness, in.scale) * tinted * see_through * (1.0 - reflects);
+//G         lit += through(in.world, n, v, roughness, in.scale * thick) * tinted * see_through * (1.0 - reflects);
     }
     if frame.params.y > 0.5 {
         lit = encode(clamp(lit, vec3(0.0), vec3(1.0)));

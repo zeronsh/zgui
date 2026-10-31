@@ -57,10 +57,27 @@ pub enum Map {
     /// 0 none), dimming the hemisphere's ambient light, not the sun's or a
     /// bulb's (glTF's occlusion).
     Occlusion,
+    /// How much of its light passes through each point (red), multiplying
+    /// its transmission's factor (`World::set_transmission`; glTF's
+    /// transmission texture). Read at its first texture coordinates as
+    /// they are (never placed), and only while light passes through it.
+    Transmission,
+    /// How thick it is at each point (green), multiplying its
+    /// transmission's thickness (glTF's volume thickness texture). Read as
+    /// `Transmission` is.
+    Thickness,
 }
-/// How many maps a mesh may have.
+/// How many maps a mesh may have, but for those of light passing through.
 pub(crate) const MAPS: usize = 5;
+/// How many maps light passing through a mesh may have.
+pub(crate) const GLASS_MAPS: usize = 2;
 impl Map {
+    /// A map of light passing through: its place in `Extras::glass_maps`.
+    /// (They follow `ALL`'s: one comparison.)
+    #[inline(always)]
+    pub(crate) fn glass(self) -> Option<usize> {
+        (self as usize).checked_sub(MAPS)
+    }
     /// Every map, in the order a frame binds them.
     pub(crate) const ALL: [Map; MAPS] = [
         Map::BaseColour,

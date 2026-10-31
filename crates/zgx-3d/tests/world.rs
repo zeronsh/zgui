@@ -546,6 +546,52 @@ fn a_volume_takes_out_light_by_how_far_it_goes() {
 }
 
 #[test]
+fn maps_vary_how_much_passes_through_and_how_deep() {
+    let (world, pane) = red_behind_glass(Material::rgb(0xffffff).with(0., 0.));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    let halves = |window: &mut Window| {
+        window.draw();
+        (window.pixel(30, 50)[0], window.pixel(70, 50)[0])
+    };
+    // Nothing passing on the left, all on the right.
+    world.set_transmission(pane, Some(Transmission::new(1.)));
+    let map = Texture::from_rgba8(2, 1, vec![0, 0, 0, 255, 255, 255, 255, 255]).unwrap();
+    world.set_map(pane, Map::Transmission, Some(map.clone()));
+    assert_eq!(
+        world.map(pane, Map::Transmission).map(|t| t.id()),
+        Some(map.id())
+    );
+    let (left, right) = halves(&mut window);
+    assert!(left < 60 && right > 200, "{left} {right}");
+    world.set_map(pane, Map::Transmission, None);
+    assert!(world.map(pane, Map::Transmission).is_none());
+    let (left, right) = halves(&mut window);
+    assert!(
+        left > 200 && right > 200,
+        "all passing again: {left} {right}"
+    );
+    // A volume as deep as it says on the left (green), none deep on the
+    // right: darker on the left.
+    let volume = Transmission::new(1.).volume(0.1, [0.5; 3], 0.1);
+    world.set_transmission(pane, Some(volume));
+    let map = Texture::from_rgba8(2, 1, vec![0, 255, 0, 255, 0, 0, 0, 255]).unwrap();
+    world.set_map(pane, Map::Thickness, Some(map));
+    let (left, right) = halves(&mut window);
+    assert!(left < right - 30, "thicker on the left: {left} {right}");
+    // They aren't placed.
+    let moved = MapPlacement::new().offset(0.5, 0.);
+    world.set_map_placement(pane, Map::Thickness, Some(moved));
+    assert_eq!(world.map_placement(pane, Map::Thickness), None);
+    assert_eq!(halves(&mut window), (left, right));
+    // Without light passing through, they're nothing.
+    world.set_transmission(pane, None);
+    let (left, right) = halves(&mut window);
+    assert!(left < 20 && right < 20, "a solid pane: {left} {right}");
+}
+
+#[test]
 fn a_glass_tints_what_shows_through_by_its_colour() {
     // Yellow glass over red: red passes; cyan glass: nothing does.
     let shown = |color| {

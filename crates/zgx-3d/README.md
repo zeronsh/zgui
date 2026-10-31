@@ -33,8 +33,10 @@ What a world takes beyond meshes and lights, each costing nothing until used:
   models bring theirs: `KHR_texture_transform`, samplers' wrapping, `TEXCOORD_1`.
 - **Glass**: `World::set_transmission(id, Some(Transmission::new(1.).ior(1.5).volume(
   thickness, color, distance)))` lets light through a mesh: what is behind shows
-  through, bent, blurred by its roughness and tinted. glTF models bring theirs
-  (`KHR_materials_transmission`, `_ior`, `_volume`). A world with none pays nothing.
+  through, bent, blurred by its roughness and tinted; `Map::Transmission` and
+  `Map::Thickness` vary how much passes and how deep it is. glTF models bring
+  theirs (`KHR_materials_transmission`, `_ior`, `_volume`, with their textures). A
+  world with none pays nothing.
 - **Lights that follow objects, and spots**: `World::set_light_parent(light, Some(id))`
   carries a light with an object, and `World::set_spot(light, Some(Spot::new(direction,
   inner, outer)))` makes a point light a spot. A frame shades with the eight point
