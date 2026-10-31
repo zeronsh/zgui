@@ -478,6 +478,90 @@ fn a_light_follows_the_object_it_is_placed_in() {
     assert_eq!(centre_and_edge(&mut window).0, 0);
 }
 
+/// A red square 1 behind a glass one facing the camera, lit by nothing:
+/// all the glass shows is what passes through it.
+fn red_behind_glass(glass: Material) -> (World, ObjectId) {
+    let mut red = Material::rgb(0xff0000);
+    red.unlit = true;
+    let (world, behind) = one(facing_square(), red);
+    world.set_transform(behind, Transform::at([0., 0., -1.]));
+    let pane = world.add(Object::mesh(facing_square(), glass));
+    (world, pane)
+}
+
+#[test]
+fn a_mesh_light_passes_through_shows_what_is_behind_it() {
+    let (world, pane) = red_behind_glass(Material::rgb(0xffffff).with(0., 0.));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let solid = window.pixel(50, 50);
+    assert!(
+        solid[0] < 20,
+        "lit by nothing, a solid pane is dark: {solid:?}"
+    );
+    world.set_transmission(pane, Some(Transmission::new(1.)));
+    assert_eq!(world.transmission(pane), Some(Transmission::new(1.)));
+    window.draw();
+    let through = window.pixel(50, 50);
+    assert!(
+        through[0] > 200 && through[1] < 40,
+        "red through it: {through:?}"
+    );
+    // Half of it: half as bright (in linear light).
+    world.set_transmission(pane, Some(Transmission::new(0.5)));
+    window.draw();
+    let half = window.pixel(50, 50);
+    assert!(
+        half[0] > 120 && half[0] < through[0] - 20,
+        "{half:?} {through:?}"
+    );
+    world.set_transmission(pane, None);
+    window.draw();
+    assert_eq!(window.pixel(50, 50), solid);
+}
+
+#[test]
+fn a_volume_takes_out_light_by_how_far_it_goes() {
+    let (world, pane) = red_behind_glass(Material::rgb(0xffffff).with(0., 0.));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    let shown = |window: &mut Window, transmission| {
+        world.set_transmission(pane, Some(transmission));
+        window.draw();
+        window.pixel(50, 50)[0]
+    };
+    let thin = shown(&mut window, Transmission::new(1.));
+    // A tenth of a unit deep, to half every tenth: half as bright.
+    let deep = shown(
+        &mut window,
+        Transmission::new(1.).volume(0.1, [0.5; 3], 0.1),
+    );
+    assert!(deep < thin - 30, "dimmed: {deep} {thin}");
+    // Light falling nowhere: as a thin wall.
+    let clear = shown(&mut window, Transmission::new(1.).volume(0.1, [1.; 3], 0.1));
+    assert!((clear as i32 - thin as i32).abs() <= 2, "{clear} {thin}");
+}
+
+#[test]
+fn a_glass_tints_what_shows_through_by_its_colour() {
+    // Yellow glass over red: red passes; cyan glass: nothing does.
+    let shown = |color| {
+        let (world, pane) = red_behind_glass(Material::rgb(color).with(0., 0.));
+        world.set_transmission(pane, Some(Transmission::new(1.)));
+        let mut window = Window::new(&world)?;
+        window.draw();
+        Some(window.pixel(50, 50)[0])
+    };
+    let Some(yellow) = shown(0xffff00) else {
+        return;
+    };
+    let cyan = shown(0x00ffff).unwrap();
+    assert!(yellow > 200 && cyan < 20, "{yellow} {cyan}");
+}
+
 /// A square coloured by its vertices, red at the left, blue at the right.
 fn colored_square() -> Geometry {
     let square = facing_square();

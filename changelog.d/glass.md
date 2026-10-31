@@ -1,0 +1,4 @@
+---
+section: added
+---
+- **Glass in 3D scenes** (zgx-3d): `World::set_transmission(id, Some(Transmission::new(1.).ior(1.5).volume(thickness, color, distance)))` lets light through a mesh. What is behind it shows through, bent by its index of refraction, blurred by its roughness, tinted by its colour, and in a volume dimmed by how far the light goes. glTF models bring theirs: `KHR_materials_transmission`, `KHR_materials_ior` and `KHR_materials_volume`, their factors (not yet their textures). A world with glass draws its other meshes a second time a frame into a picture of what is behind; a world with none draws nothing more, binds nothing new, and draws its frames slightly faster than before (`3d-textured` −0.5%, `3d-mixed` −0.8%).

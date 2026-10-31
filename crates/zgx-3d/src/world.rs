@@ -162,6 +162,57 @@ pub struct ObjectId {
     index: u32,
     generation: u32,
 }
+/// How light passes through a mesh (`World::set_transmission`): glass,
+/// water, thin plastic. What is behind it shows through, bent by its index
+/// of refraction, blurred by its roughness and tinted by its colour, and
+/// in a volume by how far the light goes through it.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transmission {
+    pub(crate) factor: f32,
+    pub(crate) ior: f32,
+    pub(crate) thickness: f32,
+    pub(crate) attenuation: [f32; 3],
+    pub(crate) distance: f32,
+}
+impl Transmission {
+    /// `factor` of the light reaching it passing through (0 to 1), a thin
+    /// wall of glass's index of refraction (1.5).
+    pub fn new(factor: f32) -> Self {
+        Self {
+            factor: factor.clamp(0., 1.),
+            ior: 1.5,
+            thickness: 0.,
+            attenuation: [1.; 3],
+            distance: f32::INFINITY,
+        }
+    }
+    /// Its index of refraction: how far light bends entering it (water
+    /// 1.33, glass 1.5, diamond 2.4).
+    pub fn ior(mut self, ior: f32) -> Self {
+        self.ior = ior.max(1.);
+        self
+    }
+    /// A volume `thickness` deep (in its mesh's units, 0 a thin wall),
+    /// light passing through it falling to `color` (linear) every
+    /// `distance` it goes (glTF's `KHR_materials_volume`).
+    pub fn volume(mut self, thickness: f32, color: [f32; 3], distance: f32) -> Self {
+        self.thickness = thickness.max(0.);
+        self.attenuation = color.map(|c| c.clamp(1e-4, 1.));
+        self.distance = if distance > 0. {
+            distance
+        } else {
+            f32::INFINITY
+        };
+        self
+    }
+    /// Its numbers, for a binding to be found by.
+    pub(crate) fn numbers(&self) -> [u32; 7] {
+        let [r, g, b] = self.attenuation.map(f32::to_bits);
+        let (f, i, t, d) = (self.factor, self.ior, self.thickness, self.distance);
+        [f.to_bits(), i.to_bits(), t.to_bits(), d.to_bits(), r, g, b]
+    }
+}
 /// A point light's cone (`World::set_spot`): it shines along `direction`,
 /// fully within `inner` radians of it, fading to nothing at `outer`.
 #[non_exhaustive]
@@ -297,9 +348,11 @@ pub(crate) struct Inner {
     /// Objects' morph weights (`World::set_morph_weights`), by index, with
     /// the generation they were set for.
     morph_weights: ByIndex<(u32, Vec<f32>)>,
-    /// Maps' placements (`World::set_map_placement`), by index, with the
-    /// generation they were set for: most have none.
-    placements: ByIndex<(u32, Placements)>,
+    /// What few meshes have: their maps' placements
+    /// (`World::set_map_placement`) and transmission
+    /// (`World::set_transmission`), by index, with the generation they were
+    /// set for. One table, so a mesh's frame looks once.
+    extras: ByIndex<(u32, Extras)>,
     /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
     /// index, with the generation they were set for: most have none.
     surfaces: ByIndex<(u32, Surface)>,
@@ -373,6 +426,19 @@ struct Posed {
     joints: Option<std::ops::Range<usize>>,
     weights: Option<std::ops::Range<usize>>,
 }
+/// What few meshes have, kept apart (see `Inner::extras`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Extras {
+    /// Its maps' placements: all as they are if it has none.
+    placements: Placements,
+    pub(crate) transmission: Option<Transmission>,
+}
+impl Extras {
+    /// Its maps' placements, if any is set.
+    pub(crate) fn placement(&self) -> Option<&Placements> {
+        (self.placements != Placements::default()).then_some(&self.placements)
+    }
+}
 /// A mesh's maps' placements, by `Map::ALL`'s order.
 type Placements = [crate::MapPlacement; crate::texture::MAPS];
 /// What a frame draws: each visible mesh with its world matrix.
@@ -389,8 +455,8 @@ pub(crate) struct Drawn<'a> {
     /// at rest (it draws as any mesh).
     pub(crate) morph: Option<&'a [[f32; 2]]>,
     pub(crate) surface: Surface,
-    /// Its maps' placements, if any is set.
-    pub(crate) placement: Option<&'a Placements>,
+    /// Its placements and transmission, if it has either.
+    pub(crate) extras: Option<&'a Extras>,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -472,6 +538,9 @@ impl Inner {
     }
     /// Every visible mesh into `out` (emptied first), their poses into
     /// `poses`: a frame's lists, kept to be filled again by the next.
+    // Apart from the renderer: inlined there, its loop compiled to whatever
+    // the rest of the frame left room for.
+    #[inline(never)]
     pub(crate) fn drawn_into<'a>(&'a self, poses: &'a mut Poses, out: &mut Vec<Drawn<'a>>) {
         out.clear();
         out.reserve(self.objects.len());
@@ -510,7 +579,7 @@ impl Inner {
                     palette: None,
                     morph: None,
                     surface: self.surface(index, generation),
-                    placement: self.placement(index, generation),
+                    extras: self.extras(index, generation),
                 });
             }
         }
@@ -529,6 +598,42 @@ impl Inner {
     pub(crate) fn has_surfaces(&self) -> bool {
         !self.surfaces.is_empty()
     }
+    /// Whether any mesh lets light through.
+    pub(crate) fn transmits(&self) -> bool {
+        self.extras.values().any(|(_, e)| e.transmission.is_some())
+    }
+    /// Object `index`'s extras, if it has any (no lookup in a world with
+    /// none).
+    fn extras(&self, index: usize, generation: u32) -> Option<&Extras> {
+        if self.extras.is_empty() {
+            return None;
+        }
+        let (set_for, extras) = self.extras.get(&(index as u32))?;
+        (*set_for == generation).then_some(extras)
+    }
+    /// Object `index`'s extras to change, made if it has none (others set
+    /// for an object gone from its place, cleared).
+    fn extras_mut(&mut self, index: u32, generation: u32) -> &mut Extras {
+        let (set_for, extras) = self
+            .extras
+            .entry(index)
+            .or_insert((generation, Extras::default()));
+        if *set_for != generation {
+            *set_for = generation;
+            *extras = Extras::default();
+        }
+        extras
+    }
+    /// Its extras dropped if nothing is left in them.
+    fn tidy_extras(&mut self, index: u32) {
+        if self
+            .extras
+            .get(&index)
+            .is_some_and(|(_, e)| *e == Extras::default())
+        {
+            self.extras.remove(&index);
+        }
+    }
     /// Object `index`'s textures.
     fn maps(
         &self,
@@ -543,11 +648,7 @@ impl Inner {
     /// Object `index`'s maps' placements, if any is set (no lookup in a
     /// world with none set).
     fn placement(&self, index: usize, generation: u32) -> Option<&Placements> {
-        if self.placements.is_empty() {
-            return None;
-        }
-        let (set_for, placements) = self.placements.get(&(index as u32))?;
-        (*set_for == generation).then_some(placements)
+        self.extras(index, generation)?.placement()
     }
     /// Object `index`'s surface (no lookup in a world with none set).
     fn surface(&self, index: usize, generation: u32) -> Surface {
@@ -774,7 +875,7 @@ impl World {
             textures: Default::default(),
             skins: Default::default(),
             morph_weights: Default::default(),
-            placements: Default::default(),
+            extras: Default::default(),
             light_parents: Default::default(),
             spots: Default::default(),
             surfaces: Default::default(),
@@ -823,7 +924,7 @@ impl World {
                 inner.skins.remove(&id.index);
                 inner.morph_weights.remove(&id.index);
                 inner.surfaces.remove(&id.index);
-                inner.placements.remove(&id.index);
+                inner.extras.remove(&id.index);
                 true
             }
             _ => false,
@@ -1050,21 +1151,33 @@ impl World {
             if inner.live(id.index, id.generation).is_none() {
                 return false;
             }
-            let (set_for, placements) = inner
-                .placements
-                .entry(id.index)
-                .or_insert((id.generation, Placements::default()));
-            if *set_for != id.generation {
-                *set_for = id.generation;
-                *placements = Placements::default();
-            }
             let placement = placement.unwrap_or_default();
+            let placements = &mut inner.extras_mut(id.index, id.generation).placements;
             let before = std::mem::replace(&mut placements[map as usize], placement);
-            if *placements == Placements::default() {
-                inner.placements.remove(&id.index);
-            }
+            inner.tidy_extras(id.index);
             before != placement
         });
+    }
+    /// Light passing through object `id` (`None`: none, as most): what is
+    /// behind it shows through. A world with such a mesh draws its others
+    /// a second time each frame, into a picture of what is behind; one
+    /// with none pays nothing.
+    pub fn set_transmission(&self, id: ObjectId, transmission: Option<Transmission>) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let extras = inner.extras_mut(id.index, id.generation);
+            let before = std::mem::replace(&mut extras.transmission, transmission);
+            inner.tidy_extras(id.index);
+            before != transmission
+        });
+    }
+    /// Object `id`'s transmission, if light passes through it.
+    pub fn transmission(&self, id: ObjectId) -> Option<Transmission> {
+        let inner = self.inner.borrow();
+        inner.live(id.index, id.generation)?;
+        inner.extras(id.index as usize, id.generation)?.transmission
     }
     /// Whether object `id`'s back faces draw too, lit as their other side
     /// is (a leaf, a sheet, an open shell). Off by default: a closed shape
