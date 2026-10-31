@@ -94,7 +94,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
           args: --check .
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features zgx-desktop/webkitgtk --locked -- -D warnings
       # Feature gating stays honest: the crates build without their defaults,
       # on the oldest Rust they claim (`rust-version`): a check this job
       # makes anyway, so the minimum costs only the toolchain's download.
@@ -185,6 +185,8 @@ jobs:
         run: |
           fixtures=$(python3 scripts/linux_smokes.py --fixtures)
           cargo build -p zgx-desktop $fixtures --locked
+          # Web views: the webkitgtk feature's probes (`web-view*`).
+          cargo build -p zgx-desktop --example web_view_probe --example web_view_schemes --features webkitgtk --locked
           cargo build -p zgx-run --locked
           cargo test -p zgx-desktop --lib --no-run --locked
       # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each

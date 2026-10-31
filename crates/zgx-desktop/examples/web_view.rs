@@ -1,6 +1,7 @@
-//! An embedded web page (WKWebView on macOS, WebView2 on Windows) under zgx chrome: a toolbar
-//! with navigation, a frosted menu popover over the page, and a floating
-//! frosted composer whose glass blurs the page beneath it.
+//! An embedded web page (WKWebView on macOS, WebView2 on Windows, WebKitGTK
+//! on Linux) under zgx chrome: a toolbar with navigation, a frosted menu
+//! popover over the page, and a floating frosted composer whose glass blurs
+//! the page beneath it.
 //!
 //! `cargo run -p zgx-desktop --example web_view [-- URL]`
 //! `-- --fixture`: checks geometry, layering, backdrops, hit testing and

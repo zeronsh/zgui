@@ -77,6 +77,12 @@ SMOKES = [
     ("wayland-drag-out", "python3 scripts/wayland_drag_out_smoke.py {bin} --output {out}", False),
     ("zenity-dialog", "python3 scripts/zenity_dialog_smoke.py {bin}/platform_services --output {out}", False),
     ("portal-dialog", "python3 scripts/portal_dialog_smoke.py {bin}/platform_services --output {out}", False),
+    ("web-view-schemes", "timeout 60s {bin}/web_view_schemes --fixture", True),
+    ("web-view", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --output {out}", False),
+    ("web-view-wayland", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --output {out}", False),
+    ("web-view-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --ime --output {out}", False),
+    ("web-view-transparent", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --transparent --output {out}", False),
+    ("web-view-wayland-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --ime --output {out}", False),
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("caret-blink", "python3 scripts/caret_blink_smoke.py {bin}/primary_selection --output {out}", False),
     ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),
@@ -150,12 +156,18 @@ FIXTURES = ("windows", "drag_probe", "zoom_probe", "tab_windows", "submenus", "g
             "canvas", "svg_transform", "animated_image")
 
 
+# Fixtures that need a feature of zgx-desktop's, which CI builds with it.
+FEATURED = {"web_view_probe": "webkitgtk", "web_view_schemes": "webkitgtk"}
+
+
 def fixtures():
     """Every zgx-desktop example a probe runs: what CI builds for them, as
     `cargo build` flags. Each must be an example."""
     names = set(FIXTURES)
     for _, command, _ in SMOKES:
         names.update(re.findall(r"\{bin\}/([a-z_0-9]+)", command))
+    # Built with their features in a step of their own (ci.yml).
+    names -= set(FEATURED)
     examples = pathlib.Path(__file__).resolve().parent.parent / "crates/zgx-desktop/examples"
     missing = [name for name in names if not (examples / f"{name}.rs").exists() and not (examples / name).is_dir()]
     if missing:

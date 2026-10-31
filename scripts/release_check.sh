@@ -148,6 +148,8 @@ ONLY = {
     "zgx-gpu/vulkan": {"linux", "windows"},
     "zgx-script/vulkan": {"linux", "windows"},
     "zgx-desktop/ghostty": {"macos"},
+    # Compiles to nothing elsewhere; WebKitGTK is opened at run time.
+    "zgx-desktop/webkitgtk": {"linux"},
     # Turned on through zgx-desktop/ghostty, which gives it what it links to.
     "zgx-ghostty-sys/link": set(),
 }

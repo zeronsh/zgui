@@ -1,5 +1,6 @@
 //! A page served from a scheme of the app's own, with a script injected
-//! before the page's and a navigation policy (WKWebView on macOS, WebView2 on Windows).
+//! before the page's and a navigation policy (WKWebView on macOS, WebView2
+//! on Windows, WebKitGTK on Linux).
 //!
 //! `cargo run -p zgx-desktop --example web_view_schemes`
 //! `-- --fixture`: checks each against the live page, prints `FIXTURE`
