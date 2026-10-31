@@ -350,6 +350,80 @@ return ui.column {
 }
 
 #[test]
+fn a_folders_files_can_be_read_shown_and_handed_on() {
+    let dir = app(
+        "folder-files",
+        &[(
+            "files.test.luau",
+            r##"
+test("a folder's file is a File the app may read and show", function()
+    local app = mount("files.luau")
+    app:write_file("lib/a.txt", "alpha")
+    app:write_file("lib/deep/b.txt", "bravo")
+    app:pick_folder("lib")
+    app:click("#open")
+    expect(app:wait("#listed", { text = "a.txt deep/b.txt" })).to_be(true)
+    expect(app:wait("#read", { text = "alpha" })).to_be(true)
+    app:click("#one")
+    expect(app:wait("#one-out", { text = "bravo" })).to_be(true)
+    app:click("#outside")
+    expect(app:wait("#outside-out", { text = "denied" })).to_be(true)
+    expect(app:error()).to_be_nil()
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("files.luau"),
+        r##"
+local folder = ui.state("folder", nil :: Folder?)
+local listed = ui.state("listed", "")
+local read = ui.state("read", "")
+local one = ui.state("one", "")
+local outside = ui.state("outside", "")
+return ui.column {
+    ui.button { id = "open", "Open", on_click = function()
+        ui.task(function()
+            local picked = ui.open_folder():await()
+            if not picked then return end
+            folder:set(picked)
+            local paths, first = {}, nil
+            for _, entry in picked:list("", { recursive = true, files = true }):await() do
+                if entry.file then
+                    table.insert(paths, entry.path)
+                    first = first or entry.file
+                end
+            end
+            listed:set(table.concat(paths, " "))
+            -- A listed file reads as a dialog's does.
+            read:set(ui.read_file(first):await())
+        end)
+    end },
+    ui.button { id = "one", "One", on_click = function()
+        ui.task(function()
+            local file = folder:peek():file("deep/b.txt"):await()
+            one:set(ui.read_file(file):await())
+        end)
+    end },
+    ui.button { id = "outside", "Outside", on_click = function()
+        ui.task(function()
+            local ok, failure = ui.try(function() return folder:peek():file("../x"):await() end)
+            outside:set(if ok then "reached" else failure.kind)
+        end)
+    end },
+    ui.text { id = "listed", "{listed}" },
+    ui.text { id = "read", "{read}" },
+    ui.text { id = "one-out", "{one}" },
+    ui.text { id = "outside-out", "{outside}" },
+}
+"##,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",

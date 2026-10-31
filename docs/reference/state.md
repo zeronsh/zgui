@@ -361,6 +361,7 @@ return ui.button { "Open a vault", on_click = open }
 | `name` | the folder's own name |
 | `list(path?, { recursive?, limit? })` | a promise of `{ name, path, kind, size, modified }`: `path` from the root, `kind` `"file"` or `"folder"`, `modified` in milliseconds since 1970, by name, depth first. `limit` stops it (100,000 by default) |
 | `read(path)` | a promise of a text file's contents |
+| `file(path)` | a promise of a file inside it as a `File`, its `path` absolute, which `ui.image`, `ui.read_file` and `drag_export`'s `files` take as they do a dialog's (a thumbnail, a drag out to Finder). `list(path, { files = true })` gives each file entry its `file` the same way |
 | `write(path, text)` | a promise settled once the file is replaced whole: its folders made, a temporary file beside it renamed over it, its permissions kept. A failure leaves the old file as it was |
 
 Everything runs off the main thread, and a failure is a `UiError`: `kind` `"denied"` for a path the handle refuses, `"io"` for what the system says.
