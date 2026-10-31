@@ -581,6 +581,17 @@ pub fn click_at(ui: &mut Ui, bounds: Rect) {
     ui.dispatch(InputEvent::PointerDown { x, y, button });
     ui.dispatch(InputEvent::PointerUp { x, y, button });
 }
+/// Press and release the primary button twice at a box's middle, as a
+/// double click.
+pub fn double_click_at(ui: &mut Ui, bounds: Rect) {
+    // With modifiers, as a window's presses come: only those count clicks.
+    let (x, y) = middle(bounds);
+    let (button, none) = (PointerButton::Primary, Modifiers::default());
+    for _ in 0..2 {
+        ui.dispatch_with_modifiers(InputEvent::PointerDown { x, y, button }, none);
+        ui.dispatch_with_modifiers(InputEvent::PointerUp { x, y, button }, none);
+    }
+}
 /// A box's middle.
 pub fn middle(bounds: Rect) -> (f32, f32) {
     (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.)

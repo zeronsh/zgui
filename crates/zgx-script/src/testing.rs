@@ -509,6 +509,12 @@ impl TestApp {
         crate::driver::click_at(&mut self.ui, b);
         self.settle();
     }
+    /// Press and release the primary button twice at node `id`'s middle.
+    pub fn double_click(&mut self, id: &str) {
+        let b = self.bounds(id);
+        crate::driver::double_click_at(&mut self.ui, b);
+        self.settle();
+    }
     /// Click field `id` (giving it focus) and type `text` into it.
     pub fn type_text(&mut self, id: &str, text: &str) {
         self.click(id);
