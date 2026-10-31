@@ -1337,6 +1337,10 @@ fn view(engine: Rc<Engine>) -> View {
         .focusable(true)
         .overflow_hidden()
         .cursor(Cursor::Text)
+        // A document named Terminal holding its lines: assistive technology
+        // drops an unnamed container's name with it (a group is one), so
+        // the rows would read as the window's own.
+        .role(Role::Document)
         .accessible_label("Terminal")
         .on_event(move |cx| {
             if cx.phase == EventPhase::Capture {

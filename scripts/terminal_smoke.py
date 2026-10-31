@@ -198,6 +198,8 @@ while time.monotonic() < deadline and row is None:
     time.sleep(.5)
 if row:
     print("ROW " + row.get_role_name() + " " + repr(row.get_name()))
+    parent = row.get_parent()
+    print("PARENT " + (parent.get_role_name() + " " + repr(parent.get_name()) if parent else "none"))
 """
 
 
@@ -215,6 +217,10 @@ def orca_checks(env, output, xdo, window, type_line):
     if "ROW" not in row:
         raise AssertionError("no row of the grid in the accessible tree reads zgx-tree-42; see tree.txt")
     print("terminal: " + row.strip().splitlines()[0])
+    parent = next((line for line in row.splitlines() if line.startswith("PARENT")), "PARENT none")
+    if "'Terminal'" not in parent:
+        raise AssertionError(f"the rows' container isn't named Terminal: {parent}")
+    print("terminal: " + parent)
     type_line("echo zgx-spoken-$((40+2))")
     deadline = time.monotonic() + 20
     nudged = time.monotonic()
