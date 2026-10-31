@@ -90,6 +90,18 @@ impl Platform for Desktop {
         true
     }
     #[cfg(target_os = "macos")]
+    fn bookmark_folder(&self, folder: &std::path::Path) -> Option<Vec<u8>> {
+        bookmarks::make(folder)
+    }
+    #[cfg(target_os = "macos")]
+    fn resolve_folder(&self, grant: &[u8]) -> Option<zgx::platform::ResolvedFolder> {
+        bookmarks::resolve(grant)
+    }
+    #[cfg(target_os = "macos")]
+    fn release_folder(&self, folder: &std::path::Path) {
+        bookmarks::release(folder);
+    }
+    #[cfg(target_os = "macos")]
     fn look_up(&self, text: &str, baseline: (f32, f32), size: f32) -> bool {
         self.dialogs
             .window()
@@ -213,6 +225,99 @@ fn byte_offset(text: &str, units: usize) -> usize {
 
 #[cfg(target_os = "linux")]
 use crate::linux_spelling as spelling;
+
+/// macOS's security-scoped bookmarks: a folder the user picked reached on a
+/// later launch, sandboxed or not, wherever it was moved or renamed.
+#[cfg(target_os = "macos")]
+mod bookmarks {
+    use objc2::{rc::Retained, runtime::Bool};
+    use objc2_foundation::{
+        NSData, NSString, NSURL, NSURLBookmarkCreationOptions, NSURLBookmarkResolutionOptions,
+    };
+    use std::{cell::RefCell, path::Path, path::PathBuf};
+    use zgx::platform::ResolvedFolder;
+
+    thread_local! {
+        /// The folders resolved and not yet released, by path: a scope ends
+        /// through the URL that began it.
+        static OPEN: RefCell<Vec<(PathBuf, Retained<NSURL>)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn make(folder: &Path) -> Option<Vec<u8>> {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(folder.to_str()?));
+        url.bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(
+            NSURLBookmarkCreationOptions::WithSecurityScope,
+            None,
+            None,
+        )
+        .ok()
+        .map(|data| data.to_vec())
+    }
+    pub(super) fn resolve(grant: &[u8]) -> Option<ResolvedFolder> {
+        let data = NSData::with_bytes(grant);
+        let mut stale = Bool::NO;
+        // SAFETY: `stale` points at a BOOL that outlives the call.
+        let url = unsafe {
+            NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
+                &data,
+                NSURLBookmarkResolutionOptions::WithSecurityScope,
+                None,
+                &mut stale,
+            )
+        }
+        .ok()?;
+        let path = PathBuf::from(url.path()?.to_string());
+        if !path.is_dir() {
+            return None;
+        }
+        // SAFETY: a URL a bookmark resolved to; `release` ends its scope.
+        // Outside the sandbox there is no scope to begin, and that is fine.
+        if unsafe { url.startAccessingSecurityScopedResource() } {
+            OPEN.with_borrow_mut(|open| open.push((path.clone(), url)));
+        }
+        let folder = ResolvedFolder::new(path.clone());
+        Some(match stale.as_bool().then(|| make(&path)).flatten() {
+            Some(renewed) => folder.renewed(renewed),
+            None => folder,
+        })
+    }
+    pub(super) fn release(folder: &Path) {
+        let url = OPEN.with_borrow_mut(|open| {
+            let at = open.iter().position(|(path, _)| path == folder)?;
+            Some(open.swap_remove(at).1)
+        });
+        if let Some(url) = url {
+            // SAFETY: its scope began in `resolve`.
+            unsafe { url.stopAccessingSecurityScopedResource() };
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// A bookmark finds its folder renamed, and says it went stale.
+        #[test]
+        fn a_bookmark_follows_its_folder_renamed() {
+            let base = std::env::temp_dir().join(format!("zgx-bookmark-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(base.join("library")).unwrap();
+            let base = base.canonicalize().unwrap();
+            let grant = super::make(&base.join("library")).expect("a bookmark");
+            let found = super::resolve(&grant).expect("it resolves");
+            assert_eq!(found.path, base.join("library"));
+            super::release(&found.path);
+            std::fs::rename(base.join("library"), base.join("photos")).unwrap();
+            let moved = super::resolve(&grant).expect("it follows the folder");
+            assert_eq!(moved.path, base.join("photos"));
+            super::release(&moved.path);
+            std::fs::remove_dir_all(base.join("photos")).unwrap();
+            assert!(
+                super::resolve(&grant).is_none(),
+                "gone, it resolves to nothing"
+            );
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+}
 
 /// macOS's spelling checker (`NSSpellChecker`), for editors that check
 /// (`View::spellcheck`). One document tag for the app: what Ignore Spelling

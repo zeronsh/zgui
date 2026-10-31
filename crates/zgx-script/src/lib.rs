@@ -1002,7 +1002,8 @@ struct Inner {
     platform: io::SharedPlatform,
     /// The files the user picked in this host's dialogs.
     picked: io::Picked,
-    folders_refused: Rc<std::cell::Cell<bool>>,
+    /// What scripts may have of folders, and the ones kept past a run.
+    folders: Rc<folder::Access>,
     /// `ui.args` and `ui.on_open` (`ScriptHost::args`, `open`).
     opens: Rc<opens::Opens>,
     /// Whether errors show over the interface (`error_banner`).
@@ -1153,6 +1154,7 @@ impl ScriptHost {
         }
         let error_hooks = ErrorHooks::default();
         let issues: Rc<RefCell<IssueLog>> = Rc::default();
+        let persist = persist::Persist::new(runtime, warnings.clone());
         let host = Self(Rc::new(Inner {
             runtime: runtime.clone(),
             app,
@@ -1169,7 +1171,7 @@ impl ScriptHost {
             rewatch: RefCell::default(),
             platform: Rc::default(),
             picked: Rc::default(),
-            folders_refused: Rc::default(),
+            folders: Rc::new(folder::Access::new(persist.clone())),
             opens: Rc::default(),
             show_errors: cfg!(debug_assertions),
             error_hooks: error_hooks.clone(),
@@ -1220,7 +1222,7 @@ impl ScriptHost {
             webs: Rc::default(),
             commands: Rc::new(command::Commands::new(runtime)),
             windows: Rc::new(windows::Windows::new(runtime)),
-            persist: persist::Persist::new(runtime, warnings.clone()),
+            persist,
             timers: Rc::default(),
             warnings,
             locate: Rc::new(Cell::new(diagnostics_requested())),
@@ -1512,7 +1514,13 @@ impl ScriptHost {
     /// Refuse `ui.open_folder` to every script, the app's own too: an app
     /// that must not touch folders, whatever its scripts ask.
     pub fn refuse_folders(self) -> Self {
-        self.0.folders_refused.set(true);
+        self.0.folders.refused.set(true);
+        self
+    }
+    /// Keep no folder past a run: `ui.open_folder { remember }` picks as
+    /// without it, and `ui.remembered_folder` is always nil.
+    pub fn refuse_remembered_folders(self) -> Self {
+        self.0.folders.forgetful.set(true);
         self
     }
     /// Let plugin `plugin` (its file name, `stats.luau`, or `plugin`'s
@@ -2893,7 +2901,7 @@ impl ScriptHost {
         });
         let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());
         let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
-        let (folders, refused) = (may(Capability::Folders), self.0.folders_refused.clone());
+        let (folders, access) = (may(Capability::Folders), self.0.folders.clone());
         lazy.ui(
             &[
                 "badge",
@@ -2902,11 +2910,12 @@ impl ScriptHost {
                 "open_files",
                 "open_folder",
                 "read_file",
+                "remembered_folder",
                 "save_file",
                 "write_file",
             ],
             move |lua, ui| {
-                folder::install(lua, ui, platform.clone(), folders, refused)?;
+                folder::install(lua, ui, platform.clone(), folders, access)?;
                 io::install(lua, ui, platform, picked, clipboard, files_allowed)
             },
         );
