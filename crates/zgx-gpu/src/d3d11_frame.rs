@@ -13,9 +13,11 @@
 //! on macOS), it is recorded here with Direct3D 11; the glyph atlas, the
 //! window's swap chain (dxgi_present.rs) and readbacks are Direct3D 11's.
 //!
-//! Only what the Windows suite's scenes draw is here: quads, text and clip
-//! regions, kept frames, scroll copies and catch-up. A frame needing more
-//! fails, naming what it lacks: there is no Direct3D 12 to fall back to.
+//! Only what the Windows suite's scenes draw is here, and isolated layers:
+//! quads, text and clip regions, kept frames, scroll copies and catch-up,
+//! and layers drawn into textures of their own and composited. A frame
+//! needing more fails, naming what it lacks: there is no Direct3D 12 to
+//! fall back to.
 //!
 //! The shaders are draw.wgsl and copy_offset.wgsl, translated by naga to
 //! HLSL (draw.hlsl, copy_offset.hlsl) and compiled ahead by FXC, as wgpu's
@@ -690,6 +692,9 @@ pub(crate) struct State {
     /// through.
     pub(crate) target: Option<Surface>,
     pub(crate) spare: Option<Surface>,
+    /// Isolated layers' contents (`crate::GpuRenderer::paint_layer`), each
+    /// under the shell's texture standing for it.
+    pub(crate) layers: rustc_hash::FxHashMap<wgpu::Texture, Surface>,
 }
 
 impl State {
@@ -717,6 +722,7 @@ impl State {
             atlas: None,
             target: None,
             spare: None,
+            layers: Default::default(),
         })
     }
 
@@ -1075,8 +1081,17 @@ impl Frame<'_> {
     /// presenting flushes it. Then `Ring::submitted`.
     pub(crate) fn end(self) {
         // SAFETY: Unbinds the target, which a resize or readback may next
-        // release or copy.
-        unsafe { self.device.context.OMSetRenderTargets(None, None) };
+        // release or copy, and the texture sampled, which may be a layer
+        // the next frame draws into.
+        unsafe {
+            self.device.context.OMSetRenderTargets(None, None);
+            self.device
+                .context
+                .PSSetShaderResources(TEXTURE, Some(&[None]));
+            self.device
+                .context
+                .VSSetShaderResources(TEXTURE, Some(&[None]));
+        }
     }
 }
 

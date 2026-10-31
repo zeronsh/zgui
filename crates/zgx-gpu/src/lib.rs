@@ -8770,9 +8770,6 @@ impl GpuRenderer {
         polylines: bool,
         effect_jobs: &[effects::Job],
     ) -> Option<&'static str> {
-        if self.in_layer {
-            return Some("isolated or transformed layer");
-        }
         if !batches.is_empty() {
             return Some("backdrop filter");
         }
@@ -8786,7 +8783,6 @@ impl GpuRenderer {
             .iter()
             .find_map(|draw| match (draw.source, draw.shading) {
                 (TextureSource::Image(_), _) => Some("image"),
-                (TextureSource::Layer(_), _) => Some("layer"),
                 (_, Shading::Full | Shading::Basic | Shading::Opaque) => None,
                 _ => Some("shader fill, layer shader, blend mode or image effect"),
             })
@@ -8826,7 +8822,18 @@ impl GpuRenderer {
         // Offscreen, the retained target is the renderer's own (and its
         // spare, for scroll copies), made at its size.
         let presenting = self.layer_present.is_some();
-        if !presenting
+        // A layer's content (`paint_layer`): drawn into the texture standing
+        // for the shell's, made at its size.
+        if self.in_layer {
+            if state
+                .layers
+                .get(&self.target)
+                .is_none_or(|t| (t.width, t.height) != (width, height))
+            {
+                let surface = device.surface(width, height, true)?;
+                state.layers.insert(self.target.clone(), surface);
+            }
+        } else if !presenting
             && state
                 .target
                 .as_ref()
@@ -8852,11 +8859,13 @@ impl GpuRenderer {
         let views = self
             .layer_present
             .as_ref()
+            .filter(|_| !self.in_layer)
             .and_then(|present| present.chain.as_ref())
             .and_then(|chain| chain.d3d11_views());
-        // The swap chain's buffer to draw (buffer 0; 1 is the one shown), or
-        // the renderer's own.
+        // The layer's texture, the swap chain's buffer to draw (buffer 0; 1
+        // is the one shown), or the renderer's own.
         let target = match &views {
+            _ if self.in_layer => &state.layers[&self.target],
             Some(views) => &views[0],
             None => state.target.as_ref().expect("made above"),
         };
@@ -8873,7 +8882,11 @@ impl GpuRenderer {
             stats.draw_calls += 1;
         }
         let atlas = state.atlas.as_ref().and_then(|atlas| atlas.srv.as_ref());
-        frame.texture(atlas.expect("made above"));
+        let atlas = atlas.expect("made above");
+        frame.texture(atlas);
+        // What batches sample: the atlas, or a layer's content.
+        let mut sampled = TextureSource::Atlas;
+        let mut unpainted = false;
         let clear = if self.split_shading {
             Shading::Basic
         } else {
@@ -8889,6 +8902,22 @@ impl GpuRenderer {
                 let Some(rect) = scissor(batch.rect, self.scale, self.width, self.height) else {
                     return;
                 };
+                if batch.source != sampled {
+                    let view = match batch.source {
+                        TextureSource::Layer(id) => self
+                            .layers
+                            .get(&id)
+                            .and_then(|layer| state.layers.get(&layer.texture))
+                            .and_then(|surface| surface.srv.as_ref()),
+                        _ => Some(atlas),
+                    };
+                    let Some(view) = view else {
+                        unpainted = true;
+                        return;
+                    };
+                    frame.texture(view);
+                    sampled = batch.source;
+                }
                 frame.scissor(rect);
                 frame.quads(batch.shading, false, batch.start..batch.end);
                 stats.draw_calls += 1;
@@ -8902,6 +8931,20 @@ impl GpuRenderer {
         drop(views);
         let state = self.d3d11.as_mut().expect("checked by the caller");
         state.ring.submitted(&device.context);
+        // Layers dropped, or made again at another size, leave their
+        // textures behind: one stands for each layer kept.
+        if !self.in_layer && state.layers.len() > self.layers.len() {
+            // A wgpu texture hashes and compares by its id alone.
+            #[allow(clippy::mutable_key_type)]
+            let kept: rustc_hash::FxHashSet<&wgpu::Texture> =
+                self.layers.values().map(|layer| &layer.texture).collect();
+            state.layers.retain(|texture, _| kept.contains(texture));
+        }
+        if unpainted {
+            return Err(GpuError(
+                "Direct3D 11 has no content for a layer composited before it was painted".into(),
+            ));
+        }
         stats.render_passes += 1;
         self.fresh = false;
         keep_room(&mut quads, &mut self.frame_peaks.0);
