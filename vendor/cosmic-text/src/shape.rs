@@ -337,12 +337,11 @@ fn run_scripts(run: &str, scripts: &mut Vec<Script>, attrs_list: &AttrsList, sta
     emoji
 }
 
-/// zgx: `attrs_list` with the language `line`'s Han characters are in
-/// (`FontFeatures::HAN`), where its kana or hangul say: on its defaults and
-/// each span. None elsewhere, as for most text.
+/// zgx: `attrs_list` with `han`, what language a line's Han characters
+/// are in (`FontFeatures::HAN`), on its defaults and each span; none for
+/// `HAN_NONE`, as for most text.
 #[inline(never)]
-fn hinted(attrs_list: &AttrsList, line: &str) -> Option<AttrsList> {
-    let han = han_hint(line);
+fn hinted(attrs_list: &AttrsList, han: u32) -> Option<AttrsList> {
     if han == HAN_NONE {
         return None;
     }
@@ -435,6 +434,10 @@ const HAN_NONE: u32 = 0;
 const HAN_JAPANESE: u32 = 1;
 /// zgx: the line has hangul: its Han characters are Korean.
 const HAN_KOREAN: u32 = 2;
+/// zgx: an app's language says what language Han characters are in, the
+/// line's kana or hangul not (`FontSystem::set_language`): their fallback
+/// fonts are its, as for a line with neither.
+const HAN_BY_LANGUAGE: u32 = 3;
 
 /// zgx: the language `line`'s Han characters are in, by its first kana
 /// (Japanese) or hangul (Korean), as browsers guess a text's when nothing
@@ -1767,7 +1770,15 @@ impl ShapeLine {
         shaping: Shaping,
         tab_width: u16,
     ) {
-        let hinted = hinted(attrs_list, line);
+        // An app's Chinese, Japanese or Korean language says what language
+        // Han characters are in, whatever the line's kana say
+        // (`FontSystem::set_language`).
+        let han = if font_system.han_by_language() {
+            HAN_BY_LANGUAGE
+        } else {
+            han_hint(line)
+        };
+        let hinted = hinted(attrs_list, han);
         self.build(
             font_system,
             line,

@@ -577,3 +577,77 @@ fn kanji_in_a_japanese_line_come_from_its_kana_font_whatever_the_system_language
     );
     assert_eq!(han_of(chinese), before, "a Chinese line's as before");
 }
+
+#[test]
+fn an_app_language_decides_which_font_its_han_characters_take() {
+    if !has_font(JAPANESE_FONTS) {
+        return;
+    }
+    // A font system of its own: the others' language stays the system's.
+    let mut fonts = cosmic_text::FontSystem::new();
+    let families = |fonts: &mut cosmic_text::FontSystem, text: &str| {
+        let metrics = cosmic_text::Metrics::new(20., 24.);
+        let mut buffer = cosmic_text::Buffer::new(fonts, metrics);
+        buffer.set_text(
+            text,
+            &cosmic_text::Attrs::new(),
+            cosmic_text::Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(fonts, false);
+        let mut found = Vec::new();
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                let family = fonts
+                    .db()
+                    .face(glyph.font_id)
+                    .map_or(String::new(), |face| {
+                        face.families
+                            .first()
+                            .map_or(String::new(), |(name, _)| name.clone())
+                    });
+                found.push((text[glyph.start..glyph.end].chars().next().unwrap(), family));
+            }
+        }
+        found
+    };
+    let han = |found: &[(char, String)]| -> Vec<String> {
+        let mut han: Vec<String> = found
+            .iter()
+            .filter(|(c, _)| ('\u{4E00}'..='\u{9FFF}').contains(c))
+            .map(|(_, f)| f.clone())
+            .collect();
+        han.dedup();
+        han
+    };
+    let kana_font = |found: &[(char, String)]| {
+        found
+            .iter()
+            .find(|(c, _)| ('\u{3040}'..='\u{30FF}').contains(c))
+            .map(|(_, f)| f.clone())
+            .unwrap()
+    };
+    // Han that both a Japanese and a Chinese font have (a simplified-only
+    // character such as 这 isn't in a Japanese one, and falls back on).
+    let (japanese, chinese) = ("日本語の文章です。", "中国人和日本人。");
+    // Japanese: even a Chinese line's Han take the Japanese font.
+    fonts.set_language(Some("ja-JP"));
+    let japanese_font = kana_font(&families(&mut fonts, japanese));
+    assert_eq!(
+        han(&families(&mut fonts, chinese)),
+        std::slice::from_ref(&japanese_font),
+        "ja"
+    );
+    // Simplified Chinese: a Japanese line's kanji take the Chinese font,
+    // its kana what they take.
+    fonts.set_language(Some("zh-CN"));
+    let found = families(&mut fonts, japanese);
+    assert!(
+        han(&found).iter().all(|f| *f != kana_font(&found)),
+        "zh-CN: kanji in Chinese, kana apart: {found:?}"
+    );
+    // None set: a line's own kana decide again.
+    fonts.set_language(None);
+    let found = families(&mut fonts, japanese);
+    assert_eq!(han(&found), [kana_font(&found)], "no language: {found:?}");
+}

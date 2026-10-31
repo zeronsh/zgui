@@ -498,6 +498,9 @@ pub struct WindowFactory {
     activation: Rc<RefCell<Option<winit::window::ActivationToken>>>,
     /// The app's fonts (`Application::font`, `WindowFactory::replace_font`).
     fonts: Rc<RefCell<Vec<zgx_gpu::text::FontData>>>,
+    /// The language the app's text is in (`set_text_language`), for the
+    /// GPU contexts made later too.
+    text_language: Rc<RefCell<Option<String>>>,
     menus: Rc<RefCell<Vec<crate::AppMenu>>>,
     /// The keystrokes the app keeps whatever has the keyboard
     /// (`set_reserved_shortcuts`).
@@ -534,6 +537,27 @@ impl WindowFactory {
         for context in self.gpu_contexts.borrow().iter() {
             context.replace_font(&font);
         }
+        self.proxy
+            .send_event(Event::FontsReplaced)
+            .map_err(|_| "application event loop is closed")
+    }
+    /// Shape every window's text as in `language` from now on (an i18n
+    /// locale; `None`: the system's), as CSS's `lang` on a document's root:
+    /// Han characters take that language's fonts, a Japanese app's kanji a
+    /// Japanese face where an English system would give them a Chinese one.
+    /// Every text measures, lays out and draws again. Costs nothing until
+    /// called; zgx-script calls it as its `ui.i18n` locale changes.
+    pub fn set_text_language(&self, language: Option<String>) -> Result<(), &'static str> {
+        if !self.alive.get() {
+            return Err("application is closed");
+        }
+        if *self.text_language.borrow() == language {
+            return Ok(());
+        }
+        for context in self.gpu_contexts.borrow().iter() {
+            context.set_text_language(language.as_deref());
+        }
+        *self.text_language.borrow_mut() = language;
         self.proxy
             .send_event(Event::FontsReplaced)
             .map_err(|_| "application event loop is closed")
@@ -722,6 +746,7 @@ impl WindowContext {
         let platform = zgx::platform::PlatformService(Rc::new(crate::platform::Desktop {
             clipboard: self.windows.clipboard.clone(),
             dialogs: self.dialogs.clone(),
+            windows: Some(self.windows.clone()),
         }));
         // Pages as images of WebKitGTK's (`web_view` asks it first).
         #[cfg(all(target_os = "linux", feature = "webkitgtk"))]
@@ -951,6 +976,7 @@ impl Application {
         }
         let factory = WindowFactory {
             fonts: Rc::new(RefCell::new(self.fonts)),
+            text_language: Rc::default(),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
@@ -2819,6 +2845,7 @@ impl Host {
         let platform = zgx::platform::PlatformService(Rc::new(crate::platform::Desktop {
             clipboard: self.context.windows.clipboard.clone(),
             dialogs: self.context.dialogs.clone(),
+            windows: None,
         }));
         match self.context.ui.focused_editor() {
             Some(editor) => editor.look_up(&platform),
@@ -3046,6 +3073,9 @@ impl Host {
             for font in self.context.windows.fonts.borrow().iter() {
                 font.install(&mut context.text_system().borrow_mut());
             }
+            if let Some(language) = &*self.context.windows.text_language.borrow() {
+                context.set_text_language(Some(language));
+            }
             self.context.windows.gpu_contexts.borrow_mut().push(context);
         }
         // Opaque unless it may show what is behind: on Windows the
@@ -3062,6 +3092,9 @@ impl Host {
         let renderer = (self.native).renderer_for(window.clone(), None, transparent)?;
         for font in self.context.windows.fonts.borrow().iter() {
             font.install(&mut renderer.text_system().borrow_mut());
+        }
+        if let Some(language) = &*self.context.windows.text_language.borrow() {
+            renderer.context().set_text_language(Some(language));
         }
         self.context
             .windows
@@ -8018,6 +8051,7 @@ mod tests {
             .unwrap();
         let factory = WindowFactory {
             fonts: Default::default(),
+            text_language: Default::default(),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
@@ -8170,6 +8204,7 @@ mod tests {
             .unwrap();
         let factory = WindowFactory {
             fonts: Default::default(),
+            text_language: Default::default(),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
@@ -8263,6 +8298,7 @@ mod tests {
             .unwrap();
         let factory = WindowFactory {
             fonts: Default::default(),
+            text_language: Default::default(),
             file_routes: Default::default(),
             application_id: None,
             activation: Rc::default(),
@@ -8335,6 +8371,7 @@ mod tests {
             .unwrap();
         let factory = WindowFactory {
             fonts: Default::default(),
+            text_language: Default::default(),
             file_routes: Default::default(),
             application_id: None,
             activation: Rc::default(),
@@ -8401,6 +8438,7 @@ mod tests {
             .unwrap();
         let factory = WindowFactory {
             fonts: Default::default(),
+            text_language: Default::default(),
             file_routes: Default::default(),
             application_id: None,
             activation: Rc::default(),

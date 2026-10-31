@@ -165,6 +165,14 @@ pub struct FontSystem {
     /// The locale of the system.
     locale: String,
 
+    /// zgx: whether `locale` is the language an app's text is in
+    /// (`set_language`), not the system's.
+    language_set: bool,
+
+    /// zgx: whether that language is Chinese, Japanese or Korean, which
+    /// then says what language Han characters are in (`han_by_language`).
+    han_by_language: bool,
+
     /// The underlying font database.
     db: fontdb::Database,
 
@@ -340,10 +348,12 @@ impl FontSystem {
             .map(|(k, v)| (k, Vec::from_iter(v)))
             .collect();
 
-        let fallbacks = Fallbacks::new(&impl_fallback, &[], &locale);
+        let fallbacks = Fallbacks::new(&impl_fallback, &[], han_locale(&locale));
 
         Self {
             locale,
+            language_set: false,
+            han_by_language: false,
             db,
             monospace_font_ids,
             per_script_monospace_font_ids,
@@ -371,6 +381,33 @@ impl FontSystem {
     /// Get the locale.
     pub fn locale(&self) -> &str {
         &self.locale
+    }
+
+    /// zgx: the language text is in, as an app says it (its i18n locale, as
+    /// CSS's `lang` on a document's root), or `None` for the system's again.
+    /// Han characters take its fallback fonts (`ja` a Japanese one, `zh-TW`
+    /// a traditional Chinese one), and where it is Chinese, Japanese or
+    /// Korean a line's own kana or hangul no longer say otherwise
+    /// (`ShapeLine::build`). The fallback lists and the runs shaped with the
+    /// old ones start again; text shaped before is to be shaped again.
+    pub fn set_language(&mut self, language: Option<&str>) {
+        let locale = language.map_or_else(Self::get_locale, str::to_owned);
+        if locale == self.locale && language.is_some() == self.language_set {
+            return;
+        }
+        self.locale = locale;
+        self.language_set = language.is_some();
+        self.han_by_language = self.language_set
+            && ["zh", "ja", "ko"].iter().any(|l| is_language(&self.locale, l));
+        self.fallbacks = Fallbacks::new(&*self.dyn_fallback, &[], han_locale(&self.locale));
+        #[cfg(feature = "shape-run-cache")]
+        self.shape_run_cache.clear();
+    }
+
+    /// zgx: whether an app set a Chinese, Japanese or Korean language
+    /// (`set_language`), which Han characters then take over a line's hint.
+    pub(crate) fn han_by_language(&self) -> bool {
+        self.han_by_language
     }
 
     /// zgx: where words with `FontFeatures::HYPHENS` may break, a hyphen drawn at
@@ -672,5 +709,62 @@ impl<T> Deref for BorrowedWithFontSystem<'_, T> {
 impl<T> DerefMut for BorrowedWithFontSystem<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
+    }
+}
+
+/// zgx: whether `locale`'s language subtag is `language` (`ja` of
+/// `ja-JP`), in any case. Without allocating: a font system's locale is
+/// read as it is made.
+fn is_language(locale: &str, language: &str) -> bool {
+    locale
+        .split(['-', '_'])
+        .next()
+        .is_some_and(|subtag| subtag.eq_ignore_ascii_case(language))
+}
+
+/// zgx: `locale` as the platform fallback lists name Han's languages
+/// (`han_unification`): `ja`, `ko`, `zh-HK`, `zh-TW`, or `zh-CN` for any
+/// other (simplified Chinese, the lists' default for every locale they
+/// don't name). A system's locale is `ja-JP`, say, which they never
+/// matched: upstream gave a Japanese system Chinese Han.
+fn han_locale(locale: &str) -> &'static str {
+    let mut subtags = locale.split(['-', '_']);
+    let language = subtags.next().unwrap_or_default();
+    if language.eq_ignore_ascii_case("ja") {
+        "ja"
+    } else if language.eq_ignore_ascii_case("ko") {
+        "ko"
+    } else if !language.eq_ignore_ascii_case("zh") {
+        "zh-CN"
+    } else if subtags.clone().any(|s| s.eq_ignore_ascii_case("hk") || s.eq_ignore_ascii_case("mo")) {
+        "zh-HK"
+    } else if subtags.any(|s| s.eq_ignore_ascii_case("tw") || s.eq_ignore_ascii_case("hant")) {
+        "zh-TW"
+    } else {
+        "zh-CN"
+    }
+}
+
+#[cfg(test)]
+mod han_locale_tests {
+    use super::han_locale;
+
+    #[test]
+    fn a_locale_names_han_as_the_fallback_lists_do() {
+        for (locale, han) in [
+            ("ja-JP", "ja"),
+            ("ja", "ja"),
+            ("ko_KR", "ko"),
+            ("zh-TW", "zh-TW"),
+            ("zh-Hant", "zh-TW"),
+            ("zh-Hant-HK", "zh-HK"),
+            ("zh-HK", "zh-HK"),
+            ("zh-CN", "zh-CN"),
+            ("zh-Hans-SG", "zh-CN"),
+            ("en-US", "zh-CN"),
+            ("", "zh-CN"),
+        ] {
+            assert_eq!(han_locale(locale), han, "{locale}");
+        }
     }
 }

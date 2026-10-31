@@ -162,6 +162,14 @@ pub trait Platform {
         let _ = (text, word);
         None
     }
+    /// The language the app's text is in (its i18n locale, `None` for the
+    /// system's again), as CSS's `lang` on a document's root: Han
+    /// characters take that language's fonts (a Japanese app's kanji a
+    /// Japanese face, a traditional Chinese one's a traditional one), and
+    /// every text shapes again. None does nothing.
+    fn set_text_language(&self, language: Option<&str>) {
+        let _ = language;
+    }
     /// Whether the platform looks words up (`look_up`): macOS's dictionary
     /// panel. A context menu offers Look Up where it does.
     fn looks_up(&self) -> bool {

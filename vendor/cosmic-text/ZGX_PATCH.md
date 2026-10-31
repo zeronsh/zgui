@@ -275,3 +275,12 @@ cache, keyed by attributes, keeps its runs apart from a Chinese line's
 without a change to its key. zgx-gpu's
 `kanji_in_a_japanese_line_come_from_its_kana_font_whatever_the_system_language`
 checks both, a Chinese line before and after.
+
+An app's language comes first (`FontSystem::set_language`, from zgx's
+`ui.i18n` locale): set to Chinese, Japanese or Korean, it decides every
+line's Han and the kana hint stands down. Setting it rebuilds the fallback
+lists and clears the shape-run cache, whose glyphs carry the old lists'
+faces. The lists name Han's languages `ja`, `ko`, `zh-HK`, `zh-TW` and
+`zh-CN` (`han_unification`), which a system locale such as `ja-JP` never
+matched, so upstream gave a Japanese system Chinese Han; `han_locale`
+maps any locale onto them.
