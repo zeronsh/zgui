@@ -292,3 +292,62 @@ fn an_item_windows_build_must_give_a_window() {
     let error = h.host.error().get().unwrap_or_default();
     assert!(error.contains("unknown option `colour`"), "{error}");
 }
+
+#[test]
+fn a_window_reads_its_own_state_and_no_other() {
+    let h = Harness::inline(
+        r##"local items = ui.state("items", { { id = "a" }, { id = "b" } })
+        local settings = ui.state("settings", true)
+        ui.windows(items, function(item, win)
+            return { title = item.id,
+                ui.text { function() return `{item.id} {if win.active:get() then "front" else "back"} {win.size:get().width}` end } }
+        end)
+        ui.window { id = "settings", open = settings, function(win)
+            return ui.text { function() return if win.shown:get() then "settings shown" else "settings hidden" end }
+        end }
+        local plain = ui.state("plain", { { id = "p" } })
+        ui.windows(plain, function(item) return { ui.text { item.id } } end)
+        return ui.text { "app" }"##,
+    );
+    h.frames(2);
+    let windows = h.host.windows().get();
+    let by = |title: &str| windows.iter().find(|w| w.title == title).unwrap().clone();
+    let (a, b, settings) = (by("a"), by("b"), by("settings"));
+    assert!(
+        windows
+            .iter()
+            .find(|w| w.id.ends_with(":p"))
+            .expect("p")
+            .state
+            .is_none(),
+        "a build that takes no `win` makes none"
+    );
+    let view = |id: &str| {
+        let mut other = Ui::with_runtime(h.ui.runtime.clone(), 300., 200.);
+        other.mount(h.host.window_view(id));
+        other.prepare_frame();
+        other
+    };
+    let (va, vb, vs) = (view(&a.id), view(&b.id), view(&settings.id));
+    assert!(texts(&va).contains(&"a back 0".to_owned()));
+    let state = a.state.clone().expect("its state");
+    state.active.set(zgx_script::Value::Bool(true));
+    state.size.set(zgx_script::window_size_value(320., 200.));
+    h.frames(1);
+    va.prepare_frame();
+    vb.prepare_frame();
+    assert!(texts(&va).contains(&"a front 320".to_owned()));
+    assert!(
+        texts(&vb).contains(&"b back 0".to_owned()),
+        "b's is its own"
+    );
+    assert!(texts(&vs).contains(&"settings hidden".to_owned()));
+    settings
+        .state
+        .clone()
+        .unwrap()
+        .shown
+        .set(zgx_script::Value::Bool(true));
+    vs.prepare_frame();
+    assert!(texts(&vs).contains(&"settings shown".to_owned()));
+}

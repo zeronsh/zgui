@@ -34,6 +34,8 @@ A drag's preview is its own window, over every window and app. It is drawn once,
 
 Every macOS app has a Window menu: its own if it has one titled "Window", else a standard one. AppKit lists the windows there, and ⌘` cycles through them.
 
+A script's windows read their own state through `win`: `ui.windows`' `build(item, win)` and `ui.window`'s `function(win)` content give `win.active`, `win.shown` and `win.size`, that window's ([native](reference/native.md#a-windows-own-state)). `ui.window.active` and its siblings are the main window's. A window can't be found from inside its content instead, because a read from Luau carries no window: the same function runs in whichever window's view calls it, and a state is a value, not a place.
+
 A window opened with no position cascades from the front one. `frame_autosave` reopens a window where it was left, at the size it was left, whatever its title bar. `tabbing` decides whether a window joins AppKit's window tabs: `Disallowed` suits windows with tabs of their own.
 
 ## Rust

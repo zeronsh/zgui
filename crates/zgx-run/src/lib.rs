@@ -548,7 +548,34 @@ pub fn follow_windows(host: &ScriptHost, cx: &zgx_desktop::WindowContext) -> zgx
                     ..Default::default()
                 };
                 let (view_host, state, id) = (host.clone(), window.open.clone(), window.id.clone());
+                let own = window.state.clone();
                 let handle = factory.open(options, move |wcx| {
+                    // The window's own state, as its content reads it (`win`).
+                    if let Some(own) = own {
+                        let runtime = wcx.ui.runtime.clone();
+                        let (active, shown, viewport) = (
+                            wcx.ui.observe_window_active(),
+                            wcx.ui.observe_shown(),
+                            wcx.viewport.clone(),
+                        );
+                        let keep = runtime.effect(move || {
+                            let pairs = [
+                                (&own.active, Value::Bool(active.get())),
+                                (&own.shown, Value::Bool(shown.get())),
+                            ];
+                            for (state, now) in pairs {
+                                if state.with_untracked(|was| *was != now) {
+                                    state.set(now);
+                                }
+                            }
+                            let (width, height) = viewport.get();
+                            let now = zgx_script::window_size_value(width, height);
+                            if own.size.with_untracked(|was| *was != now) {
+                                own.size.set(now);
+                            }
+                        });
+                        wcx.on_closed(move || drop(keep));
+                    }
                     wcx.on_closed(move || {
                         if state.with_untracked(Value::truthy) {
                             state.set(Value::Bool(false));

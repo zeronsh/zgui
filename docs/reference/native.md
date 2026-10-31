@@ -152,6 +152,10 @@ return ui.button { on_click = function() details:push({ id = "p1", name = "Harbo
 
 A list in `ui.persist` reopens its windows on the next launch, each where `frame_autosave` left it.
 
+### A window's own state
+
+`ui.window.active`, `shown` and `size` are the app's main window's. A window of its own reads its own through `win`: `build(item, win)` for `ui.windows`, and content given as `function(win)` for `ui.window` (`ui.window { id, open, function(win) return … end }`). `win.active`, `win.shown` and `win.size` are read-only states, kept as the system says: a detail window dims its toolbar while another is in front, and a command acts on the window whose `win.active` is true. A `build` that takes no `win`, and plain content, make none.
+
 ### The title bar
 
 ```luau
