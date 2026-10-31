@@ -46,12 +46,15 @@ fn region(index:f32, position:vec2<f32>)->f32 {
  if g.tint.w>.5 {let o=regions[u32(g.tint.w)-1u]; k*=faded(o.fade_box,o.fade,p);}
  return k;
 }
+// Each edge's band eases in (smoothstep): level at both ends, so its inner
+// end meets the content without a line (t², still rising there at slope 2,
+// showed one).
 fn faded(b:vec4<f32>, f:vec4<f32>, p:vec2<f32>)->f32 {
  var k=1.;
- if f.x>0. {let t=clamp((p.y-b.y)/f.x,0.,1.); k*=t*t;}
- if f.y>0. {let t=clamp((b.z-p.x)/f.y,0.,1.); k*=t*t;}
- if f.z>0. {let t=clamp((b.w-p.y)/f.z,0.,1.); k*=t*t;}
- if f.w>0. {let t=clamp((p.x-b.x)/f.w,0.,1.); k*=t*t;}
+ if f.x>0. {let t=clamp((p.y-b.y)/f.x,0.,1.); k*=t*t*(3.-2.*t);}
+ if f.y>0. {let t=clamp((b.z-p.x)/f.y,0.,1.); k*=t*t*(3.-2.*t);}
+ if f.z>0. {let t=clamp((b.w-p.y)/f.z,0.,1.); k*=t*t*(3.-2.*t);}
+ if f.w>0. {let t=clamp((p.x-b.x)/f.w,0.,1.); k*=t*t*(3.-2.*t);}
  return k;
 }
 @group(0) @binding(2) var tex_sampler:sampler;

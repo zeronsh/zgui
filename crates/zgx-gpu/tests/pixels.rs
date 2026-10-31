@@ -4761,7 +4761,7 @@ fn colour_only_rich_text_changes_recolour_without_reshaping() {
     assert_eq!(gpu.render(&scene, &damage).unwrap().shaped_nodes, 1);
 }
 #[test]
-fn fade_edges_mask_descendants_with_a_quadratic_ramp() {
+fn fade_edges_mask_descendants_with_an_eased_ramp() {
     let _gpu_fixture = gpu_fixture();
     let mut scene = Scene::new(100., 100.);
     scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
@@ -4789,13 +4789,18 @@ fn fade_edges_mask_descendants_with_a_quadratic_ramp() {
     gpu.render(&scene, &damage).unwrap();
     let pixels = gpu.readback().unwrap();
     let at = |y: usize| pixels[(y * 100 + 50) * 4];
-    // Edges nearly vanish, the ramp is quadratic, the middle is untouched.
+    // Edges nearly vanish, the ramp eases (smoothstep: at y 10, its centre
+    // 10.5 px in, 0.54), the middle is untouched.
     assert!(at(0) < 5, "top edge {}", at(0));
     assert!(at(99) < 5, "bottom edge {}", at(99));
     let half = at(10) as f32 / 255.;
-    assert!((half - 0.27).abs() < 0.08, "halfway {half}");
+    assert!((half - 0.54).abs() < 0.03, "halfway {half}");
     assert_eq!(at(50), 255);
     assert_eq!(at(30), 255);
+    // Level where the band meets the content: no step there to show as a
+    // line (t², still rising at slope 2, left 242 then 255).
+    assert!(at(19) >= 252, "the band's inner end {}", at(19));
+    assert!(at(20) - at(19) <= 2, "{} then {}", at(19), at(20));
 }
 
 #[test]
@@ -4833,7 +4838,7 @@ fn fade_insets_end_the_bands_inside_the_clip() {
     assert_eq!(at(10), 255);
     assert_eq!(at(49), 255);
     let half = at(60) as f32 / 255.;
-    assert!((half - 0.27).abs() < 0.08, "halfway {half}");
+    assert!((half - 0.46).abs() < 0.04, "halfway {half}");
     assert!(at(69) < 5, "band's end {}", at(69));
     assert_eq!(at(85), 0);
 }
