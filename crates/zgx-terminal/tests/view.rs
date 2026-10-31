@@ -242,3 +242,31 @@ fn a_windows_programs_output_shows_in_rows() {
     assert!(state.columns > 10 && state.rows > 5, "{state:?}");
     assert!(term.needs_confirm_close(), "ping runs in front");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_program_asking_for_the_kitty_keyboard_protocol_gets_it() {
+    let mut app = Harness::new();
+    // Push "disambiguate" (CSI > 1 u), ask what is on (CSI ? u), read the
+    // answer, then read one key.
+    let term = Terminal::new(
+        &app.ui.runtime,
+        session(
+            r#"exec sh -c 'stty raw -echo; printf "\033[>1u\033[?u"; dd bs=1 count=5 2>/dev/null | od -An -c | tr -d " \n"; printf "\r\n"; dd bs=1 count=7 2>/dev/null | od -An -c | tr -d " \n"; printf "\r\n"; exec sleep 30'"#,
+        ),
+    );
+    app.mount(zgx_terminal::terminal_view(&term).w(600.).h(300.));
+    app.until("the flags' answer", |app| app.shows(r"033[?1u"));
+    term.focus();
+    app.until("focus", |_| term.focused());
+    app.ui.dispatch(InputEvent::KeyDown {
+        key: Key::Character("c".into()),
+        modifiers: Modifiers {
+            control: true,
+            ..Modifiers::default()
+        },
+        repeat: false,
+    });
+    // Ctrl+C as CSI 99;5 u, not ^C.
+    app.until("the key", |app| app.shows(r"033[99;5u"));
+}

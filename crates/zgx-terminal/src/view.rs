@@ -552,7 +552,12 @@ impl Engine {
     /// holds focus on the way to the editor.
     fn keyboard(self: &Rc<Self>, root: bool, cx: &mut EventContext) {
         match cx.event.clone() {
-            InputEvent::KeyDown { key, modifiers, .. } => self.key(&key, modifiers, cx),
+            InputEvent::KeyDown {
+                key,
+                modifiers,
+                repeat,
+            } => self.key(&key, modifiers, repeat, cx),
+            InputEvent::KeyUp { key, modifiers } => self.key_up(&key, modifiers, cx),
             InputEvent::Text(text) | InputEvent::ImeCommit(text) => {
                 if self.preedit.with_untracked(|shown| !shown.is_empty()) {
                     self.preedit.set(String::new());
@@ -775,7 +780,7 @@ impl Engine {
 
     /// A key, at the hidden editor: sent to the program, or left to the app
     /// (`⌘` chords on macOS, shortcuts it binds).
-    fn key(&self, key: &Key, modifiers: Modifiers, cx: &mut EventContext) {
+    fn key(&self, key: &Key, modifiers: Modifiers, repeat: bool, cx: &mut EventContext) {
         // An input method composing takes the keys.
         if self.preedit.with_untracked(|text| !text.is_empty()) {
             return;
@@ -807,10 +812,39 @@ impl Engine {
                 _ => {}
             }
         }
-        if let Some(bytes) = keys::encode(key, modifiers, self.mode()) {
+        let mode = self.mode();
+        let event = if repeat {
+            keys::KeyEvent::Repeat
+        } else {
+            keys::KeyEvent::Press
+        };
+        // The kitty keyboard protocol, once the program asks for it.
+        let encoded = match keys::kitty(key, modifiers, event, cx.key_code(), mode) {
+            Some(kitty) => kitty,
+            None => keys::encode(key, modifiers, mode),
+        };
+        if let Some(bytes) = encoded {
             self.write(bytes);
             cx.prevent_default();
             cx.stop_propagation();
+        }
+    }
+
+    /// A key's release, which a program reads under the kitty keyboard
+    /// protocol when it asks for event types.
+    fn key_up(&self, key: &Key, modifiers: Modifiers, cx: &mut EventContext) {
+        if self.preedit.with_untracked(|text| !text.is_empty()) {
+            return;
+        }
+        let mode = self.mode();
+        if !mode.contains(TermMode::REPORT_EVENT_TYPES) {
+            return;
+        }
+        if let Some(Some(bytes)) =
+            keys::kitty(key, modifiers, keys::KeyEvent::Release, cx.key_code(), mode)
+        {
+            self.with_session(|session| session.write(bytes));
+            cx.prevent_default();
         }
     }
 
@@ -1216,6 +1250,7 @@ fn view(engine: Rc<Engine>) -> View {
                 && matches!(
                     cx.event,
                     InputEvent::KeyDown { .. }
+                        | InputEvent::KeyUp { .. }
                         | InputEvent::Text(_)
                         | InputEvent::ImeCommit(_)
                         | InputEvent::ImePreedit { .. }
