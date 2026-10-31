@@ -35,7 +35,7 @@ pub use process::process_name;
 pub use session::{
     ClipboardRequest, GridSize, Listener, Session, SessionEvent, SessionOptions, Term,
 };
-pub use view::{EngineTerminal, is_engine_drawn, terminal_view};
+pub use view::{EngineTerminal, is_engine_drawn, reads, terminal_view};
 
 /// A program's progress report (OSC 9;4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
