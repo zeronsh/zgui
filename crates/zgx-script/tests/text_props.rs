@@ -268,3 +268,40 @@ fn wrap_balance_narrows_the_lines_and_follows_state() {
     h.frames(1);
     assert!(wrap(&mut h) < 300., "balanced again");
 }
+
+/// `font_features = "hyphens"` hyphenates where the build can, and says
+/// plainly that it can't where it can't, where scripts are linted.
+#[test]
+fn hyphens_need_the_feature_or_say_so() {
+    use zgx::scene::NodeKind;
+    let code = r##"return ui.column {
+            ui.text { "Characteristically", id = "t", font_features = "hyphens ss01" },
+        }"##;
+    // Linted, as a debug build is.
+    let host = |runtime: &zgx::reactive::Runtime| {
+        let host = zgx_script::ScriptHost::inline(runtime, "app", code);
+        host.design_lint(zgx_script::DesignLint::Warn);
+        host
+    };
+    let app = zgx_script::testing::TestApp::try_new(host);
+    if !zgx::text_layout::HYPHENATION {
+        let error = app.err().expect("refused");
+        assert!(error.contains("`hyphens` feature"), "{error}");
+        return;
+    }
+    let mut h = app.expect("loads");
+    h.frames(1);
+    let node = h.find("t").unwrap();
+    let scene = h.ui.scene.borrow();
+    let mut pending = vec![node];
+    while let Some(next) = pending.pop() {
+        if matches!(scene.kind(next), NodeKind::Text { .. }) {
+            let features = &scene.font(next).features;
+            assert!(features.hyphens());
+            assert!(features.settings().contains(&(*b"ss01", 1)));
+            return;
+        }
+        pending.extend(scene.children(next).iter().copied());
+    }
+    panic!("no text");
+}

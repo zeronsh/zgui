@@ -261,7 +261,7 @@ return ui.div {
 | `line_height` | `number` | the font's | points |
 | `letter_spacing` | `number` | `0` | points |
 | `tabular` | `boolean` | `false` | tabular figures: every digit one width, so a changing number holds still |
-| `font_features` | `string` | none | OpenType features, as CSS's `font-feature-settings`: `"ss01 cv02=3 liga=0"`, a tag on, or `tag=value` (`0` off). What the font lacks does nothing, and what isn't a four-letter tag with a number is left out. Replaces `tabular`: give `"tnum"` here too |
+| `font_features` | `string` | none | OpenType features, as CSS's `font-feature-settings`: `"ss01 cv02=3 liga=0"`, a tag on, or `tag=value` (`0` off). `hyphens` breaks words at their hyphenation points with a hyphen, as CSS's `hyphens: auto`, in the system's language (zgx's `hyphens` feature; without it, an error where scripts are linted: a debug build, `zgx lint`. `hyphens = "auto"` of its own comes in 0.2). What the font lacks does nothing, and what isn't a four-letter tag with a number is left out. Replaces `tabular`: give `"tnum"` here too |
 | `underline` | `boolean` | `false` | underlined text, inherited (CSS's `text-decoration`): `hover = { underline = true }` underlines a link button's label |
 | `underline_offset` | `number` | a tenth of the text size | points below the baseline the underline sits; inherited |
 

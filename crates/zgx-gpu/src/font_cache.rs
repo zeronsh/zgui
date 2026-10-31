@@ -24,7 +24,31 @@ const FORMAT: &[u8] = b"zgx system fonts 2\n";
 pub(crate) fn system_fonts() -> FontSystem {
     let mut fonts = cached_system_fonts();
     platform_families(&mut fonts);
+    #[cfg(feature = "hyphens")]
+    fonts.set_hyphenator(Some(std::sync::Arc::new(hyphenation_points)));
     fonts
+}
+
+/// Where `word` may break with a hyphen, in `locale`'s language (English
+/// for one hypher has no patterns for): byte offsets inside it.
+#[cfg(feature = "hyphens")]
+fn hyphenation_points(word: &str, locale: &str) -> Vec<usize> {
+    let code = locale.as_bytes();
+    let lang = (code.len() >= 2)
+        .then(|| {
+            hypher::Lang::from_iso([code[0].to_ascii_lowercase(), code[1].to_ascii_lowercase()])
+        })
+        .flatten()
+        .unwrap_or(hypher::Lang::English);
+    let mut at = 0;
+    let mut points = Vec::new();
+    for syllable in hypher::hyphenate(word, lang) {
+        at += syllable.len();
+        if at < word.len() {
+            points.push(at);
+        }
+    }
+    points
 }
 
 /// The system's own faces for the generic families. cosmic-text names

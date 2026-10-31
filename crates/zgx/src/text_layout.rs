@@ -154,6 +154,30 @@ impl FontFeatures {
     pub fn settings(&self) -> &[([u8; 4], u32)] {
         self.0.as_deref().unwrap_or(&[])
     }
+    /// zgx's own tag for hyphenation (`_hyp`: no font's feature can have it,
+    /// registered tags being lowercase letters and digits and font vendors'
+    /// private ones uppercase letters, OpenType's two tag spaces, neither
+    /// with punctuation). Words break at their hyphenation
+    /// points, a hyphen ending the line (CSS's `hyphens: auto`), in the
+    /// system's language. It rides with the features, inherited as they are,
+    /// and is never given to a font; it takes zgx's `hyphens` feature
+    /// (`HYPHENATION`). Luau's `font_features = "hyphens"` sets it.
+    pub const HYPHENS: [u8; 4] = *b"_hyp";
+    /// Whether words break at their hyphenation points (`HYPHENS`).
+    pub fn hyphens(&self) -> bool {
+        self.settings()
+            .iter()
+            .any(|(tag, value)| *tag == Self::HYPHENS && *value != 0)
+    }
+    /// These features, with words breaking at their hyphenation points or not.
+    pub fn with_hyphens(&self, hyphens: bool) -> Self {
+        if self.hyphens() == hyphens {
+            return self.clone();
+        }
+        let others = self.settings().iter().copied();
+        let others = others.filter(|(tag, _)| *tag != Self::HYPHENS);
+        Self::new(others.chain(hyphens.then_some((Self::HYPHENS, 1))))
+    }
     /// The bytes the settings take, for cache accounting.
     pub fn storage_bytes(&self) -> usize {
         std::mem::size_of_val(self.settings())
@@ -360,6 +384,9 @@ impl TextLayout for Inset {
         self.inner.visual_line_edge(position, end)
     }
 }
+/// Whether this build hyphenates (zgx's `hyphens` feature): without it,
+/// features with `FontFeatures::HYPHENS` break words as before.
+pub const HYPHENATION: bool = cfg!(feature = "hyphens");
 /// A visual line's carets (`TextLayout::line_carets`), in the layout's
 /// coordinates.
 #[derive(Clone, Debug, PartialEq)]

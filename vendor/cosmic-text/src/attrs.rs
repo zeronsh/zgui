@@ -170,10 +170,22 @@ pub struct FontFeatures {
 }
 
 impl FontFeatures {
+    /// zgx: the tag that asks for hyphenation: words may break at their
+    /// hyphenation points, a hyphen drawn where they do (CSS's `hyphens:
+    /// auto`), from `FontSystem::set_hyphenator`'s. No font can have it:
+    /// OpenType's registered tags are lowercase letters and digits, its
+    /// vendors' private ones uppercase letters, neither with an underscore.
+    pub const HYPHENS: FeatureTag = FeatureTag::new(b"_hyp");
+
     pub const fn new() -> Self {
         Self {
             features: Vec::new(),
         }
+    }
+
+    /// zgx: whether these ask for hyphenation (`HYPHENS`).
+    pub fn hyphens(&self) -> bool {
+        (self.features.iter()).any(|feature| feature.tag == Self::HYPHENS && feature.value != 0)
     }
 
     pub fn set(&mut self, tag: FeatureTag, value: u32) -> &mut Self {

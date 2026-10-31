@@ -44,6 +44,10 @@ webkitgtk = ["zgx-desktop/webkitgtk"]
 # `ui.terminal` drawn by zgx on every platform (zgx-desktop's `terminal`):
 # a pseudoterminal and its screen, with alacritty_terminal.
 terminal = ["zgx-desktop/terminal"]
+# `font_features = "hyphens"` in an app's Luau: the dictionaries of 48
+# languages (zgx-desktop's `hyphens`, about 1.2 MB of the binary). Off by
+# default for now.
+hyphens = ["zgx-desktop/hyphens"]
 # `ui.model` (zgx-script's `gltf`): glTF models in 3D scenes. 48.5 KiB
 # of a build for shipping (`dist`, on against off at one commit).
 gltf = ["zgx-script/gltf"]

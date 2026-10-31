@@ -2316,7 +2316,31 @@ fn lint_literal(
     if lint.unwrap_or_else(|| crate::design::mode(lua)) != crate::DesignLint::Off
         && let Some(prop) = Prop::parse(name)
     {
+        // Hyphenation asked of a build without it: said where scripts are
+        // linted (a debug build, `zgx lint`), not ignored. A build with it
+        // never tests.
+        if !zgx::text_layout::HYPHENATION && prop == Prop::FontFeatures {
+            hyphenation_needs_the_feature(lit)?;
+        }
         crate::design::check(lua, prop, name, lit)?;
+    }
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn hyphenation_needs_the_feature(lit: &Lit) -> mlua::Result<()> {
+    let Lit::Str(text) = lit else {
+        return Ok(());
+    };
+    if text
+        .split_whitespace()
+        .any(|setting| setting.split('=').next() == Some("hyphens"))
+    {
+        return Err(mlua::Error::runtime(
+            "`font_features = \"hyphens\"` needs zgx's `hyphens` feature, which this build \
+             left out (a Rust host enables zgx-desktop's `hyphens`)",
+        ));
     }
     Ok(())
 }

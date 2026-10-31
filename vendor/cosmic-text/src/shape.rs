@@ -102,6 +102,10 @@ pub struct ShapeBuffer {
     /// Buffer for shape words.
     words: Vec<ShapeWord>,
 
+    /// zgx: the hyphenation of the line about to be laid out
+    /// (`ShapeLine::hyphenate`), taken by its layout: nothing a line keeps.
+    hyphenation: Option<Box<Hyphenation>>,
+
     /// Buffers for visual lines.
     visual_lines: Vec<VisualLine>,
     cached_visual_lines: Vec<VisualLine>,
@@ -900,6 +904,9 @@ fn decoration_metrics(font: &Font) -> (DecorationMetrics, DecorationMetrics, f32
 
 /// span index used in `VlRange` to indicate this range is the ellipsis.
 const ELLIPSIS_SPAN: usize = usize::MAX;
+/// zgx: span index used in `VlRange` for a hyphen ending a line where a word
+/// breaks (`ShapeWord::hyphens`, `ShapeWord::soft_hyphen`).
+const HYPHEN_SPAN: usize = usize::MAX - 1;
 
 fn shape_ellipsis(
     font_system: &mut FontSystem,
@@ -1391,6 +1398,41 @@ pub struct ShapeLine {
     ellipsis_span: Option<ShapeSpan>,
 }
 
+/// zgx: where a line's words may break with a hyphen, found for one layout
+/// (`ShapeLine::hyphenate`), for a line with runs that hyphenate
+/// (`FontFeatures::HYPHENS`) and points in them.
+#[derive(Clone, Debug)]
+struct Hyphenation {
+    /// By (span, word): the glyphs a line may break before, a hyphen drawn
+    /// after the part on it. Sorted.
+    points: Vec<((usize, usize), Vec<u16>)>,
+    /// The (span, word)s ending with a soft hyphen (U+00AD), shown as a
+    /// hyphen where a line breaks after one. Sorted.
+    soft: Vec<(usize, usize)>,
+    /// The hyphen, in the line's first span's attributes.
+    span: ShapeSpan,
+}
+
+impl Hyphenation {
+    /// The glyphs word `word` of span `span` may break before.
+    fn points(&self, span: usize, word: usize) -> &[u16] {
+        match self.points.binary_search_by_key(&(span, word), |(key, _)| *key) {
+            Ok(at) => &self.points[at].1,
+            Err(_) => &[],
+        }
+    }
+
+    /// Whether word `word` of span `span` ends with a soft hyphen.
+    fn soft(&self, span: usize, word: usize) -> bool {
+        self.soft.binary_search(&(span, word)).is_ok()
+    }
+
+    /// The hyphen's width in the given font size.
+    fn width(&self, font_size: f32) -> f32 {
+        self.span.words.iter().map(|w| w.width(font_size)).sum()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 struct WordGlyphPos {
     word: usize,
@@ -1466,6 +1508,8 @@ struct VisualLine {
     spaces: u32,
     w: f32,
     ellipsized: bool,
+    /// zgx: where the line's text breaks, if it ends with a hyphen there.
+    hyphen_at: Option<usize>,
     /// Byte range (start, end) of the original line text that was replaced by the ellipsis.
     /// Only set when `ellipsized` is true.
     elided_byte_range: Option<(usize, usize)>,
@@ -1478,6 +1522,7 @@ impl VisualLine {
         self.w = 0.;
         self.ellipsized = false;
         self.elided_byte_range = None;
+        self.hyphen_at = None;
     }
 }
 
@@ -1653,6 +1698,91 @@ impl ShapeLine {
         {
             font_system.shape_buffer.run_key_line = 0;
         }
+    }
+
+    /// zgx: where the words of `line` (the text this was shaped from) may
+    /// break with a hyphen, and the hyphen, for the layout that follows
+    /// (`ShapeBuffer::hyphenation`): the points the font system's hyphenator
+    /// gives the words of runs that hyphenate, and the words ending with a
+    /// soft hyphen. Nothing is kept on the line. Whether any were found.
+    #[cold]
+    #[inline(never)]
+    pub fn hyphenate(
+        &self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+    ) -> bool {
+        if !attrs_list.defaults_owned().font_features.hyphens()
+            && !attrs_list.spans_iter().any(|(_, attrs)| attrs.font_features.hyphens())
+        {
+            return false;
+        }
+        let mut points = Vec::new();
+        let mut soft = Vec::new();
+        for (span_index, span) in self.spans.iter().enumerate() {
+            if span.level.is_rtl() {
+                continue;
+            }
+            for (word_index, word) in span.words.iter().enumerate() {
+                let (Some(first), Some(last)) = (word.glyphs.first(), word.glyphs.last()) else {
+                    continue;
+                };
+                if word.blank || !attrs_list.get_span(first.start).font_features.hyphens() {
+                    continue;
+                }
+                let (start, end) = (first.start, last.end);
+                let Some(text) = line.get(start..end) else {
+                    continue;
+                };
+                if text.ends_with('\u{AD}') {
+                    soft.push((span_index, word_index));
+                }
+                let mut glyphs = Vec::new();
+                for point in font_system.hyphenate(text).unwrap_or_default() {
+                    let at = start + point;
+                    if let Some(glyph) = word.glyphs.iter().position(|glyph| glyph.start == at) {
+                        if glyph > 0 {
+                            glyphs.push(glyph as u16);
+                        }
+                    }
+                }
+                if !glyphs.is_empty() {
+                    points.push(((span_index, word_index), glyphs));
+                }
+            }
+        }
+        if points.is_empty() && soft.is_empty() {
+            return false;
+        }
+        // The hyphen, in its first span's attributes as the ellipsis is:
+        // U+2010, or `-` where the font lacks it.
+        let attrs = if attrs_list.spans.is_empty() {
+            attrs_list.defaults()
+        } else {
+            attrs_list.get_span(0)
+        };
+        let shape = |text: &str, font_system: &mut FontSystem| {
+            let attrs_list = AttrsList::new(&attrs);
+            let level = unicode_bidi::Level::ltr();
+            ShapeWord::new(font_system, text, &attrs_list, 0..text.len(), level, false, shaping)
+                .glyphs
+        };
+        let mut glyphs = shape("\u{2010}", font_system);
+        if glyphs.is_empty() || glyphs.iter().all(|glyph| glyph.glyph_id == 0) {
+            glyphs = shape("-", font_system);
+        }
+        let span = ShapeSpan {
+            level: unicode_bidi::Level::ltr(),
+            words: vec![ShapeWord {
+                blank: false,
+                glyphs,
+            }],
+            decoration_spans: Vec::new(),
+        };
+        font_system.shape_buffer.hyphenation = Some(Box::new(Hyphenation { points, soft, span }));
+        true
     }
 
     /// zgx patch: the ellipsis is shaped when a layout ellipsizes
@@ -2343,6 +2473,49 @@ impl ShapeLine {
         }
     }
 
+    /// zgx: end `line` with a hyphen at byte `at`, the text breaking there.
+    fn add_hyphen(&self, line: &mut VisualLine, level: unicode_bidi::Level, at: usize, w: f32) {
+        line.ranges.push(VlRange {
+            span: HYPHEN_SPAN,
+            start: WordGlyphPos::ZERO,
+            end: WordGlyphPos::new(1, 0),
+            level,
+        });
+        line.w += w;
+        line.hyphen_at = Some(at);
+    }
+
+    /// zgx: where `word`, from glyph `from`, breaks with a hyphen so that the
+    /// part and the hyphen fit in `room`: the glyph it breaks before, and the
+    /// part's width.
+    fn hyphen_split(
+        &self,
+        word: &ShapeWord,
+        points: &[u16],
+        from: usize,
+        room: f32,
+        font_size: f32,
+    ) -> Option<(usize, f32)> {
+        let mut best = None;
+        let mut width = 0.;
+        let mut at = from;
+        for &point in points {
+            let point = usize::from(point);
+            if point <= from {
+                continue;
+            }
+            while at < point {
+                width += word.glyphs[at].width(font_size);
+                at += 1;
+            }
+            if width > room {
+                break;
+            }
+            best = Some((point, width));
+        }
+        best
+    }
+
     fn byte_range_of_vlrange(&self, r: &VlRange) -> Option<(usize, usize)> {
         debug_assert_ne!(r.span, ELLIPSIS_SPAN);
         let words = self.get_span_words(r.span);
@@ -2543,6 +2716,8 @@ impl ShapeLine {
         // For each visual line a list of  (span index,  and range of words in that span)
         // Note that a BiDi visual line could have multiple spans or parts of them
         // let mut vl_range_of_spans = Vec::with_capacity(1);
+        // zgx: this line's hyphenation, if `hyphenate` found any.
+        let hyphenation = scratch.hyphenation.take();
         let mut visual_lines = mem::take(&mut scratch.visual_lines);
         let mut cached_visual_lines = mem::take(&mut scratch.cached_visual_lines);
         cached_visual_lines.clear();
@@ -2632,6 +2807,13 @@ impl ShapeLine {
                 width_opt,
                 ellipsize,
             ) {
+                // zgx: words break with hyphens in a layout without ellipsis.
+                let hyphens = hyphenation
+                    .as_deref()
+                    .filter(|_| matches!(ellipsize, Ellipsize::None));
+                let hyphenating = hyphens.is_some();
+                let hyphen_w = hyphens.map_or(0., |h| h.width(font_size));
+                let points = |span: usize, word: usize| hyphens.map_or(&[][..], |h| h.points(span, word));
                 'outer: for (span_index, span) in self.spans.iter().enumerate() {
                     let mut word_range_width = 0.;
                     let mut width_before_last_blank = 0.;
@@ -2842,6 +3024,57 @@ impl ShapeLine {
                                     width_before_last_blank = word_range_width;
                                 }
                                 word_range_width += word_width;
+                            } else if hyphenating
+                                && !points(span_index, i).is_empty()
+                                && self
+                                    .hyphen_split(
+                                        word,
+                                        points(span_index, i),
+                                        0,
+                                        width_opt.unwrap_or(f32::INFINITY)
+                                            - (current_visual_line.w + word_range_width)
+                                            - hyphen_w,
+                                        font_size,
+                                    )
+                                    .is_some()
+                            {
+                                // zgx: the word breaks with a hyphen where a part fits,
+                                // again on each line while the rest doesn't.
+                                let width = width_opt.unwrap_or(f32::INFINITY);
+                                let mut from = 0;
+                                let mut rest = word_width;
+                                while let Some((split, part)) = self.hyphen_split(
+                                    word,
+                                    points(span_index, i),
+                                    from,
+                                    width - (current_visual_line.w + word_range_width) - hyphen_w,
+                                    font_size,
+                                ) {
+                                    self.add_to_visual_line(
+                                        &mut current_visual_line,
+                                        span_index,
+                                        fitting_start,
+                                        WordGlyphPos::new(i, split),
+                                        word_range_width + part,
+                                        number_of_blanks,
+                                    );
+                                    let at = word.glyphs[split].start;
+                                    self.add_hyphen(&mut current_visual_line, span.level, at, hyphen_w);
+                                    visual_lines.push(current_visual_line);
+                                    current_visual_line =
+                                        cached_visual_lines.pop().unwrap_or_default();
+                                    number_of_blanks = 0;
+                                    total_line_count += 1;
+                                    total_line_height += line_height;
+                                    fitting_start = WordGlyphPos::new(i, split);
+                                    word_range_width = 0.;
+                                    rest -= part;
+                                    from = split;
+                                    if rest <= width {
+                                        break;
+                                    }
+                                }
+                                word_range_width = rest;
                             } else if wrap == Wrap::Glyph
                             // Make sure that the word is able to fit on it's own line, if not, fall back to Glyph wrapping.
                             || (wrap == Wrap::WordOrGlyph && word_width > width_opt.unwrap_or(f32::INFINITY))
@@ -2954,6 +3187,17 @@ impl ShapeLine {
                                             word_range_width,
                                             number_of_blanks,
                                         );
+                                        // zgx: broken after a soft hyphen: a hyphen shows.
+                                        if i > 0 && hyphens.is_some_and(|h| h.soft(span_index, i - 1)) {
+                                            if let Some(last) = span.words[i - 1].glyphs.last() {
+                                                self.add_hyphen(
+                                                    &mut current_visual_line,
+                                                    span.level,
+                                                    last.end,
+                                                    hyphen_w,
+                                                );
+                                            }
+                                        }
                                     }
                                 }
 
@@ -3103,8 +3347,12 @@ impl ShapeLine {
                                  max_descent: &mut f32| {
                 for r in visual_line.ranges[range.clone()].iter() {
                     let is_ellipsis = r.span == ELLIPSIS_SPAN;
-                    let span_words = self.get_span_words(r.span);
-                    let deco_spans: &[(Range<usize>, GlyphDecorationData)] = if is_ellipsis {
+                    let is_hyphen = r.span == HYPHEN_SPAN;
+                    let span_words = match &hyphenation {
+                        Some(hyphenation) if is_hyphen => &hyphenation.span.words,
+                        _ => self.get_span_words(r.span),
+                    };
+                    let deco_spans: &[(Range<usize>, GlyphDecorationData)] = if is_ellipsis || is_hyphen {
                         &[]
                     } else {
                         &self.spans[r.span].decoration_spans
@@ -3193,6 +3441,13 @@ impl ShapeLine {
                                     };
                                     layout_glyph.start = boundary;
                                     layout_glyph.end = boundary;
+                                }
+                            }
+                            // zgx: a hyphen is at the break, holding no text.
+                            if is_hyphen {
+                                if let Some(at) = visual_line.hyphen_at {
+                                    layout_glyph.start = at;
+                                    layout_glyph.end = at;
                                 }
                             }
                             glyphs.push(layout_glyph);
