@@ -1280,6 +1280,29 @@ impl TextEditor {
         }
         changed
     }
+    /// `replace_range`, the selection staying where it was (moved with the
+    /// text): a substitution made as text is typed (`View::autocorrect`).
+    /// Undone, the selection goes back there too, and typing goes on.
+    pub fn substitute(&mut self, range: Range<usize>, text: &str) -> bool {
+        let before = self.selection;
+        if !self.replace_range(range.clone(), text) {
+            return false;
+        }
+        let moved = |at: usize| match at {
+            at if at >= range.end => at + text.len() - range.len(),
+            at if at > range.start => range.start + text.len(),
+            at => at,
+        };
+        let after = Selection {
+            anchor: moved(before.anchor),
+            focus: moved(before.focus),
+        };
+        self.selection = after;
+        if let Some(last) = self.undo.back_mut() {
+            (last.before, last.after) = (before, after);
+        }
+        true
+    }
     /// The committed text's length in UTF-16 code units, as Windows counts.
     pub fn utf16_len(&mut self) -> usize {
         self.utf16_starts(|starts, _| starts.last().map_or(0, |(_, u)| *u))

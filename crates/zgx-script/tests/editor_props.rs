@@ -1,7 +1,9 @@
 //! An editor's script options: highlight colours that follow the theme, a
-//! highlighter's state of any Luau value, and `read_only`.
+//! highlighter's state of any Luau value, `read_only`, and the system's
+//! substitutions as it is typed (`autocorrect`, `smart_punctuation`).
 mod common;
 use common::Harness;
+use std::rc::Rc;
 use zgx::scene::{Color, NodeKind};
 
 /// Each styled run under `id`, as its text and colour.
@@ -159,4 +161,80 @@ fn a_read_only_editor_refuses_typing_and_follows_its_state() {
     let editor = h.ui.editor(fixed).unwrap();
     assert_eq!(editor.editor.borrow().text().to_string(), "kept");
     assert_eq!(h.error(), None);
+}
+
+/// A system that curls double quotes and corrects "teh".
+struct Substituting;
+impl zgx::platform::Platform for Substituting {
+    fn clipboard_text(&self) -> Option<String> {
+        None
+    }
+    fn set_clipboard_text(&self, _: String) -> bool {
+        false
+    }
+    fn substitutions(
+        &self,
+        text: &str,
+        kinds: zgx::platform::Substitutions,
+    ) -> Vec<(std::ops::Range<usize>, String)> {
+        // Curled or not, each quote opens or closes.
+        let mut open = false;
+        let quotes = text
+            .char_indices()
+            .filter(|(_, c)| matches!(c, '"' | '“' | '”'));
+        quotes
+            .filter_map(|(i, c)| {
+                open = !open;
+                (kinds.punctuation && c == '"')
+                    .then(|| (i..i + 1, if open { "“" } else { "”" }.into()))
+            })
+            .collect()
+    }
+    fn correction(&self, text: &str, word: std::ops::Range<usize>) -> Option<String> {
+        (&text[word] == "teh").then(|| "the".into())
+    }
+    fn open_files(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn save_file(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[test]
+fn autocorrect_and_smart_punctuation_substitute_what_is_typed() {
+    use zgx::input::InputEvent;
+    let code = r##"local a = ui.state("a", "")
+        local b = ui.state("b", "")
+        local c = ui.state("c", "")
+        return ui.column {
+            ui.input { id = "both", value = a, w = 200, autocorrect = true, smart_punctuation = true },
+            ui.textarea { id = "quotes", value = b, w = 200, h = 60, smart_punctuation = true },
+            ui.input { id = "plain", value = c, w = 200 },
+            ui.text { id = "a", "{a}" },
+            ui.text { id = "b", "{b}" },
+            ui.text { id = "c", "{c}" },
+        }"##;
+    let mut h = Harness::wrapped(
+        move |runtime| zgx_script::ScriptHost::inline(runtime, "app", code),
+        |view| zgx::compose::provide(zgx::platform::PlatformService(Rc::new(Substituting)), view),
+    );
+    h.frames(1);
+    for id in ["both", "quotes", "plain"] {
+        let node = h.find(id).unwrap();
+        h.ui.input.focus(&h.ui.scene, Some(node));
+        for c in "teh \"x\"".chars() {
+            h.ui.dispatch(InputEvent::Text(c.into()));
+        }
+        h.frames(1);
+    }
+    assert_eq!(h.text("a"), "the “x”");
+    assert_eq!(h.text("b"), "teh “x”", "quotes alone");
+    assert_eq!(h.text("c"), "teh \"x\"", "neither");
 }

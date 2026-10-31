@@ -532,8 +532,9 @@ pub(crate) struct Rare {
     line_numbers: Option<bool>,
     /// What a code editor adds to a text area (`View::highlighter`, …).
     code: Option<Box<CodeOptions>>,
-    /// `WINDOW_DRAG` (`View::window_drag`) and `HOLLOW` (`View::hollow`):
-    /// rare, tested together as the element mounts.
+    /// `WINDOW_DRAG` (`View::window_drag`), `HOLLOW` (`View::hollow`) and an
+    /// editor's `AUTOCORRECT` and `SMART_PUNCTUATION`: rare, tested together
+    /// as the element mounts.
     mount_flags: u8,
     /// `View::selectable`.
     selectable: Option<bool>,
@@ -1459,6 +1460,31 @@ impl View {
     pub fn spellcheck_when(mut self, check: impl FnMut() -> bool + 'static) -> Self {
         self.rare_mut().spellcheck = Some(Box::new(check));
         self
+    }
+    /// Correct a misspelled word as it ends, and expand the person's text
+    /// replacements ("omw" to "On my way!"), as the system's own text
+    /// fields do (macOS's `NSSpellChecker`), where the person has them on.
+    /// Undo puts back what was typed. Off by default; a password field
+    /// never corrects. Only editor views take it.
+    pub fn autocorrect(mut self, correct: bool) -> Self {
+        self.set_mount_flag(AUTOCORRECT, correct);
+        self
+    }
+    /// Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’
+    /// for " and ', — for --), in the person's language, where the person
+    /// has the system's smart quotes and dashes on (macOS). Undo puts back
+    /// what was typed. Off by default, as code and data fields want it.
+    /// Only editor views take it.
+    pub fn smart_punctuation(mut self, smart: bool) -> Self {
+        self.set_mount_flag(SMART_PUNCTUATION, smart);
+        self
+    }
+    fn set_mount_flag(&mut self, flag: u8, on: bool) {
+        if on {
+            self.rare_mut().mount_flags |= flag;
+        } else if let Some(rare) = self.rare.as_deref_mut() {
+            rare.mount_flags &= !flag;
+        }
     }
     /// Number a multiline editor's lines in a gutter at its left, as a code
     /// editor does (see `EditorHandle::set_line_numbers`). Only editor roots
@@ -4376,7 +4402,7 @@ fn open_element(
     if let Some(r) = rare.as_deref()
         && r.mount_flags != 0
     {
-        mount_drag_or_hollow(ui, root, r.mount_flags);
+        mount_flagged(ui, root, r, editor.as_ref(), &environment);
     }
     if let Some(rare) = rare.as_deref_mut()
         && (!rare.keymap.bindings.is_empty()
@@ -5219,11 +5245,39 @@ const WINDOW_DRAG: u8 = 1;
 /// `Rare::mount_flags`: the pointer passes through it while nothing it holds
 /// is displayed.
 const HOLLOW: u8 = 2;
-/// `View::window_drag` and `View::hollow`, rare: apart from the element's
-/// common path.
+/// `Rare::mount_flags`: an editor's words are corrected (`View::autocorrect`).
+const AUTOCORRECT: u8 = 4;
+/// `Rare::mount_flags`: an editor's quotes and dashes are made curly and long
+/// (`View::smart_punctuation`).
+const SMART_PUNCTUATION: u8 = 8;
+/// `View::window_drag`, `View::hollow`, and an editor's `autocorrect` and
+/// `smart_punctuation`, rare: apart from the element's common path.
 #[cold]
 #[inline(never)]
-fn mount_drag_or_hollow(ui: &mut Ui, root: NodeId, flags: u8) {
+fn mount_flagged(
+    ui: &mut Ui,
+    root: NodeId,
+    rare: &Rare,
+    editor: Option<&crate::widgets::EditorHandle>,
+    environment: &Environment,
+) {
+    let flags = rare.mount_flags;
+    if flags & (AUTOCORRECT | SMART_PUNCTUATION) != 0
+        && rare.secure != Some(true)
+        && let Some(editor) = editor
+        && let Some(platform) = environment
+            .services
+            .get::<crate::platform::PlatformService>()
+    {
+        let asked = crate::editor_autocorrect::Asked {
+            kinds: crate::platform::Substitutions {
+                punctuation: flags & SMART_PUNCTUATION != 0,
+                replacements: flags & AUTOCORRECT != 0,
+            },
+            corrections: flags & AUTOCORRECT != 0,
+        };
+        crate::editor_autocorrect::mount(ui, editor.clone(), platform, asked);
+    }
     if flags & WINDOW_DRAG != 0 {
         mount_window_drag(ui, root);
     }

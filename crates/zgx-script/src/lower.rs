@@ -2331,6 +2331,11 @@ fn kind_view(
             if let Some(hook) = rare.as_deref().and_then(|rare| rare.on_paste.clone()) {
                 view = on_paste(view, hook, vm);
             }
+            if let Some(rare) = rare.as_deref()
+                && (rare.autocorrect || rare.smart_punctuation)
+            {
+                view = substitutions(view, rare);
+            }
             if rare.as_deref().is_some_and(|rare| rare.contain) {
                 view = view.overscroll_contain();
             }
@@ -7575,6 +7580,14 @@ fn on_paste(view: View, hook: mlua::Function, vm: &Rc<Vm>) -> View {
             }
         }
     })
+}
+
+/// `autocorrect` and `smart_punctuation`: few inputs ask.
+#[cold]
+#[inline(never)]
+fn substitutions(view: View, rare: &crate::node::InputRare) -> View {
+    view.autocorrect(rare.autocorrect)
+        .smart_punctuation(rare.smart_punctuation)
 }
 
 fn active_descendant(view: View, active: &Source, vm: &Rc<Vm>) -> View {

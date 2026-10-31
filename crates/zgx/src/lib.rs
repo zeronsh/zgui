@@ -38,6 +38,7 @@ pub mod switches;
 pub mod trace;
 
 pub mod caret_blink;
+pub(crate) mod editor_autocorrect;
 pub(crate) mod editor_lines;
 pub(crate) mod editor_menu;
 pub(crate) mod editor_spell;
