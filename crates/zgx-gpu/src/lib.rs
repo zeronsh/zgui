@@ -13680,7 +13680,10 @@ fn polyline_source() -> String {
     // Without the branch to areas, not only their shader: FXC's optimizer
     // still overflowed on a branch to a stub returning nothing, where the
     // module without it compiles.
-    assert!(strokes.contains(AREA_BRANCH), "polyline.wgsl's branch to areas");
+    assert!(
+        strokes.contains(AREA_BRANCH),
+        "polyline.wgsl's branch to areas"
+    );
     format!(
         "{}\n{}",
         include_str!("draw.wgsl"),
