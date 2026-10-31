@@ -2448,4 +2448,36 @@ mod monospace_fallback_tests {
             assert!(height.is_finite() && height > 0., "{text:?}: {height}");
         }
     }
+
+    /// Monospaced text is upright wherever the system has an upright
+    /// monospaced face (on Linux it took DejaVu Sans Mono Oblique).
+    #[test]
+    fn monospaced_text_takes_an_upright_face() {
+        let mut fonts = crate::font_cache::system_fonts();
+        if !fonts
+            .db()
+            .faces()
+            .any(|face| face.monospaced && face.style == cosmic_text::fontdb::Style::Normal)
+        {
+            return;
+        }
+        let font = zgx::text_layout::FontStyle {
+            family: zgx::text_layout::FontFamily::Monospace,
+            ..Default::default()
+        };
+        let shaped = ShapedText::with_font(&mut fonts, "abc", 13., None, &font);
+        let glyph = shaped
+            .buffer
+            .layout_runs()
+            .next()
+            .and_then(|run| run.glyphs.first().cloned())
+            .expect("a glyph");
+        let face = fonts.db().face(glyph.font_id).expect("its face");
+        assert_eq!(
+            face.style,
+            cosmic_text::fontdb::Style::Normal,
+            "{:?}",
+            face.post_script_name
+        );
+    }
 }
