@@ -8461,7 +8461,7 @@ impl GpuRenderer {
         // from the same data `render_direct` takes.
         #[cfg(d3d11)]
         if self.d3d11.is_some() {
-            if let Some(lacks) = self.d3d11_lacks(&draws, &batches, polylines, &effect_jobs) {
+            if let Some(lacks) = self.d3d11_lacks(&draws, &batches, &effect_jobs) {
                 let message = format!(
                     "ZGX_D3D11 draws no {lacks}: the Direct3D 11 proof draws the Windows \
                      suite's scenes alone"
@@ -8474,7 +8474,7 @@ impl GpuRenderer {
             }
             let catch_up = catch_up.map(|(_, instances)| instances);
             let stats = self.render_d3d11(
-                quads, draws, &regions, &copies, catch_up, shown, &clips, stats,
+                quads, draws, &regions, &copies, catch_up, shown, &clips, &points, stats,
             )?;
             self.frame_points = points;
             return Ok(stats);
@@ -9190,14 +9190,10 @@ impl GpuRenderer {
         &self,
         draws: &[Draw],
         batches: &[(usize, Vec<usize>)],
-        polylines: bool,
         effect_jobs: &[effects::Job],
     ) -> Option<&'static str> {
         if !batches.is_empty() {
             return Some("backdrop filter");
-        }
-        if polylines {
-            return Some("polyline");
         }
         if !effect_jobs.is_empty() {
             return Some("layer effect");
@@ -9209,7 +9205,7 @@ impl GpuRenderer {
                 (TextureSource::Image(_), _) if self.d3d11_texture(draw.source).is_none() => {
                     Some("GPU-drawn image")
                 }
-                (_, Shading::Full | Shading::Basic | Shading::Opaque) => None,
+                (_, Shading::Full | Shading::Basic | Shading::Opaque | Shading::Polyline) => None,
                 _ => Some("shader fill, layer shader, blend mode or image effect"),
             })
     }
@@ -9242,6 +9238,7 @@ impl GpuRenderer {
         catch_up: Option<std::ops::Range<u32>>,
         shown: Option<usize>,
         clips: &[Region],
+        points: &[[f32; 2]],
         mut stats: GpuStats,
     ) -> Result<GpuStats, GpuError> {
         let _span = zgx::profile::span(zgx::profile::Phase::Encode);
@@ -9260,6 +9257,7 @@ impl GpuRenderer {
         stats.vertex_buffer_allocations += usize::from(allocated);
         self.vertex_capacity = state.ring.bytes();
         state.set_frame(self.viewport_values, bytemuck::cast_slice(clips))?;
+        state.set_points(bytemuck::cast_slice(points))?;
         // Offscreen, the retained target is the renderer's own (and its
         // spare, for scroll copies), made at its size.
         let presenting = self.layer_present.is_some();
