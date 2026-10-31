@@ -27,8 +27,16 @@ line, which allocates its per-byte tables.
    paragraph separators (`\n`, `\r`, U+001C–U+001E) holds no right-to-left
    or explicit embedding characters, so the bidi algorithm finds one
    left-to-right paragraph at level 0: one span over the whole line.
-   `ShapeLine::build` builds that span directly; every other line takes the
-   upstream path.
+   `ShapeLine::build` builds that span directly. So does `build_mixed` for
+   a line beyond ASCII that `classify` finds nothing right to left, no
+   bidi control and no paragraph separator in, by one look at its bytes
+   (`LineKind::LeftToRight`: accents, `—`, `…`, emoji); the rest takes the
+   upstream path. `classify_finds_every_character_that_needs_the_analysis_or_hints`
+   checks every code point the analysis treats otherwise than a
+   left-to-right paragraph's is caught. ASCII's path is a copy of
+   `build_spans` with no bidi in it at all, so a line beyond ASCII costs it
+   nothing (the gate's lab-scroll, such text, runs 4.5% fewer
+   instructions).
 
 3. **Span attributes by id.** A rich text's line has attribute spans
    (zgx gives each run of a paragraph its own, with its metrics and
@@ -66,20 +74,27 @@ checked never to change what is drawn):
     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml -- bench mono
     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml -- kept
 
-A layout upstream makes infinitely wide or of no width, where this crate's
-is finite, is counted apart: upstream divides by a face's zero units per em
-("A font without units per em is no font", below). `kept` lays the texts
-out only with this crate, monospaced and with an installed monospace face,
-with fonts kept against nothing kept ("A run's first font is kept", below).
-On macOS the comparison with upstream now stops at rich text 120, a line of
-ASCII and controls with a tab, which this crate breaks into one more line
-than upstream at 120 pixels; it predates the monospace patch, and is not
-yet explained.
+A layout is counted apart where upstream shaped a glyph of infinite or no
+advance and this crate shaped none (`advances_finite!`): upstream divides
+by a face's zero units per em, macOS's GB18030Bitmap, which this crate
+passes by ("A font without units per em is no font", below). Upstream's
+layout then shows `inf` or `NaN`, or loses the visual line such a glyph is
+in. Rich text 120, a line of ASCII and controls with a tab, is that last
+case: upstream shapes its `\x08` and `\x00` (in a monospace span) with
+GB18030Bitmap, their advance infinite and the tab stop after them `NaN`,
+and its word wrap drops the visual line holding bytes 0 to 17; this crate
+shapes them with another face and draws the line, one more than upstream.
+With GB18030Bitmap removed from upstream's fonts, every layout is identical
+and none is counted apart. `kept` lays the texts out only with this crate,
+monospaced and with an installed monospace face, with fonts kept against
+nothing kept ("A run's first font is kept", below).
 
-15,076 layouts are identical, and so are 12,033 of the same texts in up
-to four spans of different weight, family, metadata and size, cut at
-random places (`set_rich_text`); on the other 968 (lines mixing paragraph
-directions) both versions panic, as upstream documents. Reshaping a
+15,076 layouts are identical, and so are 8,451 of the same texts in up to
+four spans of different weight, family, metadata and size, cut at random
+places (`set_rich_text`); 3,582 differ only by GB18030Bitmap, as above
+(12,033 identical without it); on 968 (lines mixing paragraph directions)
+both versions panic, as upstream documents. 11,307 monospaced layouts are
+identical with fonts kept and with none. Reshaping a
 streaming transcript's last seven 105-byte lines takes 40.2 µs a tick instead
 of 48.7 µs (M5 Max), and zgx's headless lab stream lays out in 0.047 ms a
 tick instead of 0.061 ms.
@@ -226,3 +241,37 @@ infinite width: nothing after the first CJK character showed, and the
 text's box broke its layout. `Font::new_at` now gives no font for a face
 without units per em, so fallback passes it by (to Arial Unicode MS, or
 PingFang). zgx-gpu's `cjk_in_monospaced_text_takes_finite_room` checks it.
+
+## Words break with a hyphen
+
+Text whose features carry `FontFeatures::HYPHENS` (`_hyp`, a tag outside
+OpenType's two tag spaces, so no font has it) breaks words at the points
+`FontSystem::set_hyphenator`'s function gives, a hyphen (U+2010, or `-`)
+ending the line, and after a soft hyphen (U+00AD), as CSS's
+`hyphens: auto`. Nothing is kept per line: `BufferLine::layout` works out
+a line's points and shapes the hyphen for the layout that needs it,
+into the font system's `ShapeBuffer`, which `layout_to_buffer` takes
+(`ShapeLine::hyphenate`). Text without the tag, and every process that
+never sets it (`note_hyphens`), pays one test.
+
+## Emoji presentation takes a color font
+
+A cluster asking for emoji presentation (U+FE0F after it, or a keycap's
+U+20E3) is missing from a font without color glyphs (`Font::is_color`:
+`COLR`, `CBDT` or `sbix`, read when asked), so fallback reaches the emoji
+font, as browsers do: Windows' Segoe UI has `1` and the keycap mark, and
+drew 1️⃣ in black. Found as a run's scripts are (`run_scripts`), in text
+beyond ASCII; with no emoji font installed, the text glyphs stay.
+
+## A line's kana or hangul say its Han characters' language
+
+Han characters took the fallback font of the system's language, so on an
+English system a Japanese line's kanji came from another font than its kana
+(Arial Unicode MS beside Hiragino Sans on macOS). A line beyond ASCII with
+kana (or hangul) is built again (`build_hinted`) with `FontFeatures::HAN`
+(`_han`, 1 Japanese, 2 Korean, no font's) on its attributes: its Han
+characters take Hiragana's (or Hangul's) fallback list, and the shape-run
+cache, keyed by attributes, keeps its runs apart from a Chinese line's
+without a change to its key. zgx-gpu's
+`kanji_in_a_japanese_line_come_from_its_kana_font_whatever_the_system_language`
+checks both, a Chinese line before and after.
