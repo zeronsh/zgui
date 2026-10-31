@@ -1833,7 +1833,8 @@ pub trait Styled: Sized {
     }
     /// A shadow under a text's glyphs, as CSS `text-shadow`: its glyphs
     /// again, moved by `x`, `y` points and painted in `color`. `blur` is the
-    /// Gaussian's sigma in points; for now it draws sharp whatever it is.
+    /// Gaussian's sigma in points (0: sharp), each glyph's coverage blurred
+    /// once and kept. It paints outside the text's box, as CSS's does.
     /// Inherited, as CSS's is: on a container it shadows the text inside.
     fn text_shadow(self, x: f32, y: f32, blur: f32, color: Color) -> Self {
         self.text_shadows([crate::scene::TextShadow {

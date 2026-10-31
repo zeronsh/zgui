@@ -1645,8 +1645,8 @@ export type Styles = {
 	outline_offset: Num?,
 	shadow: Shadow?,
 	-- Under a text's glyphs, as CSS `text-shadow`: `{ x, y, blur, color }`, or
-	-- a list, the first on top. Inherited by the text inside; `blur` draws
-	-- sharp for now.
+	-- a list, the first on top. Inherited by the text inside; `blur` is a
+	-- Gaussian's sigma in points. It paints past the text's box.
 	text_shadow: Shadow?,
 	-- Shadows inside the box (CSS's inset): a ring as wide on each side as
 	-- the offset pushes it, plus the spread; drawn sharp (no blur).

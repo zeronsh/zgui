@@ -47,7 +47,7 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `letter_spacing` | `number` | `0` | points |
 | `tabular` | `boolean` | `false` | tabular figures (OpenType `tnum`): every digit one width, for numbers that change in place |
 | `font_features` | `string` | none | OpenType features: `"ss01 cv02=3 liga=0"` ([properties](properties.md)) |
-| `text_shadow` | `{ x, y, blur, color }` or a list | none | its glyphs again under them, moved by `x`, `y` and in `color` (CSS's `text-shadow`); a list's first is on top. Inherited, as CSS's: on a container it shadows the text inside it. `blur` draws sharp for now |
+| `text_shadow` | `{ x, y, blur, color }` or a list | none | its glyphs again under them, moved by `x`, `y` and in `color` (CSS's `text-shadow`); a list's first is on top. Inherited, as CSS's: on a container it shadows the text inside it. `blur` is the Gaussian's sigma in points (up to 128 device pixels); each glyph's coverage is blurred once and kept, so a blurred shadow costs a frame what a sharp one does. It paints outside the text's box, as CSS's does |
 
 ## Rich text and spans
 
