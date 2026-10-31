@@ -85,6 +85,27 @@ fn kinds(warnings: &[zgx::inspect::Warning], node: NodeId) -> Vec<WarningKind> {
         .collect()
 }
 
+/// A horizontal scroll with no height of its own, in a row as tall as its
+/// content (a tab strip): its viewport and content take that height as the
+/// engine means them to, which is no mistake to warn of.
+#[test]
+fn a_scroll_across_fitted_to_its_content_warns_of_nothing() {
+    let (ui, handle) = mounted(|ui| {
+        column().w_full().h_full().child(
+            row().items_center().child(
+                scroll_x(ui.signal(0.))
+                    .id("strip")
+                    .grow()
+                    .min_w(0.)
+                    .child(row().gap(2.).child(text("Alpha")).child(text("Beta"))),
+            ),
+        )
+    });
+    let warnings = layout_warnings(&ui);
+    assert!(warnings.is_empty(), "{warnings:#?}");
+    assert!(handle.find("strip").is_some());
+}
+
 #[test]
 fn warnings_find_collapsed_overflowing_and_unresolved_boxes() {
     let (ui, handle) = mounted(suspicious);
