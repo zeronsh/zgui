@@ -833,6 +833,12 @@ impl Scene {
                     })
             })
     }
+    /// Whether `id` lays its children out in its place, its special bit
+    /// asked first: most children have none.
+    #[inline(always)]
+    fn lays_out_in_place(&self, id: NodeId) -> bool {
+        self.node(id).special.has(COLD) && self.is_display_contents(id)
+    }
     pub(super) fn measure_hidden(&mut self, id: NodeId, constraints: Constraints) -> (f32, f32) {
         self.node_mut(id).advanced_layout = None;
         let ids = self.children_raw(self.node(id)).clone();
@@ -884,11 +890,6 @@ impl Scene {
             Box::new(AdvancedLayoutCache::new(children))
         });
         let mut ids = self.children_raw(self.node(id)).clone();
-        // Children laid out in their own place lay theirs out here.
-        let flat = self.has_flat_children(id);
-        if flat {
-            ids = self.flatten(&ids);
-        }
         // Those whose containing block is further up are placed by it.
         if self.relative_count > 0 {
             ids.retain(|child| !self.escapes(*child));
@@ -1213,10 +1214,6 @@ impl Scene {
                 )
             })
             .collect();
-        let positions = match flat {
-            true => self.fold_flat(id, positions, (inner_width, inner_height)),
-            false => positions,
-        };
         let size = (root_layout.size.width, root_layout.size.height);
         self.store_measurement(id, constraints, size, positions);
         self.node_mut(id).advanced_layout = Some(cache);
@@ -1226,10 +1223,10 @@ impl Scene {
     /// replaced by its children, theirs too, in document order.
     #[cold]
     #[inline(never)]
-    fn flatten(&self, ids: &[NodeId]) -> Vec<NodeId> {
+    pub(super) fn flatten(&self, ids: &[NodeId]) -> Vec<NodeId> {
         let mut out = Vec::with_capacity(ids.len());
         for child in ids {
-            if self.is_display_contents(*child) {
+            if self.lays_out_in_place(*child) {
                 let inner = self.children_raw(self.node(*child)).clone();
                 out.extend(self.flatten(&inner));
             } else {
@@ -1245,25 +1242,32 @@ impl Scene {
     /// further up (`escapes`) aren't among them.
     #[cold]
     #[inline(never)]
-    fn fold_flat(
+    pub(super) fn fold_flat(
         &mut self,
         id: NodeId,
-        positions: Vec<ChildPlacement>,
+        mut positions: Vec<ChildPlacement>,
+        split: usize,
         inner: (f32, f32),
     ) -> Vec<ChildPlacement> {
-        let mut placed = positions.into_iter().peekable();
+        // Each part in document order: a column or row places its absolute
+        // children, from `split`, after the rest.
+        let last = positions.split_off(split);
+        let mut placed = [
+            positions.into_iter().peekable(),
+            last.into_iter().peekable(),
+        ];
         let ids = self.children_raw(self.node(id)).clone();
         self.fold_level(&ids, &mut placed, inner)
     }
     fn fold_level(
         &mut self,
         ids: &[NodeId],
-        placed: &mut std::iter::Peekable<std::vec::IntoIter<ChildPlacement>>,
+        placed: &mut [std::iter::Peekable<std::vec::IntoIter<ChildPlacement>>; 2],
         inner: (f32, f32),
     ) -> Vec<ChildPlacement> {
         let mut out = Vec::with_capacity(ids.len());
         for child in ids {
-            if self.is_display_contents(*child) {
+            if self.lays_out_in_place(*child) {
                 let own = self.children_raw(self.node(*child)).clone();
                 let held = self.fold_level(&own, placed, inner);
                 // Its box spans what it holds.
@@ -1293,8 +1297,13 @@ impl Scene {
                 let constraints = self.relevant(*child, constraints);
                 self.store_measurement(*child, constraints, (span.width, span.height), held);
                 out.push((*child, span, constraints));
-            } else if placed.peek().is_some_and(|(node, ..)| node == child) {
-                out.extend(placed.next());
+            } else {
+                for part in placed.iter_mut() {
+                    if part.peek().is_some_and(|(node, ..)| node == child) {
+                        out.extend(part.next());
+                        break;
+                    }
+                }
             }
         }
         out
