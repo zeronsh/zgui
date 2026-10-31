@@ -16,7 +16,8 @@
 //! Accessors may be sparse. Materials' `doubleSided` and alpha modes are
 //! read, and where their maps sit: a second set of coordinates (`TEXCOORD_1`),
 //! samplers' wrapping and `KHR_texture_transform`, and vertex colours
-//! (`COLOR_0`). Not yet: points and lines (skipped); geometry compressed with Draco
+//! (`COLOR_0`). Its lights (`KHR_lights_punctual`) come with it, and its
+//! cameras (`Placed::cameras`). Not yet: points and lines (skipped); geometry compressed with Draco
 //! or meshopt, an error where the file requires it.
 use crate::{
     Geometry, MapPlacement, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform,
@@ -45,6 +46,35 @@ pub struct Model {
     roots: Vec<usize>,
     clips: Vec<crate::Clip>,
     skins: Vec<ModelSkin>,
+    /// `KHR_lights_punctual`'s lights, in their nodes' frames.
+    lights: Vec<(crate::Light, Option<crate::Spot>)>,
+    cameras: Vec<ModelCamera>,
+}
+/// A camera as a node holds it, looking down its −z.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ModelCamera {
+    /// Field of view top to bottom (perspective) or height (orthographic).
+    fov: f32,
+    near: f32,
+    far: Option<f32>,
+    orthographic: bool,
+}
+impl ModelCamera {
+    /// It as a world's camera, placed by its node's `matrix`.
+    pub(crate) fn placed(&self, matrix: &crate::Mat4) -> crate::Camera {
+        let position = matrix.project(Vec3::ZERO);
+        let c = &matrix.columns;
+        let forward = vec3(-c[2][0], -c[2][1], -c[2][2]).normalized();
+        let default = crate::Camera::default();
+        crate::Camera {
+            position,
+            target: position + forward,
+            fov: self.fov,
+            near: self.near,
+            far: self.far.unwrap_or(default.far.max(self.near * 1e3)),
+            orthographic: self.orthographic,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 struct Node {
@@ -55,6 +85,10 @@ struct Node {
     skin: Option<usize>,
     /// Its meshes' morph weights: its own, else its mesh's.
     weights: Vec<f32>,
+    /// The light it holds (`KHR_lights_punctual`), by index.
+    light: Option<usize>,
+    /// The camera it holds, by index.
+    camera: Option<usize>,
 }
 /// A skin: its joints (nodes) and each one's inverse bind matrix.
 #[derive(Clone, Debug)]
@@ -181,6 +215,16 @@ impl Model {
                                 .collect()
                         })
                         .unwrap_or_default(),
+                    light: node
+                        .get("extensions")
+                        .and_then(|e| e.get("KHR_lights_punctual"))
+                        .and_then(|l| l.get("light"))
+                        .and_then(Value::as_u64)
+                        .map(|l| l as usize),
+                    camera: node
+                        .get("camera")
+                        .and_then(Value::as_u64)
+                        .map(|c| c as usize),
                 })
             })
             .collect::<Result<Vec<_>, ModelError>>()?;
@@ -234,9 +278,19 @@ impl Model {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let lights = doc
+            .get("extensions")
+            .and_then(|e| e.get("KHR_lights_punctual"))
+            .map_or(&[][..], |l| list(l, "lights"))
+            .iter()
+            .map(light)
+            .collect();
+        let cameras = list(&doc, "cameras").iter().map(camera).collect();
         Ok(Self {
             nodes,
             roots,
+            lights,
+            cameras,
             clips,
             skins,
         })
@@ -293,6 +347,7 @@ impl World {
         let root = self.add(Object::group());
         let mut nodes = vec![None; model.nodes.len()];
         let mut meshes = vec![Vec::new(); model.nodes.len()];
+        let (mut lights, mut cameras) = (Vec::new(), Vec::new());
         // Skinned meshes, given their skins once every joint is placed.
         let mut skinned = Vec::new();
         let mut stack: Vec<(usize, ObjectId, usize)> =
@@ -304,6 +359,17 @@ impl World {
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
             nodes[index] = Some(id);
+            if let Some(&(light, spot)) = node.light.and_then(|l| model.lights.get(l)) {
+                let light = self.add_light(light);
+                self.set_light_parent(light, Some(id));
+                if spot.is_some() {
+                    self.set_spot(light, spot);
+                }
+                lights.push(light);
+            }
+            if let Some(&camera) = node.camera.and_then(|c| model.cameras.get(c)) {
+                cameras.push((id, camera));
+            }
             for (geometry, material, maps, surface, placements) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
                 if surface.double_sided {
@@ -345,6 +411,8 @@ impl World {
             root,
             nodes,
             meshes,
+            lights,
+            cameras,
         }
     }
 }
@@ -515,6 +583,78 @@ fn material(value: &Value) -> Material {
         unlit: value
             .get("extensions")
             .is_some_and(|e| e.get("KHR_materials_unlit").is_some()),
+    }
+}
+
+/// A punctual light in its node's frame, shining down its −z (glTF's units
+/// are zgx-3d's: lux for a sun, candela for a bulb). One of an unknown type
+/// gives no light.
+fn light(value: &Value) -> (crate::Light, Option<crate::Spot>) {
+    let color = floats::<3>(value.get("color")).unwrap_or([1.; 3]);
+    let number = |v: Option<&Value>| v.and_then(Value::as_f64).map(|n| n as f32);
+    let intensity = number(value.get("intensity")).unwrap_or(1.).max(0.);
+    // No range: as far as it reaches.
+    let range = number(value.get("range"))
+        .filter(|r| *r > 0.)
+        .unwrap_or(1e6);
+    let down = vec3(0., 0., -1.);
+    let bulb = crate::Light::Point {
+        position: Vec3::ZERO,
+        color,
+        intensity,
+        range,
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some("directional") => (
+            crate::Light::Directional {
+                direction: down,
+                color,
+                intensity,
+            },
+            None,
+        ),
+        Some("point") => (bulb, None),
+        Some("spot") => {
+            let spot = value.get("spot");
+            let angle = |key, default| number(spot.and_then(|s| s.get(key))).unwrap_or(default);
+            let cone = crate::Spot::new(
+                down,
+                angle("innerConeAngle", 0.),
+                angle("outerConeAngle", std::f32::consts::FRAC_PI_4),
+            );
+            (bulb, Some(cone))
+        }
+        _ => (
+            crate::Light::Point {
+                position: Vec3::ZERO,
+                color,
+                intensity: 0.,
+                range,
+            },
+            None,
+        ),
+    }
+}
+/// A camera: perspective, or orthographic (its height `2 ymag`).
+fn camera(value: &Value) -> ModelCamera {
+    let number = |v: Option<&Value>| v.and_then(Value::as_f64).map(|n| n as f32);
+    let orthographic = value.get("type").and_then(Value::as_str) == Some("orthographic");
+    let lens = value.get(if orthographic {
+        "orthographic"
+    } else {
+        "perspective"
+    });
+    let field = |key| number(lens.and_then(|l| l.get(key)));
+    let default = crate::Camera::default();
+    ModelCamera {
+        fov: if orthographic {
+            field("ymag").map_or(default.fov, |m| 2. * m.abs())
+        } else {
+            field("yfov").unwrap_or(default.fov)
+        },
+        near: field("znear").filter(|n| *n > 0.).unwrap_or(default.near),
+        far: field("zfar").filter(|f| *f > 0.),
+        orthographic,
     }
 }
 
@@ -1787,6 +1927,93 @@ mod tests {
             blend,
         );
         assert_eq!(node.meshes[0].1.color[3], 1.);
+    }
+
+    #[test]
+    fn lights_and_cameras_come_on_their_nodes() {
+        use std::f32::consts::FRAC_1_SQRT_2;
+        let (doc, bin) = square(
+            json!([
+                { "mesh": 0, "children": [1, 2, 3] },
+                { "translation": [0.0, 0.0, 2.0], "extensions": { "KHR_lights_punctual": { "light": 0 } } },
+                { "rotation": [-FRAC_1_SQRT_2, 0.0, 0.0, FRAC_1_SQRT_2], "extensions": { "KHR_lights_punctual": { "light": 1 } } },
+                { "translation": [1.0, 2.0, 3.0], "camera": 0 },
+            ]),
+            |doc| {
+                doc["extensionsUsed"] = json!(["KHR_lights_punctual"]);
+                doc["extensions"] = json!({ "KHR_lights_punctual": { "lights": [
+                    { "type": "point", "color": [1.0, 0.5, 0.25], "intensity": 4.0, "range": 7.0 },
+                    { "type": "spot", "intensity": 2.0, "spot": { "innerConeAngle": 0.1, "outerConeAngle": 0.3 } },
+                ]}});
+                doc["cameras"] = json!([{ "type": "perspective", "perspective": { "yfov": 0.6, "znear": 0.2 } }]);
+            },
+        );
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        assert_eq!(placed.lights().len(), 2);
+        let shining = |world: &World| {
+            let mut out = Vec::new();
+            world
+                .inner()
+                .for_each_light(|light, spot| out.push((light, spot)));
+            out
+        };
+        let lights = shining(&world);
+        let crate::Light::Point {
+            position,
+            color,
+            intensity,
+            range,
+        } = lights[0].0
+        else {
+            panic!("a bulb: {:?}", lights[0]);
+        };
+        assert!(
+            (position - vec3(0., 0., 2.)).length() < 1e-5,
+            "{position:?}"
+        );
+        assert_eq!(
+            (color, intensity, range, lights[0].1),
+            ([1., 0.5, 0.25], 4., 7., None)
+        );
+        // The spot's node turned to look down: its cone points along −y.
+        let spot = lights[1].1.expect("a cone");
+        assert!(
+            (spot.direction - vec3(0., -1., 0.)).length() < 1e-4,
+            "{spot:?}"
+        );
+        assert_eq!((spot.inner, spot.outer), (0.1, 0.3));
+        // Moved with the model.
+        world.set_transform(placed.root, Transform::at([10., 0., 0.]));
+        let crate::Light::Point { position, .. } = shining(&world)[0].0 else {
+            panic!()
+        };
+        assert!(
+            (position - vec3(10., 0., 2.)).length() < 1e-4,
+            "{position:?}"
+        );
+        let cameras = placed.cameras(&world);
+        assert_eq!(cameras.len(), 1);
+        let camera = cameras[0];
+        assert!(
+            (camera.position - vec3(11., 2., 3.)).length() < 1e-4,
+            "{camera:?}"
+        );
+        assert!(
+            (camera.target - vec3(11., 2., 2.)).length() < 1e-4,
+            "{camera:?}"
+        );
+        assert_eq!(
+            (camera.fov, camera.near, camera.orthographic),
+            (0.6, 0.2, false)
+        );
+        // A light removed shines no more; a hidden node's, nothing.
+        world.remove_light(placed.lights()[1]);
+        assert_eq!(shining(&world).len(), 1);
+        world.update(placed.root, |root| root.visible = false);
+        assert!(shining(&world).is_empty());
+        assert!(placed.cameras(&world).is_empty());
     }
 
     #[test]

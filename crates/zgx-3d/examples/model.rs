@@ -7,7 +7,8 @@
 //!
 //! `--environment=FILE.hdr` lights it with a Radiance image instead,
 //! `--no-environment` with a plain sky; `--smoke-test` shows it a moment
-//! and quits.
+//! and quits. A model bringing its own lights takes no sun; one bringing
+//! cameras is seen through its first with `--model-camera`.
 use std::{cell::RefCell, path::Path, rc::Rc};
 use zgx::{compose::prelude::*, input::InputEvent, scene::Color};
 use zgx_3d::*;
@@ -15,6 +16,7 @@ use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke = std::env::args().any(|arg| arg == "--smoke-test");
+    let model_camera = std::env::args().any(|arg| arg == "--model-camera");
     let path = std::env::args()
         .skip(1)
         .find(|arg| !arg.starts_with("--"))
@@ -76,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     clip.duration(),
                     model.clips().len()
                 );
-                let (world, frames) = (world.clone(), cx.frames.clone());
+                let (world, frames, placed) = (world.clone(), cx.frames.clone(), placed.clone());
                 cx.tasks.spawn(async move {
                     let start = std::time::Instant::now();
                     loop {
@@ -98,11 +100,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Geometry::plane(6., 6.),
                 Material::rgb(0x2a313c).with(0., 0.9),
             ));
-            world.add_light(Light::Directional {
-                direction: vec3(-0.5, -1., -0.4),
-                color: [1., 0.97, 0.92],
-                intensity: 2.5,
-            });
+            let lights = placed.lights().len();
+            if lights == 0 {
+                world.add_light(Light::Directional {
+                    direction: vec3(-0.5, -1., -0.4),
+                    color: [1., 0.97, 0.92],
+                    intensity: 2.5,
+                });
+            } else {
+                eprintln!("lit by its {lights} lights");
+            }
+            let seen_from = placed
+                .cameras(&world)
+                .first()
+                .copied()
+                .filter(|_| model_camera);
             match environment.clone() {
                 Some(environment) => world.set_environment(Some(environment)),
                 None => {
@@ -120,7 +132,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 distance: 4.,
                 ..Orbit::default()
             })));
-            world.set_camera(controls.borrow().orbit.camera(world.camera()));
+            world.set_camera(
+                seen_from.unwrap_or_else(|| controls.borrow().orbit.camera(world.camera())),
+            );
             // A flick coasts on, a frame at a time, while it coasts.
             let (flicked, mut heard) = zgx::task::latest::<()>();
             {

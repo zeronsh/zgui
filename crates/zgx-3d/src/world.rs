@@ -95,7 +95,7 @@ pub enum Light {
 }
 /// Point lights a frame shades with (the nearest the camera's target, past
 /// this many).
-pub const POINT_LIGHTS: usize = 4;
+pub const POINT_LIGHTS: usize = 8;
 
 /// How the scene is seen.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -161,6 +161,28 @@ impl Camera {
 pub struct ObjectId {
     index: u32,
     generation: u32,
+}
+/// A point light's cone (`World::set_spot`): it shines along `direction`,
+/// fully within `inner` radians of it, fading to nothing at `outer`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub(crate) direction: Vec3,
+    pub(crate) inner: f32,
+    pub(crate) outer: f32,
+}
+impl Spot {
+    /// Shining along `direction`, fully within `inner` radians of it and
+    /// fading to nothing at `outer` (glTF's `innerConeAngle` and
+    /// `outerConeAngle`).
+    pub fn new(direction: impl Into<Vec3>, inner: f32, outer: f32) -> Self {
+        let outer = outer.max(1e-3);
+        Self {
+            direction: direction.into(),
+            inner: inner.clamp(0., outer),
+            outer,
+        }
+    }
 }
 /// A light of a world (`World::add_light`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -281,6 +303,11 @@ pub(crate) struct Inner {
     /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
     /// index, with the generation they were set for: most have none.
     surfaces: ByIndex<(u32, Surface)>,
+    /// Lights placed in an object's frame (`World::set_light_parent`), by
+    /// light index, with the generation they were set for.
+    light_parents: ByIndex<(u32, ObjectId)>,
+    /// Point lights' cones (`World::set_spot`), by light index.
+    spots: ByIndex<(u32, Spot)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -354,6 +381,74 @@ impl Inner {
     pub(crate) fn lights(&self) -> impl Iterator<Item = &Light> {
         self.lights.iter().filter_map(|slot| slot.value.as_ref())
     }
+    /// Each light as it shines now, in the world's frame, with its cone if
+    /// it has one; a light under an object gone or hidden shines nothing.
+    pub(crate) fn for_each_light(&self, mut f: impl FnMut(Light, Option<Spot>)) {
+        let placed = !self.light_parents.is_empty();
+        let mut memo = if placed {
+            vec![None; self.objects.len()]
+        } else {
+            Vec::new()
+        };
+        for (index, slot) in self.lights.iter().enumerate() {
+            let Some(light) = slot.value else {
+                continue;
+            };
+            fn of<V: Copy>(table: &ByIndex<(u32, V)>, index: usize, generation: u32) -> Option<V> {
+                let (set_for, value) = table.get(&(index as u32))?;
+                (*set_for == generation).then_some(*value)
+            }
+            let spot = if self.spots.is_empty() {
+                None
+            } else {
+                of(&self.spots, index, slot.generation)
+            };
+            let parent = placed.then(|| of(&self.light_parents, index, slot.generation));
+            let Some(parent) = parent.flatten() else {
+                f(light, spot);
+                continue;
+            };
+            let Some(matrix) = self
+                .live(parent.index, parent.generation)
+                .and_then(|at| world_matrix(self, at, &mut memo, 0))
+            else {
+                continue;
+            };
+            let turned = |d: Vec3| {
+                let c = &matrix.columns;
+                let along = |r: usize| c[0][r] * d.x + c[1][r] * d.y + c[2][r] * d.z;
+                crate::vec3(along(0), along(1), along(2)).normalized()
+            };
+            let light = match light {
+                Light::Directional {
+                    direction,
+                    color,
+                    intensity,
+                } => Light::Directional {
+                    direction: turned(direction),
+                    color,
+                    intensity,
+                },
+                Light::Point {
+                    position,
+                    color,
+                    intensity,
+                    range,
+                } => Light::Point {
+                    position: matrix.project(position),
+                    color,
+                    intensity,
+                    range,
+                },
+                hemisphere => hemisphere,
+            };
+            let spot = spot.map(|spot| Spot {
+                direction: turned(spot.direction),
+                ..spot
+            });
+            f(light, spot);
+        }
+    }
     /// Every visible mesh with its world matrix, its ancestors' applied.
     fn world_of(&self, index: usize) -> Option<Mat4> {
         let mut memo = vec![None; self.objects.len()];
@@ -361,7 +456,9 @@ impl Inner {
     }
     pub(crate) fn drawn(&self) -> Vec<Drawn<'_>> {
         let mut matrices: Vec<Option<Option<Mat4>>> = vec![None; self.objects.len()];
-        let mut out = Vec::new();
+        // At most one an object, made once: grown a push at a time, it was
+        // copied again at each doubling, every frame.
+        let mut out = Vec::with_capacity(self.objects.len());
         for index in 0..self.objects.len() {
             if let Some(object) = &self.objects[index].value
                 && let Some(geometry) = &object.geometry
@@ -610,6 +707,8 @@ impl World {
             skins: Default::default(),
             morph_weights: Default::default(),
             placements: Default::default(),
+            light_parents: Default::default(),
+            spots: Default::default(),
             surfaces: Default::default(),
             revision: 0,
         }));
@@ -774,9 +873,67 @@ impl World {
             Some(slot) if slot.generation == id.generation && slot.value.is_some() => {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
+                inner.light_parents.remove(&id.index);
+                inner.spots.remove(&id.index);
                 true
             }
             _ => false,
+        });
+    }
+    /// Whether light `id` is still in the world.
+    fn light_live(inner: &Inner, id: LightId) -> bool {
+        inner
+            .lights
+            .get(id.index as usize)
+            .is_some_and(|slot| slot.generation == id.generation && slot.value.is_some())
+    }
+    /// Light `id` placed in object `parent`'s frame, following it as it
+    /// moves, turns and scales (`None`: the world's). Under an object gone
+    /// or hidden, it shines nothing.
+    pub fn set_light_parent(&self, id: LightId, parent: Option<ObjectId>) {
+        self.change(|inner| {
+            if !Self::light_live(inner, id) {
+                return false;
+            }
+            let before = inner
+                .light_parents
+                .get(&id.index)
+                .filter(|(set_for, _)| *set_for == id.generation)
+                .map(|(_, parent)| *parent);
+            match parent {
+                Some(parent) => {
+                    inner
+                        .light_parents
+                        .insert(id.index, (id.generation, parent));
+                }
+                None => {
+                    inner.light_parents.remove(&id.index);
+                }
+            }
+            before != parent
+        });
+    }
+    /// Point light `id` shone as a spot, along `spot`'s direction in its
+    /// frame (`None`: all round). Other lights ignore it.
+    pub fn set_spot(&self, id: LightId, spot: Option<Spot>) {
+        self.change(|inner| {
+            if !Self::light_live(inner, id) {
+                return false;
+            }
+            let before = inner
+                .spots
+                .get(&id.index)
+                .filter(|(set_for, _)| *set_for == id.generation)
+                .map(|(_, spot)| *spot);
+            match spot {
+                Some(spot) => {
+                    inner.spots.insert(id.index, (id.generation, spot));
+                }
+                None => {
+                    inner.spots.remove(&id.index);
+                }
+            }
+            before != spot
         });
     }
     /// How it is seen.

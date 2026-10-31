@@ -410,6 +410,74 @@ fn a_texture_colours_a_mesh_across_its_coordinates() {
     );
 }
 
+/// A grey square lit only by `light`, 1 in front of it, and how bright it
+/// shows at its centre and near its left edge.
+fn lit_by(add: impl Fn(&World) -> LightId) -> Option<(World, LightId, Window)> {
+    let (world, _) = one(facing_square(), Material::rgb(0x808080).with(0., 1.));
+    let light = add(&world);
+    let window = Window::new(&world)?;
+    Some((world, light, window))
+}
+fn centre_and_edge(window: &mut Window) -> (u8, u8) {
+    window.draw();
+    (window.pixel(50, 50)[0], window.pixel(22, 50)[0])
+}
+fn bulb() -> Light {
+    Light::Point {
+        position: vec3(0., 0., 1.),
+        color: [1.; 3],
+        intensity: 3.,
+        range: 10.,
+    }
+}
+
+#[test]
+fn a_spot_lights_within_its_cone_alone() {
+    let Some((world, light, mut window)) = lit_by(|world| world.add_light(bulb())) else {
+        return;
+    };
+    let (centre, edge) = centre_and_edge(&mut window);
+    assert!(centre > 60 && edge > 15, "all round: {centre} {edge}");
+    // Down at the square, within 0.2 rad: the edge, 0.7 rad off, is dark.
+    world.set_spot(light, Some(Spot::new([0., 0., -1.], 0.1, 0.2)));
+    let (lit, dark) = centre_and_edge(&mut window);
+    assert!((lit as i32 - centre as i32).abs() <= 2, "{lit} {centre}");
+    assert!(dark < 3, "outside its cone: {dark}");
+    // Turned away, nothing.
+    world.set_spot(light, Some(Spot::new([0., 0., 1.], 0.1, 0.2)));
+    assert_eq!(centre_and_edge(&mut window).0, 0);
+    world.set_spot(light, None);
+    assert_eq!(centre_and_edge(&mut window), (centre, edge));
+}
+
+#[test]
+fn a_light_follows_the_object_it_is_placed_in() {
+    let group = std::cell::Cell::new(None);
+    let Some((world, light, mut window)) = lit_by(|world| {
+        let id = world.add(Object::group());
+        group.set(Some(id));
+        let light = world.add_light(bulb());
+        world.set_light_parent(light, Some(id));
+        light
+    }) else {
+        return;
+    };
+    let group = group.get().unwrap();
+    let (centre, _) = centre_and_edge(&mut window);
+    assert!(centre > 60, "{centre}");
+    // Carried out of its range.
+    world.set_transform(group, Transform::at([0., 0., 50.]));
+    assert_eq!(centre_and_edge(&mut window).0, 0);
+    // Back in the world's frame, where it was.
+    world.set_light_parent(light, None);
+    assert_eq!(centre_and_edge(&mut window).0, centre);
+    // Under a hidden object, dark.
+    world.set_light_parent(light, Some(group));
+    world.set_transform(group, Transform::default());
+    world.update(group, |g| g.visible = false);
+    assert_eq!(centre_and_edge(&mut window).0, 0);
+}
+
 /// A square coloured by its vertices, red at the left, blue at the right.
 fn colored_square() -> Geometry {
     let square = facing_square();

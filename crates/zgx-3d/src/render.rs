@@ -42,7 +42,7 @@ struct FrameUniforms {
     sun_color: [f32; 4],
     sky: [f32; 4],
     ground: [f32; 4],
-    points: [[[f32; 4]; 2]; POINT_LIGHTS],
+    points: [[[f32; 4]; 3]; POINT_LIGHTS],
     /// Point lights in use, whether to encode sRGB itself, exposure,
     /// whether the sun casts shadows.
     params: [f32; 4],
@@ -657,7 +657,7 @@ impl Viewport for Renderer {
                     .device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("3D skinned, morphing or cut-out shadows"),
-                        source: wgpu::ShaderSource::Wgsl(source.into()),
+                        source: wgpu::ShaderSource::Wgsl(compact(source).into()),
                     });
                 let group1 = match &gpu.placed_layout {
                     Some(layout) if placed => layout,
@@ -758,7 +758,7 @@ impl Viewport for Renderer {
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("3D mesh variant"),
                     source: wgpu::ShaderSource::Wgsl(
-                        antialiased(shader_source(variant), gpu.samples).into(),
+                        compact(antialiased(shader_source(variant), gpu.samples)).into(),
                     ),
                 });
             let group0 = match &gpu.environment_layout {
@@ -1011,7 +1011,7 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
         sun_color: [0.; 4],
         sky: [0.; 4],
         ground: [0.; 4],
-        points: [[[0.; 4]; 2]; POINT_LIGHTS],
+        points: [[[0.; 4]; 3]; POINT_LIGHTS],
         params: [0., if encode { 1. } else { 0. }, 1., 0.],
         shadow: Mat4::IDENTITY.columns,
         shadow_texel: [0.; 4],
@@ -1046,11 +1046,11 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
         }
     }
     // The point lights nearest the camera's target, nearest first, past the
-    // four a frame shades with (ties in the order they were added).
+    // eight a frame shades with (ties in the order they were added).
     let target = world.camera.target;
-    let mut points: Vec<(f32, [[f32; 4]; 2])> = Vec::with_capacity(POINT_LIGHTS + 1);
-    for light in world.lights() {
-        match *light {
+    let mut points: Vec<(f32, [[f32; 4]; 3])> = Vec::with_capacity(POINT_LIGHTS + 1);
+    world.for_each_light(|light, spot| {
+        match light {
             // The first sun shades; others add to it as one.
             Light::Directional {
                 direction,
@@ -1087,16 +1087,25 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
                     .position(|(nearer, _)| distance.total_cmp(nearer).is_lt())
                     .unwrap_or(points.len());
                 if at < POINT_LIGHTS {
+                    // A spot's cone as glTF fades it: (cos θ · scale +
+                    // offset)², θ from its direction; all round, 1.
+                    let cone = spot.map_or([0., 0., 0., 1.], |spot| {
+                        let (inner, outer) = (spot.inner.cos(), spot.outer.cos());
+                        let scale = 1. / (inner - outer).max(1e-3);
+                        let d = spot.direction.normalized() * scale;
+                        [d.x, d.y, d.z, -outer * scale]
+                    });
                     let slot = [
                         [position.x, position.y, position.z, range.max(1e-3)],
                         [color[0], color[1], color[2], intensity],
+                        cone,
                     ];
                     points.insert(at, (distance, slot));
                     points.truncate(POINT_LIGHTS);
                 }
             }
         }
-    }
+    });
     for (slot, (_, light)) in uniforms.points.iter_mut().zip(&points) {
         *slot = *light;
     }
@@ -1254,7 +1263,7 @@ impl Gpu {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
             source: wgpu::ShaderSource::Wgsl(
-                antialiased(shader_source(Variant::default()), samples).into(),
+                compact(antialiased(shader_source(Variant::default()), samples)).into(),
             ),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1448,6 +1457,16 @@ fn shader_source(variant: Variant) -> String {
 /// `source` drawing `samples` a pixel: multisampled, its `//A ` lines
 /// (geometric specular anti-aliasing) are its own; at one sample they stay
 /// comments, and cost nothing.
+/// `source` without its comment lines: naga reads every byte of a shader,
+/// and a variant's are half other variants' lines, commented out.
+fn compact(source: String) -> String {
+    let mut out = String::with_capacity(source.len() / 2);
+    for line in source.lines().filter(|l| !l.trim_start().starts_with("//")) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
 fn antialiased(source: String, samples: u32) -> String {
     if samples > 1 {
         source.replace("//A ", "")
@@ -1848,7 +1867,7 @@ struct Frame {
     sun_color: vec4<f32>,
     sky: vec4<f32>,
     ground: vec4<f32>,
-    points: array<array<vec4<f32>, 2>, 4>,
+    points: array<array<vec4<f32>, 3>, 8>,
     params: vec4<f32>,
     shadow: mat4x4<f32>,
     shadow_texel: vec4<f32>,
@@ -2167,7 +2186,9 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
             let to = light[0].xyz - in.world;
             let distance = length(to);
             let falloff = pow(clamp(1.0 - pow(distance / light[0].w, 4.0), 0.0, 1.0), 2.0) / max(distance * distance, 1e-4);
-            lit += shade(base, metallic, roughness, n, v, to / distance, light[1].rgb * light[1].w * falloff);
+            // Within a spot's cone (all round: 1).
+            let cone = clamp(dot(light[2].xyz, -to / distance) + light[2].w, 0.0, 1.0);
+            lit += shade(base, metallic, roughness, n, v, to / distance, light[1].rgb * light[1].w * falloff * cone * cone);
         }
         // Ambient light: the hemisphere seen by the surface for its diffuse
         // part, and along its reflection, by Fresnel, for its specular one
@@ -2299,12 +2320,45 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_shades_with_the_four_point_lights_nearest_the_target() {
+    fn a_compact_shader_keeps_its_code_and_drops_its_comments() {
+        let skinned = shader_source(Variant {
+            skinned: true,
+            ..Variant::default()
+        });
+        let compact = compact(antialiased(skinned.clone(), 4));
+        assert!(compact.len() < skinned.len() / 2 + skinned.len() / 4);
+        assert!(compact.lines().all(|l| !l.trim_start().starts_with("//")));
+        assert!(compact.contains("var<storage, read> palette"));
+        assert!(compact.contains("fn fragment"));
+        // Antialiasing's lines, uncommented before, are kept.
+        let antialiased = antialiased(skinned, 4);
+        let code = |s: &str| {
+            let lines = s.lines().filter(|l| !l.trim_start().starts_with("//"));
+            lines.filter(|l| l.contains("dpdx")).count()
+        };
+        assert!(code(&antialiased) > 0);
+        assert_eq!(code(&compact), code(&antialiased));
+    }
+
+    #[test]
+    fn a_frame_shades_with_the_eight_point_lights_nearest_the_target() {
         let world = World::new();
         world.set_camera(Camera::looking_at([0., 0., 9.], [0., 0., 0.]));
         // Along x at these distances from the target; the second 1 is
         // added after the first.
-        for (x, intensity) in [(5., 1.), (1., 1.), (3., 1.), (2., 1.), (4., 1.), (1., 2.)] {
+        let lights = [
+            (9., 1.),
+            (5., 1.),
+            (1., 1.),
+            (7., 1.),
+            (3., 1.),
+            (2., 1.),
+            (8., 1.),
+        ];
+        for (x, intensity) in lights
+            .into_iter()
+            .chain([(4., 1.), (6., 1.), (10., 1.), (1., 2.)])
+        {
             world.add_light(Light::Point {
                 position: vec3(x, 0., 0.),
                 color: [1.; 3],
@@ -2316,9 +2370,14 @@ mod tests {
         let shaded: Vec<(f32, f32)> = uniforms
             .points
             .iter()
-            .map(|[position, color]| (position[0], color[3]))
+            .map(|[position, color, _]| (position[0], color[3]))
             .collect();
-        assert_eq!(shaded, [(1., 1.), (1., 2.), (2., 1.), (3., 1.)]);
-        assert_eq!(uniforms.params[0], 4.);
+        let nearest = [1., 1., 2., 3., 4., 5., 6., 7.];
+        let intensities = [1., 2., 1., 1., 1., 1., 1., 1.];
+        assert_eq!(
+            shaded,
+            nearest.into_iter().zip(intensities).collect::<Vec<_>>()
+        );
+        assert_eq!(uniforms.params[0], 8.);
     }
 }
