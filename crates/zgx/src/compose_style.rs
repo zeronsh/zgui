@@ -1945,6 +1945,7 @@ fn apply_rare(
     if cold.is_some() || scene.has_cold_styles(target) || scene.has_cold_styles(node) {
         let template = cold.and_then(|cold| cold.grid_template.as_ref());
         scene.set_grid_template(target, template);
+        scene.set_grid_place(node, cold.and_then(|cold| cold.grid_place.as_ref()));
         scene.set_z(node, cold.and_then(|cold| cold.z).unwrap_or(0));
         scene.set_sticky(node, cold.and_then(|cold| cold.sticky_top));
         scene.set_size_calcs(node, cold.and_then(|cold| cold.size_calcs.as_ref()));

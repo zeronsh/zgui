@@ -1577,6 +1577,18 @@ export type Styles = {
 	-- "repeat(auto-fill, minmax(240, 1fr))". A bare number is points.
 	cols: (number | string)?,
 	rows: (number | string)?,
+	-- Named areas, a string a row (`grid-template-areas`): { "head head",
+	-- "side main" }; items place themselves with `area`.
+	areas: ({ string } | string)?,
+	-- How items without a place fill the grid (`grid-auto-flow`): "row",
+	-- "column", "dense", "column dense".
+	flow: string?,
+	-- An item's area by name (`grid-area`).
+	area: string?,
+	-- An item's lines (`grid-column`, `grid-row`): "side / main",
+	-- "2 / span 3", a number.
+	grid_column: (string | number)?,
+	grid_row: (string | number)?,
 	col_start: number?,
 	row_start: number?,
 	col_span: number?,
@@ -1773,6 +1785,11 @@ export type StyleProps = {
 	grid: Reactive<boolean>?,
 	cols: Reactive<number | string>?,
 	rows: Reactive<number | string>?,
+	areas: Reactive<{ string } | string>?,
+	flow: Reactive<string>?,
+	area: Reactive<string>?,
+	grid_column: Reactive<string | number>?,
+	grid_row: Reactive<string | number>?,
 	col_start: Reactive<number>?,
 	row_start: Reactive<number>?,
 	col_span: Reactive<number>?,
