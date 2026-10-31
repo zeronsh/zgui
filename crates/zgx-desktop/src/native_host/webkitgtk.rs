@@ -162,6 +162,29 @@ fn deliver(delivery: impl FnOnce() + Send + 'static) {
         waker();
     }
 }
+/// `deliver` what the web process answered: in a test of a slow one
+/// (`ZGX_WEBKITGTK_REPLY_DELAY_MS`), that late, as on a loaded machine.
+/// Debug builds only (the probes'): no release build reads it.
+fn deliver_reply(delivery: impl FnOnce() + Send + 'static) {
+    #[cfg(debug_assertions)]
+    {
+        static DELAY: OnceLock<u64> = OnceLock::new();
+        let delay = *DELAY.get_or_init(|| {
+            std::env::var("ZGX_WEBKITGTK_REPLY_DELAY_MS")
+                .ok()
+                .and_then(|ms| ms.parse().ok())
+                .unwrap_or(0)
+        });
+        if delay > 0 {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                deliver(delivery);
+            });
+            return;
+        }
+    }
+    deliver(delivery);
+}
 /// Run what GTK's thread delivered (the UI thread's safe point, before
 /// `zgx::native_view::deliver_posted`).
 pub(crate) fn deliver_pages() {
@@ -1363,31 +1386,8 @@ unsafe extern "C" fn on_unhandled_key(
     // SAFETY: GTK passes the key event and this handler's page.
     let (page, time) = unsafe { (page(data), (*event).time) };
     let id = page.id;
-    // A test's slow web process (`ZGX_WEBKITGTK_REPLY_DELAY_MS`): the
-    // answer comes after the modifiers are up, as on a loaded machine.
-    // Debug builds only (the probes'): no release build reads it.
-    #[cfg(debug_assertions)]
-    {
-        static DELAY: OnceLock<u64> = OnceLock::new();
-        let delay = *DELAY.get_or_init(|| {
-            std::env::var("ZGX_WEBKITGTK_REPLY_DELAY_MS")
-                .ok()
-                .and_then(|ms| ms.parse().ok())
-                .unwrap_or(0)
-        });
-        if delay > 0 {
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(delay));
-                deliver(move || {
-                    if let Some(page) = ui_page(id) {
-                        page.unhandled(time);
-                    }
-                });
-            });
-            return 1;
-        }
-    }
-    deliver(move || {
+    // Slow, the answer comes after the modifiers are up.
+    deliver_reply(move || {
         if let Some(page) = ui_page(id) {
             page.unhandled(time);
         }
@@ -2009,11 +2009,18 @@ fn im_report(im: Ptr, change: ImChange) {
     let Some(id) = GTK.with(|gtk| gtk.page_of_context(im).map(|page| page.id)) else {
         return;
     };
-    deliver(move || {
+    let caret = matches!(change, ImChange::Area(..));
+    let report = move || {
         if let Some(page) = ui_page(id) {
             page.ime_changed(change);
         }
-    });
+    };
+    if caret {
+        // Slow, the caret comes after the candidates showed.
+        deliver_reply(report);
+    } else {
+        deliver(report);
+    }
 }
 unsafe extern "C" fn im_focus_in(im: Ptr) {
     im_report(im, ImChange::Editing(true));
@@ -2136,6 +2143,9 @@ thread_local! {
     static UNHANDLED: RefCell<Vec<(Weak<RefCell<Scene>>, KeyPress)>> = const { RefCell::new(Vec::new()) };
     /// zgx focus to move to or from pages' boxes (`sync_focus`).
     static FOCUS: RefCell<Vec<(NodeId, bool)>> = const { RefCell::new(Vec::new()) };
+    /// Windows whose page moved its caret or began or ended editing
+    /// (`ime_moved`).
+    static IME_MOVED: RefCell<Vec<Weak<RefCell<Scene>>>> = const { RefCell::new(Vec::new()) };
 }
 fn ui_page(id: u64) -> Option<Rc<UiPage>> {
     UI_PAGES.with(|pages| pages.borrow().get(&id).and_then(Weak::upgrade))
@@ -2220,9 +2230,15 @@ impl UiPage {
         }
     }
     fn ime_changed(&self, change: ImChange) {
-        match change {
-            ImChange::Editing(editing) => self.editing.set(editing),
-            ImChange::Area(x, y, w, h) => self.caret.set(Some((x, y, w, h))),
+        let changed = match change {
+            ImChange::Editing(editing) => self.editing.replace(editing) != editing,
+            ImChange::Area(x, y, w, h) => {
+                self.caret.replace(Some((x, y, w, h))) != Some((x, y, w, h))
+            }
+        };
+        if changed {
+            let scene = self.scene.borrow().clone();
+            IME_MOVED.with(|moved| moved.borrow_mut().push(scene));
         }
     }
     /// A point of the window in the page's device pixels.
@@ -2698,6 +2714,23 @@ pub(crate) fn take_unhandled_keys(ui: &Ui) -> Vec<KeyPress> {
             .into_iter()
             .map(|(_, press)| press)
             .collect::<Vec<_>>()
+    })
+}
+/// Whether a page in `ui`'s window moved its caret or began or ended editing
+/// since last asked: WebKit says so apart from the frame it draws, maybe
+/// after it, so the window tells its input method then, not at its next
+/// frame (an idle window draws none).
+pub(crate) fn ime_moved(ui: &Ui) -> bool {
+    if !live() {
+        return false;
+    }
+    IME_MOVED.with(|moved| {
+        let mut moved = moved.borrow_mut();
+        let count = moved.len();
+        moved.retain(|scene| {
+            scene.strong_count() > 0 && !std::ptr::eq(scene.as_ptr(), Rc::as_ptr(&ui.scene))
+        });
+        moved.len() != count
     })
 }
 /// Move zgx's focus to or from pages' boxes as their controllers asked.

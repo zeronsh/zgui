@@ -2706,6 +2706,13 @@ impl Host {
             window.set_cursor(cursor);
             self.native_cursor = Some(cursor);
         }
+        self.sync_ime_area(&window);
+        self.sync_accessibility();
+        Ok(())
+    }
+    /// Tell the input method where the focused editor or page edits.
+    fn sync_ime_area(&mut self, window: &Window) {
+        let ui = &self.context.ui;
         let editor = crate::native_ime::editable_editor(ui, self.native_focused);
         // The clause an input method converts, else the caret, where they
         // show (zoomed too): where its candidates go, as under a native
@@ -2751,13 +2758,11 @@ impl Host {
                 // winit's X11 sends the spot when it next handles an event.
                 #[cfg(target_os = "linux")]
                 if self.x11 {
-                    crate::x11_nudge::nudge(&window);
+                    crate::x11_nudge::nudge(window);
                 }
             }
             self.ime_geometry = caret;
         }
-        self.sync_accessibility();
-        Ok(())
     }
     /// X11's and Wayland's primary selection follows what is selected in
     /// the focused editor, published as each selection settles (a pointer
@@ -4379,8 +4384,27 @@ impl Host {
                     &event,
                 ) =>
             {
+                let began = !self.ime_active;
                 self.ime_active =
                     matches!(&event, winit::event::Ime::Preedit(text, _) if !text.is_empty());
+                // IBus (over XIM) forgets the spot as a composition begins,
+                // and puts its candidates at the window's corner: a field of
+                // zgx's moves its area as its preedit shows, but the page's
+                // caret comes later, from WebKit's web process, maybe after
+                // the candidates showed. So the spot goes again now: a pixel
+                // below first, as winit sends only a spot that moved.
+                if began
+                    && self.ime_active
+                    && self.x11
+                    && let (Some(window), Some(r)) = (self.window.clone(), self.ime_geometry)
+                {
+                    let mut below = LogicalPosition::new(r.x as f64, (r.y + r.height) as f64)
+                        .to_physical::<f64>(self.scale_factor);
+                    below.y += 1.;
+                    window.set_ime_cursor_area(below, PhysicalSize::new(1., 1.));
+                    self.ime_geometry = None;
+                    self.sync_ime_area(&window);
+                }
             }
             WindowEvent::Ime(event) => {
                 if self.ime_restart.accepts(&event)
@@ -4931,6 +4955,13 @@ impl Host {
                 let replayed = self.key_input(event, false);
                 self.modifiers = now;
                 replayed?;
+            }
+            // A page's caret moved: the input method hears now, as no frame
+            // may follow.
+            if crate::native_host::webkitgtk::ime_moved(&self.context.ui)
+                && let Some(window) = self.window.clone()
+            {
+                self.sync_ime_area(&window);
             }
         }
         self.poll_frame_deadline(std::time::Instant::now());

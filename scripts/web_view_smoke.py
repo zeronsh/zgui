@@ -16,9 +16,10 @@ messages carry their origin.
 app; the clipboard through wl-clipboard). `--ime`: Pinyin composed into the
 page's field instead (IBus over XIM on X11; Fcitx5 over text-input-v3 in
 Sway with `--wayland`), checked as the page's composition events and value.
-`--slow-replies`: WebKit's answer on each key 800 ms late, after Ctrl is
-up, as on a loaded machine: a shortcut the page leaves alone still reaches
-the app with the modifiers it was pressed with.
+`--slow-replies`: WebKit's answers 800 ms late, as on a loaded machine: on
+each key, after Ctrl is up (a shortcut the page leaves alone still reaches
+the app with the modifiers it was pressed with); with `--ime`, where the
+caret is, after IBus's candidates showed (they still go under it).
 `--transparent`: a transparent page with no background of its own shows
 its box's yellow through it. `--orca` (X11): over a private AT-SPI bus, the
 page's own accessible tree is a child of its box (an internal frame) and
@@ -491,7 +492,7 @@ def main():
     parser.add_argument("--transparent", action="store_true", help="a transparent page over its box's colour")
     parser.add_argument("--orca", action="store_true", help="the page's accessible tree, and Orca reading it (X11)")
     parser.add_argument("--slow-replies", action="store_true",
-                        help="WebKit's answer on each key comes 800 ms late (ZGX_WEBKITGTK_REPLY_DELAY_MS, debug builds only), after Ctrl is up")
+                        help="WebKit's answers come 800 ms late (ZGX_WEBKITGTK_REPLY_DELAY_MS, debug builds only): on keys, after Ctrl is up; on the caret, after its frame")
     args = parser.parse_args()
     needed = ["Xvfb", "openbox", "xdotool", "xwininfo"]
     needed += ["sway", "dbus-daemon", "wl-copy", "wl-paste"] + (["fcitx5", "fcitx5-remote"] if args.ime else []) if args.wayland else []

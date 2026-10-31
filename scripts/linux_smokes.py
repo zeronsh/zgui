@@ -82,6 +82,7 @@ SMOKES = [
     ("web-view-schemes", "timeout 60s {bin}/web_view_schemes --fixture", True),
     ("web-view", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --output {out}", False),
     ("web-view-slow-replies", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --slow-replies --output {out}", False),
+    ("web-view-ime-slow-replies", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --ime --slow-replies --output {out}", False),
     ("web-view-wayland", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --output {out}", False),
     ("web-view-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --ime --output {out}", False),
     ("web-view-transparent", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --transparent --output {out}", False),
