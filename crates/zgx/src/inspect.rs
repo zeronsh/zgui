@@ -1113,9 +1113,13 @@ fn check(ui: &Ui, labels: &HashMap<NodeId, Label>) -> Vec<Warning> {
                 ));
             }
         }
-        // A percentage against a parent that sizes to its content.
+        // A percentage against a parent that sizes to its content: not a
+        // scroll's own viewport and content, which the engine sizes so (a
+        // `scroll_x` with no height takes a definite one, or its content's).
         let (pw, ph) = scene.unresolved_percentages(id);
-        if pw || ph {
+        let scrolls = scene.is_scroll_content(id)
+            || scene.children(id).iter().any(|c| scene.is_scroll_content(*c));
+        if (pw || ph) && !scrolls {
             let (axis, value, size) = if pw {
                 ("width", style.width_percent, item.bounds.width)
             } else {
