@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use crate::auxil::dxgi::result::HResult;
 use thiserror::Error;
 use windows::{
+    Win32::Graphics::Direct3D::{D3D_SHADER_MACRO, Dxc, Fxc, ID3DBlob},
     core::{Interface, PCSTR, PCWSTR},
-    Win32::Graphics::Direct3D::{Dxc, Fxc, ID3DBlob, D3D_SHADER_MACRO},
 };
 
 pub(super) enum CompilerContainer {
@@ -23,6 +23,9 @@ pub(super) struct CompilerFxc {
 pub(super) struct CompilerDynamicDxc {
     max_shader_model: wgt::DxcShaderModel,
     compiler: Dxc::IDxcCompiler3,
+    /// zgx patch: what tells this DLL from another for the disk cache (its
+    /// version, and its file's size and time: the DLL is the app's own).
+    identity: String,
     // Has to be held onto for the lifetime of the device otherwise shaders will fail to compile.
     // Only needed when using dynamic linking.
     _dxc: DxcLib,
@@ -31,6 +34,7 @@ pub(super) struct CompilerDynamicDxc {
 pub(super) struct CompilerStaticDxc {
     max_shader_model: wgt::DxcShaderModel,
     compiler: Dxc::IDxcCompiler3,
+    identity: String,
 }
 
 #[derive(Debug, Error)]
@@ -47,6 +51,14 @@ impl CompilerContainer {
     }
 
     pub(super) fn new_dynamic_dxc(dxc_path: PathBuf) -> Result<Self, GetContainerError> {
+        let file = std::fs::metadata(&dxc_path).ok().map(|meta| {
+            let time = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            format!("{} {time}", meta.len())
+        });
         let dxc = DxcLib::new_dynamic(dxc_path)
             .map_err(|e| GetContainerError::FailedToLoad("dxcompiler.dll", e))?;
 
@@ -63,6 +75,9 @@ impl CompilerContainer {
         Ok(Self::DynamicDxc(CompilerDynamicDxc {
             max_shader_model: wgt::DxcShaderModel::from_dxc_version(major, minor),
             compiler,
+            // A DLL found by name on the search path has no file to read:
+            // its output isn't kept.
+            identity: file.map_or(String::new(), |file| format!("dxc {major}.{minor} {file}")),
             _dxc: dxc,
         }))
     }
@@ -83,12 +98,15 @@ impl CompilerContainer {
                 Ok(CompilerContainer::StaticDxc(CompilerStaticDxc {
                     max_shader_model: wgt::DxcShaderModel::V6_7,
                     compiler,
+                    identity: String::new(),
                 }))
             }
         }
         #[cfg(not(static_dxc))]
         {
-            panic!("Attempted to create a static DXC shader compiler, but the static-dxc feature was not enabled")
+            panic!(
+                "Attempted to create a static DXC shader compiler, but the static-dxc feature was not enabled"
+            )
         }
     }
 
@@ -123,8 +141,12 @@ impl CompilerContainer {
                 full_stage,
                 fxc,
             ),
-            CompilerContainer::DynamicDxc(CompilerDynamicDxc { compiler, .. })
-            | CompilerContainer::StaticDxc(CompilerStaticDxc { compiler, .. }) => compile_dxc(
+            CompilerContainer::DynamicDxc(CompilerDynamicDxc {
+                compiler, identity, ..
+            })
+            | CompilerContainer::StaticDxc(CompilerStaticDxc {
+                compiler, identity, ..
+            }) => compile_dxc(
                 device,
                 source,
                 source_name,
@@ -132,6 +154,7 @@ impl CompilerContainer {
                 stage_bit,
                 full_stage,
                 compiler,
+                identity,
             ),
         }
     }
@@ -376,6 +399,7 @@ fn as_err_str(blob: &Dxc::IDxcBlobUtf8) -> Result<&str, crate::DeviceError> {
         .map_err(|_| crate::DeviceError::Unexpected)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_dxc(
     device: &crate::dx12::Device,
     source: &str,
@@ -384,8 +408,31 @@ fn compile_dxc(
     stage_bit: wgt::ShaderStages,
     full_stage: &str,
     compiler: &Dxc::IDxcCompiler3,
+    identity: &str,
 ) -> Result<crate::dx12::CompiledShader, crate::PipelineError> {
     profiling::scope!("compile_dxc");
+    // zgx patch: compiled at an earlier launch by the same DLL, read back
+    // (`shader_disk_cache`); the flags stand for the debug arguments below.
+    let debug = device
+        .shared
+        .private_caps
+        .instance_flags
+        .contains(wgt::InstanceFlags::DEBUG);
+    let f16 = device.features.contains(wgt::Features::SHADER_F16);
+    let cache_key = (!identity.is_empty()).then(|| {
+        super::shader_disk_cache::key(
+            u32::from(debug) | u32::from(f16) << 1,
+            &format!("{identity}\n{full_stage}"),
+            raw_ep,
+            source,
+        )
+    });
+    if let Some(code) = cache_key
+        .as_deref()
+        .and_then(super::shader_disk_cache::read)
+    {
+        return Ok(crate::dx12::CompiledShader::Precompiled(code));
+    }
 
     let source_name = source_name.and_then(|cstr| cstr.to_str().ok());
 
@@ -456,6 +503,13 @@ fn compile_dxc(
     }
 
     let blob = get_output::<Dxc::IDxcBlob>(&compile_res, Dxc::DXC_OUT_OBJECT)?;
+    if let Some(key) = &cache_key {
+        // SAFETY: the blob's own buffer, read while the blob lives.
+        let code = unsafe {
+            core::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize())
+        };
+        super::shader_disk_cache::write(key, code);
+    }
 
     Ok(crate::dx12::CompiledShader::Dxc(blob))
 }

@@ -78,6 +78,27 @@ alternating launches on an RTX 4090:
 | zgx, shaders kept | 278 ms | 219 ms |
 | GPUI Fast | 307 ms | 273 ms |
 
+### Shader compiler
+
+Direct3D 12 compiles shaders with FXC unless the app ships Microsoft's DXC:
+with `dxcompiler.dll` beside the executable, zgx compiles with it, and with
+FXC if that fails. Compiling all 50 of zgx's pipelines took 689 ms with it,
+cold. FXC is deprecated, and its optimizer has overflowed its
+stack on zgx shaders that DXC compiles (Windows CI compiles every shader
+under FXC as a release build does, `tests/every_shader.rs`). DXC is quicker
+to a cold window's first text; its output is kept in the shader cache too,
+under a key naming the DLL, so a launch after the first compiles nothing. On
+an RTX 4090, the lab scene's first text, medians of 5 launches:
+
+| | Cold | Kept |
+| --- | --- | --- |
+| FXC | 776 ms | 511 ms |
+| DXC (Windows SDK's 1.8.2502) | 437 ms | to measure with the cache |
+
+`WGPU_DX12_COMPILER` (`fxc`, `dxc`) chooses one alone, the DLL found by
+name. Direct3D 11 (`ZGX_D3D11`) takes its shaders compiled ahead of time
+and never compiles at run time. Shipping DXC is described below.
+
 Most of the rest is the GPU driver opening its device (about 160 ms for a
 Direct3D 11 device and 180 ms for Direct3D 12, alone in a process), a floor
 any app on this GPU pays.
@@ -602,6 +623,14 @@ and how they fit what zgx does at run time.
   Visual C++ Redistributable.
 - ARM64 machines run x64 builds emulated. Build `aarch64-pc-windows-msvc`
   as well for native speed (see ARM64 above).
+
+**DXC (optional).** Copy `dxcompiler.dll` from the Windows SDK
+(`Windows Kits\10\bin\<version>\x64`) or a DirectXShaderCompiler release
+next to the executable: 14.3 MB for 1.8.2502. It is Microsoft's, signed, and
+redistributable (the release's license allows it). `dxil.dll` (1.5 MB) isn't
+needed: DXC 1.8 validates and signs on its own (every zgx shader compiled
+with `dxcompiler.dll` alone on an RTX 4090). Without it zgx uses FXC, which
+ships with Windows (see Shader compiler).
 
 **Size.** zgx's comparison app (`component_workload`, every image format)
 is 12.1 MiB x64 built as it ships: `lto = "fat"` and `codegen-units = 1`,

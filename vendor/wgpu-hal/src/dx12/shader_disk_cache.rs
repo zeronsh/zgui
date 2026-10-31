@@ -8,9 +8,10 @@
 //! read back the next time: the file holds that key in full, which must
 //! match byte for byte, so a hash collision or another version's file is
 //! compiled again rather than used. A file is written whole and renamed into
-//! place, so another process never reads half of one. DXC's output is not
-//! kept: its DLL is the app's own, of any version. What the cache did is
-//! counted (`shader_cache_counts`), for a start's marks.
+//! place, so another process never reads half of one. DXC's output is kept
+//! too, under a key naming its DLL's version and file (size and time), since
+//! the DLL is the app's own; a DLL found only by name isn't kept. What the
+//! cache did is counted (`shader_cache_counts`), for a start's marks.
 use alloc::{string::String, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::{
@@ -117,4 +118,3 @@ pub(super) fn write(key: &str, code: &[u8]) {
         let _ = std::fs::remove_file(&partial);
     }
 }
-
