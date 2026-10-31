@@ -169,16 +169,15 @@ fn fallback_spans<'a>(
     let faces: Vec<_> = families
         .iter()
         .map(|f| {
-            let id = fonts.db().query(&cosmic_text::fontdb::Query {
-                families: &[family(f)],
-                weight: cosmic_text::Weight(font.weight),
-                style: if font.italic {
+            let id = fonts.query_face(
+                family(f),
+                cosmic_text::Weight(font.weight),
+                if font.italic {
                     cosmic_text::Style::Italic
                 } else {
                     cosmic_text::Style::Normal
                 },
-                ..Default::default()
-            });
+            );
             id.and_then(|id| fonts.get_font(id, cosmic_text::Weight(font.weight)))
         })
         .collect();

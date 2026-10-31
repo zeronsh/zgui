@@ -80,6 +80,21 @@ fn platform_families(fonts: &mut FontSystem) {
             db.set_serif_family(serif);
         }
     }
+    // Nor does macOS have Noto Sans Mono. With no face of its own,
+    // monospaced text searched every fixed-width face for each word it
+    // shaped anew (a terminal's every line), to settle on Menlo for Latin
+    // text. Menlo, on every Mac, is now the family's face; characters it
+    // lacks fall back to other faces as on Windows and Linux.
+    #[cfg(target_os = "macos")]
+    {
+        let db = fonts.db_mut();
+        if db
+            .faces()
+            .any(|face| face.families.iter().any(|(family, _)| family == "Menlo"))
+        {
+            db.set_monospace_family("Menlo");
+        }
+    }
     // cosmic-text's monospace is Noto Sans Mono, which few Linux systems
     // install: monospaced text then took any fixed-width face, and on one
     // with DejaVu that was DejaVu Sans Mono Oblique, slanting every code

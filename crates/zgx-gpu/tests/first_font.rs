@@ -3,19 +3,26 @@
 //! search finds: texts shaped in turn under changing families, weights,
 //! sizes and scripts, and with characters only another font has, shape to
 //! the same glyphs, from the same fonts, as each shaped alone in a font
-//! system of its own.
+//! system of its own. Monospace's search weighs every fixed-width face
+//! against a word's characters, so its runs mix words its face has whole
+//! with ones only another face completes.
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, Family, FontSystem, LineEnding, Shaping, Weight, fontdb,
 };
 
-const FONTS: [&[u8]; 4] = [
+const FONTS: [&[u8]; 7] = [
     include_bytes!("fonts/GeistVariable-subset.ttf"),
     include_bytes!("fonts/Geist-500-subset.ttf"),
     include_bytes!("fonts/Geist-600-subset.ttf"),
     include_bytes!("../../../comparisons/fonts/DejaVuSans.ttf"),
+    // Fixed-width, without Hebrew or ✓ (DejaVu Sans has both).
+    include_bytes!("../../zgx-desktop/examples/support/fonts/GeistMono.ttf"),
+    include_bytes!("../../zgx-desktop/examples/support/fonts/GeistMono-Medium.ttf"),
+    // Fixed-width with them: monospace's search prefers it to DejaVu Sans.
+    include_bytes!("fonts/FixedHebrew-subset.ttf"),
 ];
 /// Family, weight, size and text, in the order shaped.
-const RUNS: [(&str, u16, f32, &str); 12] = [
+const RUNS: [(&str, u16, f32, &str); 18] = [
     ("Geist", 400, 13., "Requests 48,213"),
     ("DejaVu Sans", 400, 13., "Requests 48,213"),
     ("Geist", 400, 24., "Requests 48,213"),
@@ -28,6 +35,12 @@ const RUNS: [(&str, u16, f32, &str); 12] = [
     ("sans-serif", 400, 12., "déjà vu, naïve"),
     ("Geist", 400, 13., "Requests 48,213"),
     ("DejaVu Sans", 400, 40., "Requests 48,213"),
+    ("monospace", 400, 13., "שלום ✓ Ω → █"),
+    ("monospace", 400, 13., "let x = 42;"),
+    ("monospace", 500, 13., "fn ✓ main"),
+    ("monospace", 400, 13., "ok ✓ → done"),
+    ("monospace", 400, 13., "fn main() {}"),
+    ("monospace", 400, 13., "שלום"),
 ];
 
 type Glyphs = Vec<(u16, usize, usize, u32, u32, u32, String)>;
@@ -37,6 +50,7 @@ fn fonts() -> FontSystem {
     for bytes in FONTS {
         db.load_font_data(bytes.to_vec());
     }
+    db.set_monospace_family("Geist Mono");
     FontSystem::new_with_locale_and_db("en-US".into(), db)
 }
 
