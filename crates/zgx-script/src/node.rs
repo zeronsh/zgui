@@ -1158,6 +1158,8 @@ pub(crate) struct Span {
     pub strike: bool,
     /// `font`: as `ui.text`'s, `"mono"` or a family's name.
     pub font: Option<Rc<str>>,
+    /// `lang`: the language its text is in, over its paragraph's.
+    pub lang: Option<Rc<str>>,
     /// Those of its options given a state or a function, and what it was
     /// given: read as the paragraph is built, so a change builds it again.
     /// Empty for most spans.
@@ -1178,7 +1180,8 @@ pub(crate) struct Span {
     /// A link's look under the pointer: underlined, and its colour.
     pub hover: Option<(bool, Option<Themed<Color>>)>,
     /// An icon before the text, in the line.
-    pub icon: Option<SpanIcon>,
+    /// Boxed: few spans have one, and every span is copied as it is made.
+    pub icon: Option<Box<SpanIcon>>,
 }
 /// `ui.span { icon = { src = …, size = 12, gap = 4, tint = … } }`.
 #[derive(Clone)]
@@ -1507,6 +1510,7 @@ props! {
     "areas" => Areas: Areas, "flow" => Flow: GridFlow, "area" => Area: Str,
     "grid_column" => GridColumn: GridLines, "grid_row" => GridRow: GridLines,
     "display" => Display: Str,
+    "lang" => Lang: Str,
     // Transforms: after layout, about `origin` (fractions of the node).
     // Last, so that `is_transform` is a single comparison.
     "x" => X: Num, "y" => Y: Num,
@@ -4062,6 +4066,7 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         underline: false,
         strike: false,
         font: None,
+        lang: None,
         followed: Vec::new(),
         padding: [0.; 2],
         radius: 0.,
@@ -4107,6 +4112,11 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
                 b"font" => {
                     if let Value::Str(font) = lua.unpack(given)? {
                         span.font = Some(font);
+                    }
+                }
+                b"lang" => {
+                    if let Value::Str(lang) = lua.unpack(given)? {
+                        span.lang = Some(lang);
                     }
                 }
                 // `padding = 4` (across) or `{ 4, 0.5 }` (across, down).
@@ -4158,12 +4168,12 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
                         }
                     };
                     let tint = icon.get::<Value>("tint")?;
-                    span.icon = Some(SpanIcon {
+                    span.icon = Some(Box::new(SpanIcon {
                         src,
                         size: icon.get::<Option<f32>>("size")?.unwrap_or(12.),
                         gap: icon.get::<Option<f32>>("gap")?.unwrap_or(4.),
                         tint: (!matches!(tint, Value::Nil)).then_some(tint),
-                    });
+                    }));
                 }
                 b"on_click" => span.click = Some(handler(given)?),
                 b"href" => span.href = Some(lua.unpack::<String>(given)?.into()),

@@ -47,6 +47,7 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `letter_spacing` | `number` | `0` | points |
 | `tabular` | `boolean` | `false` | tabular figures (OpenType `tnum`): every digit one width, for numbers that change in place |
 | `font_features` | `string` | none | OpenType features: `"ss01 cv02=3 liga=0"` ([properties](properties.md)) |
+| `lang` | `string` | its parent's | the language its text is in (`"zh-TW"`), inherited: its Han characters take that language's fonts, and screen readers read it in it ([properties](properties.md)) |
 | `text_shadow` | `{ x, y, blur, color }` or a list | none | its glyphs again under them, moved by `x`, `y` and in `color` (CSS's `text-shadow`); a list's first is on top. Inherited, as CSS's: on a container it shadows the text inside it. `blur` is the Gaussian's sigma in points (up to 128 device pixels); each glyph's coverage is blurred once and kept, so a blurred shadow costs a frame what a sharp one does. It paints outside the text's box, as CSS's does |
 
 ## Rich text and spans
@@ -68,6 +69,7 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `weight` | `number` | the paragraph's | `bold = true` is 700 |
 | `bold`, `italic`, `underline`, `strike` | `boolean` | `false` | |
 | `font` | `string` | the paragraph's | as `ui.text`'s: `"mono"`, `"sans"`, `"serif"`, or a family's name |
+| `lang` | `string` | the paragraph's | the language the run is in: a quote's Han characters in its language's fonts. A plain value, not followed |
 | `padding` | `number` or `{ across, down }` | `0` | room around the run: across, before and after it (it takes space in the line); with `bg`, the background hugs the text plus this instead of filling the line, an inline code chip |
 | `radius` | `number` | `0` | the background's corner radius |
 | `underline_offset` | `number` | a tenth of the text size | how far below the baseline the underline sits (CSS's `text-underline-offset`) |

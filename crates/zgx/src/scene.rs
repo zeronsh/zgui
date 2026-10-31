@@ -1845,6 +1845,11 @@ struct ColdMaps {
     flat_parents: NodeMap<u32>,
     /// Images sampled other than smoothly (`set_image_rendering`).
     image_rendering: NodeMap<crate::image::ImageRendering>,
+    /// The languages nodes say their text is in (`set_language`), for what
+    /// they hold.
+    languages: NodeMap<Arc<str>>,
+    /// Counts changes to `languages` (`language_revision`).
+    language_revision: u64,
 }
 /// Where a node takes hits while an animation moves it: the place it's
 /// going, not the place it shows (Core Animation's model layer against its
@@ -6320,6 +6325,7 @@ impl Scene {
                 || cold.flat.contains_key(&id)
                 || cold.flat_parents.contains_key(&id)
                 || cold.image_rendering.contains_key(&id)
+                || cold.languages.contains_key(&id)
         }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
@@ -6411,6 +6417,46 @@ impl Scene {
         self.invalidate(id, PAINTED);
         self.damage_subtree(id);
         true
+    }
+    /// `id` and what it holds say their text is in `language` (HTML's
+    /// `lang`, a BCP 47 tag), or nothing of their own with `None`: what
+    /// assistive technology reads it in (`language`). Its fonts come with its
+    /// style (`Styled::lang`).
+    #[cold]
+    #[inline(never)]
+    pub fn set_language(&mut self, id: NodeId, language: Option<Arc<str>>) {
+        let held = (self.cold.as_ref()).and_then(|cold| cold.languages.get(&id));
+        if held == language.as_ref() || !self.contains(id) {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match language {
+            Some(language) => maps.languages.insert(id, language),
+            None => maps.languages.remove(&id),
+        };
+        maps.language_revision += 1;
+        self.sync_cold(id);
+    }
+    /// The language `id`'s text is in: as the nearest of it and its
+    /// ancestors that says (`set_language`); none where none does.
+    pub fn language(&self, id: NodeId) -> Option<&Arc<str>> {
+        let cold = self
+            .cold
+            .as_ref()
+            .filter(|cold| !cold.languages.is_empty())?;
+        let mut at = Some(id).filter(|id| self.contains(*id));
+        while let Some(node) = at {
+            if let Some(language) = cold.languages.get(&node) {
+                return Some(language);
+            }
+            at = self.node(node).parent;
+        }
+        None
+    }
+    /// Counts changes to what nodes say their text's language is
+    /// (`set_language`): unchanged, every node's `language` is as it was.
+    pub fn language_revision(&self) -> u64 {
+        self.cold.as_ref().map_or(0, |cold| cold.language_revision)
     }
     /// The width text `id` wraps at in a box `width` wide, and how far right
     /// of the box's left edge its lines start: `(width, 0)`, unless its lines
@@ -6733,6 +6779,9 @@ impl Scene {
             maps.flat.remove(&id);
             maps.flat_parents.remove(&id);
             maps.image_rendering.remove(&id);
+            if maps.languages.remove(&id).is_some() {
+                maps.language_revision += 1;
+            }
         }
     }
     /// Hit `id` and what it holds where an animation is taking it, not

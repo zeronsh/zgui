@@ -285,6 +285,18 @@ faces. The lists name Han's languages `ja`, `ko`, `zh-HK`, `zh-TW` and
 matched, so upstream gave a Japanese system Chinese Han; `han_locale`
 maps any locale onto them.
 
+A text's own language (zgx's `lang`, HTML's) comes before both: zgx sets
+`_han` on its attributes (1 or 2, 4 simplified Chinese, 5 traditional, 6
+Hong Kong's, 3 another language), and the hint and the app's language
+fill only the spans that say nothing (`hinted`). Chinese has no script of
+its own to look its fonts up by, so `Fallbacks` keeps the three Chinese
+lists beside the locale's (`chinese`, built with the others), and
+`run_scripts`, as it finds a run's Han, notes their language in the shape
+buffer (`ShapeBuffer::han`), which the search reads for Han's fallbacks: a
+Chinese quote in a Japanese app gets a Chinese face whatever the locale.
+ASCII runs pass as before, and the search looks only when it reaches Han's
+fallbacks.
+
 ## PingFang on macOS 26
 
 macOS 26 keeps PingFang (its simplified, traditional and Hong Kong Chinese

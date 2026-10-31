@@ -364,6 +364,7 @@ return ui.div {
 | `font_features` | `string` | none | OpenType features, as CSS's `font-feature-settings`: `"ss01 cv02=3 liga=0"`, a tag on, or `tag=value` (`0` off). `hyphens` breaks words at their hyphenation points with a hyphen, as CSS's `hyphens: auto`, in the system's language (zgx's `hyphens` feature; without it, an error where scripts are linted: a debug build, `zgx lint`. `hyphens = "auto"` of its own comes in 0.2). What the font lacks does nothing, and what isn't a four-letter tag with a number is left out. Replaces `tabular`: give `"tnum"` here too |
 | `underline` | `boolean` | `false` | underlined text, inherited (CSS's `text-decoration`): `hover = { underline = true }` underlines a link button's label |
 | `underline_offset` | `number` | a tenth of the text size | points below the baseline the underline sits; inherited |
+| `lang` | `string` | its parent's (the app's locale at the root) | the language its text is in (HTML's `lang`, a BCP 47 tag: `"ja"`, `"zh-TW"`), inherited. Han characters take that language's fonts: a Chinese quote in a Japanese app in a Chinese face, a Japanese name in a Chinese one's in a Japanese face. It wins over the app's locale and over what a line's kana or hangul say. Screen readers read the text in it (AccessKit's language). A function or state follows |
 
 ### Which way text from people runs
 

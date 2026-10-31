@@ -4621,7 +4621,10 @@ fn open_element(
                     font.fallbacks = value;
                 }
                 if let Some(value) = features {
-                    font.features = value;
+                    let inherited = std::mem::replace(&mut font.features, value);
+                    if inherited.han() != 0 || font.features.han() != 0 {
+                        font.features = inherited.layered(&font.features);
+                    }
                 }
                 if let Some(value) = span.styles.font_family.clone() {
                     font.family = value;

@@ -747,6 +747,8 @@ pub(crate) struct ColdStyles {
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
     /// `Styled::text_balance`.
     pub(crate) text_balance: Option<bool>,
+    /// `Styled::lang`.
+    pub(crate) lang: Option<std::sync::Arc<str>>,
 }
 /// How an image sits in its box: `Styled::object_fit` and `object_position`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -934,6 +936,9 @@ impl RareStyles {
             if theirs.text_balance.is_some() {
                 mine.text_balance = theirs.text_balance;
             }
+            if theirs.lang.is_some() {
+                mine.lang = theirs.lang.clone();
+            }
             if theirs.text_shadows.is_some() {
                 mine.text_shadows = theirs.text_shadows.clone();
             }
@@ -1009,8 +1014,11 @@ impl RareStyles {
         if other.line_clamp.is_some() {
             self.line_clamp = other.line_clamp;
         }
-        if other.font_features.is_some() {
-            self.font_features = other.font_features.clone();
+        if let Some(theirs) = &other.font_features {
+            self.font_features = Some(match &self.font_features {
+                Some(mine) => mine.layered(theirs),
+                None => theirs.clone(),
+            });
         }
         if other.font_fallbacks.is_some() {
             self.font_fallbacks = other.font_fallbacks.clone();
@@ -2328,7 +2336,12 @@ pub trait Styled: Sized {
     }
     /// Override inherited OpenType features; an empty set restores font defaults.
     fn font_features(mut self, features: crate::text_layout::FontFeatures) -> Self {
-        self.styles_mut().rare_mut().font_features = Some(features);
+        let rare = self.styles_mut().rare_mut();
+        // Keeping a language it says (`lang`).
+        rare.font_features = Some(match &rare.font_features {
+            Some(own) => own.layered(&features),
+            None => features,
+        });
         self
     }
     /// The font family, or a theme token. Inherited.
@@ -2622,6 +2635,25 @@ pub trait Styled: Sized {
     /// Inherited.
     fn text_wrap(mut self, value: bool) -> Self {
         self.styles_mut().fields_mut(bit::TEXT_WRAP).text_wrap = Some(value);
+        self
+    }
+    /// The language its text is in (HTML's `lang`, a BCP 47 tag: "ja",
+    /// "zh-TW"), inherited by what it holds: Han characters take that
+    /// language's fonts (a Chinese quote's in a Japanese app, not the
+    /// app's Japanese ones), over the app's language and what a line's kana
+    /// or hangul say, and assistive technology reads it in that language.
+    fn lang(mut self, language: impl Into<std::sync::Arc<str>>) -> Self {
+        let language = language.into();
+        // Its fonts ride with its features, over those it inherits; what
+        // assistive technology reads it in, with its cold styles.
+        let han = crate::text_layout::FontFeatures::han_of(&language);
+        let rare = self.styles_mut().rare_mut();
+        let only = crate::text_layout::FontFeatures::language_only(han);
+        rare.font_features = Some(match &rare.font_features {
+            Some(features) => features.layered(&only),
+            None => only,
+        });
+        rare.cold.get_or_insert_default().lang = Some(language);
         self
     }
     /// Wrap text with its lines balanced (CSS's `text-wrap: balance`): at
