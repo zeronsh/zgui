@@ -14,7 +14,21 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Every laid-out glyph of `text`, as comparable lines.
+/// Whether every glyph `buffer` shaped has a finite advance, laid out or
+/// not: a glyph of infinite advance can take its whole visual line out of
+/// the layout (rich text 120 in ZGX_PATCH.md's "Checked").
+macro_rules! advances_finite {
+    ($buffer:expr) => {
+        $buffer.lines.iter().filter_map(|line| line.shape_opt()).all(|shape| {
+            shape.spans.iter().all(|span| {
+                span.words.iter().all(|word| word.glyphs.iter().all(|glyph| glyph.x_advance.is_finite()))
+            })
+        })
+    };
+}
+
+/// Every laid-out glyph of `text`, as comparable lines, then whether every
+/// glyph shaped had a finite advance (`advances_finite!`).
 macro_rules! layout {
     ($ct:ident, $fonts:expr, $text:expr, $width:expr, $wrap:expr) => {
         layout!($ct, $fonts, $text, $width, $wrap, SansSerif)
@@ -28,6 +42,7 @@ macro_rules! layout {
         let attrs = Attrs::new().family(Family::$family);
         buffer.set_text($text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll($fonts, false);
+        let finite = advances_finite!(buffer);
         let mut out = Vec::new();
         for run in buffer.layout_runs() {
             out.push(format!("line {} rtl {} y {} w {}", run.line_i, run.rtl, run.line_y, run.line_w));
@@ -38,6 +53,7 @@ macro_rules! layout {
                 ));
             }
         }
+        out.push(format!("advances finite {finite}"));
         out
     }};
 }
@@ -75,6 +91,7 @@ macro_rules! layout_rich {
         }
         buffer.set_rich_text(spans, &base, Shaping::Advanced, None);
         buffer.shape_until_scroll($fonts, false);
+        let finite = advances_finite!(buffer);
         let mut out = Vec::new();
         for run in buffer.layout_runs() {
             out.push(format!("line {} rtl {} y {} w {}", run.line_i, run.rtl, run.line_y, run.line_w));
@@ -85,6 +102,7 @@ macro_rules! layout_rich {
                 ));
             }
         }
+        out.push(format!("advances finite {finite}"));
         out
     }};
 }
@@ -159,13 +177,15 @@ macro_rules! bench_mono {
     }};
 }
 
-/// Whether upstream's layout is of infinite or no width where the patch's
-/// is finite: upstream divides by a face's units per em, 0 in macOS's
-/// GB18030Bitmap, which the patch passes by ("A font without units per em
-/// is no font" in ZGX_PATCH.md).
+/// Whether upstream shaped a glyph of infinite or no advance where every
+/// one of the patch's is finite (`advances_finite!`): upstream divides by a
+/// face's units per em, 0 in macOS's GB18030Bitmap, which the patch passes
+/// by ("A font without units per em is no font" in ZGX_PATCH.md). Its
+/// layout then shows `inf` or `NaN`, or loses the visual line the glyph is
+/// in, and differs from the patch's either way.
 fn upstream_divides_by_zero(upstream: &[String], patched: &[String]) -> bool {
-    let infinite = |lines: &[String]| lines.iter().any(|line| line.contains("NaN") || line.contains("inf"));
-    infinite(upstream) && !infinite(patched)
+    upstream.last().is_some_and(|last| last == "advances finite false")
+        && patched.last().is_some_and(|last| last == "advances finite true")
 }
 
 fn next(seed: &mut u64) -> u64 {
