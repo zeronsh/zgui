@@ -124,6 +124,10 @@ required-features = ["svg"]
 
 # Runs itself again with `ZGX_D3D11=1` (read once a process) and compares.
 [[test]]
+name = "fxc_tags"
+harness = false
+
+[[test]]
 name = "d3d11_parity"
 harness = false
 required-features = ["d3d11"]

@@ -421,3 +421,5 @@ jobs:
       - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --test every_shader --test canvas --test box_model --locked
         env:
           LOCALAPPDATA: ${{ runner.temp }}\zgx-cold
+      # Probe (not for merge): which released versions' strokes overflow FXC.
+      - run: cargo test -p zgx-gpu --test fxc_tags --locked
