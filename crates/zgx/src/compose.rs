@@ -5498,13 +5498,26 @@ fn mount_scroll(
             }
         }
         if let InputEvent::Scroll {
-            delta_x, delta_y, ..
+            x,
+            y,
+            delta_x,
+            delta_y,
         } = cx.event
         {
             // A Control-wheel zooms the window instead.
             if cx.default_prevented() || crate::zoom::wheel_zooms() {
                 return;
             }
+            // In its own points: zoomed, its content moves as far as the
+            // wheel says on screen.
+            let (delta_x, delta_y) = match weak.upgrade() {
+                Some(ui) if ui.wheel_in_window() => {
+                    ui.scene
+                        .borrow()
+                        .local_delta(cx.current_target, (x, y), (delta_x, delta_y))
+                }
+                _ => (delta_x, delta_y),
+            };
             let delta = if horizontal { delta_x } else { delta_y };
             if !delta.is_finite() {
                 return;

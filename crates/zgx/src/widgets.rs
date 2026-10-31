@@ -1385,6 +1385,8 @@ pub(crate) struct UiStorage {
     scrollbar_fades: RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>>,
     /// Input is being dispatched: what scrolls now, the user scrolled.
     dispatching: Cell<bool>,
+    /// A platform's wheel is being dispatched (`Ui::wheel_in_window`).
+    wheel_in_window: Cell<bool>,
     /// What hears every event the document gets (`Ui::on_document_event`):
     /// usually nothing.
     document_listeners: RefCell<Vec<(u64, DocumentListener)>>,
@@ -1609,6 +1611,7 @@ impl Ui {
             elastic: Default::default(),
             scrollbar_fades: RefCell::new(Vec::new()),
             dispatching: Cell::new(false),
+            wheel_in_window: Cell::new(false),
             document_listeners: RefCell::new(Vec::new()),
         });
         storage.input.set_semantics(&storage.semantics);
@@ -3405,6 +3408,11 @@ impl Ui {
         self.storage.dispatching.set(false);
         Ok(result)
     }
+    /// Whether the wheel being dispatched is a platform's, in the window's
+    /// points, rather than one the engine made in a scroll view's own.
+    pub(crate) fn wheel_in_window(&self) -> bool {
+        self.storage.wheel_in_window.get()
+    }
     /// Give `event` to the nodes with `dispatch`, with elastic scrolling
     /// around it when that is on, then what the selection and keyboard
     /// scrolling make of it.
@@ -3438,7 +3446,13 @@ impl Ui {
             (elastic && !crate::zoom::wheel_zooms() && matches!(event, InputEvent::Scroll { .. }))
                 .then(|| event.clone());
         let key = matches!(event, InputEvent::KeyDown { .. }).then(|| event.clone());
+        // A platform's wheel, in the window's points; the engine's own
+        // (`InputDispatcher::dispatch_to`: keys, find, a reveal) are in a
+        // scroll view's.
+        let wheel = matches!(event, InputEvent::Scroll { .. });
+        self.storage.wheel_in_window.set(wheel);
         let mut result = dispatch(self, event);
+        self.storage.wheel_in_window.set(false);
         self.after_dispatch(after, &mut result);
         if let Some(key) = key {
             self.find_after_dispatch(&key, &mut result);

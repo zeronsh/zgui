@@ -203,6 +203,7 @@ impl Draggable {
                 }
                 let limits = self.limits(&element);
                 let start = self.position();
+                let (x, y) = in_parent(&element, x, y);
                 {
                     let mut s = self.state.borrow_mut();
                     s.dragging = true;
@@ -221,6 +222,10 @@ impl Draggable {
                 self.call(GRAB);
             }
             InputEvent::PointerMove { x, y } if self.state.borrow().dragging => {
+                let (x, y) = match self.element() {
+                    Some(element) => in_parent(&element, x, y),
+                    None => (x, y),
+                };
                 let (nx, ny) = {
                     let s = self.state.borrow();
                     let dx = (x as f64 - s.pointer.0) * self.drag_speed;
@@ -583,4 +588,17 @@ pub(crate) fn create(
         }
     }));
     Ok(DraggableUd(draggable))
+}
+
+/// Window point (`x`, `y`) in the space the element's `x` and `y` move it
+/// in, its parent's: a zoomed or scaled one follows the pointer.
+fn in_parent(element: &crate::element::Element, x: f32, y: f32) -> (f32, f32) {
+    element
+        .read(|scene, id| {
+            scene
+                .parent(id)
+                .and_then(|parent| scene.point_in(parent, x, y))
+        })
+        .flatten()
+        .unwrap_or((x, y))
 }

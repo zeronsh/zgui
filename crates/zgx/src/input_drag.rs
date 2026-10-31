@@ -462,7 +462,8 @@ impl InputDispatcher {
         if !self.enabled(&scene.borrow(), source) {
             return;
         }
-        let origin = scene.borrow().bounds(source);
+        // From where it shows: a preview goes in the window's points.
+        let origin = scene.borrow().transformed_bounds(source);
         let drag = DragSession {
             source,
             payload,

@@ -4190,11 +4190,18 @@ fn with_events(
                 delta_x,
                 delta_y,
             } => {
+                // In the box's own points, as `local_x` is.
+                let (dx, dy) = handle
+                    .get()
+                    .and_then(|h| {
+                        let scene = h.scene()?;
+                        let delta = (*delta_x, *delta_y);
+                        Some(scene.borrow().local_delta(h.node(), (*x, *y), delta))
+                    })
+                    .unwrap_or((*delta_x, *delta_y));
                 if let Some(h) = &wheel
                     && let Ok(t) = point(*x, *y)
-                    && t.set("dx", *delta_x)
-                        .and_then(|_| t.set("dy", *delta_y))
-                        .is_ok()
+                    && t.set("dx", dx).and_then(|_| t.set("dy", dy)).is_ok()
                     && run(h, &vm, &actions, t).is_some_and(|v| v.as_boolean() == Some(true))
                 {
                     event.prevent_default();
