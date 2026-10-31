@@ -6,6 +6,7 @@
 // frontmatter, links rewritten (a doc's link to another doc goes to that
 // doc's page and heading on the site, anything else in the repository to
 // GitHub), images copied, and code fences given a language Shiki knows.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,7 +52,12 @@ function source(src) {
     fail(`${src}: no such file`);
     return null;
   }
-  const tree = processor.parse(fs.readFileSync(file, 'utf8'));
+  // The changelog's unreleased entries are files of their own
+  // (changelog.d/), shown in its Unreleased section as a release puts them.
+  const text = src === 'CHANGELOG.md'
+    ? execFileSync('python3', [path.join(root, 'scripts/changelog.py'), 'render'], { encoding: 'utf8' })
+    : fs.readFileSync(file, 'utf8');
+  const tree = processor.parse(text);
   const h1 = tree.children.find((n) => n.type === 'heading' && n.depth === 1);
   // Anchors as GitHub computes them, over the whole file.
   const slugger = new GithubSlugger();

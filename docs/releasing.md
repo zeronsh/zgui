@@ -6,7 +6,7 @@ zgx 0.1.6 is on crates.io (2026-10-29, tag `v0.1.6`; 0.1.0, the first, on 2026-1
 
 - Every published crate shares one version, the workspace's (`[workspace.package] version` in `Cargo.toml`). Path dependencies between them name it (`version = "0.1.2"`), as crates.io needs.
 - It follows [semver](https://semver.org) as Cargo reads it before 1.0: `0.MINOR.PATCH`, where a new minor may break apps (each break listed in `CHANGELOG.md` with what to check and how to migrate) and a patch does not.
-- A release is a tag `v<version>` on `main` (`v0.2.0`), made once its changelog section is written: `CHANGELOG.md`'s "Unreleased" becomes `## 0.2.0 (date)`.
+- A release is a tag `v<version>` on `main` (`v0.2.0`), made once its changelog section is written: `scripts/changelog.py assemble --version 0.2.0 --date <date>` puts `changelog.d/`'s entries into `CHANGELOG.md`'s "Unreleased", which becomes `## 0.2.0 (date)`, and deletes them (`release_check.sh` fails a release commit that leaves any).
 - A fix to a release already out (a patch with nothing else in it) branches from that release's tag, not from `main`, whose later changes would each need their semver check and dry run: `release-0.1.2` is `v0.1.1` and the fix, tagged `v0.1.2` on that branch and published from it, the fix then brought to `main` by its own pull request (as 0.1.2 was).
 - The oldest Rust the workspace builds with is `rust-version` (1.95: `AtomicU64::try_update`). CI's Linux job checks it: its no-default-features check runs on that toolchain.
 

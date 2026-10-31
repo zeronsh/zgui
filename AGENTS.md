@@ -21,6 +21,7 @@ Linux native probes (real X11/Wayland windows, input, IME, clipboard, accessibil
 
 - `cargo fmt`, clippy with `-D warnings`, and the tests of every crate you touched.
 - Luau scripts: `cargo run -p zgx-script --bin zgx -- lint <dir>` and `... -- check <dir>` (luau-lsp), then `stylua .` (2.6, from the repository root: CI checks every Luau file).
+- A change apps notice gets a changelog entry as a file of its own, `changelog.d/<pr-or-slug>.md`, with `section:` (changed, added, performance or fixed) in front matter: `scripts/changelog.py` says how. Never edit CHANGELOG.md's Unreleased section: every PR doing so conflicted with the next, and CI fails it.
 - A commit title says what is now true ("Wheel scrolling eases in whole pixels"), the body why.
 
 ## Principles

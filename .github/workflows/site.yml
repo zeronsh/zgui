@@ -10,6 +10,8 @@ on:
       - "docs/**"
       - "README.md"
       - "CHANGELOG.md"
+      - "changelog.d/**"
+      - "scripts/changelog.py"
       - "Cargo.toml"
       - "site/data.json"
       - "site/windows/data.json"

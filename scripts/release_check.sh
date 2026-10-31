@@ -28,7 +28,9 @@
 #    `cargo update -p zgx` gets this zgx, and they call it in places a
 #    doc(hidden) or return-type change breaks without semver-checks seeing
 #    it (zgx-desktop 0.1.3 calls `zoom::wheel`).
-# Before them: each fork whose version crates.io has is what crates.io has
+# Before them: changelog.d/'s entries are well formed, and none is left out
+# of a CHANGELOG.md that has this version's section (scripts/changelog.py);
+# each fork whose version crates.io has is what crates.io has
 # (scripts/check_forks.py; 2 and 3 are given vendor/, and would hide a change
 # made without a version), and zgx's Thai word dictionary (crates/zgx/data/thaidict.bin) is
 # what scripts/extract_thai_dictionary.py extracts from the locked ICU4X
@@ -75,6 +77,8 @@ if [ -z "$python" ]; then
     echo "no Python runs (python3 or python): the checks below need one" >&2
     exit 1
 fi
+echo "== the changelog's entries"
+"$python" scripts/changelog.py check --release "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
 echo "== the forks against crates.io"
 "$python" scripts/check_forks.py
 echo "== zgx's vendored Thai dictionary"
