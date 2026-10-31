@@ -1539,6 +1539,12 @@ struct Host {
     startup_trim: StartupTrim,
     /// Timer tick (no native source) or watchdog deadline (native source).
     frame_deadline: Option<std::time::Instant>,
+    /// When the last frame began drawing, and when one no input asked for,
+    /// held back, draws (`frame_source::unasked_frame_at`).
+    #[cfg(windows)]
+    drawn_at: Option<std::time::Instant>,
+    #[cfg(windows)]
+    frame_held: Option<std::time::Instant>,
     /// When frames started being wanted, or the last native tick since.
     frame_heartbeat: Option<std::time::Instant>,
     /// A Wayland redraw is pending on the compositor's frame callback.
@@ -1920,6 +1926,10 @@ impl Host {
             #[cfg(target_os = "macos")]
             frame_starts: std::collections::VecDeque::new(),
             frame_deadline: None,
+            #[cfg(windows)]
+            drawn_at: None,
+            #[cfg(windows)]
+            frame_held: None,
             frame_heartbeat: None,
             frame_redraw_requested: false,
             focus_memory: crate::focus_memory::FocusMemory::default(),
@@ -5136,6 +5146,29 @@ impl Host {
                 .display_link
                 .as_ref()
                 .is_some_and(|link| link.running());
+        // Changes no input asked for, soon after the last frame, draw
+        // together about a refresh after it rather than each at once: this
+        // only ever puts off a draw, so a window at rest stays at rest.
+        // Changes just after input (a terminal's echo of a key, a search's
+        // results) still draw at once, as the input did.
+        #[cfg(windows)]
+        let paced = {
+            let now = std::time::Instant::now();
+            if self.frame_held.is_some_and(|at| now >= at) {
+                self.frame_held = None;
+                self.frame_arrived = true;
+            }
+            let inputting = self.input_until.is_some_and(|until| now < until);
+            let mut held = false;
+            if !(input || inputting || paced || due || self.force || self.frame_arrived)
+                && let Some(at) =
+                    crate::frame_source::unasked_frame_at(self.drawn_at, now, self.frame_interval)
+            {
+                self.frame_held.get_or_insert(at);
+                held = true;
+            }
+            paced || held
+        };
         #[cfg(not(any(target_os = "macos", windows)))]
         let paced = false;
         // Scene damage accumulates until the refresh paints it in one frame.
@@ -5145,6 +5178,11 @@ impl Host {
                 self.refresh_frame = paced && self.frame_arrived;
             }
             self.frame_arrived = false;
+            #[cfg(windows)]
+            {
+                self.drawn_at = Some(std::time::Instant::now());
+                self.frame_held = None;
+            }
             self.draw()?;
             #[cfg(target_os = "macos")]
             {
@@ -5248,6 +5286,13 @@ impl Host {
                 gaps.join(", ")
             );
         }
+    }
+    /// When a frame held back to a refresh after the last draws (Windows).
+    fn held_frame(&self) -> Option<std::time::Instant> {
+        #[cfg(windows)]
+        return self.frame_held;
+        #[cfg(not(windows))]
+        None
     }
     fn poll_frame_deadline(&mut self, now: std::time::Instant) {
         if self.frame_deadline.is_some_and(|deadline| now >= deadline) {
@@ -6781,6 +6826,7 @@ impl WindowManager {
                     host.presentation.deadline(),
                     host.context.ui.next_interaction_deadline(),
                     host.frame_deadline,
+                    host.held_frame(),
                     host.renderer_retry,
                     host.plane_retry,
                     host.touch.hold_deadline(),
