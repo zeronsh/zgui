@@ -1502,7 +1502,57 @@ impl InputDispatcher {
     /// listeners may have removed it or moved focus on (a dialog's button
     /// closing the dialog), and what has focus now did not hear the key.
     fn still_targeted(&self, scene: &Rc<RefCell<Scene>>, target: Option<NodeId>) -> Option<NodeId> {
-        target.filter(|id| self.focused() == Some(*id) && scene.borrow().contains(*id))
+        target.filter(|id| {
+            let scene = scene.borrow();
+            // Inert content (a row leaving) activates on no key.
+            self.focused() == Some(*id) && scene.contains(*id) && scene.inert_around(*id).is_none()
+        })
+    }
+    /// Move focus off inert content (`Scene::set_inert`: a row playing its
+    /// exit, gone from its data): to the next focusable control after it,
+    /// else the one before, else the nearest focusable around it, as a
+    /// platform's list moves focus off a row it deletes. Whoever makes
+    /// content inert calls it (`NodeHandle::leave`).
+    pub fn leave_inert(&self, scene: &Rc<RefCell<Scene>>) {
+        let target = {
+            let scene = scene.borrow();
+            let Some(focused) = self.focused() else {
+                return;
+            };
+            let Some(leaving) = scene.inert_around(focused) else {
+                return;
+            };
+            let takes = |id: NodeId| {
+                self.options(id)
+                    .is_some_and(|o| o.focusable && o.tab_index >= 0)
+                    && scene.inert_around(id).is_none()
+                    && self.enabled(&scene, id)
+            };
+            // Document order, leaving's subtree passed over.
+            let (mut before, mut after) = (None, None);
+            let mut passed = false;
+            let mut stack = vec![scene.root()];
+            while let Some(id) = stack.pop() {
+                if id == leaving {
+                    passed = true;
+                    continue;
+                }
+                if takes(id) {
+                    if passed {
+                        after = Some(id);
+                        break;
+                    }
+                    before = Some(id);
+                }
+                stack.extend(scene.children(id).iter().rev().copied());
+            }
+            after
+                .or(before)
+                .or_else(|| scene.ancestors(leaving).find(|id| takes(*id)))
+        };
+        if target.is_none() || !self.focus(scene, target) {
+            self.focus(scene, None);
+        }
     }
     /// Whether `node` can take input now: shown, not disabled itself or by
     /// an ancestor, not transparent, and inside the active modal scope.

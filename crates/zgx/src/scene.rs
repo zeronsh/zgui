@@ -3082,6 +3082,21 @@ impl Scene {
         }
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
     }
+    /// The inert node `id` is in (itself or an ancestor), if any: content
+    /// that paints but takes no input, such as a row playing its exit.
+    pub fn inert_around(&self, id: NodeId) -> Option<NodeId> {
+        if self.inert.is_empty() || !self.contains(id) {
+            return None;
+        }
+        self.inert
+            .iter()
+            .copied()
+            .find(|inert| self.is_within(id, *inert))
+    }
+    /// Whether any subtree is inert (`set_inert`).
+    pub fn has_inert(&self) -> bool {
+        !self.inert.is_empty()
+    }
     /// Whether `id` is inert (`set_inert`): hit testing passes through it.
     pub fn is_inert(&self, id: NodeId) -> bool {
         self.inert.contains(&id)

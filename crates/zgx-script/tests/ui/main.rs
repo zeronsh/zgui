@@ -13,6 +13,8 @@ mod driver;
 mod each_reorder;
 #[path = "../editor_props.rs"]
 mod editor_props;
+#[path = "../exiting_rows.rs"]
+mod exiting_rows;
 #[path = "../failures.rs"]
 mod failures;
 #[path = "../file_drop.rs"]

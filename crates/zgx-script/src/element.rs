@@ -393,6 +393,14 @@ impl Element {
         }
         let _ = self.handle.set(handle);
     }
+    /// It's leaving, gone from the data it showed: while its exit plays it
+    /// takes no input (`NodeHandle::leave`), so a second click or a key acts
+    /// on what is still there.
+    pub(crate) fn leave(&self) {
+        if let Some(handle) = self.handle.get() {
+            handle.leave();
+        }
+    }
     pub fn read<R>(&self, f: impl FnOnce(&Scene, NodeId) -> R) -> Option<R> {
         let scene = self.scene()?;
         let scene = scene.borrow();

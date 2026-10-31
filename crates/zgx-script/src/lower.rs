@@ -7263,6 +7263,8 @@ fn presence(
                         if let Some(scene) = &scene {
                             scene.borrow_mut().set_contents(handle.node(), false);
                         }
+                        // What holds it takes no input either (`leave`).
+                        handle.leave();
                         // A one-cell grid holds the content at that size,
                         // flex-sized content included.
                         let px = |v: f32| Lit::Len(zgx::layout::Length::Px(v));
@@ -7282,6 +7284,7 @@ fn presence(
                         if let Some(engine) = &engine {
                             engine.set_now(Vec::new());
                         }
+                        element.leave();
                         let then = remove.clone();
                         if let Err(e) = play(&element, exit, Some(Rc::new(move || then(id)))) {
                             vm.report(e);

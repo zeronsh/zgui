@@ -113,6 +113,8 @@ return ui.column {
 
 ## Gotchas
 
+- What leaves with an `exit` (an `each` row gone from its list, what a `presence` lets go of) takes no input while it plays: clicks reach what is under it, focus moves to the next row (else the one before), keys never activate it, and assistive technology no longer lists it.
+
 - A node at opacity 0 takes no pointer, unlike CSS (where `opacity: 0` is still clicked): a row fading in from 0 (`enter = { opacity = { 0, 1 } }`) takes clicks and drops from its first visible frame, and a row fading out stops taking them once it is gone. To keep something invisible but clickable, give it a small opacity; to make something visible take no pointer, `pointer_events = "none"`.
 
 - `each`'s list must be a state (`ui.state`, `ui.computed`, a component's `ui.use_state`), not a function or a plain table: wrap a derived list in `ui.computed`.

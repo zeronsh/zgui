@@ -431,6 +431,7 @@ pub(crate) fn each(
             shown.set(list);
             if let Some(exit) = &motion.exit {
                 for (row, element) in leaving_out {
+                    element.leave();
                     let then = remove.clone();
                     let done: Rc<dyn Fn()> = {
                         let row = row.clone();
