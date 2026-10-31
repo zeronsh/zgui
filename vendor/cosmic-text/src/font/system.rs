@@ -670,6 +670,8 @@ impl FontSystem {
         let now = std::time::Instant::now();
 
         db.load_system_fonts();
+        #[cfg(target_os = "macos")]
+        load_pingfang(db);
 
         for source in fonts {
             db.load_font_source(source);
@@ -709,6 +711,24 @@ impl<T> Deref for BorrowedWithFontSystem<'_, T> {
 impl<T> DerefMut for BorrowedWithFontSystem<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
+    }
+}
+
+/// zgx: PingFang, macOS's Chinese face (simplified, traditional and Hong
+/// Kong's), where `load_system_fonts` didn't find it: macOS 26 keeps it in
+/// a private framework, where Core Text finds it, outside the font
+/// directories fontdb reads. Without it the fallback lists' PingFang named
+/// nothing, and Chinese text took Arial Unicode MS.
+#[cfg(all(feature = "std", target_os = "macos"))]
+fn load_pingfang(db: &mut fontdb::Database) {
+    const PINGFANG: &str =
+        "/System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc";
+    let found = db
+        .faces()
+        .any(|face| face.families.iter().any(|(name, _)| name == "PingFang SC"));
+    if !found {
+        // Not there (another macOS): the lists' next face stands in.
+        let _ = db.load_font_file(PINGFANG);
     }
 }
 

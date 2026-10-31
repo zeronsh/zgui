@@ -19,7 +19,8 @@ use std::{
 };
 
 /// Bump when fontdb or cosmic-text change what they read from a font file.
-const FORMAT: &[u8] = b"zgx system fonts 2\n";
+/// 3: macOS's PingFang, outside the font directories, is loaded too.
+const FORMAT: &[u8] = b"zgx system fonts 3\n";
 
 pub(crate) fn system_fonts() -> FontSystem {
     let mut fonts = cached_system_fonts();
