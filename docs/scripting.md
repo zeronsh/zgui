@@ -441,7 +441,7 @@ end)
   - waiting: `frames(n)`, and `wait(target, { text?, gone?, timeout_ms? })`, which delivers frames until the target shows (holding `text`) or is gone and answers whether it did;
   - state: `state(name)` and `set_state(name, value)`;
   - `error()`, the script error showing, if any.
-- **The desktop is a fake one.** The clipboard and dialogs work, and answer as the test says: `save_to(name)` is where the next `ui.save_file` saves, `pick({ names })` what the next `ui.open_files` picks, `write_file(name, text)` and `read_file(name)` make and read those files (in a directory of the app's own, gone with it), and `clipboard()` and `copy(text)` read and fill the clipboard. A dialog with no answer waiting is cancelled.
+- **The desktop is a fake one.** The clipboard and dialogs work, and answer as the test says: `save_to(name)` is where the next `ui.save_file` saves, `pick({ names })` what the next `ui.open_files` picks, `write_file(name, text)` and `read_file(name)` make and read those files, `copy_file(from, name)` copies a fixture from the app's directory (an image, a folder of them) (in a directory of the app's own, gone with it), and `clipboard()` and `copy(text)` read and fill the clipboard. A dialog with no answer waiting is cancelled.
 - **What a headless app lacks:** a fetcher (`ui.fetch` fails as it does offline) and storage (`ui.persist` keeps state in memory).
 - **Types.** `zgx check` gives test files these globals' types (`types/zgx-test.d.luau`); the app's own scripts don't see them.
 

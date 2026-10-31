@@ -120,6 +120,15 @@ fn a_test_answers_the_desktops_dialogs_and_resizes_the_window() {
         &[(
             "desktop.test.luau",
             r##"
+test("a fixture is copied in, a folder whole", function()
+    local app = mount("desktop.luau")
+    app:copy_file("fixtures", "lib")
+    expect(app:read_file("lib/deep/note.txt")).to_be("fixture")
+    local ok, message = pcall(function() app:copy_file("../zgx-outside-fixture.txt", "x") end)
+    expect(ok).to_be(false)
+    expect(tostring(message)).to_contain("app's directory")
+end)
+
 test("a file saved, picked and copied", function()
     local app = mount("desktop.luau")
     app:save_to("out/report.csv")
@@ -167,6 +176,13 @@ end)
 "##,
         )],
     );
+    std::fs::create_dir_all(dir.join("fixtures/deep")).unwrap();
+    std::fs::write(
+        dir.parent().unwrap().join("zgx-outside-fixture.txt"),
+        "secret",
+    )
+    .unwrap();
+    std::fs::write(dir.join("fixtures/deep/note.txt"), "fixture").unwrap();
     std::fs::write(
         dir.join("desktop.luau"),
         r#"

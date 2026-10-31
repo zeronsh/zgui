@@ -574,23 +574,31 @@ pub fn parse_keys(text: &str) -> Result<(Key, Modifiers), String> {
     Ok((key, modifiers))
 }
 
-/// Press and release the primary button at the middle of `bounds`.
+/// A pointer event as a window delivers one, with the keys held (none):
+/// only such presses are counted (a double click's `clicks`), so a test's
+/// can't differ from a person's.
+fn pointer(ui: &mut Ui, event: InputEvent) {
+    ui.dispatch_with_modifiers(event, Modifiers::default());
+}
+/// Press and release the primary button at the middle of `bounds`, a click
+/// of its own: a next one starts its count afresh, however soon it comes.
 pub fn click_at(ui: &mut Ui, bounds: Rect) {
-    let (x, y) = (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.);
+    let (x, y) = middle(bounds);
     let button = PointerButton::Primary;
-    ui.dispatch(InputEvent::PointerDown { x, y, button });
-    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    pointer(ui, InputEvent::PointerDown { x, y, button });
+    pointer(ui, InputEvent::PointerUp { x, y, button });
+    ui.input.forget_clicks();
 }
 /// Press and release the primary button twice at a box's middle, as a
 /// double click.
 pub fn double_click_at(ui: &mut Ui, bounds: Rect) {
-    // With modifiers, as a window's presses come: only those count clicks.
     let (x, y) = middle(bounds);
-    let (button, none) = (PointerButton::Primary, Modifiers::default());
+    let button = PointerButton::Primary;
     for _ in 0..2 {
-        ui.dispatch_with_modifiers(InputEvent::PointerDown { x, y, button }, none);
-        ui.dispatch_with_modifiers(InputEvent::PointerUp { x, y, button }, none);
+        pointer(ui, InputEvent::PointerDown { x, y, button });
+        pointer(ui, InputEvent::PointerUp { x, y, button });
     }
+    ui.input.forget_clicks();
 }
 /// A box's middle.
 pub fn middle(bounds: Rect) -> (f32, f32) {
@@ -603,9 +611,10 @@ pub fn hover_at(ui: &mut Ui, (x, y): (f32, f32)) {
 /// Move to `(x, y)` and click the context button there.
 pub fn right_click_at(ui: &mut Ui, (x, y): (f32, f32)) {
     let button = PointerButton::Secondary;
-    ui.dispatch(InputEvent::PointerMove { x, y });
-    ui.dispatch(InputEvent::PointerDown { x, y, button });
-    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    pointer(ui, InputEvent::PointerMove { x, y });
+    pointer(ui, InputEvent::PointerDown { x, y, button });
+    pointer(ui, InputEvent::PointerUp { x, y, button });
+    ui.input.forget_clicks();
 }
 /// Drag with the primary button from one point to another: pressed there,
 /// moved past the drag threshold, on to `to` in steps, as a hand moves
@@ -615,21 +624,28 @@ pub fn drag_between(ui: &mut Ui, from: (f32, f32), to: (f32, f32)) {
     const STEPS: u16 = 8;
     let (x, y) = from;
     let button = PointerButton::Primary;
-    ui.dispatch(InputEvent::PointerMove { x, y });
-    ui.dispatch(InputEvent::PointerDown { x, y, button });
-    ui.dispatch(InputEvent::PointerMove {
-        x: x + 16.,
-        y: y + 8.,
-    });
+    pointer(ui, InputEvent::PointerMove { x, y });
+    pointer(ui, InputEvent::PointerDown { x, y, button });
+    pointer(
+        ui,
+        InputEvent::PointerMove {
+            x: x + 16.,
+            y: y + 8.,
+        },
+    );
     for step in 1..=STEPS {
         let part = f32::from(step) / f32::from(STEPS);
-        ui.dispatch(InputEvent::PointerMove {
-            x: x + (to.0 - x) * part,
-            y: y + (to.1 - y) * part,
-        });
+        pointer(
+            ui,
+            InputEvent::PointerMove {
+                x: x + (to.0 - x) * part,
+                y: y + (to.1 - y) * part,
+            },
+        );
     }
     let (x, y) = to;
-    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    pointer(ui, InputEvent::PointerUp { x, y, button });
+    ui.input.forget_clicks();
 }
 /// Click `node`, then type `text` into what has focus.
 pub fn type_into(ui: &mut Ui, node: NodeId, text: &str) {

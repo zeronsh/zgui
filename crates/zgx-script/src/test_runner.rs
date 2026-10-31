@@ -149,6 +149,7 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
         .call(())?;
     globals.set("expect", expect)?;
     let dir = dir.to_path_buf();
+    let fixtures = dir.clone();
     globals.set(
         "mount",
         lua.create_function(move |_, path: Option<String>| {
@@ -170,6 +171,7 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
             app.host.window_size(viewport.clone());
             app.frames(1);
             Ok(Mounted {
+                dir: fixtures.clone(),
                 app: Rc::new(RefCell::new(app)),
                 viewport,
                 files: Files::default(),
@@ -243,6 +245,8 @@ fn untraced(text: &str) -> String {
 /// An app `mount` made: [`TestApp`]'s acts and reads as methods.
 struct Mounted {
     app: Rc<RefCell<TestApp>>,
+    /// The app's directory, where a test's fixtures lie.
+    dir: PathBuf,
     /// The window's size, `ui.window.size` following it.
     viewport: Signal<(f32, f32)>,
     files: Files,
@@ -277,6 +281,19 @@ impl Files {
             std::fs::create_dir_all(parent).map_err(mlua::Error::external)?;
         }
         Ok(path)
+    }
+}
+/// `from` to `to`, a folder with all inside it.
+fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(|_| ())
     }
 }
 impl Drop for Files {
@@ -444,6 +461,24 @@ impl UserData for Mounted {
         });
         methods.add_method("write_file", |_, m, (name, text): (String, String)| {
             std::fs::write(m.files.path(&name)?, text).map_err(mlua::Error::external)
+        });
+        // A fixture of the app's directory (an image, a folder of them),
+        // copied in as `name`, for the dialogs to answer with.
+        methods.add_method("copy_file", |_, m, (from, name): (String, String)| {
+            // Where links lead: a fixture is in the app's directory, wherever
+            // the directory itself is reached from.
+            let root = m.dir.canonicalize().unwrap_or_else(|_| m.dir.clone());
+            let source =
+                m.dir.join(&from).canonicalize().map_err(|error| {
+                    mlua::Error::runtime(format!("copy_file `{from}`: {error}"))
+                })?;
+            if !source.starts_with(&root) {
+                return Err(mlua::Error::runtime(format!(
+                    "`{from}`: a fixture comes from the app's directory"
+                )));
+            }
+            copy(&source, &m.files.path(&name)?)
+                .map_err(|error| mlua::Error::runtime(format!("copy_file `{from}`: {error}")))
         });
         methods.add_method("read_file", |_, m, name: String| {
             std::fs::read_to_string(m.files.path(&name)?).map_err(mlua::Error::external)

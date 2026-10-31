@@ -38,6 +38,9 @@ declare extern type TestApp with
 	-- A file of that directory, written for a dialog to pick, or read after
 	-- the app saved it.
 	function write_file(self, name: string, text: string): ()
+	-- A fixture from the app's directory (an image, a folder of them), copied
+	-- in as `name`.
+	function copy_file(self, from: string, name: string): ()
 	function read_file(self, name: string): string
 	-- The clipboard's text, and text put on it as another app copies it.
 	function clipboard(self): string
