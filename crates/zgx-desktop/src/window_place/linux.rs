@@ -12,7 +12,10 @@ use winit::{
 use x11rb::{
     connection::Connection,
     properties::{WmSizeHints, WmSizeHintsSpecification},
-    protocol::xproto::{AtomEnum, ConfigureWindowAux, ConnectionExt as _, MapState, PropMode},
+    protocol::xproto::{
+        AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, MapState,
+        PropMode,
+    },
     rust_connection::RustConnection,
     wrapper::ConnectionExt as _,
 };
@@ -238,6 +241,32 @@ fn x11_id(window: &Window) -> Option<u32> {
         RawWindowHandle::Xcb(handle) => Some(handle.window.get()),
         _ => None,
     }
+}
+
+/// Paint `window` (X11, opaque) `color` where it has no picture: from its
+/// mapping until its first frame after, which X11 keeps none of from while
+/// it was unmapped (`WindowOptions::visible`), it then shows the app's
+/// background rather than black or white.
+pub(crate) fn set_background(window: &Window, color: zgx::scene::Color) {
+    let Some(id) = x11_id(window) else {
+        return;
+    };
+    let Ok((connection, _)) = x11rb::connect(None) else {
+        return;
+    };
+    let rgb = u32::from(color.0) << 16 | u32::from(color.1) << 8 | u32::from(color.2);
+    // A 32-bit visual's pixel carries its alpha.
+    let depth = connection
+        .get_geometry(id)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .map_or(24, |geometry| geometry.depth);
+    let pixel = if depth == 32 { 0xff00_0000 | rgb } else { rgb };
+    let _ = connection.change_window_attributes(
+        id,
+        &ChangeWindowAttributesAux::new().background_pixel(pixel),
+    );
+    let _ = connection.sync();
 }
 
 /// Whether a monitor shows the title bar of a frame at `(x, y)`, `width`

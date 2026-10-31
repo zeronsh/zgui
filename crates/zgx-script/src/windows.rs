@@ -41,6 +41,9 @@ pub struct Window {
     /// Where it opens: the window's top-left this far up and left of the
     /// pointer (a tab torn off, kept under the grab).
     pub under_pointer: Option<(f64, f64)>,
+    /// Shown while true (none: shown): made hidden while false, laid out
+    /// and drawn, and shown whole as it turns true.
+    pub visible: Option<Signal<Value>>,
     /// Its own state, which the host keeps as the system says and its
     /// content reads (`win.active`, `win.shown`, `win.size`); none for a
     /// window whose content never asked.
@@ -102,6 +105,10 @@ impl PartialEq for Window {
             &other.tabbing,
             other.under_pointer,
         ) && self.open.ptr_eq(&other.open)
+            && match (&self.visible, &other.visible) {
+                (Some(a), Some(b)) => a.ptr_eq(b),
+                (a, b) => a.is_none() && b.is_none(),
+            }
     }
 }
 impl std::fmt::Debug for Window {
@@ -298,7 +305,7 @@ fn build(
         None => vm.call(&group.build, item.clone())?,
     };
     let open = vm.runtime.signal(Value::Bool(true));
-    let (mut window, node) = window_of(&table, id.to_owned(), open, false, None)?;
+    let (mut window, node) = window_of(&table, id.to_owned(), open, false, None, &vm.runtime)?;
     window.state = state;
     Ok((window, node))
 }
@@ -311,6 +318,7 @@ fn window_of(
     open: Signal<Value>,
     declared: bool,
     runtime: Option<(&Lua, &Runtime)>,
+    signals: &Runtime,
 ) -> mlua::Result<(Window, Rc<Node>)> {
     let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
     // `ui.window`'s content may be `function(win)`: the window's own state.
@@ -332,6 +340,16 @@ fn window_of(
         Some(at) => Some((at.get::<f64>(1)?, at.get::<f64>(2)?)),
         None => None,
     };
+    let visible = match table.get::<mlua::Value>("visible")? {
+        mlua::Value::Nil => None,
+        mlua::Value::Boolean(visible) => Some(signals.signal(Value::Bool(visible))),
+        state => Some(crate::node::state_of(&state).ok_or_else(|| {
+            mlua::Error::runtime(format!(
+                "{} must be a boolean or a ui.state",
+                what("visible")
+            ))
+        })?),
+    };
     let window = Window {
         title: table
             .get::<Option<String>>("title")?
@@ -350,6 +368,7 @@ fn window_of(
             tabbing => tabbing,
         },
         under_pointer,
+        visible,
         state,
         id,
     };
@@ -363,6 +382,7 @@ fn window_of(
             "frame_autosave",
             "tabbing",
             "under_pointer",
+            "visible",
         ]
     } else {
         &[
@@ -372,6 +392,7 @@ fn window_of(
             "frame_autosave",
             "tabbing",
             "under_pointer",
+            "visible",
         ]
     };
     for key in table.pairs::<mlua::Value, mlua::Value>() {
@@ -408,6 +429,10 @@ pub(crate) const SHOWN: &str = "zgx.window.shown";
 /// (`ScriptHost::window_size`): `ui.window.size`, `{ width, height }`,
 /// which a script reads.
 pub(crate) const SIZE: &str = "zgx.window.size";
+/// The shared key holding whether the app's window shows
+/// (`ScriptHost::window_visible`): `ui.window.visible`, which a script reads
+/// and sets, to show a window that zgx.json opened hidden.
+pub(crate) const VISIBLE: &str = "zgx.window.visible";
 
 /// A window's size as `ui.window.size` holds it.
 pub(crate) fn size(width: f32, height: f32) -> Value {
@@ -471,6 +496,7 @@ pub(crate) fn install(
                 let state = match name.as_deref() {
                     Some("zoom") => shared.state(ZOOM, Value::Num(1.)),
                     Some("zoomable") => shared.state(ZOOMABLE, Value::Bool(true)),
+                    Some("visible") => shared.state(VISIBLE, Value::Bool(true)),
                     // Read-only: the window's, as the system says.
                     Some(read @ ("active" | "shown" | "size")) => {
                         let state = State::new(match read {
@@ -498,7 +524,8 @@ pub(crate) fn install(
             let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
             let open = expect_state(&table.get::<mlua::Value>("open")?, &what("open"))?;
             let runtime = crate::node::env(lua)?.runtime.clone();
-            let (window, node) = window_of(&table, id, open, true, Some((lua, &runtime)))?;
+            let (window, node) =
+                window_of(&table, id, open, true, Some((lua, &runtime)), &runtime)?;
             let mut pending = windows.pending.borrow_mut();
             if pending.iter().any(|(w, _)| w.id == window.id) {
                 return Err(mlua::Error::runtime(format!(

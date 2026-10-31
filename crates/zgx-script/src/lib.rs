@@ -1030,6 +1030,7 @@ struct Inner {
     window_size: RefCell<Option<zgx::reactive::Effect>>,
     /// Keeps the window's zoom and `ui.window.zoom` the same (`window_zoom`).
     zoom: RefCell<Option<zgx::reactive::Effect>>,
+    visible: RefCell<Option<zgx::reactive::Effect>>,
     /// What publishes the window's state (`window_state`).
     window_state: RefCell<Vec<zgx::reactive::Effect>>,
     elements: Rc<element::Elements>,
@@ -1209,6 +1210,7 @@ impl ScriptHost {
             chrome: RefCell::default(),
             window_size: RefCell::default(),
             zoom: RefCell::default(),
+            visible: RefCell::default(),
             window_state: RefCell::default(),
             actions: Actions::default(),
             functions: Functions::default(),
@@ -1711,6 +1713,24 @@ impl ScriptHost {
             }
         });
         *self.0.zoom.borrow_mut() = Some(effect);
+    }
+    /// Keep `ui.window.visible` as the app's window shows, `visible` at
+    /// first (as it opened), and `show` it as a script sets it: an app that
+    /// opens its window hidden (`WindowOptions::visible`) shows it with
+    /// `ui.window.visible:set(true)`, drawn whole as it appears.
+    pub fn window_visible(&self, visible: bool, show: impl Fn(bool) + 'static) {
+        let state = self.0.shared.state(windows::VISIBLE, Value::Bool(visible));
+        if state.with_untracked(|was| *was != Value::Bool(visible)) {
+            state.set(Value::Bool(visible));
+        }
+        let shown = std::cell::Cell::new(visible);
+        let effect = self.0.runtime.effect_now(move || {
+            let wanted = state.get().truthy();
+            if shown.replace(wanted) != wanted {
+                show(wanted);
+            }
+        });
+        *self.0.visible.borrow_mut() = Some(effect);
     }
     /// The app commands scripts declare (`ui.command`), in declaration
     /// order, as of the last successful load: show them as menu items.
