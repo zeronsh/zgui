@@ -5996,6 +5996,9 @@ impl Ui {
                         e.set_selection(anchor, next.byte_offset);
                         position.set(next);
                     } else {
+                        // Where the caret shows, for the arrows through
+                        // right-to-left text, which may keep its side.
+                        let shown = position.get();
                         if !directional {
                             position.set(TextPosition {
                                 byte_offset: e.selection().focus,
@@ -6038,12 +6041,14 @@ impl Ui {
                                     Some(s.bounds(viewport).width.max(1.)),
                                     &font,
                                 );
-                                e.move_visually(
+                                let to = e.move_visually(
                                     word,
                                     modifiers.shift,
                                     key == Key::ArrowLeft,
-                                    |byte| layout.caret(byte),
+                                    shown,
+                                    |p| layout.caret_position(p),
                                 );
+                                position.set(to);
                             }
                             Key::ArrowLeft => e.move_left(word, modifiers.shift),
                             Key::ArrowRight => e.move_right(word, modifiers.shift),
