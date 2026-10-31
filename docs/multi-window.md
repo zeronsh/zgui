@@ -154,7 +154,7 @@ return ui.row {
 }
 ```
 
-Luau also has `on_drag_outside` and `drag_moves_window` ([events](reference/events.md)). A torn-off tab's window is an item of `ui.windows`, opened under the grab with `under_pointer = { e.grab_x, e.grab_y }` ([native](reference/native.md#a-window-an-item)).
+Luau also has `on_drag_outside` and `drag_moves_window` ([events](reference/events.md)). `ui.tabs { on_tear_off }` tears tabs off ([containers](reference/containers.md#tabs)): told the tab's id and where it was grabbed, a script adds it to the list `ui.windows` opens a window per item of, under the grab with `under_pointer = { e.grab_x, e.grab_y }` ([native](reference/native.md#a-window-an-item)), and the tab dragged onto a strip of its group in another window goes back.
 
 ## Measuring
 

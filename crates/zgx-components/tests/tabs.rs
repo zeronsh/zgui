@@ -452,3 +452,109 @@ fn a_bare_button_opens_its_menu() {
     click(&mut ui, b);
     assert!(open.get());
 }
+
+/// Two windows of one app (on one runtime), each a strip in group `docs`
+/// that tears off: the left's tabs `a` and `b`, the right's `c`. What each
+/// tells, in `log`.
+type TornWindows = (
+    [(Ui, ViewHandle); 2],
+    [zgx::reactive::Signal<Vec<Tab>>; 2],
+    [zgx::reactive::Signal<String>; 2],
+);
+fn torn_windows(log: Rc<RefCell<Vec<String>>>) -> TornWindows {
+    let mut left = Ui::new(400., 200.);
+    let mut right = Ui::with_runtime(left.runtime.clone(), 400., 200.);
+    let items = [
+        left.signal(vec![Tab::new("a", "Alpha"), Tab::new("b", "Beta")]),
+        left.signal(vec![Tab::new("c", "Gamma")]),
+    ];
+    let selected = [left.signal("a".to_owned()), left.signal("c".to_owned())];
+    let strip = |side: usize, label: &str| {
+        let (moved, torn) = (log.clone(), log.clone());
+        tabs(
+            label,
+            items[side].clone(),
+            selected[side].clone(),
+            TabsOptions {
+                reorderable: true,
+                group: Some("docs".into()),
+                on_move: Some(Rc::new(move |id: &str, to: &str| {
+                    moved.borrow_mut().push(format!("moved {id} to {to}"));
+                })),
+                on_tear_off: Some(Rc::new(move |id: &str, e: &zgx::input::DragEvent| {
+                    let grab = e.grab_x.round();
+                    torn.borrow_mut()
+                        .push(format!("torn {id} grabbed {grab} in"));
+                })),
+                ..Default::default()
+            },
+            |id, _| text(format!("Panel {id}")),
+        )
+        .w(400.)
+        .h(200.)
+    };
+    let left_view = left.mount(strip(0, "Left"));
+    let right_view = right.mount(strip(1, "Right"));
+    for _ in 0..2 {
+        left.prepare_frame();
+        right.prepare_frame();
+    }
+    ([(left, left_view), (right, right_view)], items, selected)
+}
+/// Press `label`'s tab and drag it down off its strip: a drag starts.
+fn tear(ui: &mut Ui, view: &ViewHandle, label: &str) -> zgx::actions::Action {
+    let tabs = with_role(ui, view, Role::Tab);
+    let at = labels(ui, &tabs).iter().position(|n| n == label).unwrap();
+    let b = ui.scene.borrow().bounds(tabs[at]);
+    let (x, y) = (b.x + 10., b.y + b.height / 2.);
+    ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    ui.dispatch(InputEvent::PointerMove { x, y: y + 120. });
+    let drag = ui.input.drag_state().expect("torn off, it drags");
+    drag.payload
+}
+
+#[test]
+fn a_tab_torn_off_leaves_drops_on_another_windows_strip_or_comes_home() {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let ([(mut left, left_view), (mut right, right_view)], items, selected) =
+        torn_windows(log.clone());
+
+    // Out of every window: it leaves, and the app is told where it was grabbed.
+    tear(&mut left, &left_view, "Alpha");
+    left.input.end_drag_elsewhere(&left.scene, false, true);
+    left.prepare_frame();
+    assert_eq!(order(&items[0]), ["b"]);
+    assert_eq!(selected[0].get(), "b", "its neighbour is chosen");
+    assert_eq!(*log.borrow(), ["torn a grabbed 10 in"]);
+
+    // Onto the other window's strip: it goes there, and is chosen.
+    log.borrow_mut().clear();
+    let payload = tear(&mut left, &left_view, "Beta");
+    left.input.set_drag_away(&left.scene, true);
+    assert!(right.input.drag_over(&right.scene, &payload, 200., 15.));
+    assert!(right.input.drag_drop(&right.scene, &payload, 200., 15.));
+    left.input.end_drag_elsewhere(&left.scene, true, false);
+    left.prepare_frame();
+    right.prepare_frame();
+    assert_eq!(order(&items[0]), Vec::<String>::new());
+    assert_eq!(order(&items[1]), ["c", "b"]);
+    assert_eq!(selected[1].get(), "b");
+    assert_eq!(*log.borrow(), ["moved b to Right"]);
+
+    // Dropped back on its own strip: it stays, and nobody is told.
+    log.borrow_mut().clear();
+    tear(&mut right, &right_view, "Gamma");
+    right.dispatch(InputEvent::PointerMove { x: 100., y: 100. });
+    right.dispatch(InputEvent::PointerUp {
+        x: 100.,
+        y: 100.,
+        button: PointerButton::Primary,
+    });
+    right.prepare_frame();
+    assert_eq!(order(&items[1]), ["c", "b"]);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}

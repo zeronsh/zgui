@@ -667,6 +667,46 @@ fn a_tab_moved_to_another_strip_is_in_its_states() {
     assert_eq!(h.text("closable"), "true Alpha");
 }
 
+/// A tab torn off, through Luau: it leaves the strip's state and the app is
+/// told its id and where, to open it in a window of its own.
+#[test]
+fn a_torn_off_tab_leaves_its_state_and_tells_where() {
+    let mut h = Harness::inline(
+        r#"local docs = ui.state("docs", { { id = "a", label = "Alpha" }, { id = "b", label = "Beta" } })
+        local chosen = ui.state("chosen", "a")
+        local torn = ui.state("torn", "")
+        local function names(list: any)
+            local out = {}
+            for _, t in list do table.insert(out, t.id) end
+            return table.concat(out, ",")
+        end
+        return ui.column {
+            ui.tabs { id = "docs", label = "Docs", w = 300, h = 120, items = docs, value = chosen,
+                reorderable = true,
+                on_tear_off = function(id: string, e) torn:set(`{id} {math.floor(e.grab_x)}`) end,
+                panel = function(id: string): Node return ui.text { id } end },
+            ui.text { id = "left", function() return names(docs:get()) end },
+            ui.text { id = "torn", "{torn}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let tab = with_role(&mut h, Role::Tab)[0];
+    let b = h.ui.scene.borrow().bounds(tab);
+    let (x, y) = (b.x + 10., b.y + b.height / 2.);
+    h.ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x, y: y + 160. });
+    assert!(h.ui.input.drag_state().is_some(), "torn off, it drags");
+    // Released outside every window (as a host says).
+    h.ui.input.end_drag_elsewhere(&h.ui.scene, false, true);
+    h.frames(2);
+    assert_eq!(h.text("left"), "b");
+    assert_eq!(h.text("torn"), "a 10");
+}
+
 #[test]
 fn a_double_click_is_heard_once_by_the_innermost_node() {
     let mut h = Harness::inline(

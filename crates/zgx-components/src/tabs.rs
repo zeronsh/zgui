@@ -2,8 +2,9 @@
 //! strip: one Tab stop, the arrows moving among the tabs (the choice
 //! following), Home and End to the ends; closable tabs close with their ×,
 //! Delete, or a middle click; reorderable ones drag along the strip or move
-//! with ⌘ (Ctrl) Shift and an arrow; a strip too long for its width scrolls,
-//! and a menu at its end lists every tab.
+//! with ⌘ (Ctrl) Shift and an arrow, and with `on_tear_off` tear off into
+//! windows of their own; a strip too long for its width scrolls, and a menu
+//! at its end lists every tab.
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -14,7 +15,7 @@ use zgx::{
         Context, NodeHandle, View, button, column, component, div, keyed, menu, menu_item, row,
         scroll_x, switch, text, text_signal,
     },
-    input::{EventPhase, FocusGroup, InputEvent, Key, PointerButton},
+    input::{DragEvent, DragPhase, EventPhase, FocusGroup, InputEvent, Key, PointerButton},
     reactive::Signal,
     scene::{Color, Direction, Rect},
     semantics::Role,
@@ -57,6 +58,11 @@ pub type CloseTab = Rc<dyn Fn(&str) -> bool>;
 /// label.
 pub type MoveTab = Rc<dyn Fn(&str, &str)>;
 
+/// Told a tab was torn off: released outside every window of the app, it
+/// left the strip. Its id, and where (the drag's `x`, `y`, `grab_x` and
+/// `grab_y`), to open it in a window of its own under the pointer.
+pub type TearOffTab = Rc<dyn Fn(&str, &DragEvent)>;
+
 /// How [`tabs`] behave beyond choosing.
 #[derive(Clone, Default)]
 pub struct TabsOptions {
@@ -74,6 +80,24 @@ pub struct TabsOptions {
     pub group: Option<String>,
     /// Told a tab of this strip went to another of its group.
     pub on_move: Option<MoveTab>,
+    /// Tabs tear off: one dragged off the strip is carried as a drag, to a
+    /// strip of its group in any of the app's windows (`on_move` told), or
+    /// out of every window, where it leaves the strip and this is told (the
+    /// host telling where it can: macOS and X11). Reorderable strips only.
+    pub on_tear_off: Option<TearOffTab>,
+}
+
+/// How far past its strip a dragged tab goes to tear off.
+const TEAR: f32 = 24.;
+
+/// A tab torn off its strip, in flight.
+struct TabDrag {
+    tab: Tab,
+    group: Option<String>,
+    /// The strip it came from: dropped back there, it stays.
+    home: Rc<()>,
+    /// The label of the strip of its group it was dropped on.
+    landed: RefCell<Option<String>>,
 }
 
 /// A strip of a group: what another's dragged tab needs of it.
@@ -126,21 +150,41 @@ impl Strip {
         if !drop {
             return None;
         }
-        let mut list = self.items.with_untracked(Clone::clone);
-        let at = list.iter().position(|t| t.id == id)?;
-        let tab = list.remove(at);
-        if self.selected.with_untracked(|s| s == id) {
-            let next = list.get(at).or_else(|| list.get(at.wrapping_sub(1)));
-            self.selected
-                .set(next.map_or(String::new(), |t| t.id.clone()));
-        }
-        self.items.set(list);
-        if !to.items.with_untracked(|l| l.iter().any(|t| t.id == id)) {
-            to.items.update(|l| l.push(tab));
-        }
-        to.selected.set(id.to_owned());
+        let tab = take(&self.items, &self.selected, id)?;
+        give(&to.items, &to.selected, tab);
         Some(to)
     }
+}
+
+/// Take `id` out of `items`, its neighbour chosen if it was: the tab.
+fn take(items: &Signal<Vec<Tab>>, selected: &Signal<String>, id: &str) -> Option<Tab> {
+    let mut list = items.with_untracked(Clone::clone);
+    let at = list.iter().position(|t| t.id == id)?;
+    let tab = list.remove(at);
+    if selected.with_untracked(|s| s == id) {
+        let next = list.get(at).or_else(|| list.get(at.wrapping_sub(1)));
+        selected.set(next.map_or(String::new(), |t| t.id.clone()));
+    }
+    items.set(list);
+    Some(tab)
+}
+/// Give `tab` to `items`, chosen.
+fn give(items: &Signal<Vec<Tab>>, selected: &Signal<String>, tab: Tab) {
+    let id = tab.id.clone();
+    if !items.with_untracked(|l| l.iter().any(|t| t.id == id)) {
+        items.update(|l| l.push(tab));
+    }
+    selected.set(id);
+}
+/// A torn tab under the pointer.
+fn chip(label: &str) -> View {
+    row()
+        .px(12.)
+        .py(6.)
+        .rounded(6.)
+        .bg(tok::SURFACE_RAISED)
+        .text_color(tok::TEXT_PRIMARY)
+        .child(text(label))
 }
 
 /// The ids in `items`, in order.
@@ -175,6 +219,8 @@ pub fn tabs(
         let overflow_open = runtime.signal(false);
         let bounds = runtime.signal(Rect::new(0., 0., 0., 0.));
         let over = runtime.signal(false);
+        // This strip, as a torn tab knows where it came from.
+        let home: Rc<()> = Rc::new(());
         let strip_of_group = options.group.clone().map(|group| {
             let strip = Rc::new(Strip {
                 group,
@@ -257,8 +303,15 @@ pub fn tabs(
             let (close, move_to, reveal) = (close.clone(), move_to.clone(), reveal.clone());
             let reorderable = options.reorderable;
             let (grouped, on_move) = (strip_of_group.clone(), options.on_move.clone());
+            let tear = options
+                .on_tear_off
+                .clone()
+                .filter(|_| reorderable)
+                .map(|told| (told, home.clone(), options.group.clone()));
+            let strip_bounds = strip_bounds.clone();
             move |id: String, _: &mut Context| {
                 let (grouped, on_move) = (grouped.clone(), on_move.clone());
+                let (tear, strip_bounds) = (tear.clone(), strip_bounds.clone());
                 let lookup = {
                     let items = items.clone();
                     let id = id.clone();
@@ -275,7 +328,7 @@ pub fn tabs(
                 let closable = lookup().is_some_and(|t| t.closable);
                 let (shown, named) = (lookup.clone(), lookup.clone());
                 // A drag along the strip: where it started, and whether it moved.
-                let drag: Rc<Cell<Option<(f32, bool)>>> = Rc::default();
+                let drag: Rc<Cell<Option<(f32, f32, bool)>>> = Rc::default();
                 let mut tab = button()
                     .role(Role::Tab)
                     .accessible_label_when(move || named().map(|t| t.label).unwrap_or_default())
@@ -341,6 +394,31 @@ pub fn tabs(
                             })
                             .child(text("×").text_size(12.).text_color(tok::TEXT_TERTIARY)),
                     );
+                }
+                // Torn off: dropped on a strip of its group it went there;
+                // out of every window, it leaves.
+                if let Some((told, _, _)) = &tear {
+                    let (moved, gone) = (
+                        (items.clone(), selected.clone(), on_move.clone()),
+                        (items.clone(), selected.clone(), told.clone()),
+                    );
+                    tab = tab
+                        .drag_preview(|torn: &TabDrag| chip(&torn.tab.label))
+                        .on_drag_end(move |torn: &TabDrag, accepted| {
+                            let (items, selected, on_move) = &moved;
+                            let landed = torn.landed.borrow().clone();
+                            if let (true, Some(to)) = (accepted, landed) {
+                                take(items, selected, &torn.tab.id);
+                                if let Some(told) = on_move {
+                                    told(&torn.tab.id, &to);
+                                }
+                            }
+                        })
+                        .on_drag_outside(move |torn: &TabDrag, event| {
+                            let (items, selected, told) = &gone;
+                            take(items, selected, &torn.tab.id);
+                            told(&torn.tab.id, event);
+                        });
                 }
                 let (close, move_to, reveal, nodes, items) = (
                     close.clone(),
@@ -411,24 +489,48 @@ pub fn tabs(
                         }
                         InputEvent::PointerDown {
                             x,
+                            y,
                             button: PointerButton::Primary,
-                            ..
                         } if reorderable => {
-                            drag.set(Some((*x, false)));
+                            drag.set(Some((*x, *y, false)));
                             DRAGGED.with(|d| d.set(false));
                             cx.capture_pointer();
                         }
                         InputEvent::PointerMove { x, y, .. } => {
-                            let Some((start, moved)) = drag.get() else {
+                            let Some((start, start_y, moved)) = drag.get() else {
                                 return;
                             };
-                            if !moved && (x - start).abs() < 4. {
+                            let off = tear.is_some() && (y - start_y).abs() >= 4.;
+                            if !moved && (x - start).abs() < 4. && !off {
                                 return;
                             }
-                            drag.set(Some((start, true)));
+                            drag.set(Some((start, start_y, true)));
                             DRAGGED.with(|d| d.set(true));
                             if grouped.as_ref().is_some_and(|strip| strip.aim(*x, *y)) {
                                 return;
+                            }
+                            // Off the strip, it tears off: carried as a drag.
+                            if let Some((_, home, group)) = &tear {
+                                let b = strip_bounds.with_untracked(|b| *b);
+                                if *y < b.y - TEAR || *y > b.y + b.height + TEAR {
+                                    if let Some(strip) = &grouped {
+                                        strip.land(&id_focused, false);
+                                    }
+                                    drag.set(None);
+                                    let tab = items.with_untracked(|l| {
+                                        l.iter().find(|t| t.id == id_focused).cloned()
+                                    });
+                                    if let Some(tab) = tab {
+                                        let torn = TabDrag {
+                                            tab,
+                                            group: group.clone(),
+                                            home: home.clone(),
+                                            landed: RefCell::default(),
+                                        };
+                                        cx.start_drag_from(torn, start, start_y);
+                                    }
+                                    return;
+                                }
                             }
                             // Past a neighbour's middle, it takes its place.
                             let order = items.with_untracked(|l| ids(l));
@@ -550,6 +652,8 @@ pub fn tabs(
             list
         });
 
+        // What a torn tab dropped here needs.
+        let torn_to = (items.clone(), selected.clone(), over.clone(), label.clone());
         let (panel_selected, mut panel) = (selected.clone(), panel);
         // The panel's root lays out as a child of the tab panel, so `grow`
         // and `h_full` fill it.
@@ -599,26 +703,69 @@ pub fn tabs(
             }),
             None => tabs_row,
         };
-        column()
-            .on_mount({
-                let (strip, runtime) = (strip_of_group, runtime.clone());
-                move |handle| {
-                    if let Some(strip) = strip {
-                        follow(&runtime, &bounds, &handle);
-                        let scene = handle.scene().map_or(0, |s| Rc::as_ptr(&s) as usize);
-                        strip.scene.set(scene);
+        let root = column();
+        // A torn tab of its group (or its own, back home) drops here.
+        let takes_torn = options.on_tear_off.is_some() || options.group.is_some();
+        let root = if takes_torn {
+            let (items, selected, over, label) = torn_to;
+            // Another strip's tab of its group, or its own back home.
+            let accepts = {
+                let (group, home) = (options.group.clone(), home.clone());
+                Rc::new(move |torn: &TabDrag| {
+                    Rc::ptr_eq(&torn.home, &home) || (torn.group.is_some() && torn.group == group)
+                })
+            };
+            let (accepted, lit, own) = (accepts.clone(), over.clone(), home.clone());
+            root.on_drop_when(
+                move |torn: &TabDrag| accepts(torn),
+                move |torn: &TabDrag, _| {
+                    over.set(false);
+                    if !Rc::ptr_eq(&torn.home, &home) {
+                        give(&items, &selected, torn.tab.clone());
+                        *torn.landed.borrow_mut() = Some(label.clone());
                     }
+                },
+            )
+            // Lit while another strip's tab is over it.
+            .on_event(move |cx| {
+                let InputEvent::Drag(event) = &cx.event else {
+                    return;
+                };
+                let Some(torn) = event.payload.downcast_ref::<TabDrag>() else {
+                    return;
+                };
+                match event.phase {
+                    DragPhase::Over => {
+                        lit.set(accepted(torn) && !Rc::ptr_eq(&torn.home, &own));
+                    }
+                    DragPhase::Leave | DragPhase::End => {
+                        lit.set(false);
+                    }
+                    _ => {}
                 }
             })
-            .child(tabs_row)
-            .child(
-                div()
-                    .h(1.)
-                    .shrink_0()
-                    .bg(tok::BORDER_SUBTLE)
-                    .accessible_hidden(),
-            )
-            .child(div().role(Role::TabPanel).grow().child(panels))
+        } else {
+            root
+        };
+        root.on_mount({
+            let (strip, runtime) = (strip_of_group, runtime.clone());
+            move |handle| {
+                if let Some(strip) = strip {
+                    follow(&runtime, &bounds, &handle);
+                    let scene = handle.scene().map_or(0, |s| Rc::as_ptr(&s) as usize);
+                    strip.scene.set(scene);
+                }
+            }
+        })
+        .child(tabs_row)
+        .child(
+            div()
+                .h(1.)
+                .shrink_0()
+                .bg(tok::BORDER_SUBTLE)
+                .accessible_hidden(),
+        )
+        .child(div().role(Role::TabPanel).grow().child(panels))
     })
 }
 

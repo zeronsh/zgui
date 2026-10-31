@@ -30,6 +30,7 @@ pub(crate) enum Library {
         keep: bool,
         group: Option<String>,
         on_move: Option<Function>,
+        on_tear_off: Option<Function>,
         on_close: Option<Function>,
         panel: Function,
     },
@@ -250,6 +251,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
                 keep: table.get::<Option<bool>>("keep")?.unwrap_or(false),
                 group: table.get("group")?,
                 on_move: table.get("on_move")?,
+                on_tear_off: table.get("on_tear_off")?,
                 on_close: table.get("on_close")?,
                 panel,
             }));
@@ -1211,6 +1213,7 @@ pub(crate) fn view(
             keep,
             group,
             on_move,
+            on_tear_off,
             on_close,
             panel,
         } => {
@@ -1276,6 +1279,23 @@ pub(crate) fn view(
                     let vm = vm.clone();
                     let told: MoveTab = Rc::new(move |id: &str, to: &str| {
                         if let Err(error) = vm.call::<()>(&f, (id, to)) {
+                            vm.report(error);
+                        }
+                    });
+                    told
+                }),
+                // Told with where, as `on_drag_outside` is.
+                on_tear_off: on_tear_off.clone().map(|f| {
+                    let vm = vm.clone();
+                    let told: TearOffTab = Rc::new(move |id: &str, event| {
+                        let at = vm.lua.create_table().and_then(|at| {
+                            at.set("x", event.x)?;
+                            at.set("y", event.y)?;
+                            at.set("grab_x", event.grab_x)?;
+                            at.set("grab_y", event.grab_y)?;
+                            Ok(at)
+                        });
+                        if let Err(error) = at.and_then(|at| vm.call::<()>(&f, (id, at))) {
                             vm.report(error);
                         }
                     });
