@@ -342,7 +342,7 @@ return ui.row {
 - `ui.term` rejects an unknown option. The `on_*` options are a session's events, not a node's: give them to `ui.term`, not `ui.terminal`.
 - A page from `ui.web(id)` is kept until `web:close()`; `ui.web(opts)` and a `webview` without `web` make a page for the run (a reload makes a new one).
 - Over a page or a Ghostty terminal that takes input, zgx's nodes hear no pointer moves (they had their leave): follow `web.pointer` or `term.pointer` instead (an engine-drawn terminal reports `pointer` too).
-- The engine-drawn terminal's fidelity, keys and limits (no images, no kitty keyboard protocol yet, clipboard reads unanswered) are in [native surfaces](../native-surfaces.md#terminals). The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its commands, whose keys work wherever focus is.
+- The engine-drawn terminal's fidelity, keys and limits (the kitty keyboard protocol included; no images; clipboard reads unanswered) are in [native surfaces](../native-surfaces.md#terminals). The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its commands, whose keys work wherever focus is.
 - Terminals hand the right clicks their program does not use to the node, so a `context_menu` on the `terminal` node opens over it.
 - Each successful load declares its commands afresh, replacing the last; a failed reload keeps them. Declaring an id twice in one run is an error.
 - `on_message` and `eval` get the page's JSON as Luau data, typed `any`: check its shape before using it.

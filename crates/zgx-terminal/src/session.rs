@@ -298,6 +298,9 @@ impl Session {
             // Programs may set the clipboard, and ask to read it: the app
             // asks its user (`SessionEvent::ClipboardLoad`).
             osc52: Osc52::CopyPaste,
+            // Programs may turn on the kitty keyboard protocol (`CSI > u`):
+            // the view encodes keys as it asks.
+            kitty_keyboard: true,
             ..Config::default()
         };
         let term = Arc::new(FairMutex::new(Term::new(
