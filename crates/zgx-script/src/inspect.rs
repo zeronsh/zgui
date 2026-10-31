@@ -453,6 +453,11 @@ impl Session {
             let target = text("target").ok_or("this command takes a `target`")?;
             driver::find(ui, &self.0.handle, &target)
         };
+        // The same for an action: it must show.
+        let reachable = |ui: &Ui| -> Result<zgx::scene::NodeId, String> {
+            let target = text("target").ok_or("this command takes a `target`")?;
+            driver::find_shown(ui, &self.0.handle, &target)
+        };
         // Where a field says: a target's middle, or `x,y` in window points.
         let point_of = |ui: &Ui, name: &str| -> Result<(f32, f32), String> {
             let said = text(name).ok_or_else(|| format!("this command takes a `{name}`"))?;
@@ -461,7 +466,7 @@ impl Session {
             {
                 return Ok((x, y));
             }
-            let node = driver::find(ui, &self.0.handle, &said)?;
+            let node = driver::find_shown(ui, &self.0.handle, &said)?;
             Ok(driver::middle(ui.scene.borrow().transformed_bounds(node)))
         };
         let answer = match cmd.as_str() {
@@ -621,7 +626,7 @@ impl Session {
                 self.0.host.set_state(&name, value)?;
                 Ok((format!("{name} set"), Value::Nil))
             })(),
-            "click" => target(&ui).map(|node| {
+            "click" => reachable(&ui).map(|node| {
                 let b = ui.scene.borrow().transformed_bounds(node);
                 driver::click_at(&mut ui, b);
                 (format!("clicked @{}", driver::number(node)), Value::Nil)
@@ -661,7 +666,7 @@ impl Session {
                 Ok((format!("pressed {keys}"), Value::Nil))
             })(),
             "snapshot" => (|| {
-                let node = target(&ui)?;
+                let node = reachable(&ui)?;
                 let width = number("width").map_or(4096, |w| w.clamp(1., 16384.) as u32);
                 let image = ui.snapshot(node, width).ok_or(
                     "no picture: the node is hidden or not laid out, or this window takes none \
@@ -684,7 +689,7 @@ impl Session {
                 ))
             })(),
             "scroll" => (|| {
-                let node = target(&ui)?;
+                let node = reachable(&ui)?;
                 driver::scroll(&mut ui, node, number("dy").unwrap_or(100.) as f32);
                 Ok((format!("scrolled @{}", driver::number(node)), Value::Nil))
             })(),
@@ -1400,7 +1405,8 @@ impl Session {
                 return failed("the window has closed");
             };
             ui.prepare_frame();
-            let found = driver::find(&ui, &self.0.handle, &target);
+            // What doesn't show isn't there, to wait for or to wait out.
+            let found = driver::find_shown(&ui, &self.0.handle, &target);
             let met = match (&found, gone) {
                 (Err(_), true) => true,
                 (Ok(_), true) => false,

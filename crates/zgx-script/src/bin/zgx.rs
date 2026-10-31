@@ -509,7 +509,9 @@ fn inspect(args: Vec<String>) -> ExitCode {
         }
     };
     match cmd.as_str() {
-        "tree" | "node" | "find" | "click" | "wait" | "snapshot" => put("target", arg(1)),
+        "tree" | "node" | "find" | "click" | "hover" | "right-click" | "wait" | "snapshot" => {
+            put("target", arg(1))
+        }
         "record" => {
             if arg(1).as_deref() == Some("stop") {
                 fields.push(("stop".into(), Value::Bool(true)));

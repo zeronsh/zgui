@@ -1691,6 +1691,22 @@ impl Host {
                 let (w, h) = (w as usize, h as usize);
                 crate::thumbnail::image(&bgra, w, h, w * 4, max_width as usize)
             });
+            // A popup is in a surface of its own, past the window or not.
+            let frames = popups.frames();
+            ui.on_popup_snapshot(move |root, rect, max_width| {
+                let frames = frames.borrow();
+                let (_, frame, scale, shown) = frames.iter().find(|frame| frame.0 == root)?;
+                let inside = zgx::scene::Rect::new(
+                    rect.x - shown.x,
+                    rect.y - shown.y,
+                    rect.width,
+                    rect.height,
+                );
+                let (x, y, w, h) = snapshot_region(inside, f64::from(*scale));
+                let (w, h, bgra) = frame.read(x, y, w, h)?;
+                let (w, h) = (w as usize, h as usize);
+                crate::thumbnail::image(&bgra, w, h, w * 4, max_width as usize)
+            });
         }
         // Devtools record and replay wheel input through this window's own
         // path (`Ui::wheel_tape`); asked nothing, it does nothing.
@@ -4778,6 +4794,26 @@ impl Host {
         crate::memory::process(&mut report);
         if let Some(renderer) = &self.renderer {
             renderer.memory(&mut report);
+        }
+        self.popups.memory(&mut report);
+        // Popups the scene has open but no window has drawn yet (the next
+        // frame makes it): said, so a reading between the two isn't taken
+        // for none.
+        let open = self.context.ui.scene.borrow().popups().len();
+        let drawn = report
+            .lines
+            .iter()
+            .find(|line| line.area == "gpu" && line.name == "popup windows")
+            .and_then(|line| line.entries);
+        if let Some(drawn) = drawn
+            && open > drawn
+        {
+            report.add(
+                "gpu",
+                "popup windows not yet drawn",
+                Some(open - drawn),
+                None,
+            );
         }
         zgx::memory::answer(report);
     }
