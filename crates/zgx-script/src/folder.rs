@@ -560,13 +560,16 @@ pub(crate) fn install(
                 })?;
                 return Ok(PromiseUd(promise));
             }
-            let platform = crate::io::platform(&shared, "ui.open_folder")?;
-            let dialog = platform
-                .0
-                .open_folder(crate::io::picker(opts, "Open Folder")?);
-            let access = access.clone();
+            let picker = crate::io::picker(opts, "Open Folder")?;
+            let (access, shared) = (access.clone(), shared.clone());
             settle_failing(lua, &promise, async move {
-                let picked = dialog.await.map_err(|e| Failure::new(Kind::Io, e))?;
+                let platform = crate::io::later(&shared, "ui.open_folder")
+                    .map_err(|e| Failure::new(Kind::Io, e))?;
+                let picked = platform
+                    .0
+                    .open_folder(picker)
+                    .await
+                    .map_err(|e| Failure::new(Kind::Io, e))?;
                 let Some(path) = picked else {
                     return Ok(Value::Nil);
                 };
