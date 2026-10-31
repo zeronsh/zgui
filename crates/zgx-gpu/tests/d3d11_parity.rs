@@ -2,7 +2,8 @@
 //! does: cards whose bars and values change each frame (kept frames
 //! patched), text through the glyph atlas, rounded borders, a list scrolled
 //! inside a rounded clip (scroll copies, clip regions), and heavy's
-//! continuous geometry (bars and a progress bar with fractional edges), at
+//! continuous geometry (bars and a progress bar with fractional edges),
+//! isolated layers (translucent, nested, and turning inside), at
 //! 1×, 1.5× and 2×, byte for byte: both compile the same HLSL with FXC
 //! (Direct3D 12 pinned to it, docs/windows.md). `ZGX_D3D11` is read once a
 //! process, so the test runs itself again with it and compares that run's
@@ -26,7 +27,7 @@ const CHILD: &str = "ZGX_D3D11_PARITY_CHILD";
 
 #[cfg(windows)]
 fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
-    let (spark, progress) = (live.clone(), live.clone());
+    let (spark, progress, turn) = (live.clone(), live.clone(), live.clone());
     let card = move |index: u32| {
         let (value, bars) = (live.clone(), live.clone());
         div()
@@ -123,6 +124,45 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
                     Styles::new().w(376. * ((progress.get() % 37) as f32 + 0.43) / 37.)
                 }),
         );
+    // Layers: a translucent isolated subtree over the third card, a nested
+    // one inside it, and a square turning in that, each frame.
+    let layered = div()
+        .absolute()
+        .ml(250.)
+        .mt(40.)
+        .size(110., 90.)
+        .isolated(true)
+        .opacity(0.7)
+        .rounded(8.)
+        .bg(Color(120, 72, 200, 255))
+        .child(
+            text("layer")
+                .text_size(13.)
+                .absolute()
+                .ml(8.)
+                .mt(4.)
+                .size(80., 16.),
+        )
+        .child(
+            div()
+                .absolute()
+                .ml(30.)
+                .mt(26.)
+                .size(56., 56.)
+                .isolated(true)
+                .opacity(0.8)
+                .rounded(28.)
+                .bg(Color(255, 140, 90, 255))
+                .child(
+                    div()
+                        .absolute()
+                        .ml(14.)
+                        .mt(14.)
+                        .size(28., 28.)
+                        .bg(Color(240, 240, 250, 255))
+                        .reactive_style(move || Styles::new().rotate(turn.get() as f32 * 0.13)),
+                ),
+        );
     div()
         .w(SIZE.0)
         .h(SIZE.1)
@@ -131,6 +171,7 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .children((0..3).map(card))
         .child(list)
         .child(continuous)
+        .child(layered)
 }
 
 /// Each frame's pixels, RGBA, as this process draws them at `scale`.
