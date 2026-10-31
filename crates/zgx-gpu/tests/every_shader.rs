@@ -114,6 +114,9 @@ fn every_shader_module_compiles_each_entry_point() {
             .collect();
         for entry in &parsed.entry_points {
             let label = format!("{name} `{}`", entry.name);
+            // Named first: a compiler that overflows its stack ends the
+            // process with no message of its own.
+            eprintln!("every_shader: {label}");
             match entry.stage {
                 naga::ShaderStage::Compute => {
                     let _ = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
