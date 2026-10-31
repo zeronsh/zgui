@@ -6415,6 +6415,155 @@ fn a_text_shadow_paints_under_its_glyphs_and_moves_without_a_trail() {
     );
 }
 
+/// A blurred text shadow spreads past its glyphs, lighter, where a sharp
+/// one stops; drawn again it rasterizes nothing (its blurred glyphs and
+/// quads are kept), and a sharp shadow beside it still draws sharp. Both
+/// paint below and beside the text's box (40 points down from a box 48
+/// high), as CSS's do: a text is clipped to its box, its shadows aren't.
+#[test]
+fn a_blurred_text_shadow_spreads_softly_and_is_kept() {
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let _gpu_fixture = gpu_fixture();
+    // Reddened, then fully red.
+    let tinted = |p: &[u8]| i32::from(p[0]) - i32::from(p[1]) > 24;
+    let red = |p: &[u8]| p[0] > 180 && p[1] < 80 && p[2] < 80;
+    let draw = |blur: f32, sharp_too: bool| {
+        let (mut gpu, mut ui) = (GpuRenderer::new(200, 120).unwrap(), Ui::new(200., 120.));
+        let red_shadow = zgx::scene::TextShadow {
+            offset: Transform { x: 0., y: 40. },
+            blur,
+            color: Color(230, 20, 20, 255),
+        };
+        let blue_sharp = zgx::scene::TextShadow {
+            offset: Transform { x: 100., y: 0. },
+            blur: 0.,
+            color: Color(20, 20, 230, 255),
+        };
+        let shadows: Vec<_> = if sharp_too {
+            vec![red_shadow, blue_sharp]
+        } else {
+            vec![red_shadow]
+        };
+        ui.mount(
+            div().size(200., 120.).bg(Color(255, 255, 255, 255)).child(
+                text("HH")
+                    .size(200., 48.)
+                    .text_size(40.)
+                    .text_color(Color(0, 0, 0, 255))
+                    .text_shadows(shadows),
+            ),
+        );
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        let counts = (
+            pixels.chunks(4).filter(|p| tinted(p)).count(),
+            pixels.chunks(4).filter(|p| red(p)).count(),
+            pixels.chunks(4).filter(|p| p[2] > 180 && p[0] < 80).count(),
+        );
+        // Again, whole: nothing rasterized, the same pixels.
+        let again = gpu
+            .render(&ui.scene.borrow(), &[Rect::new(0., 0., 200., 120.)])
+            .unwrap();
+        assert_eq!(again.glyph_uploads, 0, "kept");
+        assert_eq!(gpu.readback().unwrap(), pixels, "drawn the same");
+        counts
+    };
+    let (sharp_tint, sharp_red, _) = draw(0., false);
+    let (soft_tint, soft_red, _) = draw(3., false);
+    assert!(sharp_red > 200, "sharp: {sharp_red} red pixels");
+    assert!(
+        soft_tint > sharp_tint + 200,
+        "blurred, it reaches further: {soft_tint} tinted pixels, {sharp_tint} sharp"
+    );
+    assert!(
+        soft_red < sharp_red / 2,
+        "and is lighter: {soft_red} fully red, {sharp_red} sharp"
+    );
+    let (_, _, blue) = draw(3., true);
+    assert!(
+        blue > 200,
+        "a sharp shadow beside it draws: {blue} blue pixels"
+    );
+}
+
+/// A shadow reaches past its text's box; its glyphs don't. Under a parent
+/// that clips, truncated, clamped to a line, or cut at its box's width,
+/// a shadowed text draws its glyphs where it did without one, sharp shadow
+/// or blurred, and its shadow shows below its box (not past a parent's
+/// clip).
+#[test]
+fn a_shadowed_text_keeps_its_glyphs_clipped_where_they_were() {
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let _gpu_fixture = gpu_fixture();
+    let dark = |p: &[u8]| p[0] < 100 && p[1] < 100 && p[2] < 100;
+    let tinted = |p: &[u8]| i32::from(p[0]) - i32::from(p[1]) > 24;
+    let long = "HHHH HHHH HHHH HHHH";
+    // Each case: its text, and whether a parent clips it (and its shadow)
+    // to 50 points high.
+    #[allow(clippy::type_complexity)]
+    let cases: [(&str, fn(View) -> View, bool); 4] = [
+        ("parent clip", |t| t, true),
+        ("truncate", |t| t.truncate(), false),
+        ("lines = 1", |t| t.line_clamp(1), false),
+        ("a word wider than its box", |t| t, false),
+    ];
+    for (case, style, parent_clips) in cases {
+        for blur in [0., 3.] {
+            let draw = |shadow: bool| {
+                let (mut gpu, mut ui) = (GpuRenderer::new(240, 160).unwrap(), Ui::new(240., 160.));
+                let word = case == "a word wider than its box";
+                let mut label = text(if word { "HHHHHHHHHH" } else { long })
+                    .size(if word { 100. } else { 120. }, 48.)
+                    .text_size(30.)
+                    .text_color(Color(0, 0, 0, 255));
+                if shadow {
+                    label = label.text_shadow(0., 60., blur, Color(230, 20, 20, 255));
+                }
+                let label = style(label);
+                let parent = div().size(240., if parent_clips { 50. } else { 160. });
+                let parent = if parent_clips {
+                    parent.overflow_hidden()
+                } else {
+                    parent
+                };
+                ui.mount(
+                    div()
+                        .size(240., 160.)
+                        .bg(Color(255, 255, 255, 255))
+                        .child(parent.child(label)),
+                );
+                ui.prepare_frame();
+                let damage = ui.scene.borrow_mut().flush().damage;
+                gpu.render(&ui.scene.borrow(), &damage).unwrap();
+                gpu.readback().unwrap()
+            };
+            let (plain, shadowed) = (draw(false), draw(true));
+            let glyphs = |pixels: &[u8]| pixels.chunks(4).map(dark).collect::<Vec<_>>();
+            assert_eq!(
+                glyphs(&shadowed),
+                glyphs(&plain),
+                "{case}, blur {blur}: its glyphs as they were"
+            );
+            assert!(glyphs(&plain).iter().any(|&d| d), "{case}: its glyphs show");
+            // Rows below its box (48 points) and below a clipping parent's (50).
+            let below = shadowed
+                .chunks(240 * 4)
+                .skip(52)
+                .flat_map(|row| row.chunks(4));
+            let reddened = below.filter(|p| tinted(p)).count();
+            match parent_clips {
+                true => assert_eq!(reddened, 0, "{case}, blur {blur}: not past its clip"),
+                false => assert!(
+                    reddened > 100,
+                    "{case}, blur {blur}: {reddened} shadow pixels below"
+                ),
+            }
+        }
+    }
+}
+
 /// The user's case: two large photos (4000 by 3000) shown as 300 by 420
 /// cards at 2x. Each texture holds its card's pixels, not its file's (48 MB
 /// each would pass the budget between them), both draw, and a card drawn

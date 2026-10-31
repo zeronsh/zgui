@@ -1123,6 +1123,119 @@ fn place_text_quads(
         mask: NO_MASK,
     }));
 }
+/// A shadowed text's clip: `clip` (its ancestors') over its box and where
+/// its shadows paint, each its box moved by the shadow's offset and grown by
+/// three sigmas (as the scene counts their damage). Its own clip, `own`,
+/// goes to `own_clip`: its glyphs stay where they were clipped (`truncate`,
+/// `lines`), only its shadows reach past its box. A text with none: `own`.
+#[cold]
+#[inline(never)]
+fn shadowed(
+    scene: &Scene,
+    id: NodeId,
+    bounds: Rect,
+    clip: Rect,
+    own: Rect,
+    own_clip: &mut Option<Rect>,
+) -> Rect {
+    let shadows = scene.text_shadows(id);
+    if shadows.is_empty() {
+        return own;
+    }
+    *own_clip = Some(own);
+    let reach = shadows.iter().fold(bounds, |all, shadow| {
+        let blur = shadow.blur.max(0.) * 3.;
+        all.union(Rect::new(
+            bounds.x + shadow.offset.x - blur,
+            bounds.y + shadow.offset.y - blur,
+            bounds.width + 2. * blur,
+            bounds.height + 2. * blur,
+        ))
+    });
+    clip.intersection(reach).unwrap_or_default()
+}
+/// A text shadow's blur as `blurred_glyph` keys it: its sigma in eighths of
+/// a device pixel, at most `MAX_SHADOW_SIGMA`; 0 is sharp.
+fn shadow_sigma(blur: f32, scale: f32) -> u32 {
+    if blur.is_nan() || blur <= 0. {
+        return 0;
+    }
+    ((blur * scale).min(MAX_SHADOW_SIGMA) * 8.).round() as u32
+}
+/// A glyph's coverage blurred (`blur_coverage`): `alpha` holds `texels`, each
+/// `size / texels` device pixels square, the glyph `reach` pixels in.
+struct BlurredCoverage {
+    alpha: Vec<u8>,
+    texels: (u32, u32),
+    size: (u32, u32),
+    reach: u32,
+}
+/// `coverage` (`width` by `height`, 0 to 255) blurred by a Gaussian of
+/// `sigma` pixels: averaged down by a power of two first where sigma would
+/// span more than four texels, so its taps stay few however wide it is.
+fn blur_coverage(coverage: &[f32], (width, height): (u32, u32), sigma: f32) -> BlurredCoverage {
+    let mut step = 1u32;
+    while sigma / step as f32 > 4. && step < 64 {
+        step *= 2;
+    }
+    let reach = ((sigma * 3.).ceil() as u32).div_ceil(step) * step;
+    let size = (
+        (width + 2 * reach).div_ceil(step) * step,
+        (height + 2 * reach).div_ceil(step) * step,
+    );
+    let (tw, th) = ((size.0 / step) as usize, (size.1 / step) as usize);
+    let mut texels = vec![0f32; tw * th];
+    let area = (step * step) as f32;
+    for (row, line) in coverage.chunks_exact(width as usize).enumerate() {
+        let ty = (row + reach as usize) / step as usize;
+        for (column, &value) in line.iter().enumerate() {
+            texels[ty * tw + (column + reach as usize) / step as usize] += value / area;
+        }
+    }
+    let s = sigma / step as f32;
+    let radius = (s * 3.).ceil() as usize;
+    let mut kernel: Vec<f32> = (0..=2 * radius)
+        .map(|i| (-((i as f32 - radius as f32).powi(2)) / (2. * s * s)).exp())
+        .collect();
+    let total: f32 = kernel.iter().sum();
+    kernel.iter_mut().for_each(|k| *k /= total);
+    let pass = |from: &[f32],
+                to: &mut [f32],
+                (along, lines): (usize, usize),
+                at: fn(usize, usize, usize) -> usize,
+                w: usize| {
+        for line in 0..lines {
+            for i in 0..along {
+                let mut sum = 0.;
+                for (k, weight) in kernel.iter().enumerate() {
+                    let j = i + k;
+                    if j >= radius && j - radius < along {
+                        sum += from[at(line, j - radius, w)] * weight;
+                    }
+                }
+                to[at(line, i, w)] = sum;
+            }
+        }
+    };
+    let mut across = vec![0f32; tw * th];
+    pass(&texels, &mut across, (tw, th), |row, x, w| row * w + x, tw);
+    pass(
+        &across,
+        &mut texels,
+        (th, tw),
+        |column, y, w| y * w + column,
+        tw,
+    );
+    BlurredCoverage {
+        alpha: texels
+            .iter()
+            .map(|&a| a.round().clamp(0., 255.) as u8)
+            .collect(),
+        texels: (tw as u32, th as u32),
+        size,
+        reach,
+    }
+}
 // Keep the former glyph charge so compaction cannot retain more entries.
 #[allow(dead_code)]
 struct GlyphCharge {
@@ -1209,6 +1322,36 @@ struct AtlasEntry {
     left: i32,
     top: i32,
 }
+/// A glyph's coverage blurred for a text shadow (`blurred_glyph`): `texels`
+/// in the atlas drawn over `size` device pixels, a wide blur at a power of
+/// two fewer (sampled back up bilinearly, as `effects` does).
+#[derive(Clone, Copy)]
+struct BlurredGlyph {
+    x: u32,
+    y: u32,
+    texels: (u32, u32),
+    size: (u32, u32),
+    left: i32,
+    top: i32,
+}
+/// Blurred text shadows' glyphs and each text's quads of them, out of the
+/// way of text without one (`GpuRenderer::blurred`).
+#[derive(Default)]
+struct BlurredShadows {
+    /// Per glyph and sigma (eighths of a device pixel); given up with the
+    /// atlas.
+    glyphs: FxHashMap<(AtlasKey, u32), Option<BlurredGlyph>>,
+    texts: FxHashMap<NodeId, BlurredText>,
+}
+/// A text's blurred shadows' quads, as `place_text_quads` takes them, per
+/// sigma: placed while its shape, the atlas and the scale hold.
+struct BlurredText {
+    atlas_epoch: u64,
+    scale: f32,
+    sigmas: Vec<(u32, Vec<TextQuad>)>,
+}
+/// The widest text shadow blur, in device pixels (as `effects`' widest).
+const MAX_SHADOW_SIGMA: f32 = 128.;
 struct LayerCache {
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
@@ -3604,6 +3747,9 @@ pub struct GpuRenderer {
     /// The quads of the lines of a text partly in its clip, made each frame
     /// (see `render_flat`), kept for their allocation.
     visible_glyphs: Vec<TextQuad>,
+    /// Blurred text shadows (`place_blurred_shadows`): none until a text has
+    /// one.
+    blurred: Option<Box<BlurredShadows>>,
     background: Color,
     /// Image textures: each bound for the quads, its size in bytes, and,
     /// where the CPU wrote its texels, the texture (see `render_direct`).
@@ -4232,6 +4378,7 @@ impl GpuRenderer {
             frame_draws: Vec::new(),
             frame_peaks: (0, 0),
             visible_glyphs: Vec::new(),
+            blurred: None,
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
             images_awaited: false,
@@ -5084,6 +5231,13 @@ impl GpuRenderer {
                 )
         });
         self.shaped_bytes = self.shapes.values().map(Shaped::bytes).sum();
+        // Blurred shadows go with their texts' shapes; with the last, all.
+        if let Some(blurred) = &mut self.blurred {
+            blurred.texts.retain(|id, _| self.shapes.contains_key(id));
+            if blurred.texts.is_empty() {
+                self.blurred = None;
+            }
+        }
         self.canvases.retain(scene);
         self.svgs.retain(scene);
         if !self.images.is_empty() {
@@ -6829,16 +6983,25 @@ impl GpuRenderer {
                 if item.effects.opacity <= 0. {
                     continue;
                 }
+                // A text's own clip, its box, apart where its shadows reach
+                // past it: then `node_clip` takes them in, for them alone
+                // (`draw_text_shadows`).
+                let mut own_clip = None;
                 let node_clip = if !item.isolated
                     && matches!(item.kind, NodeKind::Text { .. } | NodeKind::RichText { .. })
                 {
-                    item.clip
-                        .unwrap_or(viewport)
-                        .intersection(item.bounds)
-                        .unwrap_or_default()
+                    let clip = item.clip.unwrap_or(viewport);
+                    let own = clip.intersection(item.bounds).unwrap_or_default();
+                    match scene.has_text_shadows() {
+                        true => shadowed(scene, item.id, item.bounds, clip, own, &mut own_clip),
+                        false => own,
+                    }
                 } else {
                     item.clip.unwrap_or(viewport)
                 };
+                // Where its shadows' quads lie among its own
+                // (`draw_text_shadows`).
+                let mut shadow_quads = (0u32, 0u32);
                 let Some(clip) = node_clip.intersection(viewport) else {
                     continue;
                 };
@@ -7820,8 +7983,16 @@ impl GpuRenderer {
                         // each its glyphs again, moved on whole device pixels.
                         let shadows = scene.text_shadows(item.id);
                         let scale = self.scale;
+                        // Blurred: all its shadows placed after, under its glyphs
+                        // (`place_blurred_shadows`), from where they start.
+                        let blurred = shadows.iter().any(|shadow| shadow.blur > 0.);
+                        // Where its shadows' quads went, to be drawn apart.
+                        let shadows_at = std::cell::Cell::new((usize::MAX, 0));
                         let place = |quads: &mut Vec<Quad>, source: &[TextQuad]| {
-                            for shadow in shadows.iter().rev() {
+                            if !shadows.is_empty() {
+                                shadows_at.set((quads.len(), quads.len()));
+                            }
+                            for shadow in shadows.iter().rev().filter(|_| !blurred) {
                                 let shadow_color = rgba(shadow.color, item.effects.opacity);
                                 place_text_quads(
                                     quads,
@@ -7832,6 +8003,9 @@ impl GpuRenderer {
                                     item.effects.edge_fade,
                                     |_| shadow_color,
                                 );
+                            }
+                            if !shadows.is_empty() {
+                                shadows_at.set((shadows_at.get().0, quads.len()));
                             }
                             // Plain and unselected: one colour, chosen once.
                             if selected.is_none() && rich.is_none() {
@@ -7991,6 +8165,22 @@ impl GpuRenderer {
                                 self.shapes.insert(item.id, shaped);
                             }
                         }
+                        let (at, mut end) = shadows_at.get();
+                        if at != usize::MAX {
+                            if blurred {
+                                end = at
+                                    + self.place_blurred_shadows(
+                                        &mut quads,
+                                        at,
+                                        (item.id, stale),
+                                        shadows,
+                                        (x, y, fade),
+                                        (item.effects.edge_fade, item.effects.opacity),
+                                        &mut stats,
+                                    )?;
+                            }
+                            shadow_quads = (at as u32, end as u32);
+                        }
                     }
                     NodeKind::Container(_) => {}
                 }
@@ -8007,6 +8197,27 @@ impl GpuRenderer {
                 // in the shader (its quads' lane is set once they're culled).
                 let region = item_region(&mut clips, &item);
                 let in_region = region > 0.;
+                // A shadowed text: its shadows drawn first under the clip that
+                // takes them in, then the rest under its own.
+                let (start, clip) = match own_clip {
+                    Some(own)
+                        if shadow_quads.1 > shadow_quads.0 && item.effects.blur_radius <= 0. =>
+                    {
+                        let glyphs = match item.effects.edge_fade != 0. || in_region {
+                            true => Shading::Full,
+                            false => Shading::Basic,
+                        };
+                        let start = self.draw_text_shadows(
+                            (&mut quads, &mut draws),
+                            shadow_quads,
+                            (start, own, clip, viewport),
+                            (&clips, region, glyphs),
+                        );
+                        (start, own.intersection(viewport).unwrap_or_default())
+                    }
+                    Some(own) => (start, own.intersection(viewport).unwrap_or_default()),
+                    None => (start, clip),
+                };
                 // When the clip only culls whole quads, apply it on the CPU and
                 // draw under the viewport, so a change of clip never splits a
                 // batch: neighbouring text, icons and rows become one draw. Quads
@@ -10565,6 +10776,9 @@ impl GpuRenderer {
         self.release_atlas_cells();
         self.entries.clear();
         self.image_cells.clear();
+        if let Some(blurred) = &mut self.blurred {
+            blurred.glyphs.clear();
+        }
         self.atlas_epoch = self.atlas_epoch.wrapping_add(1);
         self.cursor = (0, 0, 0);
     }
@@ -10574,6 +10788,9 @@ impl GpuRenderer {
         self.bind = self.texture_bind(&self.atlas.create_view(&Default::default()), "glyph atlas");
         self.entries.clear();
         self.image_cells.clear();
+        if let Some(blurred) = &mut self.blurred {
+            blurred.glyphs.clear();
+        }
         self.cursor = (0, 0, 0);
         self.atlas_epoch = self.atlas_epoch.wrapping_add(1);
     }
@@ -10868,6 +11085,257 @@ impl GpuRenderer {
             top: p.top,
         };
         self.entries.insert(AtlasKey::from(key), Some(entry));
+        stats.glyph_uploads += 1;
+        Ok(Some(entry))
+    }
+    /// A shadowed text's quads up to its glyphs (its box and marks, from
+    /// `start`, under its `own` clip) and its shadows' (`at` to `end`, under
+    /// `wide`, which takes them in past its box), culled and drawn as an
+    /// item's are: the rest (its glyphs) go on after them, under its own
+    /// clip, where they start returned.
+    #[cold]
+    #[inline(never)]
+    fn draw_text_shadows(
+        &mut self,
+        (quads, draws): (&mut Vec<Quad>, &mut Vec<Draw>),
+        (at, end): (u32, u32),
+        (start, own, wide, viewport): (u32, Rect, Rect, Rect),
+        (regions, region, glyphs): (&[Region], f32, Shading),
+    ) -> u32 {
+        let mut rest = quads.split_off(end as usize);
+        let shadows = quads.split_off(at as usize);
+        let own = own.intersection(viewport).unwrap_or_default();
+        for (part, clip, shading) in [(None, own, None), (Some(shadows), wide, Some(glyphs))] {
+            let from = match part {
+                Some(part) => {
+                    let from = quads.len();
+                    quads.extend(part);
+                    from
+                }
+                None => start as usize,
+            };
+            let (draw_clip, culled) = match shading {
+                Some(_) => cull_glyphs(quads, from, clip, viewport, self.scale),
+                None => cull_on_cpu(quads, from, clip, viewport, self.scale),
+            };
+            if quads.len() <= from {
+                continue;
+            }
+            let drawn = culled.unwrap_or_else(|| quad_bounds(&quads[from..]));
+            if region > 0. {
+                mark_region(
+                    &mut self.region_interiors,
+                    regions,
+                    region,
+                    &mut quads[from..],
+                    drawn,
+                    false,
+                    self.scale,
+                );
+            }
+            let draw = Draw {
+                shading: Shading::Full,
+                blur: None,
+                start: from as u32,
+                end: quads.len() as u32,
+                clip: draw_clip,
+                bounds: drawn,
+                source: TextureSource::Atlas,
+            };
+            let split = self.split_shading;
+            push_draw(draws, quads, draw, split, false, self.scale, shading);
+        }
+        let start = quads.len() as u32;
+        quads.append(&mut rest);
+        start
+    }
+    /// A text's shadows when one is blurred, all of them, placed at `at`
+    /// (where its glyphs start, so under them): a blurred one from its own
+    /// glyphs' blurred coverage (`blurred_glyph`), kept while the text's
+    /// shape, the atlas and the scale hold; a sharp one from its glyphs, as
+    /// text with no blur places them. Out of line: text with none never
+    /// comes here.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn place_blurred_shadows(
+        &mut self,
+        quads: &mut Vec<Quad>,
+        at: usize,
+        (id, reshaped): (NodeId, bool),
+        shadows: &[zgx::scene::TextShadow],
+        (x, y, fade): (f32, f32, [f32; 4]),
+        (edge_fade, opacity): (f32, f32),
+        stats: &mut GpuStats,
+    ) -> Result<usize, GpuError> {
+        // (A shape past the cache's budget isn't kept: nor its shadows.)
+        let Some(shaped) = self.shapes.remove(&id) else {
+            return Ok(0);
+        };
+        let placed = self.blurred_shadow_quads(&shaped, id, reshaped, shadows, stats);
+        let blurred = self.blurred.as_ref().and_then(|b| b.texts.get(&id));
+        let scale = self.scale;
+        let mut under = Vec::new();
+        if placed.is_ok() {
+            for shadow in shadows.iter().rev() {
+                let sigma = shadow_sigma(shadow.blur, scale);
+                let source = match blurred.filter(|_| sigma > 0) {
+                    Some(text) => match text.sigmas.iter().find(|(s, _)| *s == sigma) {
+                        Some((_, quads)) => quads.as_slice(),
+                        None => continue,
+                    },
+                    None => &shaped.quads,
+                };
+                let color = rgba(shadow.color, opacity);
+                place_text_quads(
+                    &mut under,
+                    source,
+                    x + (shadow.offset.x * scale).round() / scale,
+                    y + (shadow.offset.y * scale).round() / scale,
+                    fade,
+                    edge_fade,
+                    |_| color,
+                );
+            }
+        }
+        self.shapes.insert(id, shaped);
+        placed?;
+        let placed = under.len();
+        quads.splice(at..at, under);
+        Ok(placed)
+    }
+    /// The quads of `shaped`'s glyphs blurred at each of `shadows`' sigmas,
+    /// made where they aren't kept (`BlurredShadows::texts`).
+    fn blurred_shadow_quads(
+        &mut self,
+        shaped: &Shaped,
+        id: NodeId,
+        reshaped: bool,
+        shadows: &[zgx::scene::TextShadow],
+        stats: &mut GpuStats,
+    ) -> Result<(), GpuError> {
+        let (epoch, scale) = (self.atlas_epoch, self.scale);
+        let blurred = self.blurred.get_or_insert_default();
+        let text = blurred.texts.entry(id).or_insert_with(|| BlurredText {
+            atlas_epoch: epoch,
+            scale,
+            sigmas: Vec::new(),
+        });
+        if reshaped || text.atlas_epoch != epoch || text.scale != scale {
+            (text.atlas_epoch, text.scale) = (epoch, scale);
+            text.sigmas.clear();
+        }
+        for shadow in shadows {
+            let sigma = shadow_sigma(shadow.blur, scale);
+            let kept = |blurred: &Option<Box<BlurredShadows>>| {
+                blurred
+                    .as_ref()
+                    .and_then(|b| b.texts.get(&id))
+                    .is_some_and(|text| text.sigmas.iter().any(|(s, _)| *s == sigma))
+            };
+            if sigma == 0 || kept(&self.blurred) {
+                continue;
+            }
+            let mut placed = Vec::with_capacity(shaped.glyphs.len());
+            for glyph in &shaped.glyphs {
+                let Some(b) = self.blurred_glyph(glyph.key, sigma, stats)? else {
+                    continue;
+                };
+                let atlas = self.atlas_size as f32;
+                placed.push(TextQuad {
+                    rect: [
+                        (glyph.x + b.left as f32) / scale,
+                        (glyph.y - b.top as f32) / scale,
+                        b.size.0 as f32 / scale,
+                        b.size.1 as f32 / scale,
+                    ],
+                    uv: [
+                        b.x as f32 / atlas,
+                        b.y as f32 / atlas,
+                        b.texels.0 as f32 / atlas,
+                        b.texels.1 as f32 / atlas,
+                    ],
+                    color: [0.; 4],
+                    paint: [0., 1., 0., 0.],
+                });
+            }
+            // The atlas may have started over meanwhile: these are its own.
+            let epoch = self.atlas_epoch;
+            let text = self
+                .blurred
+                .get_or_insert_default()
+                .texts
+                .entry(id)
+                .or_insert_with(|| BlurredText {
+                    atlas_epoch: epoch,
+                    scale,
+                    sigmas: Vec::new(),
+                });
+            if text.atlas_epoch != epoch {
+                (text.atlas_epoch, text.sigmas) = (epoch, Vec::new());
+            }
+            text.sigmas.push((sigma, placed));
+        }
+        Ok(())
+    }
+    /// `key`'s coverage blurred by a Gaussian of `sigma` eighths of a device
+    /// pixel, in the atlas: reaching three sigmas past the glyph, at a power
+    /// of two fewer texels where sigma spans more than four (CSS blurs a
+    /// text shadow's coverage; glyph by glyph, where two glyphs' blurs meet
+    /// they combine as paint does, a shade lighter than one blur of both).
+    fn blurred_glyph(
+        &mut self,
+        key: CacheKey,
+        sigma: u32,
+        stats: &mut GpuStats,
+    ) -> Result<Option<BlurredGlyph>, GpuError> {
+        let slot = (AtlasKey::from(key), sigma);
+        if let Some(entry) = self.blurred.as_ref().and_then(|b| b.glyphs.get(&slot)) {
+            return Ok(*entry);
+        }
+        let image = self
+            .swash
+            .get_image_uncached(&mut self.fonts.borrow_mut(), key);
+        let Some(image) = image.filter(|i| i.placement.width > 0 && i.placement.height > 0) else {
+            self.blurred
+                .get_or_insert_default()
+                .glyphs
+                .insert(slot, None);
+            return Ok(None);
+        };
+        let p = image.placement;
+        let coverage: Vec<f32> = match image.content {
+            SwashContent::Mask => image.data.iter().map(|&a| f32::from(a)).collect(),
+            SwashContent::Color => (image.data.as_chunks::<4>().0.iter())
+                .map(|t| f32::from(t[3]))
+                .collect(),
+            SwashContent::SubpixelMask => (image.data.as_chunks::<4>().0.iter())
+                .map(|t| f32::from(t[0].max(t[1]).max(t[2])))
+                .collect(),
+        };
+        let blurred = blur_coverage(&coverage, (p.width, p.height), sigma as f32 / 8.);
+        let (texels, size, reach) = (blurred.texels, blurred.size, blurred.reach);
+        let cell_width = texels.0 + 2;
+        let (x, y) = self.atlas_cell(texels.0, texels.1, |rgba| {
+            for (row, alphas) in blurred.alpha.chunks_exact(texels.0 as usize).enumerate() {
+                let start = ((row as u32 + 1) * cell_width + 1) as usize * 4;
+                for (texel, alpha) in rgba[start..].as_chunks_mut::<4>().0.iter_mut().zip(alphas) {
+                    *texel = [255, 255, 255, *alpha];
+                }
+            }
+        })?;
+        let entry = BlurredGlyph {
+            x,
+            y,
+            texels,
+            size,
+            left: p.left - reach as i32,
+            top: p.top + reach as i32,
+        };
+        self.blurred
+            .get_or_insert_default()
+            .glyphs
+            .insert(slot, Some(entry));
         stats.glyph_uploads += 1;
         Ok(Some(entry))
     }
@@ -14671,6 +15139,45 @@ impl surface::SurfaceSource for GpuRenderer {
     }
 }
 
+#[cfg(test)]
+mod shadow_blur_tests {
+    use super::{blur_coverage, shadow_sigma};
+    /// A blur spreads a glyph's coverage three sigmas out and keeps all of
+    /// it, at its own size and averaged down for a wide one; its middle is
+    /// lighter, its reach has some.
+    #[test]
+    fn a_blurred_glyph_keeps_its_coverage_and_reaches_three_sigmas() {
+        // (A glyph about as large as its blur: a far wider one spreads its
+        // coverage thinner than an 8-bit alpha keeps.)
+        for (sigma, (width, height)) in [(1.5f32, (4u32, 6u32)), (3., (6, 9)), (20., (24, 32))] {
+            let coverage = vec![255f32; (width * height) as usize];
+            let blurred = blur_coverage(&coverage, (width, height), sigma);
+            let step = blurred.size.0 / blurred.texels.0;
+            assert_eq!(step, blurred.size.1 / blurred.texels.1);
+            assert!(blurred.reach as f32 >= sigma * 3., "{sigma}");
+            assert!(blurred.size.0 >= width + 2 * blurred.reach);
+            let total: f32 = (blurred.alpha.iter())
+                .map(|&a| f32::from(a) * (step * step) as f32)
+                .sum();
+            let kept = total / (255. * (width * height) as f32);
+            assert!((0.97..1.03).contains(&kept), "sigma {sigma}: {kept} of it");
+            let middle = blurred.alpha
+                [(blurred.texels.1 / 2 * blurred.texels.0 + blurred.texels.0 / 2) as usize];
+            assert!(middle < 255, "sigma {sigma}: lighter in the middle");
+            assert!(sigma < 4. || step > 1, "a wide blur is averaged down");
+        }
+    }
+    /// Sigma is keyed in eighths of a device pixel, at most 128 pixels; none,
+    /// negative or not a number is sharp.
+    #[test]
+    fn shadow_sigmas_key_in_eighths_of_a_device_pixel() {
+        assert_eq!(shadow_sigma(0., 2.), 0);
+        assert_eq!(shadow_sigma(-3., 2.), 0);
+        assert_eq!(shadow_sigma(f32::NAN, 2.), 0);
+        assert_eq!(shadow_sigma(2., 2.), 32);
+        assert_eq!(shadow_sigma(1e6, 1.), 128 * 8);
+    }
+}
 #[cfg(test)]
 mod image_level_tests {
     /// The level an image needs is its coarsest halving still at least as
