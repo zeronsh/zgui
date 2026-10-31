@@ -288,6 +288,11 @@ pub struct TextPosition {
     /// Which side of a shared boundary the caret sits on.
     pub affinity: TextAffinity,
 }
+/// How wide a selection shows an empty line of `line_height`: its line
+/// break, a sliver as in an editor.
+pub fn empty_line_width(line_height: f32) -> f32 {
+    line_height * 0.25
+}
 /// A visual line's carets (`TextLayout::line_carets`), in the layout's
 /// coordinates.
 #[derive(Clone, Debug, PartialEq)]
@@ -861,8 +866,13 @@ impl TextLayout for FallbackTextLayout {
             return Vec::new();
         }
         let mut result: Vec<Rect> = Vec::new();
-        for (index, r) in &self.cells {
-            if index.start < end && index.end > start && r.width > 0. {
+        // Cells are in text order: from the first that reaches `start`.
+        let first = self.cells.partition_point(|(index, _)| index.end <= start);
+        for (i, (index, r)) in self.cells.iter().enumerate().skip(first) {
+            if index.start >= end {
+                break;
+            }
+            if r.width > 0. {
                 if let Some(last) = result.last_mut()
                     && last.y == r.y
                     && last.x + last.width >= r.x
@@ -871,6 +881,10 @@ impl TextLayout for FallbackTextLayout {
                     continue;
                 }
                 result.push(*r);
+            } else if i == 0 || self.cells[i - 1].1.y != r.y {
+                // An empty line's break.
+                let width = empty_line_width(r.height);
+                result.push(Rect::new(r.x, r.y, width, r.height));
             }
         }
         result

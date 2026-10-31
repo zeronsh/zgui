@@ -27,7 +27,8 @@ fn fixture() -> (Ui, EditorHandle, Rc<Cell<usize>>) {
 fn install_shaper(ui: &mut Ui, calls: Rc<Cell<usize>>, scale: f32) {
     ui.scene.borrow_mut().set_font_text_shaper(
         move |text: &str, size, width, font: &FontStyle| -> Box<dyn TextLayout> {
-            calls.set(calls.get() + 1);
+            // A selection's own empty text, measured once, is not the editor's.
+            calls.set(calls.get() + usize::from(!text.is_empty()));
             Box::new(FallbackTextLayout::with_line_height(
                 text,
                 size * scale,

@@ -3943,19 +3943,24 @@ impl Ui {
         let window_blurred = Rc::new(Cell::new(false));
         let draw_window_blurred = window_blurred.clone();
         let scroll = Rc::new(RefCell::new((0f32, 0f32)));
-        let selection_nodes = Rc::new(RefCell::new(Vec::new()));
+        // Carries the selection's highlight, made when one first shows.
+        let selection_node: Rc<Cell<Option<NodeId>>> = Rc::new(Cell::new(None));
         // A selection showing when the theme (or the system's accent)
-        // changes takes the new colour, as one drawn after it would.
+        // changes takes the new look, as one drawn after it would.
         {
-            let (nodes, scene, theme) =
-                (selection_nodes.clone(), self.scene.clone(), theme.clone());
+            let (node, scene, theme) = (selection_node.clone(), self.scene.clone(), theme.clone());
             self.bind_marked(root, true, move || {
                 let color = theme.color(tok::SELECTION);
                 let mut s = scene.borrow_mut();
-                for id in nodes.borrow().iter() {
-                    if s.contains(*id) {
-                        s.set_kind(*id, NodeKind::Rect(color));
-                    }
+                if let Some(id) = node.get()
+                    && let Some(shown) = s.text_highlight(id).cloned()
+                {
+                    let look = crate::scene::TextHighlight {
+                        color,
+                        radius: theme.number_untracked(tok::SELECTION_RADIUS).max(0.),
+                        ..shown
+                    };
+                    s.set_text_highlight(id, Some(look));
                 }
             });
         }
@@ -4464,23 +4469,26 @@ impl Ui {
             // shows again when the focus comes back. Read-only text gives its up on blur.
             let shows_selection =
                 *focus.borrow() || draw_window_blurred.get() || draw_read_only.get();
-            let rects: Vec<_> = if e.preedit().is_none() && shows_selection {
-                layout
-                    .selection_within(selection.range(), scroll.1, scroll.1 + inner_height)
-                    .into_iter()
-                    .filter_map(|r| {
-                        let y = r.y - scroll.1;
-                        (y + r.height > 0. && y < inner_height).then_some((
-                            r.x - scroll.0,
-                            y,
-                            r.width,
-                            r.height,
-                        ))
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            // With a line more each way, so the lines in view know what they
+            // meet: a selection running on past the edge is not rounded off.
+            let rects: Vec<_> =
+                if e.preedit().is_none() && shows_selection {
+                    let (top, bottom) = (
+                        scroll.1 - line_height,
+                        scroll.1 + inner_height + line_height,
+                    );
+                    layout
+                        .selection_within(selection.range(), top, bottom)
+                        .into_iter()
+                        .filter_map(|r| {
+                            let y = r.y - scroll.1;
+                            (y + r.height > -line_height && y < inner_height + line_height)
+                                .then_some((r.x - scroll.0, y, r.width, r.height))
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
             // Behind the selection: the caret's row and the marked ranges
             // (a search's matches), those in view.
             if let Some(code) = draw_hint.code() {
@@ -4622,20 +4630,40 @@ impl Ui {
                     );
                 }
             }
-            let mut nodes = selection_nodes.borrow_mut();
-            while nodes.len() > rects.len() {
-                s.remove(nodes.pop().unwrap());
-            }
-            while nodes.len() < rects.len() {
-                nodes.push(s.append(
-                    selection_layer,
-                    NodeKind::Rect(theme.color_untracked(tok::SELECTION)),
-                    Style::default(),
-                ));
-            }
-            for (id, (x, y, w, h)) in nodes.iter().zip(rects) {
-                s.set_style(*id, fixed(w, h));
-                s.set_transform(*id, Transform { x, y });
+            // The selection, one shape over the view: its node shows no text
+            // of its own, a long document's lines being nodes apart.
+            if rects.is_empty() {
+                if let Some(id) = selection_node.get() {
+                    s.set_text_highlight(id, None);
+                }
+            } else {
+                let id = selection_node.get().unwrap_or_else(|| {
+                    let id = s.append(
+                        selection_layer,
+                        NodeKind::Text {
+                            text: "".into(),
+                            color: Color(0, 0, 0, 0),
+                            font_size: 1.,
+                        },
+                        Style::default(),
+                    );
+                    selection_node.set(Some(id));
+                    id
+                });
+                // Padded: flush takes its ink from its box, shaping nothing.
+                let mut style = fixed(inner_width, inner_height);
+                style.padding = 1.;
+                s.set_style(id, style);
+                let highlight = crate::scene::TextHighlight {
+                    color: theme.color_untracked(tok::SELECTION),
+                    rects: rects
+                        .into_iter()
+                        .map(|(x, y, w, h)| Rect::new(x, y, w, h))
+                        .collect(),
+                    text_color: None,
+                    radius: theme.number_untracked(tok::SELECTION_RADIUS).max(0.),
+                };
+                s.set_text_highlight(id, Some(highlight));
             }
             // The numbers of the lines in view: found by where each line
             // starts (rows are in order, so the first is a binary search),

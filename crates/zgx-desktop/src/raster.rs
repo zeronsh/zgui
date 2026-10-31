@@ -183,7 +183,9 @@ impl Raster {
                                 r.height,
                             );
                             let color = tint(highlight.color, item.color());
-                            if highlight.radius > 0. {
+                            // Rounded on one line; lines that touch stay
+                            // square, this path having no inner curves.
+                            if highlight.radius > 0. && highlight.rects.len() == 1 {
                                 let style = zgx::scene::QuadStyle {
                                     fill: color,
                                     radius: highlight.radius,

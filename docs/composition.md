@@ -209,10 +209,16 @@ pasted from a PNG where one is there, else from the DIB another app copied
 The highlight is styled as CSS's `::selection` is. Its background is the
 theme's `selection` token (`selection.inactive` while the window is at the
 back). The glyphs inside it repaint in `selection.text` (`selection.text.inactive`),
-which is transparent by default, so they keep their own colours. Its rects
-round by `selection.radius` (0). Override them for a subtree with
+which is transparent by default, so they keep their own colours. Lines that
+touch draw as one shape, in selectable text and in editors alike: outer corners
+round by `selection.radius` (3, at most half a line), the corners between a line
+and a longer one curve the other way, and a translucent colour stays even across
+them. An empty line in the selection shows as a sliver, as in an editor. A radius
+of 0 draws plain rectangles; so does the software renderer for a selection over
+lines, which rounds a selection on one line alone. Override them for a subtree with
 `theme_scope(ThemeOverride::new().with(tok::SELECTION_TEXT, color), view)`,
-or on one region with `.selection_color(color)` and `.selected_text_color(color)`
+or on one region with `.selection_color(color)`, `.selected_text_color(color)` and
+`.selection_radius(radius)`
 (`_when` variants follow reactive reads), which hold in either window state. A
 glyph recolours when its centre lies in a highlight rect, from the glyphs
 already laid out on the GPU and software paths: changing a colour or the

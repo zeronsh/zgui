@@ -1008,6 +1008,25 @@ fn themed(spec: &crate::node::ThemeSpec, vm: &Rc<Vm>, view: View) -> View {
         })
     };
     match spec {
+        ThemeSpec::SelectionRadius(both) => {
+            let (given, radius) = &**both;
+            let over = |r: f32| zgx::theme::ThemeOverride::new().with(tok::SELECTION_RADIUS, r);
+            let view = match resolve_owned(radius) {
+                Owned::Lit(Lit::Num(r)) => zgx::compose::theme_scope(over(r), view),
+                radius => {
+                    let vm = vm.clone();
+                    let follow = move || match resolve(&radius, Ty::Num, None, &vm) {
+                        Some(Lit::Num(r)) => over(r),
+                        _ => zgx::theme::ThemeOverride::new(),
+                    };
+                    zgx::compose::theme_scope_with(follow, view)
+                }
+            };
+            match given {
+                Some(given) => themed(given, vm, view),
+                None => view,
+            }
+        }
         ThemeSpec::Fixed(over) => zgx::compose::theme_scope(over.clone(), view),
         ThemeSpec::State(state) => {
             let (state, vm) = (state.clone(), vm.clone());

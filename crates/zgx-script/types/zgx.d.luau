@@ -1930,6 +1930,7 @@ export type NodeProps = {
 	-- tokens; a state or function follows.
 	selection_color: Reactive<Color>?,
 	selected_text_color: Reactive<Color>?,
+	selection_radius: Reactive<number>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2282,6 +2283,7 @@ export type Props = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2567,6 +2569,7 @@ export type Props_private = boolean?
 export type Props_selectable = boolean?
 export type Props_selection_color = Reactive<Color>?
 export type Props_selected_text_color = Reactive<Color>?
+export type Props_selection_radius = Reactive<number>?
 export type Props_tooltip = (string | Node)?
 export type Props_tooltip_placement = Placement?
 export type Props_tooltip_interactive = boolean?
@@ -2847,6 +2850,7 @@ export type ContainerProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3199,6 +3203,7 @@ export type ScrollProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3562,6 +3567,7 @@ export type TextProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3913,6 +3919,7 @@ export type MarkdownViewProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4320,6 +4327,7 @@ export type RichProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4665,6 +4673,7 @@ export type ImageProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5020,6 +5029,7 @@ export type SvgProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5470,6 +5480,7 @@ export type Scene3DProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5838,6 +5849,7 @@ export type CanvasProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6215,6 +6227,7 @@ export type CheckboxProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6570,6 +6583,7 @@ export type InputProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -7014,6 +7028,7 @@ export type ProgressProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -7360,6 +7375,7 @@ export type SliderProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -7721,6 +7737,7 @@ export type SegmentedProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -8078,6 +8095,7 @@ export type StepperProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -8436,6 +8454,7 @@ export type DisclosureProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -8791,6 +8810,7 @@ export type AccordionProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -9134,6 +9154,7 @@ export type SectionProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -9488,6 +9509,7 @@ export type SeparatorProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -9839,6 +9861,7 @@ export type TabsProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -10201,6 +10224,7 @@ export type TreeProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -10570,6 +10594,7 @@ export type DataGridProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -10935,6 +10960,7 @@ export type CalendarProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -11293,6 +11319,7 @@ export type DatePickerProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -11649,6 +11676,7 @@ export type TimeFieldProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -12004,6 +12032,7 @@ export type ComboboxProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -12367,6 +12396,7 @@ export type CommandPaletteProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -12718,6 +12748,7 @@ export type SelectProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -13076,6 +13107,7 @@ export type SplitProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -13439,6 +13471,7 @@ export type ListProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -13864,6 +13897,7 @@ export type LayerProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -14215,6 +14249,7 @@ export type ModalProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -14584,6 +14619,7 @@ export type PopoverProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -14959,6 +14995,7 @@ export type MenuItemProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -15313,6 +15350,7 @@ export type SubmenuProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -15670,6 +15708,7 @@ export type WebViewProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -16035,6 +16074,7 @@ export type TerminalProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -16381,6 +16421,7 @@ export type SlotProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -16771,6 +16812,7 @@ export type EachOptions = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -17132,6 +17174,7 @@ export type PresenceOptions = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.

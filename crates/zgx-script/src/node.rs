@@ -99,6 +99,9 @@ pub(crate) enum ThemeSpec {
     Fixed(zgx::theme::ThemeOverride),
     State(Signal<Value>),
     Computed(Function),
+    /// `selection_radius = …`: `$selection.radius` for the subtree, inside
+    /// the `theme` it is given beside, if any.
+    SelectionRadius(Box<(Option<ThemeSpec>, Source)>),
 }
 /// An alpha mask over a node's content; the offset animates (`maskX`), or
 /// sweeps on its own (`sweep`).
@@ -2865,6 +2868,7 @@ const LATE_FIELDS: &[&str] = &[
     "on_paste",
     "overscroll",
     "read_only",
+    "selection_radius",
 ];
 
 /// A key no style property names, taken where it lies once the walk finds
@@ -2877,6 +2881,13 @@ const LATE_FIELDS: &[&str] = &[
 #[inline(never)]
 fn late_field(lua: &Lua, node: &mut Node, name: &str, value: mlua::Value) -> mlua::Result<()> {
     match name {
+        // A theme scope of its own: what reads `$selection.radius` below it
+        // (a selectable region's highlight, an editor's) follows it.
+        "selection_radius" => {
+            let radius = source(lua, Ty::Num, name, value)?;
+            let given = node.theme.take();
+            node.theme = Some(ThemeSpec::SelectionRadius(Box::new((given, radius))));
+        }
         "caret_color" | "caret_width" => {
             let Kind::Input { rare, .. } = &mut node.kind else {
                 return Ok(());
@@ -3498,7 +3509,7 @@ fn fill_from(
                 node.provide = Some(provided.into());
             }
             "theme" => {
-                node.theme = Some(if let Some(state) = state_of(&value) {
+                let spec = if let Some(state) = state_of(&value) {
                     ThemeSpec::State(state)
                 } else if let mlua::Value::Function(f) = value {
                     ThemeSpec::Computed(f)
@@ -3507,7 +3518,12 @@ fn fill_from(
                     ThemeSpec::Fixed(
                         crate::theme::override_of(&value).map_err(mlua::Error::runtime)?,
                     )
-                });
+                };
+                // Given after `selection_radius`: inside it.
+                match &mut node.theme {
+                    Some(ThemeSpec::SelectionRadius(both)) => both.0 = Some(spec),
+                    theme => *theme = Some(spec),
+                }
             }
             "hover" | "active" | "focus" | "disabled" => {
                 let pseudo = match key {

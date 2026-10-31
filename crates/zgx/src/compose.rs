@@ -536,7 +536,8 @@ pub(crate) struct Rare {
     mount_flags: u8,
     /// `View::selectable`.
     selectable: Option<bool>,
-    /// `View::selection_color`, `selected_text_color`: few views have them.
+    /// `View::selection_color`, `selected_text_color`, `selection_radius`:
+    /// few views have them.
     selection_style: Option<Box<crate::selection::SelectionStyle>>,
     /// `View::row_text`.
     row_text: Option<crate::selection::RowText>,
@@ -1587,6 +1588,20 @@ impl View {
         color: impl FnMut() -> crate::scene::Color + 'static,
     ) -> Self {
         self.rare_mut().selection_style.get_or_insert_default().text = Some(Box::new(color));
+        self
+    }
+    /// The corner radius of this selectable region's highlight, in place of
+    /// the theme's `selection.radius`, at most half a line; 0 draws its lines
+    /// as plain rectangles. For a selectable view.
+    pub fn selection_radius(self, radius: f32) -> Self {
+        self.selection_radius_when(move || radius)
+    }
+    /// `selection_radius`, following the reactive values it reads.
+    pub fn selection_radius_when(mut self, radius: impl FnMut() -> f32 + 'static) -> Self {
+        self.rare_mut()
+            .selection_style
+            .get_or_insert_default()
+            .radius = Some(Box::new(radius));
         self
     }
     /// A virtual list's plain text of row `index` (`None` past its end):

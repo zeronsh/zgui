@@ -521,13 +521,14 @@ fn a_selection_change_repaints_only_the_text_it_changes() {
     move_to(&mut ui, 30., 34.);
     ui.prepare_frame();
     let _ = ui.scene.borrow_mut().flush();
-    // Extending within the second line leaves the first alone.
+    // Extending within the second line leaves the first alone, but for
+    // where its corners meet the second's.
     move_to(&mut ui, 42., 34.);
     ui.prepare_frame();
     let report = ui.scene.borrow_mut().flush();
     assert!(!report.damage.is_empty());
     assert!(
-        report.damage.iter().all(|rect| rect.y >= 24.),
+        report.damage.iter().all(|rect| rect.y >= 20.),
         "{:?}",
         report.damage
     );
@@ -1424,6 +1425,7 @@ fn selected_text_keeps_its_colour_unless_styled_and_regions_override_the_theme()
             column()
                 .selectable(true)
                 .selection_color(Color(0, 0, 255, 128))
+                .selection_radius(6.)
                 .selected_text_color_when(move || followed.get())
                 .child(text("Styled")),
             theme_scope(
@@ -1444,9 +1446,10 @@ fn selected_text_keeps_its_colour_unless_styled_and_regions_override_the_theme()
     };
     let default = highlight(&ui, plain);
     assert_eq!(default.text_color, None, "glyphs keep their colour");
-    assert_eq!(default.radius, 0.);
+    assert_eq!(default.radius, 3., "rounded by default");
     let own = highlight(&ui, styled);
     assert_eq!(own.color, Color(0, 0, 255, 128));
+    assert_eq!(own.radius, 6.);
     assert_eq!(own.text_color, Some(Color(255, 0, 0, 255)));
     // The region's colours hold in a window at the back too.
     ui.set_window_active(false);
@@ -1737,5 +1740,195 @@ fn extending_in_a_zoomed_scroll_view_scrolls_just_enough() {
             "at {zoom}×: scrolled {}",
             offset.get()
         );
+    }
+}
+
+mod highlight_shape {
+    use zgx::scene::{Color, HighlightPiece, Rect, TextHighlight};
+
+    fn pieces(rects: &[Rect], radius: f32, origin: (f32, f32), scale: f32) -> Vec<HighlightPiece> {
+        TextHighlight {
+            color: Color(0, 0, 255, 80),
+            rects: rects.to_vec(),
+            text_color: None,
+            radius,
+        }
+        .pieces(origin.0, origin.1, scale)
+    }
+    fn runs(pieces: &[HighlightPiece]) -> Vec<(Rect, [f32; 4])> {
+        (pieces.iter())
+            .filter_map(|piece| match piece {
+                HighlightPiece::Run { rect, radii } => Some((*rect, *radii)),
+                _ => None,
+            })
+            .collect()
+    }
+    fn fillets(pieces: &[HighlightPiece]) -> Vec<(Rect, (f32, f32), f32)> {
+        (pieces.iter())
+            .filter_map(|piece| match piece {
+                HighlightPiece::Fillet {
+                    rect,
+                    centre,
+                    radius,
+                } => Some((*rect, *centre, *radius)),
+                _ => None,
+            })
+            .collect()
+    }
+    /// By more than rounding: every edge lies on a whole pixel.
+    fn overlap(a: Rect, b: Rect) -> bool {
+        let e = 1e-3;
+        a.x + e < b.x + b.width
+            && b.x + e < a.x + a.width
+            && a.y + e < b.y + b.height
+            && b.y + e < a.y + a.height
+    }
+    /// No two pieces cover the same point, so a translucent colour stays even.
+    fn assert_no_overlap(pieces: &[HighlightPiece]) {
+        let area = |piece: &HighlightPiece| match piece {
+            HighlightPiece::Run { rect, .. } | HighlightPiece::Fillet { rect, .. } => *rect,
+        };
+        for (i, a) in pieces.iter().enumerate() {
+            for b in &pieces[i + 1..] {
+                assert!(!overlap(area(a), area(b)), "{a:?} overlaps {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn lines_of_different_lengths_are_one_shape() {
+        // A selection from mid-line over a full line to mid-line.
+        let shape = pieces(
+            &[
+                Rect::new(40., 0., 120., 20.),
+                Rect::new(0., 20., 160., 20.),
+                Rect::new(0., 40., 60., 20.),
+            ],
+            4.,
+            (0., 0.),
+            2.,
+        );
+        assert_no_overlap(&shape);
+        let lines = runs(&shape);
+        // Round where nothing meets it; square where a line runs on from it.
+        assert_eq!(lines[0].1, [4., 4., 0., 0.]);
+        assert_eq!(lines[1].1, [4., 0., 4., 0.]);
+        assert_eq!(lines[2].1, [0., 0., 4., 4.]);
+        // The two inner corners curve the other way, outside their lines.
+        assert_eq!(
+            fillets(&shape),
+            [
+                (Rect::new(36., 16., 4., 4.), (36., 16.), 4.),
+                (Rect::new(60., 40., 4., 4.), (64., 44.), 4.),
+            ]
+        );
+    }
+
+    #[test]
+    fn lines_share_an_edge_on_whole_pixels_at_any_scale() {
+        for scale in [1., 1.25, 1.5, 1.75, 2., 3.] {
+            for origin in [0., 0.3, 7.6, 100.45] {
+                let rects: Vec<Rect> = (0..6)
+                    .map(|i| Rect::new(0., i as f32 * 17.3, 200. - i as f32 * 25., 17.3))
+                    .collect();
+                let shape = pieces(&rects, 3., (origin, origin), scale);
+                assert_no_overlap(&shape);
+                let lines = runs(&shape);
+                assert_eq!(lines.len(), 6);
+                for pair in lines.windows(2) {
+                    let (above, below) = (pair[0].0, pair[1].0);
+                    let seam = (above.y + above.height - below.y).abs();
+                    assert!(seam < 1e-3, "{above:?} over {below:?} at {scale}");
+                }
+                for (rect, _) in &lines {
+                    let device = rect.y * scale;
+                    assert!(
+                        (device - device.round()).abs() < 1e-3,
+                        "{rect:?} at {scale}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lines_overlapping_in_a_tight_line_height_do_not_darken() {
+        let shape = pieces(
+            &[Rect::new(0., 0., 100., 20.), Rect::new(0., 16., 80., 20.)],
+            3.,
+            (0., 0.),
+            2.,
+        );
+        assert_no_overlap(&shape);
+        let lines = runs(&shape);
+        assert_eq!(lines[0].0.y + lines[0].0.height, 18.);
+        assert_eq!(lines[1].0.y, 18.);
+    }
+
+    #[test]
+    fn a_step_shorter_than_the_radius_takes_half_of_it_each_way() {
+        let shape = pieces(
+            &[Rect::new(0., 0., 100., 20.), Rect::new(0., 20., 104., 20.)],
+            4.,
+            (0., 0.),
+            2.,
+        );
+        assert_eq!(
+            runs(&shape)[0].1[2],
+            0.,
+            "the shorter line's corner curves in"
+        );
+        assert_eq!(runs(&shape)[1].1[1], 2., "the longer line's stays round");
+        assert_eq!(
+            fillets(&shape),
+            [(Rect::new(100., 18., 2., 2.), (102., 18.), 2.)]
+        );
+    }
+
+    #[test]
+    fn the_radius_is_at_most_half_a_line_and_half_a_run() {
+        let shape = pieces(&[Rect::new(0., 0., 100., 12.)], 40., (0., 0.), 2.);
+        assert_eq!(runs(&shape)[0].1, [6.; 4]);
+        // An empty line's sliver.
+        let shape = pieces(&[Rect::new(0., 0., 5., 20.)], 4., (0., 0.), 2.);
+        assert_eq!(runs(&shape)[0].1, [2.5; 4]);
+    }
+
+    #[test]
+    fn runs_of_mixed_direction_stay_apart_or_join_on_a_line() {
+        // Two runs apart on one line, then a whole line under them.
+        let shape = pieces(
+            &[
+                Rect::new(0., 0., 40., 20.),
+                Rect::new(100., 0., 40., 20.),
+                Rect::new(0., 20., 140., 20.),
+            ],
+            4.,
+            (0., 0.),
+            2.,
+        );
+        assert_no_overlap(&shape);
+        assert_eq!(runs(&shape).len(), 3);
+        assert_eq!(fillets(&shape).len(), 2, "either side of the gap");
+        // Touching runs of one line are one run, with no seam.
+        let shape = pieces(
+            &[Rect::new(0., 0., 40., 20.), Rect::new(40.2, 0., 40., 20.)],
+            4.,
+            (0., 0.),
+            2.,
+        );
+        assert_eq!(runs(&shape).len(), 1);
+    }
+
+    #[test]
+    fn lines_with_a_gap_between_them_round_apart() {
+        let shape = pieces(
+            &[Rect::new(0., 0., 100., 20.), Rect::new(0., 40., 100., 20.)],
+            4.,
+            (0., 0.),
+            2.,
+        );
+        assert_eq!(runs(&shape)[0].1, [4.; 4]);
+        assert_eq!(runs(&shape)[1].1, [4.; 4]);
     }
 }

@@ -12934,7 +12934,7 @@ mod nonfinite_transform_tests {
 mod advanced_layout;
 #[path = "scene_select.rs"]
 mod select;
-pub use select::{TextHighlight, TextLeaf, TextMark};
+pub use select::{HighlightPiece, TextHighlight, TextLeaf, TextMark};
 #[path = "scene_view.rs"]
 mod view;
 pub use view::{CanvasView, GridFill, GridMark};

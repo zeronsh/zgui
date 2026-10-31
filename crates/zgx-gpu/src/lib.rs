@@ -7597,28 +7597,30 @@ impl GpuRenderer {
                                 mask: NO_MASK,
                             }
                         }));
-                        // A text selection, under the glyphs; rounded, its box
-                        // rides in `fade`, as a rounded run background's does.
+                        // A text selection, under the glyphs.
                         let highlight = scene.text_highlight(item.id);
                         if let Some(highlight) = highlight {
-                            quads.extend(highlight.rects.iter().map(|r| {
-                                let rect = [bounds.x + r.x, bounds.y + r.y, r.width, r.height];
-                                let rounded = highlight.radius > 0.;
-                                Quad {
-                                    rect,
+                            if highlight.radius > 0. {
+                                push_highlight(
+                                    &mut quads,
+                                    highlight,
+                                    (x, y),
+                                    self.scale,
+                                    item.effects.opacity,
+                                    item.effects.edge_fade,
+                                );
+                            } else {
+                                quads.extend(highlight.rects.iter().map(|r| Quad {
+                                    rect: [bounds.x + r.x, bounds.y + r.y, r.width, r.height],
                                     uv: [0.; 4],
                                     color: rgba(highlight.color, item.effects.opacity),
-                                    fade: if rounded { rect } else { fade },
+                                    fade,
                                     options: [item.effects.edge_fade, 0., 0., 0.],
-                                    shape: if rounded {
-                                        [highlight.radius, 0., 0., 1.]
-                                    } else {
-                                        [0.; 4]
-                                    },
+                                    shape: [0.; 4],
                                     border: [0.; 4],
                                     mask: NO_MASK,
-                                }
-                            }));
+                                }));
+                            }
                         }
                         // Its selected glyphs, in the selected-text colour.
                         let selected = highlight.filter(|h| h.text_color.is_some());
@@ -13129,6 +13131,63 @@ fn canvas_quads_of(
 /// `style`'s border alone at `bounds`: a ring of its side widths (top,
 /// right, bottom, left) inside its rounded box (`draw.wgsl`'s ring mode,
 /// two widths a lane in 16ths of a pixel, up to 255 px).
+/// A rounded selection's pieces (`TextHighlight::pieces`): each run a box
+/// with its own corners, as a rounded run background is; each curve the ring
+/// between its circle and a wider one, cut to its square by the quad. Both
+/// are shapes every backend's shader has.
+#[cold]
+#[inline(never)]
+fn push_highlight(
+    quads: &mut Vec<Quad>,
+    highlight: &zgx::scene::TextHighlight,
+    (x, y): (f32, f32),
+    scale: f32,
+    opacity: f32,
+    edge_fade: f32,
+) {
+    use zgx::scene::HighlightPiece;
+    let color = rgba(highlight.color, opacity);
+    quads.extend(
+        highlight
+            .pieces(x, y, scale)
+            .into_iter()
+            .map(|piece| match piece {
+                HighlightPiece::Run { rect, radii } => {
+                    let rect = [rect.x, rect.y, rect.width, rect.height];
+                    Quad {
+                        rect,
+                        uv: [0.; 4],
+                        color,
+                        fade: rect,
+                        options: [edge_fade, 0., 0., 1.],
+                        shape: [0., 0., 0., 1.],
+                        border: radii,
+                        mask: NO_MASK,
+                    }
+                }
+                HighlightPiece::Fillet {
+                    rect,
+                    centre,
+                    radius,
+                } => {
+                    // Far enough out that the wider circle's edge, and its
+                    // antialiasing, miss the square's far corner (1.41 × `radius`).
+                    let width = ((radius + 2.) * 16.).ceil();
+                    let outer = radius + width / 16.;
+                    Quad {
+                        rect: [rect.x, rect.y, rect.width, rect.height],
+                        uv: [0.; 4],
+                        color,
+                        fade: [centre.0 - outer, centre.1 - outer, outer * 2., outer * 2.],
+                        options: [edge_fade, 0., 0., 1.],
+                        shape: [width + 4096. * width, -1., width + 4096. * width, 1.],
+                        border: [outer; 4],
+                        mask: NO_MASK,
+                    }
+                }
+            }),
+    );
+}
 fn ring_quad(style: &zgx::scene::QuadStyle, bounds: Rect, opacity: f32, edge_fade: f32) -> Quad {
     let sides = style.border_sides();
     let width = |value: f32| match value.is_finite() {
@@ -15194,6 +15253,92 @@ mod blend_backdrop_tests {
             "{} backdrops after trim",
             gpu.backdrops.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod highlight_shape_tests {
+    use super::*;
+    use zgx::scene::{Color, Layout, Style, TextHighlight, Transform};
+
+    /// A translucent selection over lines of different lengths, placed off
+    /// the pixel grid: `(pixels, width in pixels)`.
+    fn draw(scale: f32) -> (Vec<u8>, usize) {
+        let (width, height) = (80., 60.);
+        let pixels = (
+            (width * scale).ceil() as u32,
+            (height * scale).ceil() as u32,
+        );
+        let mut gpu = GpuRenderer::new(pixels.0, pixels.1).unwrap();
+        gpu.set_scale_factor(scale);
+        let mut scene = Scene::new(width, height);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let size = Style {
+            width: Some(width),
+            height: Some(height),
+            ..Default::default()
+        };
+        scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(0, 0, 0, 255)),
+            size.clone(),
+        );
+        let text = NodeKind::Text {
+            text: "".into(),
+            color: Color(0, 0, 0, 0),
+            font_size: 1.,
+        };
+        let node = scene.append(scene.root(), text, size);
+        scene.set_transform(node, Transform { x: 3.3, y: 3.3 });
+        scene.flush();
+        let highlight = TextHighlight {
+            color: Color(255, 255, 255, 96),
+            rects: vec![
+                Rect::new(20., 0., 40., 13.3),
+                Rect::new(0., 13.3, 60., 13.3),
+                Rect::new(0., 26.6, 30., 13.3),
+            ],
+            text_color: None,
+            radius: 3.,
+        };
+        scene.set_text_highlight(node, Some(highlight));
+        scene.flush();
+        gpu.render(&scene, &[]).unwrap();
+        (gpu.readback().unwrap(), pixels.0 as usize)
+    }
+
+    /// One colour from line to line at any scale: no seam where they meet,
+    /// no darker band where they would overlap.
+    #[test]
+    fn a_translucent_selection_is_even_across_its_lines() {
+        for scale in [1., 1.25, 1.5, 2.] {
+            let (pixels, width) = draw(scale);
+            let at = |x: f32, y: f32| {
+                let (x, y) = ((x * scale) as usize, (y * scale) as usize);
+                pixels[(y * width + x) * 4]
+            };
+            let full = at(10., 20.);
+            assert!(full > 20, "the selection shows at {scale}");
+            let column = 28.;
+            let mut y = 6.;
+            while y < 40. {
+                assert_eq!(at(column, y), full, "at {y}, scale {scale}");
+                y += 1. / scale;
+            }
+        }
+    }
+
+    /// The inner corner where a line meets a longer one curves: filled at
+    /// the corner itself, and not at the far side of the curve.
+    #[test]
+    fn an_inner_corner_curves() {
+        let (pixels, width) = draw(2.);
+        let at = |x: f32, y: f32| pixels[((y * 2.) as usize * width + (x * 2.) as usize) * 4];
+        let full = at(10., 20.);
+        // The first line starts at 23.5 and meets the second at 16.5, on
+        // whole pixels: the curve is 3 around (20.5, 13.5).
+        assert_eq!(at(23.1, 16.2), full, "in the corner");
+        assert_eq!(at(20.6, 13.6), 0, "past the curve");
     }
 }
 

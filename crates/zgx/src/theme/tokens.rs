@@ -286,7 +286,7 @@ schema! {
     /// Selected text's glyphs while its window is in the background.
     SELECTION_TEXT_INACTIVE: Color = "selection.text.inactive" => "{selection.text}",
     /// The corner radius of selected text's highlight.
-    SELECTION_RADIUS: Number = "selection.radius" => "0",
+    SELECTION_RADIUS: Number = "selection.radius" => "3",
     /// Find in page's matches, behind their text (Chrome's yellow).
     FIND_MATCH: Color = "find.match" => "#ffd60a80",
     /// Find in page's current match (Chrome's orange).
