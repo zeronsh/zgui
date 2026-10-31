@@ -298,8 +298,10 @@ return ui.div {
 | `border_color` | `Color` | | |
 | `border_over` | `boolean` | `false` | paint the border over the children, taking no room (a ring) |
 | `border_dash` | `Pair` | solid | `{ length, gap }` |
+| `border_style` | `"solid" \| "dotted"` | `"solid"` | `"dotted"`: round dots as wide as the border, as far apart as they're wide, spread evenly round the box (CSS's `dotted`) |
 | `shadow` | `Shadow` | none | `{ x, y, blur, spread, color }` (CSS `box-shadow`; `color` `#0000005a` by default), a list of them, or `false` |
 | `outline`, `outline_color`, `outline_offset` | `number`, `Color`, `number` | none, black, `0` | an outline around the box (CSS's): its width, colour, and where it starts outside the box; a negative offset puts it over the edge (an inset focus ring is `outline = 1, outline_offset = -1`) |
+| `outline_style`, `outline_dash` | `"solid" \| "dotted"`, `Pair` | `"solid"` | how the outline is drawn (CSS's `outline-style`): `"dotted"`, round dots as wide as the outline; `outline_dash = { length, gap }`, dashed |
 | `inset_shadow` | `Shadow` | none | shadows inside the box (CSS's `inset`), over its fill and under its border and children: the box less itself moved by `x`, `y` and shrunk by `spread`, cut to its corners; `blur` softens it into the box, half its colour on that edge, as CSS's does. A 1-point top highlight is `{ x = 0, y = 1, color = "#ffffff1f" }` |
 | `opacity` | `number` | `1` | 0 to 1 |
 | `brightness`, `contrast`, `saturate` | `number` | `1` | CSS filter functions over the node and its subtree |

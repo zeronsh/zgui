@@ -1488,7 +1488,7 @@ props! {
     "rounded_br" => RoundedBr: Num, "rounded_bl" => RoundedBl: Num,
     "border" => Border: Num, "border_sides" => BorderSides: Corners, "border_color" => BorderColor: Color,
     "outline" => Outline: Num, "outline_color" => OutlineColor: Color, "outline_offset" => OutlineOffset: Num,
-    "border_over" => BorderOver: Bool, "border_dash" => BorderDash: Pair,
+    "border_over" => BorderOver: Bool, "border_dash" => BorderDash: Pair, "border_style" => BorderStyle: Str, "outline_style" => OutlineStyle: Str, "outline_dash" => OutlineDash: Pair,
     "shadow" => Shadow: Shadow, "inset_shadow" => InsetShadow: Shadow, "text_shadow" => TextShadow: Shadow, "opacity" => Opacity: Num,
     "brightness" => Brightness: Num, "contrast" => Contrast: Num, "saturate" => Saturate: Num, "hue_rotate" => HueRotate: Num, "sepia" => Sepia: Num, "invert" => Invert: Num, "blur" => Blur: Num, "backdrop_blur" => BackdropBlur: Num,
     "blend" => Blend: Str,

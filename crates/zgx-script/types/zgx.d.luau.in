@@ -1626,11 +1626,18 @@ export type Styles = {
 	border_color: Color?,
 	border_over: boolean?,
 	border_dash: Pair?,
+	-- "dotted": round dots as wide as the border, evenly round the box
+	-- (CSS's `border-style`); dashes are `border_dash`.
+	border_style: ("solid" | "dotted")?,
 	-- An outline around the box (CSS's): its width, colour, and how far
 	-- outside it starts (negative: over the box's edge, an inset ring).
 	outline: Num?,
 	outline_color: Color?,
 	outline_offset: Num?,
+	-- How the outline is drawn (CSS's `outline-style`): dotted, or dashed
+	-- `{ length, gap }` (`outline_dash`).
+	outline_style: ("solid" | "dotted")?,
+	outline_dash: Pair?,
 	shadow: Shadow?,
 	-- Under a text's glyphs, as CSS `text-shadow`: `{ x, y, blur, color }`, or
 	-- a list, the first on top. Inherited by the text inside; `blur` is a
@@ -1832,9 +1839,12 @@ export type StyleProps = {
 	border_over: Reactive<boolean>?,
 	-- A function may return nil: a solid border.
 	border_dash: Reactive<Pair?>?,
+	border_style: ("solid" | "dotted")?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
+	outline_style: ("solid" | "dotted")?,
+	outline_dash: Reactive<Pair?>?,
 	shadow: Reactive<Shadow>?,
 	text_shadow: Reactive<Shadow>?,
 	inset_shadow: Reactive<Shadow>?,

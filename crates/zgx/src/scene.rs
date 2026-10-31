@@ -1845,6 +1845,8 @@ struct ColdMaps {
     flat_parents: NodeMap<u32>,
     /// Images sampled other than smoothly (`set_image_rendering`).
     image_rendering: NodeMap<crate::image::ImageRendering>,
+    /// Outlines drawn dashed or dotted (`set_outline_style`).
+    outline_styles: NodeMap<crate::decoration::BorderStyle>,
 }
 /// Where a node takes hits while an animation moves it: the place it's
 /// going, not the place it shows (Core Animation's model layer against its
@@ -6320,6 +6322,7 @@ impl Scene {
                 || cold.flat.contains_key(&id)
                 || cold.flat_parents.contains_key(&id)
                 || cold.image_rendering.contains_key(&id)
+                || cold.outline_styles.contains_key(&id)
         }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
@@ -6733,6 +6736,7 @@ impl Scene {
             maps.flat.remove(&id);
             maps.flat_parents.remove(&id);
             maps.image_rendering.remove(&id);
+            maps.outline_styles.remove(&id);
         }
     }
     /// Hit `id` and what it holds where an animation is taking it, not

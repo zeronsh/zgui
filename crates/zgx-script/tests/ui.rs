@@ -334,6 +334,39 @@ fn image_rendering_reaches_the_scene() {
     assert_eq!(scene.image_rendering(smooth), ImageRendering::Auto);
 }
 
+/// `border_style = "dotted"` dots the border; `outline_style` and
+/// `outline_dash` break the outline.
+#[test]
+fn borders_and_outlines_take_their_styles() {
+    use zgx::decoration::BorderStyle;
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.div { id = "dotted", w = 20, h = 20, border = 2, border_style = "dotted",
+                outline = 1, outline_style = "dotted" },
+            ui.div { id = "dashed", w = 20, h = 20, outline = 1, outline_dash = { 6, 3 } },
+            ui.div { id = "solid", w = 20, h = 20, outline = 1 } }"##,
+    );
+    h.ui.prepare_frame();
+    let ids = ["dotted", "dashed", "solid"].map(|id| h.find(id).unwrap());
+    let scene = h.ui.scene.borrow();
+    let border = match scene.kind(ids[0]) {
+        zgx::scene::NodeKind::Quad(q) | zgx::scene::NodeKind::Panel { quad: q, .. } => {
+            q.decoration.as_ref().map(|d| d.border_style)
+        }
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(border, Some(BorderStyle::DOTTED));
+    assert_eq!(scene.outline_style(ids[0]), BorderStyle::DOTTED);
+    assert_eq!(
+        scene.outline_style(ids[1]),
+        BorderStyle::Dashed {
+            length: 6.,
+            gap: 3.
+        }
+    );
+    assert_eq!(scene.outline_style(ids[2]), BorderStyle::Solid);
+}
+
 #[test]
 fn a_closed_modal_in_an_overlay_blocks_no_clicks() {
     let mut h = Harness::inline(

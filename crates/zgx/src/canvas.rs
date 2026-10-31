@@ -472,7 +472,8 @@ pub struct Stroke {
     pub join: LineJoin,
     /// How long a miter may be, in line widths, before it bevels.
     pub miter_limit: f32,
-    /// Dash and gap lengths, alternating; empty draws a solid line.
+    /// Dash and gap lengths, alternating; empty draws a solid line. A dash
+    /// may be 0 long: with round caps, a dot.
     pub dash: Vec<f32>,
     /// How far into the dash pattern the line starts.
     pub dash_offset: f32,

@@ -5334,6 +5334,15 @@ fn refused(value: &Value, ty: Ty, vm: &Vm) -> Option<Lit> {
     }
     None
 }
+/// A `border_style` or `outline_style`: `"dotted"`, round dots as wide as
+/// the line (`BorderStyle::DOTTED`); anything else solid (dashes take their
+/// lengths: `border_dash`, `outline_dash`).
+fn line_style(name: &str) -> zgx::decoration::BorderStyle {
+    match name {
+        "dotted" => zgx::decoration::BorderStyle::DOTTED,
+        _ => zgx::decoration::BorderStyle::Solid,
+    }
+}
 fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
     match source {
         Owned::Lit(l) => Some(l.clone()),
@@ -7233,6 +7242,14 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (OutlineOffset, Lit::Num(v)) => s.outline_offset(*v),
         (BorderDash, Lit::Pair(length, gap)) => {
             s.border_style(zgx::decoration::BorderStyle::Dashed {
+                length: *length,
+                gap: *gap,
+            })
+        }
+        (BorderStyle, Lit::Str(name)) => s.border_style(line_style(name)),
+        (OutlineStyle, Lit::Str(name)) => s.outline_style(line_style(name)),
+        (OutlineDash, Lit::Pair(length, gap)) => {
+            s.outline_style(zgx::decoration::BorderStyle::Dashed {
                 length: *length,
                 gap: *gap,
             })

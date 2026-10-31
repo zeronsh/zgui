@@ -3845,6 +3845,9 @@ pub struct GpuRenderer {
     /// Pixelated images' nearest samplers (`image_source`): none until one
     /// draws.
     nearest: Option<Box<NearestBinds>>,
+    /// Dashed and dotted outlines (`Scene::outline_style`), rasterized: none
+    /// until one draws.
+    outlines: Option<Box<OutlineRasters>>,
     svgs: svg::SvgCache,
     /// Small untransformed SVG rasters packed into the glyph atlas by image
     /// id, so icons batch with text instead of binding a texture each.
@@ -4420,6 +4423,7 @@ impl GpuRenderer {
             wide_until: None,
             canvases: Default::default(),
             nearest: None,
+            outlines: None,
             svgs: Default::default(),
             blur_pipelines: None,
             image_cells: FxHashMap::default(),
@@ -4979,6 +4983,7 @@ impl GpuRenderer {
             self.layers.clear();
             self.shapes.clear();
             self.node_images.clear();
+            self.outlines = None;
             self.shaped_bytes = 0;
             self.fresh = true;
             self.pruned_revision = None;
@@ -5269,6 +5274,17 @@ impl GpuRenderer {
             nearest.binds.retain(|id, _| self.images.contains_key(id));
             if nearest.binds.is_empty() {
                 self.nearest = None;
+            }
+        }
+        // Outlines still dashed or dotted keep their rasters; with the last, all.
+        if let Some(outlines) = &mut self.outlines {
+            let styled = |id| {
+                scene.contains(id) && scene.outline_style(id) != zgx::decoration::BorderStyle::Solid
+            };
+            outlines.cache.retain_nodes(styled);
+            outlines.images.retain(|id, _| styled(*id));
+            if outlines.images.is_empty() {
+                self.outlines = None;
             }
         }
         self.svgs.retain(scene);
@@ -7275,9 +7291,24 @@ impl GpuRenderer {
                                 quads.push(ring_quad(style, bounds, opacity, edge_fade));
                             }
                             if let Some(outline) = style.outline.filter(|o| o.visible()) {
-                                quads.push(outline_quad(
-                                    &outline, style, bounds, opacity, edge_fade,
-                                ));
+                                if scene.has_outline_styles()
+                                    && scene.outline_style(item.id)
+                                        != zgx::decoration::BorderStyle::Solid
+                                {
+                                    let (id, quad) = self.styled_outline(
+                                        (item.id, style, &outline),
+                                        scene.outline_style(item.id),
+                                        bounds,
+                                        (opacity, edge_fade),
+                                        &mut stats,
+                                    )?;
+                                    canvas_image = Some(id);
+                                    quads.push(quad);
+                                } else {
+                                    quads.push(outline_quad(
+                                        &outline, style, bounds, opacity, edge_fade,
+                                    ));
+                                }
                             }
                         } else {
                             for shadow in style.shadows().iter().take(32) {
@@ -10587,6 +10618,64 @@ impl GpuRenderer {
         nearest.binds.insert(image, (bind, texture));
         true
     }
+    /// A dashed or dotted outline (`Scene::outline_style`) of `node`, a box
+    /// of `style` at `bounds`: its raster's texture (`OutlineRasters`, apart
+    /// from the node's decoration's) and the quad drawing it over the
+    /// outline's outer box. Out of line: solid outlines are a ring quad.
+    #[cold]
+    #[inline(never)]
+    fn styled_outline(
+        &mut self,
+        (node, style, outline): (NodeId, &zgx::scene::QuadStyle, &zgx::scene::Outline),
+        outline_style: zgx::decoration::BorderStyle,
+        bounds: Rect,
+        (opacity, edge_fade): (f32, f32),
+        stats: &mut GpuStats,
+    ) -> Result<(u64, Quad), GpuError> {
+        let outer = outline.outer(bounds);
+        let canvas = Arc::new(decoration::outline_canvas(
+            style,
+            outline,
+            outline_style,
+            bounds.width,
+            bounds.height,
+        )?);
+        let scale = self.scale;
+        let rasters = self.outlines.get_or_insert_default();
+        let mut found = rasters
+            .cache
+            .get(node, &canvas, outer.width, outer.height, scale)?;
+        let old = rasters.images.insert(node, found.id);
+        if let Some(old) = old.filter(|old| *old != found.id) {
+            self.images.remove(&old);
+        }
+        if !self.images.contains_key(&found.id) {
+            if found.pixels.is_none() {
+                let rasters = self.outlines.get_or_insert_default();
+                rasters.cache.forget(node);
+                found = rasters
+                    .cache
+                    .get(node, &canvas, outer.width, outer.height, scale)?;
+            }
+            let pixels = found.pixels.expect("fresh raster");
+            self.upload_image(&pixels)?;
+            stats.image_uploads += 1;
+            stats.canvas_rasterizations += 1;
+        }
+        self.outlines.get_or_insert_default().cache.uploaded(node);
+        let rect = [outer.x, outer.y, outer.width, outer.height];
+        let quad = Quad {
+            rect,
+            uv: [0., 0., 1., 1.],
+            color: [1., 1., 1., opacity],
+            fade: rect,
+            options: [edge_fade, 2., 0., 0.],
+            shape: [0.; 4],
+            border: [0.; 4],
+            mask: NO_MASK,
+        };
+        Ok((found.id, quad))
+    }
     /// The texture of `node`'s canvas raster, uploaded if it is new; the
     /// cache then keeps no pixels. A lost texture rasterizes again.
     fn canvas_texture(
@@ -13550,6 +13639,13 @@ fn background_quad(
 struct NearestBinds {
     sampler: wgpu::Sampler,
     binds: FxHashMap<u64, (wgpu::BindGroup, wgpu::Texture)>,
+}
+/// Dashed and dotted outlines' rasters (`GpuRenderer::styled_outline`):
+/// a cache and textures of their own, by node, apart from its decoration's.
+#[derive(Default)]
+struct OutlineRasters {
+    cache: canvas::CanvasCache,
+    images: FxHashMap<NodeId, u64>,
 }
 /// `outline` around a box of `style` at `bounds`: a ring of its width
 /// between the box grown by its offset and by its offset and width, each
