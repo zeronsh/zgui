@@ -13669,17 +13669,27 @@ pub fn shader_modules() -> Vec<(&'static str, String)> {
 /// stage and clip regions they share, polyline.wgsl, and its filled areas
 /// (area.wgsl) where they draw on the GPU (`AREAS_ON_GPU`).
 fn polyline_source() -> String {
-    format!(
-        "{}\n{}\n{}",
-        include_str!("draw.wgsl"),
-        include_str!("polyline.wgsl"),
-        if AREAS_ON_GPU {
+    let strokes = include_str!("polyline.wgsl");
+    if AREAS_ON_GPU {
+        return format!(
+            "{}\n{strokes}\n{}",
+            include_str!("draw.wgsl"),
             include_str!("area.wgsl")
-        } else {
-            include_str!("area_stub.wgsl")
-        }
+        );
+    }
+    // Without the branch to areas, not only their shader: FXC's optimizer
+    // still overflowed on a branch to a stub returning nothing, where the
+    // module without it compiles.
+    assert!(strokes.contains(AREA_BRANCH), "polyline.wgsl's branch to areas");
+    format!(
+        "{}\n{}",
+        include_str!("draw.wgsl"),
+        strokes.replace(AREA_BRANCH, "")
     )
 }
+/// The line of polyline.wgsl's `zgx_polyline` that hands an area to
+/// area.wgsl's `zgx_area`.
+const AREA_BRANCH: &str = " if v.shape.x>.5 {return zgx_area(v);}\n";
 /// Whether a canvas's filled areas draw as quads (area.wgsl). Not on
 /// Windows: FXC's optimizer recursed on area.wgsl until it overflowed any
 /// stack, which crashed an app at its first canvas stroke. A canvas holding
