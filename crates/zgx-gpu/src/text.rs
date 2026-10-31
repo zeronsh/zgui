@@ -416,6 +416,17 @@ impl ShapedText {
         let mut rectangles: Vec<Rect> = Vec::new();
         for run in self.buffer.layout_runs() {
             let offset = self.line_offsets[run.line_i];
+            // An empty line in the selection: its line break, a little wide.
+            if run.glyphs.is_empty() && offset >= start && offset < end {
+                let width = zgx::text_layout::empty_line_width(run.line_height);
+                let cursor = TextCursor {
+                    byte_index: offset,
+                    affinity: Affinity::After,
+                };
+                let x = ShapedText::caret(self, cursor).map_or(0., |caret| caret.x);
+                rectangles.push(Rect::new(x, run.line_top, width, run.line_height));
+                continue;
+            }
             let mut spans = Vec::new();
             for glyph in run.glyphs {
                 if glyph.metadata == usize::MAX {
@@ -830,6 +841,24 @@ impl CpuTextRaster {
 mod visual_line_tests {
     use super::*;
     use zgx::text_layout::{TextAffinity, TextLayout, TextPosition};
+
+    #[test]
+    fn a_selection_shows_an_empty_line_as_a_sliver() {
+        let mut fonts = FontSystem::new();
+        let layout = ShapedText::new(&mut fonts, "ab\n\ncd", 18., None);
+        let rows = layout.selection(0..6);
+        assert_eq!(rows.len(), 3);
+        let sliver = rows[1];
+        assert_eq!(
+            sliver.width,
+            zgx::text_layout::empty_line_width(sliver.height)
+        );
+        assert_eq!(sliver.y, rows[0].y + rows[0].height);
+        assert_eq!(layout.selection(0..2).len(), 1, "no line break selected");
+        assert_eq!(layout.selection(3..4), [sliver], "its break alone");
+        let last = ShapedText::new(&mut fonts, "ab\n", 18., None);
+        assert_eq!(last.selection(0..3).len(), 1, "the last line has no break");
+    }
 
     #[test]
     fn logical_visual_row_range_includes_mixed_bidi_clusters_beyond_physical_edges() {

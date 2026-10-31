@@ -31,6 +31,149 @@ impl TextHighlight {
                 .any(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
         })
     }
+    /// Its rectangles at (`x`, `y`) as one shape, on whole pixels of a target
+    /// of `scale` pixels a point: lines that touch share an edge, with no
+    /// seam or overlap between them; outer corners round by `radius` (at most
+    /// half the line), and where a line's run meets a longer one the corner
+    /// curves the other way, in a `Fillet`. A step too short for the radius
+    /// takes half of it each way, as Zed and VS Code draw it.
+    pub fn pieces(&self, x: f32, y: f32, scale: f32) -> Vec<HighlightPiece> {
+        let snap = |value: f32| (value * scale).round() / scale;
+        let pixel = 1. / scale;
+        let mut rects = self.rects.clone();
+        rects.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
+        let mut rows: Vec<HighlightRow> = Vec::new();
+        let mut runs: Vec<(f32, f32)> = Vec::new();
+        for r in rects {
+            let left = snap(x + r.x);
+            let right = snap(x + r.x + r.width).max(left + pixel);
+            let (mut top, bottom) = (snap(y + r.y), snap(y + r.y + r.height));
+            match rows.last_mut() {
+                // Another run of the line: mixed-direction text.
+                Some(row) if y + r.y + r.height * 0.5 < row.bottom => {
+                    match runs.last_mut() {
+                        Some(last) if left <= last.1 + pixel => last.1 = last.1.max(right),
+                        _ => {
+                            runs.push((left, right));
+                            row.runs.end += 1;
+                        }
+                    }
+                    continue;
+                }
+                // Touching, or overlapping in a tight line height: one edge.
+                Some(row) if top <= row.bottom + pixel => {
+                    row.bottom = snap((row.bottom + top) * 0.5);
+                    top = row.bottom;
+                }
+                _ => {}
+            }
+            if bottom > top {
+                rows.push(HighlightRow {
+                    top,
+                    bottom,
+                    runs: runs.len()..runs.len() + 1,
+                });
+                runs.push((left, right));
+            }
+        }
+        let mut pieces = Vec::with_capacity(runs.len() * 2);
+        for (i, row) in rows.iter().enumerate() {
+            let above = i
+                .checked_sub(1)
+                .map(|k| &rows[k])
+                .filter(|above| above.bottom == row.top);
+            let below = rows.get(i + 1).filter(|below| below.top == row.bottom);
+            let height = row.bottom - row.top;
+            let radius = self.radius.min(height * 0.5);
+            let own = &runs[row.runs.clone()];
+            for (k, &run) in own.iter().enumerate() {
+                let (left, right) = run;
+                // Before the next run along its line, if any.
+                let room_left = k.checked_sub(1).map_or(f32::MAX, |k| left - own[k].1);
+                let room_right = own.get(k + 1).map_or(f32::MAX, |next| next.0 - right);
+                let mut radii = [radius.min((right - left) * 0.5); 4];
+                let corners = [(above, true), (above, false), (below, false), (below, true)];
+                for (corner, (neighbour, is_left)) in corners.into_iter().enumerate() {
+                    let reach = neighbour
+                        .and_then(|n| neighbour_reach(&runs[n.runs.clone()], run, is_left));
+                    match reach {
+                        None => {}
+                        Some(reach) if reach < 0. => {
+                            radii[corner] = radii[corner].min(-reach * 0.5)
+                        }
+                        Some(reach) => {
+                            radii[corner] = 0.;
+                            let room = if is_left { room_left } else { room_right };
+                            let curve = radius.min(reach * 0.5).min(room * 0.5);
+                            let curve = (curve * scale).floor() / scale;
+                            if curve <= 0. {
+                                continue;
+                            }
+                            let x = if is_left { left - curve } else { right };
+                            let is_top = corner < 2;
+                            let y = if is_top { row.top } else { row.bottom - curve };
+                            pieces.push(HighlightPiece::Fillet {
+                                rect: Rect::new(x, y, curve, curve),
+                                centre: (
+                                    if is_left { x } else { x + curve },
+                                    if is_top { y + curve } else { y },
+                                ),
+                                radius: curve,
+                            });
+                        }
+                    }
+                }
+                pieces.push(HighlightPiece::Run {
+                    rect: Rect::new(left, row.top, right - left, height),
+                    radii,
+                });
+            }
+        }
+        pieces
+    }
+}
+
+/// A piece of a rounded highlight's shape (`TextHighlight::pieces`). Pieces
+/// never overlap, so a translucent colour stays even across them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HighlightPiece {
+    /// A line's run, with its corner radii (top left, top right, bottom
+    /// right, bottom left).
+    Run {
+        /// Where it is.
+        rect: Rect,
+        /// Its corners.
+        radii: [f32; 4],
+    },
+    /// The curve in the corner where a run meets a longer one: `rect` filled
+    /// but for the circle of `radius` around `centre`, a corner of `rect`.
+    Fillet {
+        /// The square it fills.
+        rect: Rect,
+        /// The circle's centre.
+        centre: (f32, f32),
+        /// The circle's radius, `rect`'s side.
+        radius: f32,
+    },
+}
+
+/// A line of a highlight: its edges, and its runs in `TextHighlight::pieces`.
+struct HighlightRow {
+    top: f32,
+    bottom: f32,
+    runs: std::ops::Range<usize>,
+}
+
+/// How far past the run's left or right edge the first run it touches among
+/// `neighbours` (the line above or below, in order) reaches: negative if it
+/// stops short, `None` if none touches it.
+fn neighbour_reach(neighbours: &[(f32, f32)], run: (f32, f32), left: bool) -> Option<f32> {
+    let mut touching = neighbours.iter().filter(|n| n.0 < run.1 && n.1 > run.0);
+    if left {
+        touching.next().map(|n| run.0 - n.0)
+    } else {
+        touching.next_back().map(|n| n.1 - run.1)
+    }
 }
 
 /// A mark behind a text node's glyphs, apart from its selection: a find
@@ -161,6 +304,12 @@ impl Scene {
                 .chain(new)
                 .flat_map(|h| h.rects.iter().copied())
                 .collect(),
+        };
+        // The lines beside them round to meet them.
+        let reach = new.or(old.as_ref()).map_or(0., |h| h.radius);
+        let changed: Vec<Rect> = match reach > 0. {
+            true => changed.iter().map(|r| r.expand(reach + 1.)).collect(),
+            false => changed,
         };
         self.damage_text_rects(id, &changed);
         // Its layers repaint; its own retained glyphs stay as they are.

@@ -882,6 +882,13 @@ impl LinesLayout {
             let line = self.line_range(i);
             let (a, b) = (start.max(line.start), end.min(line.end));
             if a >= b {
+                // An empty line in the selection: its line break, a little wide.
+                if line.is_empty() && start <= line.start && end > line.end {
+                    let row = self.line(i).caret_position(Default::default());
+                    let width = crate::text_layout::empty_line_width(row.height);
+                    let sliver = Rect::new(row.x, row.y, width, row.height);
+                    rects.push(self.shift(i, sliver));
+                }
                 continue;
             }
             let layout = self.line(i);

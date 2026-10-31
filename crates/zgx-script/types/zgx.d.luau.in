@@ -1888,6 +1888,7 @@ export type NodeProps = {
 	-- tokens; a state or function follows.
 	selection_color: Reactive<Color>?,
 	selected_text_color: Reactive<Color>?,
+	selection_radius: Reactive<number>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.

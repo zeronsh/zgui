@@ -1,8 +1,7 @@
 use zgx::{
     compose::prelude::*,
     input::{InputEvent, PointerButton},
-    scene::{NodeId, NodeKind},
-    theme::tok,
+    scene::NodeId,
     widgets::Ui,
 };
 
@@ -13,13 +12,12 @@ fn settle(ui: &mut Ui) {
 
 /// How many selection highlights are drawn inside `node`.
 fn highlights(ui: &Ui, node: NodeId) -> usize {
-    let colour = ui.theme().root().color_untracked(tok::SELECTION);
     let scene = ui.scene.borrow();
     let mut stack = vec![node];
     let mut count = 0;
     while let Some(id) = stack.pop() {
-        if matches!(scene.kind(id), NodeKind::Rect(c) if *c == colour) {
-            count += 1;
+        if let Some(highlight) = scene.text_highlight(id) {
+            count += highlight.rects.len();
         }
         stack.extend(scene.children(id).iter().copied());
     }

@@ -437,11 +437,19 @@ impl TestApp {
     fn text_in(&self, node: NodeId) -> String {
         let scene = self.ui.scene.borrow();
         let mut stack = vec![node];
+        let mut empty = false;
         while let Some(n) = stack.pop() {
             if let NodeKind::Text { text, .. } = scene.kind(n) {
-                return text.to_string();
+                // An editor's selection lies in an empty text of its own.
+                if !text.is_empty() {
+                    return text.to_string();
+                }
+                empty = true;
             }
             stack.extend(scene.children(n).iter().rev());
+        }
+        if empty {
+            return String::new();
         }
         panic!("no text in {node:?}: {:?}", scene.kind(node))
     }

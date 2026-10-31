@@ -409,12 +409,14 @@ impl Palette {
     }
 }
 
-/// A region's own highlight colours (`View::selection_color`,
-/// `selected_text_color`), over the theme's, in either window state.
+/// A region's own highlight look (`View::selection_color`,
+/// `selected_text_color`, `selection_radius`), over the theme's, in either
+/// window state.
 #[derive(Default)]
 pub(crate) struct SelectionStyle {
     pub(crate) background: Option<Box<dyn FnMut() -> Color>>,
     pub(crate) text: Option<Box<dyn FnMut() -> Color>>,
+    pub(crate) radius: Option<Box<dyn FnMut() -> f32>>,
 }
 
 /// Make `root` a selectable region (`View::selectable(true)`).
@@ -455,6 +457,9 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
         };
         if let Some(background) = &mut style.background {
             colors.background = [background(); 2];
+        }
+        if let Some(radius) = &mut style.radius {
+            colors.radius = radius().max(0.);
         }
         if let Some(color) = &mut style.text {
             colors.text = [text(color()); 2];

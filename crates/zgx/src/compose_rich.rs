@@ -292,6 +292,11 @@ impl RichTextView {
         self.view = self.view.selectable(selectable);
         self
     }
+    /// The corner radius of the highlight (see `View::selection_radius`).
+    pub fn selection_radius(mut self, radius: f32) -> Self {
+        self.view = self.view.selection_radius(radius);
+        self
+    }
     /// The highlight behind selected text (see `View::selection_color`).
     pub fn selection_color(mut self, color: Color) -> Self {
         self.view = self.view.selection_color(color);
