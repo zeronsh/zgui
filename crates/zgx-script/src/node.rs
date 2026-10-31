@@ -1495,7 +1495,7 @@ props! {
     "fade" => Fade: Pair, "fade_x" => FadeX: Pair, "fade_sides" => FadeSides: Corners,
     "fade_overflow" => FadeOverflow: Bool, "snap" => Snap: Bool,
     "zoom" => Zoom: Num, "zoom_fixed" => ZoomFixed: Bool,
-    "clip_inset" => ClipInset: Corners, "clip_feather" => ClipFeather: Num, "layer" => Layer: Bool, "object_position" => ObjectPosition: Pair, "fit" => Fit: Str, "tint" => Tint: Color, "decode" => Decode: Str, "dither" => Dither: Num, "characters" => Characters: Num,
+    "clip_inset" => ClipInset: Corners, "clip_feather" => ClipFeather: Num, "layer" => Layer: Bool, "object_position" => ObjectPosition: Pair, "fit" => Fit: Str, "image_rendering" => ImageRendering: Str, "tint" => Tint: Color, "decode" => Decode: Str, "dither" => Dither: Num, "characters" => Characters: Num,
     "cursor" => Cursor: Str,
     // Text.
     "text_size" => TextSize: Num, "weight" => Weight: Num, "bold" => Bold: Bool, "italic" => Italic: Bool,

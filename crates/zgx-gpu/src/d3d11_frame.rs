@@ -104,6 +104,25 @@ struct Pipeline {
     blend: ID3D11BlendState,
 }
 
+/// A clamped sampler of `filter`, or none if Direct3D makes none.
+fn sampler_state(device: &ID3D11Device, filter: D3D11_FILTER) -> Option<ID3D11SamplerState> {
+    let desc = D3D11_SAMPLER_DESC {
+        Filter: filter,
+        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+        MipLODBias: 0.,
+        MaxAnisotropy: 1,
+        ComparisonFunc: D3D11_COMPARISON_NEVER,
+        BorderColor: [0.; 4],
+        MinLOD: 0.,
+        MaxLOD: 32.,
+    };
+    let mut state = None;
+    // SAFETY: A plain sampler description.
+    unsafe { device.CreateSamplerState(&desc, Some(&mut state)) }.ok()?;
+    state
+}
 /// The device, its immediate context and every pipeline: shared by the
 /// renderers of a `GpuContext`, as its wgpu device is.
 pub(crate) struct Device {
@@ -113,6 +132,9 @@ pub(crate) struct Device {
     pipelines: [Pipeline; 6],
     rasterizer: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
+    /// Pixelated images' sampler, the nearest texel's, made with the first
+    /// (`Frame::nearest`; `None`: Direct3D made none).
+    nearest: std::cell::OnceCell<Option<ID3D11SamplerState>>,
     /// Bound where a frame has no clip regions: one zeroed `Region`.
     no_regions: ID3D11ShaderResourceView,
     /// The query `wait_idle` ends and waits for.
@@ -264,25 +286,8 @@ impl Device {
             state.ok_or_else(|| GpuError("Direct3D 11 made no rasterizer state".into()))?
         };
         // Linear and clamped, as `GpuRenderer::texture_bind`'s.
-        let sampler = {
-            let desc = D3D11_SAMPLER_DESC {
-                Filter: D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT,
-                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-                MipLODBias: 0.,
-                MaxAnisotropy: 1,
-                ComparisonFunc: D3D11_COMPARISON_NEVER,
-                BorderColor: [0.; 4],
-                MinLOD: 0.,
-                MaxLOD: 32.,
-            };
-            let mut state = None;
-            // SAFETY: A plain sampler description.
-            unsafe { device.CreateSamplerState(&desc, Some(&mut state)) }
-                .map_err(failed("sampler"))?;
-            state.ok_or_else(|| GpuError("Direct3D 11 made no sampler".into()))?
-        };
+        let sampler = sampler_state(&device, D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT)
+            .ok_or_else(|| GpuError("Direct3D 11 made no sampler".into()))?;
         let no_regions = raw_buffer(
             &device,
             size_of::<crate::Region>(),
@@ -297,6 +302,7 @@ impl Device {
             pipelines,
             rasterizer,
             sampler,
+            nearest: std::cell::OnceCell::new(),
             no_regions,
             idle,
         })
@@ -524,6 +530,7 @@ impl Device {
             device: self,
             current: None,
             scissor: None,
+            nearest: false,
         }
     }
 }
@@ -1065,6 +1072,8 @@ pub(crate) struct Frame<'a> {
     /// The scissor last set: setting it again costs the driver as much as
     /// a change (most batches share their region's).
     scissor: Option<Scissor>,
+    /// Sampling the nearest texel (`nearest`), not the linear sampler.
+    nearest: bool,
 }
 
 impl Frame<'_> {
@@ -1085,6 +1094,31 @@ impl Frame<'_> {
     }
     /// The texture fragments sample: the atlas, or for catch-up copies the
     /// shown buffer (whose size the copy's vertex stage reads).
+    /// Sample the nearest texel from here (a pixelated image's), or blend as
+    /// every other draw does.
+    pub(crate) fn nearest(&mut self, on: bool) {
+        if self.nearest == on {
+            return;
+        }
+        let device = self.device;
+        let sampler = match on {
+            true => device
+                .nearest
+                .get_or_init(|| sampler_state(&device.device, D3D11_FILTER_MIN_MAG_MIP_POINT))
+                .as_ref(),
+            false => Some(&device.sampler),
+        };
+        let Some(sampler) = sampler else {
+            return;
+        };
+        self.nearest = on;
+        // SAFETY: The device's own sampler, in the slot both modules read.
+        unsafe {
+            device
+                .context
+                .PSSetSamplers(0, Some(&[Some(sampler.clone())]));
+        }
+    }
     pub(crate) fn texture(&mut self, view: &ID3D11ShaderResourceView) {
         // SAFETY: A live view, in the register both modules read it from.
         unsafe {

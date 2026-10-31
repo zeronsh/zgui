@@ -368,6 +368,41 @@ impl Scene {
         self.sync_cold(id);
         self.invalidate(id, PAINTED);
     }
+    /// Sample node `id`'s image, or its background image, as `rendering`
+    /// says (CSS's `image-rendering`): `Pixelated`, the nearest pixel.
+    pub fn set_image_rendering(&mut self, id: NodeId, rendering: crate::image::ImageRendering) {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.image_rendering.get(&id))
+            .copied()
+            .unwrap_or_default();
+        if !self.contains(id) || held == rendering {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match rendering {
+            crate::image::ImageRendering::Auto => maps.image_rendering.remove(&id),
+            rendering => maps.image_rendering.insert(id, rendering),
+        };
+        self.sync_cold(id);
+        self.invalidate(id, PAINTED);
+    }
+    /// Whether any node's image is sampled other than smoothly.
+    #[inline(always)]
+    pub fn has_image_rendering(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.image_rendering.is_empty())
+    }
+    /// How node `id`'s image is sampled (`set_image_rendering`).
+    pub fn image_rendering(&self, id: NodeId) -> crate::image::ImageRendering {
+        self.cold
+            .as_ref()
+            .and_then(|cold| cold.image_rendering.get(&id))
+            .copied()
+            .unwrap_or_default()
+    }
     /// Whether any node has text shadows.
     #[inline(always)]
     pub fn has_text_shadows(&self) -> bool {

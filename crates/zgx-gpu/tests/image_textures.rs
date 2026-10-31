@@ -153,3 +153,112 @@ fn a_kept_file_draws_once_decoded_at_the_size_it_shows() {
     assert!(gpu.take_images_uploaded(), "its decoded copy may go");
     assert!(gpu.readback().unwrap()[(30 * 200 + 30) * 4] > 200);
 }
+
+/// A 2 by 2 checker, black and white, drawn at 100 by 100: smooth, its
+/// middle blends them; pixelated (`Scene::set_image_rendering`), each point
+/// is the nearest of the four, black or white, as an image and as a
+/// background image alike.
+#[test]
+fn pixelated_images_take_the_nearest_pixel() {
+    use zgx::decoration::{Background, Decoration};
+    use zgx::image::ImageRendering;
+    let checker = Arc::new(
+        ImageData::new(
+            2,
+            2,
+            vec![
+                0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255,
+            ],
+        )
+        .unwrap(),
+    );
+    // Grey values (neither black nor white) along a row through the middle.
+    let greys = |background: bool, rendering: ImageRendering| {
+        let mut scene = Scene::new(100., 100.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let kind = match background {
+            false => NodeKind::Image(checker.clone()),
+            true => NodeKind::Quad(QuadStyle {
+                decoration: Some(Arc::new(Decoration {
+                    background: Some(Background::Image {
+                        image: checker.clone(),
+                        fit: Default::default(),
+                    }),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+        };
+        let node = scene.append(
+            scene.root(),
+            kind,
+            Style {
+                width: Some(100.),
+                height: Some(100.),
+                ..Default::default()
+            },
+        );
+        scene.set_image_rendering(node, rendering);
+        let mut gpu = GpuRenderer::new(100, 100).unwrap();
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        (0..100)
+            .map(|x| pixels[(25 * 100 + x) * 4])
+            .filter(|v| (8..248).contains(v))
+            .count()
+    };
+    for background in [false, true] {
+        let smooth = greys(background, ImageRendering::Auto);
+        assert!(
+            smooth > 20,
+            "background {background}: smooth blends ({smooth} greys)"
+        );
+        let pixelated = greys(background, ImageRendering::Pixelated);
+        assert_eq!(
+            pixelated, 0,
+            "background {background}: pixelated is black or white"
+        );
+    }
+}
+
+/// A page of images, every other one pixelated, draws in as many draws as
+/// the same page all smooth: each image samples its own texture in a draw
+/// of its own either way, the pixelated ones with a sampler of their own.
+#[test]
+fn pixelated_images_draw_in_as_many_draws() {
+    use zgx::image::ImageRendering;
+    let images: Vec<_> = (0..20u8)
+        .map(|i| Arc::new(ImageData::new(4, 4, [i * 12, 90, 200 - i * 9, 255].repeat(16)).unwrap()))
+        .collect();
+    let draws = |mixed: bool| {
+        let mut scene = Scene::new(500., 200.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        for (i, image) in images.iter().enumerate() {
+            let node = scene.append(
+                scene.root(),
+                NodeKind::Image(image.clone()),
+                Style {
+                    width: Some(40.),
+                    height: Some(40.),
+                    ..Default::default()
+                },
+            );
+            scene.set_transform(
+                node,
+                Transform {
+                    x: (i % 10) as f32 * 48.,
+                    y: (i / 10) as f32 * 48.,
+                },
+            );
+            if mixed && i % 2 == 0 {
+                scene.set_image_rendering(node, ImageRendering::Pixelated);
+            }
+        }
+        let mut gpu = GpuRenderer::new(500, 200).unwrap();
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap().draw_calls
+    };
+    let (smooth, mixed) = (draws(false), draws(true));
+    assert_eq!(mixed, smooth, "draws: {smooth} smooth, {mixed} mixed");
+}

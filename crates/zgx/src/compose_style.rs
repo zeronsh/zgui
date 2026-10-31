@@ -1956,6 +1956,11 @@ fn apply_rare(
             ui.text_geometry_moved();
         }
         scene.set_text_shadows(node, cold.and_then(|cold| cold.text_shadows.clone()));
+        scene.set_image_rendering(
+            node,
+            cold.and_then(|cold| cold.image_rendering)
+                .unwrap_or_default(),
+        );
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

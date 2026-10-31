@@ -7280,6 +7280,10 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Layer, Lit::Bool(v)) => s.isolated(*v),
         (BgImage | BgFit, _) => s,
         (ObjectPosition, Lit::Pair(x, y)) => s.object_position(*x, *y),
+        (ImageRendering, Lit::Str(v)) => s.image_rendering(match &**v {
+            "pixelated" => zgx::image::ImageRendering::Pixelated,
+            _ => zgx::image::ImageRendering::Auto,
+        }),
         (Fit, Lit::Str(v)) => s.object_fit(match &**v {
             "contain" => ObjectFit::Contain,
             "cover" => ObjectFit::Cover,
