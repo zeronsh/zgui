@@ -119,9 +119,9 @@ fn transformed_images_fade_with_their_fade_edges_ancestor() {
     let report = scene.flush();
     gpu.render(&scene, &report.damage).unwrap();
     let pixels = gpu.readback().unwrap();
-    // 100 px down, 20 into the 40 px band: a quarter of full brightness.
+    // 100 px down, 20 into the 40 px band: half of full brightness, eased.
     let (rotated, upright) = (pixel(&pixels, 20, 100)[0], pixel(&pixels, 70, 100)[0]);
-    assert!(upright.abs_diff(64) <= 4, "upright {upright}");
+    assert!(upright.abs_diff(125) <= 5, "upright {upright}");
     assert!(
         rotated.abs_diff(upright) <= 2,
         "rotated {rotated} upright {upright}"
