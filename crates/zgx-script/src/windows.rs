@@ -41,6 +41,47 @@ pub struct Window {
     /// Where it opens: the window's top-left this far up and left of the
     /// pointer (a tab torn off, kept under the grab).
     pub under_pointer: Option<(f64, f64)>,
+    /// Its own state, which the host keeps as the system says and its
+    /// content reads (`win.active`, `win.shown`, `win.size`); none for a
+    /// window whose content never asked.
+    pub state: Option<WindowState>,
+}
+/// A window's own `active`, `shown` and `size`, as its host keeps them.
+#[derive(Clone)]
+pub struct WindowState {
+    /// Whether it is the active window, its keys going to it.
+    pub active: Signal<Value>,
+    /// Whether it shows: not hidden, minimized or covered.
+    pub shown: Signal<Value>,
+    /// Its size in points, `{ width, height }`.
+    pub size: Signal<Value>,
+}
+impl WindowState {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            active: runtime.signal(Value::Bool(false)),
+            shown: runtime.signal(Value::Bool(false)),
+            size: runtime.signal(size(0., 0.)),
+        }
+    }
+    /// `win` as a script reads it: each read-only.
+    fn table(&self, lua: &Lua) -> mlua::Result<Table> {
+        let win = lua.create_table()?;
+        win.set(
+            "active",
+            ReadState(State::new(self.active.clone()), "active".into()),
+        )?;
+        win.set(
+            "shown",
+            ReadState(State::new(self.shown.clone()), "shown".into()),
+        )?;
+        win.set(
+            "size",
+            ReadState(State::new(self.size.clone()), "size".into()),
+        )?;
+        win.set_readonly(true);
+        Ok(win)
+    }
 }
 impl PartialEq for Window {
     fn eq(&self, other: &Self) -> bool {
@@ -250,9 +291,16 @@ fn build(
     id: &str,
     item: &Value,
 ) -> mlua::Result<(Window, Rc<Node>)> {
-    let table: Table = vm.call(&group.build, item.clone())?;
+    // `win` made only for a build that takes it.
+    let state = (group.build.info().num_params >= 2).then(|| WindowState::new(&vm.runtime));
+    let table: Table = match &state {
+        Some(state) => vm.call(&group.build, (item.clone(), state.table(&vm.lua)?))?,
+        None => vm.call(&group.build, item.clone())?,
+    };
     let open = vm.runtime.signal(Value::Bool(true));
-    window_of(&table, id.to_owned(), open, false)
+    let (mut window, node) = window_of(&table, id.to_owned(), open, false, None)?;
+    window.state = state;
+    Ok((window, node))
 }
 
 /// A window from `ui.window`'s options; `declared` for `ui.window`'s own,
@@ -262,9 +310,21 @@ fn window_of(
     id: String,
     open: Signal<Value>,
     declared: bool,
+    runtime: Option<(&Lua, &Runtime)>,
 ) -> mlua::Result<(Window, Rc<Node>)> {
     let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
-    let node = expect_node(table.get::<mlua::Value>(1)?, &what("content ([1])"))?;
+    // `ui.window`'s content may be `function(win)`: the window's own state.
+    let mut state = None;
+    let content = match (table.get::<mlua::Value>(1)?, runtime) {
+        (mlua::Value::Function(f), Some((lua, runtime))) => {
+            let made = WindowState::new(runtime);
+            let node = f.call::<mlua::Value>(made.table(lua)?)?;
+            state = Some(made);
+            node
+        }
+        (content, _) => content,
+    };
+    let node = expect_node(content, &what("content ([1])"))?;
     let number = |key: &str, default: f64| -> mlua::Result<f64> {
         Ok(table.get::<Option<f64>>(key)?.unwrap_or(default))
     };
@@ -290,6 +350,7 @@ fn window_of(
             tabbing => tabbing,
         },
         under_pointer,
+        state,
         id,
     };
     let known: &[&str] = if declared {
@@ -436,7 +497,8 @@ pub(crate) fn install(
                 .ok_or_else(|| mlua::Error::runtime("ui.window needs an `id`"))?;
             let what = |field: &str| format!("ui.window `{id}`'s `{field}`");
             let open = expect_state(&table.get::<mlua::Value>("open")?, &what("open"))?;
-            let (window, node) = window_of(&table, id, open, true)?;
+            let runtime = crate::node::env(lua)?.runtime.clone();
+            let (window, node) = window_of(&table, id, open, true, Some((lua, &runtime)))?;
             let mut pending = windows.pending.borrow_mut();
             if pending.iter().any(|(w, _)| w.id == window.id) {
                 return Err(mlua::Error::runtime(format!(

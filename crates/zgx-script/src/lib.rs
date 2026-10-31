@@ -94,6 +94,11 @@ pub use command::Command;
 pub use design::DesignLint;
 pub use persist::app_data_dir;
 pub use socket::{Message, Socket, SocketRequest};
+pub use windows::WindowState;
+/// A window's size as `ui.window.size` and `win.size` hold it.
+pub fn window_size_value(width: f32, height: f32) -> Value {
+    windows::size(width, height)
+}
 pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted, values_converted};
 pub use windows::Window;
 

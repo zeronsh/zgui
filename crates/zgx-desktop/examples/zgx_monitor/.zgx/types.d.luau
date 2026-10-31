@@ -1366,7 +1366,16 @@ export type WindowOptions = {
 	-- `on_drag_outside`'s `{ e.grab_x, e.grab_y }` (a tab torn off stays
 	-- under the grab).
 	read under_pointer: { number }?,
-	read [number]: Node,
+	read [number]: Node | ((win: OwnWindow) -> Node),
+}
+
+-- A window's own state, as its content reads it: whether it is the active
+-- window, whether it shows, and its size in points. `ui.window.active` and the
+-- rest are the app's main window's.
+export type OwnWindow = {
+	read active: State<boolean>,
+	read shown: State<boolean>,
+	read size: State<{ width: number, height: number }>,
 }
 
 -- What `ui.windows`' `build` gives an item's window: `ui.window`'s options
@@ -17627,7 +17636,7 @@ declare ui: {
 	-- goes, built once by `build(item)`. A person closing one calls
 	-- `on_close(item)`, for the app to let the item go. `key` names an item
 	-- (its `id` field by default).
-	windows: (list: State<{ any }>, build: (item: any) -> ItemWindow, options: { key: ((item: any) -> string | number)?, on_close: ((item: any) -> ())? }?) -> (),
+	windows: (list: State<{ any }>, build: (item: any, win: OwnWindow) -> ItemWindow, options: { key: ((item: any) -> string | number)?, on_close: ((item: any) -> ())? }?) -> (),
 	window_rect: (el: Element) -> { x: number, y: number, width: number, height: number }?,
 	checkbox: (props: CheckboxProps) -> Node,
 	input: (props: InputProps) -> Node,
