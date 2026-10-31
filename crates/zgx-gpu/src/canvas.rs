@@ -293,8 +293,13 @@ impl HeadlessCanvases {
             }
             if item.effects.opacity >= 1.
                 && item.effects.edge_fade <= 0.
-                && let Some(quads) =
-                    crate::canvas_quads(canvas, (bounds.x, bounds.y), view, &mut self.points)
+                && let Some(quads) = crate::canvas_quads(
+                    canvas,
+                    (bounds.x, bounds.y),
+                    view,
+                    !cfg!(windows),
+                    &mut self.points,
+                )
             {
                 std::hint::black_box((quads, &self.points));
                 self.cache.forget(item.id);

@@ -90,6 +90,8 @@ fn locations(
 
 #[test]
 fn every_shader_module_compiles_each_entry_point() {
+    let fxc =
+        cfg!(windows) && matches!(wgpu::Dx12Compiler::Fxc.with_env(), wgpu::Dx12Compiler::Fxc);
     let Some(device) = device() else {
         eprintln!("every_shader: no adapter; nothing checked");
         return;
@@ -101,6 +103,12 @@ fn every_shader_module_compiles_each_entry_point() {
     let mut made = 0;
     for (name, source) in zgx_gpu::shader_modules() {
         if source.starts_with("enable dual_source_blending") && !dual {
+            continue;
+        }
+        // FXC can't compile the areas' shader: the renderer never asks it to
+        // (`areas_on_gpu`), so neither does this. DXC, and every other
+        // backend, compiles it.
+        if name == "polyline with areas" && fxc {
             continue;
         }
         let parsed = naga::front::wgsl::parse_str(&source)

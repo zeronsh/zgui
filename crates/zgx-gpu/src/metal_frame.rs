@@ -200,7 +200,7 @@ impl MetalFrame {
         self.polyline
             .get_or_init(|| {
                 let library =
-                    Library::new(&self.device, &crate::polyline_source(), Kind::Quads).ok()?;
+                    Library::new(&self.device, &crate::polyline_source(true), Kind::Quads).ok()?;
                 let format = MTLPixelFormat::BGRA8Unorm;
                 let plain = library
                     .pipeline(&self.device, "vs", "fs_polyline", format, Blend::Over)
