@@ -733,6 +733,8 @@ pub(crate) struct ColdStyles {
     pub(crate) grid_place: Option<std::sync::Arc<crate::grid_tracks::GridPlace>>,
     /// `Styled::z`.
     pub(crate) z: Option<i32>,
+    /// `Styled::display_contents`.
+    pub(crate) display_contents: bool,
     /// `Styled::sticky_top`.
     pub(crate) sticky_top: Option<f32>,
     /// `Styled::object_position`.
@@ -936,6 +938,7 @@ impl RareStyles {
             if theirs.z.is_some() {
                 mine.z = theirs.z;
             }
+            mine.display_contents |= theirs.display_contents;
             if let Some(template) = &theirs.grid_template {
                 match &mut mine.grid_template {
                     Some(mine) => {
@@ -1601,6 +1604,24 @@ pub trait Styled: Sized {
     /// Its rows in its grid, as `grid_column` (CSS `grid-row`).
     fn grid_row(mut self, lines: crate::grid_tracks::GridLines) -> Self {
         grid_place(self.styles_mut()).row = Some(lines);
+        self
+    }
+    /// Lay this view's children out in its place, as its parent's own, as
+    /// CSS `display: contents` does: in a grid each is a cell, in a row an
+    /// item. Its own size, padding and margins don't apply; it spans its
+    /// children for paint, clip and hits, and keeps its place in focus
+    /// order and for assistive technology (a role or label it has stays,
+    /// its children under it). See `Scene::set_display_contents`.
+    fn display_contents(mut self) -> Self {
+        let styles = self.styles_mut();
+        // Its parent lays out with taffy, which lays it out in its place:
+        // a value that changes nothing, to say so.
+        styles.layout_options_mut().reverse.get_or_insert(false);
+        styles
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .display_contents = true;
         self
     }
     /// A grid's number of equal columns (at least 1).

@@ -12,6 +12,8 @@ mod composition_percent;
 mod composition_wrap;
 #[path = "../contents_layout.rs"]
 mod contents_layout;
+#[path = "../display_contents.rs"]
+mod display_contents;
 #[path = "../element_zoom.rs"]
 mod element_zoom;
 #[path = "../grid_areas.rs"]

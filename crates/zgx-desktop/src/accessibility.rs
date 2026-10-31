@@ -2382,6 +2382,45 @@ mod projection_key_tests {
         assert_eq!(children, [staying_id]);
     }
 
+    /// A group laid out in its parent's place (`set_display_contents`)
+    /// keeps its role and name, its children under it.
+    #[test]
+    fn a_group_laid_out_in_its_parents_place_keeps_its_children() {
+        let mut scene = Scene::new(400., 300.);
+        let grid = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Row),
+            fixed(300., 200.),
+        );
+        let group = scene.append(grid, NodeKind::Container(Layout::Column), Style::default());
+        let buttons = ["One", "Two"]
+            .map(|_| scene.append(group, NodeKind::Rect(Color(0, 0, 0, 255)), fixed(100., 20.)));
+        scene.set_display_contents(group, true);
+        scene.prepare_layout();
+        let mut semantics = Semantics::new();
+        semantics.set(
+            group,
+            zgx::semantics::SemanticNode::new(Role::Group, "Photos"),
+        );
+        for (button, name) in buttons.iter().zip(["One", "Two"]) {
+            semantics.set(
+                *button,
+                zgx::semantics::SemanticNode::new(Role::Button, name),
+            );
+        }
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(&scene, &semantics, None, "Test", 1.);
+        let group_id = adapter.ids[&group];
+        let held = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == group_id)
+            .map(|(_, node)| node)
+            .expect("the group is there");
+        assert_eq!(held.label(), Some("Photos"));
+        assert_eq!(held.children(), &buttons.map(|button| adapter.ids[&button]));
+    }
+
     #[test]
     fn replacing_semantics_instance_cannot_reuse_coincident_node_revisions() {
         let mut scene = Scene::new(100., 100.);

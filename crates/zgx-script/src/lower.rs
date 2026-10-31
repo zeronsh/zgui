@@ -6986,8 +6986,8 @@ fn align(v: &str) -> Align {
     }
 }
 
-/// A grid's areas, flow, or an item's area or lines, checked as they came
-/// in (`node::lit`).
+/// A grid's tracks, areas or flow, an item's area or lines, or `display`,
+/// checked as they came in (`node::lit`).
 #[cold]
 #[inline(never)]
 fn grid_text<S: Styled>(s: S, prop: Prop, text: &str) -> S {
@@ -7002,6 +7002,10 @@ fn grid_text<S: Styled>(s: S, prop: Prop, text: &str) -> S {
             Err(_) => s,
         },
         Prop::Area => s.grid_area(text),
+        Prop::Display => match text {
+            "contents" => s.display_contents(),
+            _ => s,
+        },
         Prop::GridColumn => match text.parse() {
             Ok(lines) => s.grid_column(lines),
             Err(_) => s,
@@ -7173,9 +7177,9 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Grid, Lit::Bool(true)) => s.grid(),
         (Cols, Lit::Num(v)) => s.grid_cols(v.max(1.) as u16),
         (Rows, Lit::Num(v)) => s.grid_rows(v.max(1.) as u16),
-        // One arm for a grid's texts: an arm more makes the match, and every
-        // prop's apply, cost more.
-        (Cols | Rows | Areas | Flow | Area | GridColumn | GridRow, Lit::Str(text)) => {
+        // One arm for the layout texts few nodes set: an arm more makes the
+        // match, and every prop's apply, cost more.
+        (Cols | Rows | Areas | Flow | Area | GridColumn | GridRow | Display, Lit::Str(text)) => {
             grid_text(s, prop, text)
         }
         (W | H | MinW | MaxW | MinH | MaxH, Lit::Str(size)) => size_math(s, prop, size),

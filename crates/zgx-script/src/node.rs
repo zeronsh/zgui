@@ -1506,6 +1506,7 @@ props! {
     // (`specificity` compiles to a test of them).
     "areas" => Areas: Areas, "flow" => Flow: GridFlow, "area" => Area: Str,
     "grid_column" => GridColumn: GridLines, "grid_row" => GridRow: GridLines,
+    "display" => Display: Str,
     // Transforms: after layout, about `origin` (fractions of the node).
     // Last, so that `is_transform` is a single comparison.
     "x" => X: Num, "y" => Y: Num,

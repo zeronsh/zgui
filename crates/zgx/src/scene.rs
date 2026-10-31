@@ -1838,6 +1838,11 @@ struct ColdMaps {
     shadows_shown: NodeMap<Rect>,
     /// Where nodes take hits while they animate (`set_hit_target`).
     hit_targets: NodeMap<HitTarget>,
+    /// Nodes whose children lay out in their place (`set_display_contents`).
+    flat: NodeMap<Flat>,
+    /// How many children of each parent do: a parent with some lays out
+    /// with taffy, its children's children as its own.
+    flat_parents: NodeMap<u32>,
 }
 /// Where a node takes hits while an animation moves it: the place it's
 /// going, not the place it shows (Core Animation's model layer against its
@@ -1879,6 +1884,10 @@ impl HitTarget {
         own
     }
 }
+/// A node whose children lay out in its place. Its own type, not `()`: a
+/// second user of `NodeMap<()>`'s insert stops it inlining into the label
+/// queue's, on every mount.
+struct Flat;
 /// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
 #[derive(Clone, Copy)]
 struct Sticky {
@@ -4433,6 +4442,69 @@ impl Scene {
             self.invalidate_layout(id);
         }
     }
+    /// Lay out `id`'s children in its place, as its parent's own (CSS
+    /// `display: contents`, all its children): in a grid, each a cell; in a
+    /// row, each an item. Its own box takes none of its size, padding or
+    /// margins; it spans its children, for paint, clip and hit testing,
+    /// which keep the tree as it is, as do focus order and assistive
+    /// technology. Its parent lays out with taffy. `set_contents` is the
+    /// one-child kind regions use.
+    pub fn set_display_contents(&mut self, id: NodeId, on: bool) {
+        if self.is_display_contents(id) == on {
+            return;
+        }
+        let parent = self.node(id).parent;
+        let maps = self.cold.get_or_insert_default();
+        match on {
+            true => {
+                maps.flat.insert(id, Flat);
+            }
+            false => {
+                maps.flat.remove(&id);
+            }
+        }
+        if let Some(parent) = parent {
+            let count = maps.flat_parents.entry(parent).or_insert(0);
+            *count = match on {
+                true => *count + 1,
+                false => count.saturating_sub(1),
+            };
+            if *count == 0 {
+                maps.flat_parents.remove(&parent);
+            }
+            self.sync_cold(parent);
+            let node = self.node_mut(parent);
+            node.style_writes = node.style_writes.wrapping_add(1);
+            self.invalidate_layout(parent);
+        }
+        self.sync_cold(id);
+        self.invalidate_layout(id);
+    }
+    /// Whether `id` lays its children out in its place
+    /// (`set_display_contents`).
+    pub fn is_display_contents(&self, id: NodeId) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| cold.flat.contains_key(&id))
+    }
+    /// Whether some of `id`'s children lay theirs out in their place: it
+    /// lays out with taffy, theirs as its own. One test a scene with no
+    /// special nodes pays.
+    #[inline(always)]
+    pub(crate) fn has_flat_children(&self, id: NodeId) -> bool {
+        self.contents_count > 0 && self.node(id).special.has(COLD) && self.flat_parent(id)
+    }
+    #[cold]
+    #[inline(never)]
+    fn flat_parent(&self, id: NodeId) -> bool {
+        self.cold.as_ref().is_some_and(|cold| {
+            cold.flat_parents.contains_key(&id)
+                && self
+                    .children_raw(self.node(id))
+                    .iter()
+                    .any(|child| cold.flat.contains_key(child))
+        })
+    }
     /// Make `id` lay out as its last child would in its place, as CSS
     /// `display: contents` does: that child's size, flex and position
     /// properties (percentages, `absolute` and insets resolving against
@@ -6243,6 +6315,8 @@ impl Scene {
                 || cold.size_calcs.contains_key(&id)
                 || cold.balanced.contains_key(&id)
                 || cold.hit_targets.contains_key(&id)
+                || cold.flat.contains_key(&id)
+                || cold.flat_parents.contains_key(&id)
         }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
@@ -6653,6 +6727,8 @@ impl Scene {
             maps.text_shadows.remove(&id);
             maps.content_widths.remove(&id);
             maps.hit_targets.remove(&id);
+            maps.flat.remove(&id);
+            maps.flat_parents.remove(&id);
         }
     }
     /// Hit `id` and what it holds where an animation is taking it, not
