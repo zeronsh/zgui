@@ -22,6 +22,8 @@ use crate::errors::DecodeErrors;
 use crate::marker::Marker;
 use crate::mcu_prog::get_marker;
 use crate::misc::{calculate_padded_width, setup_component_params};
+// zgx: reduced IDCTs for a scaled decode (see `set_scale`).
+use crate::idct::scalar::idct_scaled_at;
 use crate::worker::{color_convert, upsample};
 use crate::JpegDecoder;
 
@@ -134,9 +136,10 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
             mcu_width = ((self.info.width + 7) / 8) as usize;
             mcu_height = ((self.info.height + 7) / 8) as usize;
         }
-        let width = usize::from(self.info.width);
+        // zgx: rows of pixels are the scaled size (see `set_scale`).
+        let width = self.out_width();
 
-        let padded_width = calculate_padded_width(width, self.info.sample_ratio);
+        let padded_width = calculate_padded_width(width, self.info.sample_ratio, self.scale_block);
 
         let mut stream = BitStream::new();
         let mut tmp = [0_i32; DCT_BLOCK];
@@ -158,7 +161,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                 // allocate enough space to hold a whole MCU width
                 // this means we should take into account sampling ratios
                 // `*8` is because each MCU spans 8 widths.
-                let len = comp.width_stride * comp.vertical_sample * 8;
+                // zgx: `block_h` rows when scaled (see `set_scale`).
+                let len = comp.width_stride * comp.vertical_sample * comp.block_h;
 
                 comp.needed = true;
                 comp.raw_coeff = vec![0; len];
@@ -179,7 +183,9 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                     * component.vertical_sample
                     * component.horizontal_sample
                     * mcu_height
-                    * 64;
+                    // zgx: these hold IDCT output, a scaled block (see `set_scale`).
+                    * component.block_w
+                    * component.block_h;
                 *mcu = vec![0; len];
             }
         }
@@ -332,8 +338,9 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         // Size of our output image(width*height)
         let is_hv = usize::from(self.is_interleaved);
         let upsampler_scratch_size = is_hv * self.components[0].width_stride;
-        let width = usize::from(self.info.width);
-        let padded_width = calculate_padded_width(width, self.info.sample_ratio);
+        // zgx: rows of pixels are the scaled size (see `set_scale`).
+        let width = self.out_width();
+        let padded_width = calculate_padded_width(width, self.info.sample_ratio, self.scale_block);
 
         let mut upsampler_scratch_space = vec![0; upsampler_scratch_size];
 
@@ -464,7 +471,8 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
         if PROGRESSIVE && z_scans.len() > 1 {
             let min_du = z_scans
                 .iter()
-                .map(|&k| self.components[k].width_stride / 8)
+                // zgx: blocks per row, `block_w` pixels each (see `set_scale`).
+                .map(|&k| self.components[k].width_stride / self.components[k].block_w)
                 .min()
                 .unwrap_or(0);
             scan_du_width = scan_du_width.min(min_du);
@@ -489,9 +497,11 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                     .ok_or(DecodeErrors::FormatStatic("AC table not found"))?;
 
                 let qt_table = &component.quantization_table;
+                // zgx: the size of a decoded block, 8 unless scaled (see `set_scale`).
+                let (block_w, block_h) = (component.block_w, component.block_h);
                 let channel = if PROGRESSIVE {
                     let offset =
-                        mcu_height * component.width_stride * 8 * component.vertical_sample;
+                        mcu_height * component.width_stride * block_h * component.vertical_sample;
                     // Small stopgap for https://github.com/etemesi254/zune-image/issues/362
                     if offset >= progressive[k].len(){
                         return Err(DecodeErrors::FormatStatic("Would panic on slice iteration"))
@@ -569,20 +579,29 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                             // tmp was only written partially, note that len is in ZigZag order.
                             clobber_more_than_4x4 = len > 10;
 
+                            // zgx: blocks are `block_w` by `block_h` pixels, not 8.
                             let idct_position = if PROGRESSIVE {
                                 // For non-interleaved, j indexes data units directly
-                                j * 8
+                                j * block_w
                             } else {
                                 // derived from stb and rewritten for my tastes
-                                let c2 = v_samp * 8;
-                                let c3 = ((j * component.horizontal_sample) + h_samp) * 8;
+                                let c2 = v_samp * block_h;
+                                let c3 = ((j * component.horizontal_sample) + h_samp) * block_w;
 
                                 component.width_stride * c2 + c3
                             };
 
                             let idct_pos = channel.get_mut(idct_position..).unwrap();
 
-                            if len <= 1 {
+                            if (block_w, block_h) != (8, 8) {
+                                // zgx: a scaled decode's reduced IDCT. It leaves
+                                // `tmp` as decoded, which the clobber above relies on.
+                                let (bx, by) = if PROGRESSIVE { (j, mcu_height * component.vertical_sample) } else {
+                                    (j * component.horizontal_sample + h_samp, mcu_height * component.vertical_sample + v_samp)
+                                };
+                                let (w, h, stride) = (component.full_w, component.full_h, component.width_stride);
+                                idct_scaled_at(block_w, block_h, bx, by, w, h, tmp, idct_pos, stride);
+                            } else if len <= 1 {
                                 (self.idct_1x1_func)(tmp, idct_pos, component.width_stride);
                             } else if len <= 10 {
                                 (self.idct_4x4_func)(tmp, idct_pos, component.width_stride);
@@ -924,7 +943,9 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
             // should sample full raw coeffs
             let is_last_considered = is_vertically_sampled && (i != mcu_height.saturating_sub(1));
 
-            let num_iters = (8 - usize::from(is_last_considered)) * self.coeff * self.v_max;
+            // zgx: an MCU row is `scale_block` rows when scaled (see `set_scale`).
+            let num_iters =
+                (self.scale_block - usize::from(is_last_considered)) * self.coeff * self.v_max;
 
             color_conv_function(num_iters, samples)?;
         } else {
@@ -935,10 +956,11 @@ impl<T: ZByteReaderTrait> JpegDecoder<T> {
                 .enumerate()
                 .for_each(|(pos, x)| channels_ref[pos] = &x.raw_coeff);
 
+            // zgx: an MCU row is `scale_block` rows when scaled (see `set_scale`).
             if let SampleRatios::Generic(_, v) = self.info.sample_ratio {
-                color_conv_function(8 * v * self.coeff, channels_ref)?;
+                color_conv_function(self.scale_block * v * self.coeff, channels_ref)?;
             } else {
-                color_conv_function(8 * self.coeff, channels_ref)?;
+                color_conv_function(self.scale_block * self.coeff, channels_ref)?;
             }
         }
 

@@ -157,6 +157,9 @@ pub struct JpegDecoder<T> {
     pub(crate) coeff:    usize, // Solves some weird bug :)
     /// Extended XMP segments
     pub(crate) extended_xmp_segments: Vec<ExtendedXmpSegment>,
+    /// zgx: the side of the pixel block each 8x8 block of coefficients becomes,
+    /// 8 / the scale denominator (8, 4, 2 or 1). See [`JpegDecoder::set_scale`].
+    pub(crate) scale_block: usize,
 }
 
 impl<T> JpegDecoder<T>
@@ -203,6 +206,8 @@ where
             is_mjpeg:          false,
             coeff:             1,
             extended_xmp_segments: vec![],
+            // zgx: full size unless `set_scale` asks for less.
+            scale_block: 8,
         }
     }
     /// Decode a buffer already in memory
@@ -264,9 +269,10 @@ where
     #[must_use]
     pub fn output_buffer_size(&self) -> Option<usize> {
         return if self.headers_decoded {
+            // zgx: the scaled size, see `set_scale`.
             Some(
-                usize::from(self.width())
-                    .checked_mul(usize::from(self.height()))?
+                self.out_width()
+                    .checked_mul(self.out_height())?
                     .checked_mul(self.options.jpeg_get_out_colorspace().num_components())?
             )
         } else {
@@ -888,23 +894,31 @@ where
         }
 
         for comp in &mut self.components {
-            let hs = self.h_max / comp.horizontal_sample;
-            let vs = self.v_max / comp.vertical_sample;
+            // zgx: a scaled decode makes subsampled components at the image's
+            // scaled size where it can, by a larger IDCT (see `set_scale`), so
+            // they need no up-sampling: `block_w` and `block_h` are then
+            // `scale_block` times the ratio. What is left, only of ratios the full
+            // decode up-samples generically (4 or 3), is up-sampled generically too,
+            // which is the full decode's nearest sample shrunk.
+            // Unscaled, they are 8 and this is `h_max / horizontal_sample`.
+            let hs = self.h_max * self.scale_block / (comp.horizontal_sample * comp.block_w);
+            let vs = self.v_max * self.scale_block / (comp.vertical_sample * comp.block_h);
+            let scaled = self.scale_block != 8;
 
             let samp_factor = match (hs, vs) {
                 (1, 1) => {
                     comp.sample_ratio = SampleRatios::None;
                     upsample_no_op
                 }
-                (2, 1) => {
+                (2, 1) if !scaled => {
                     comp.sample_ratio = SampleRatios::H;
                     choose_horizontal_samp_function(&self.options)
                 }
-                (1, 2) => {
+                (1, 2) if !scaled => {
                     comp.sample_ratio = SampleRatios::V;
                     choose_v_samp_function(&self.options)
                 }
-                (2, 2) => {
+                (2, 2) if !scaled => {
                     comp.sample_ratio = SampleRatios::HV;
                     choose_hv_samp_function(&self.options)
                 }
@@ -913,12 +927,50 @@ where
                     generic_sampler()
                 }
             };
-            comp.setup_upsample_scanline();
+            comp.setup_upsample_scanline(comp.block_h);
             comp.up_sampler = samp_factor;
         }
 
         return Ok(());
     }
+    /// zgx: Decode at 1/`denominator` of the image's size, as libjpeg's
+    /// `scale_denom` does: each 8x8 block of coefficients becomes an 8/d by 8/d
+    /// block of pixels through libjpeg's reduced IDCT (`jidctred.c`), each pixel
+    /// the mean of the d by d it replaces, so the planes, rows and output are d²
+    /// times smaller and no full-size pixel is ever made. Subsampled chroma is
+    /// made at the scaled size directly where it can (a 4:2:0 file at 1/2 takes
+    /// a full IDCT of its chroma and no up-sampling).
+    ///
+    /// The denominator is 1, 2, 4 or 8; any other value is rounded down to one
+    /// of those (0 to 1, 3 to 2, 5 to 7 to 4, above 8 to 8). The default is 1,
+    /// whose output is the unscaled decoder's, byte for byte.
+    ///
+    /// Call it before [`decode`](Self::decode) or
+    /// [`decode_into`](Self::decode_into). After headers are decoded,
+    /// [`dimensions`](Self::dimensions) and
+    /// [`output_buffer_size`](Self::output_buffer_size) report the scaled size,
+    /// `ceil(width / d)` by `ceil(height / d)`, while [`info`](Self::info)
+    /// keeps the size stored in the file.
+    pub fn set_scale(&mut self, denominator: u8) {
+        let d = match denominator {
+            0 | 1 => 1,
+            2 | 3 => 2,
+            4..=7 => 4,
+            _ => 8
+        };
+        self.scale_block = 8 / d;
+    }
+
+    /// zgx: the output width, the image's scaled by `set_scale`.
+    pub(crate) const fn out_width(&self) -> usize {
+        (self.info.width as usize).div_ceil(8 / self.scale_block)
+    }
+
+    /// zgx: the output height, the image's scaled by `set_scale`.
+    pub(crate) const fn out_height(&self) -> usize {
+        (self.info.height as usize).div_ceil(8 / self.scale_block)
+    }
+
     #[must_use]
     /// Get the width of the image as a u16
     ///
@@ -943,8 +995,9 @@ where
     /// -  None : The image headers haven't been decoded
     #[must_use]
     pub const fn dimensions(&self) -> Option<(usize, usize)> {
+        // zgx: the scaled size, see `set_scale`.
         return if self.headers_decoded {
-            Some((self.info.width as usize, self.info.height as usize))
+            Some((self.out_width(), self.out_height()))
         } else {
             None
         };

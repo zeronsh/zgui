@@ -163,7 +163,8 @@
 #![cfg_attr(not(any(feature = "x86", feature = "neon")), forbid(unsafe_code))]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "portable_simd", feature(portable_simd))]
-#![macro_use]
+// zgx: `#![macro_use]` was here; on a crate it does nothing, and Rust 1.99
+// warns of it in every build of zgx.
 extern crate alloc;
 extern crate core;
 

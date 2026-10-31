@@ -69,10 +69,16 @@ pub enum Decoding {
 pub const SYNC_PIXELS: u64 = 256 * 256;
 /// How a kept file decodes: its straight-alpha RGBA8 pixels, at its size.
 pub type Decode = fn(&[u8]) -> Result<Arc<[u8]>, String>;
+/// How a kept file decodes smaller (`ImageData::kept_scaled`): its
+/// straight-alpha RGBA8 pixels at least `size`, at a size of its own (a
+/// JPEG's 1/2, 1/4 or 1/8, decoded no larger), and that size.
+pub type DecodeScaled = fn(&[u8], (u32, u32)) -> Result<(u32, u32, Arc<[u8]>), String>;
 /// A kept file and what of it is decoded now.
 struct Kept {
     encoded: Arc<[u8]>,
     decode: Decode,
+    /// Decoded at least the size drawn, not whole (`kept_scaled`).
+    scaled: Option<DecodeScaled>,
     /// Its pixels at a size it was asked for, premultiplied, until released.
     held: std::sync::Mutex<Option<Held>>,
     /// The size a decode under way makes, if one is.
@@ -313,6 +319,28 @@ impl ImageData {
         encoded: Arc<[u8]>,
         decode: Decode,
     ) -> Result<Self, &'static str> {
+        Self::kept_with(width, height, encoded, decode, None)
+    }
+    /// As `kept`, its pixels decoded by `scaled` at least as large as they
+    /// are drawn rather than whole (a JPEG at 1/2, 1/4 or 1/8 of its size),
+    /// so a photo shown small never decodes at its full size. `decode` is
+    /// what `pixels` borrows, whole.
+    pub fn kept_scaled(
+        width: u32,
+        height: u32,
+        encoded: Arc<[u8]>,
+        decode: Decode,
+        scaled: DecodeScaled,
+    ) -> Result<Self, &'static str> {
+        Self::kept_with(width, height, encoded, decode, Some(scaled))
+    }
+    fn kept_with(
+        width: u32,
+        height: u32,
+        encoded: Arc<[u8]>,
+        decode: Decode,
+        scaled: Option<DecodeScaled>,
+    ) -> Result<Self, &'static str> {
         if width == 0 || height == 0 {
             return Err("image requires nonzero dimensions");
         }
@@ -321,6 +349,7 @@ impl ImageData {
             kept: std::mem::ManuallyDrop::new(Some(Kept {
                 encoded,
                 decode,
+                scaled,
                 held: std::sync::Mutex::new(None),
                 pending: std::sync::Mutex::new(None),
                 decoding: std::sync::atomic::AtomicU8::new(Decoding::Auto as u8),
@@ -492,21 +521,42 @@ fn decode_at(
     wake: bool,
 ) -> Option<Held> {
     let kept = pixels.kept.as_ref()?;
-    let done = (kept.decode)(&kept.encoded).ok().map(|straight| {
-        let mut rgba = straight.to_vec();
-        drop(straight);
-        premultiply(&mut rgba);
-        let (mut w, mut h) = (width, height);
+    // Decoded no larger than it need be, where it can be (`kept_scaled`).
+    let decoded = match kept.scaled {
+        Some(scaled) => scaled(&kept.encoded, size),
+        None => (kept.decode)(&kept.encoded).map(|straight| (width, height, straight)),
+    };
+    let done = decoded.ok().map(|(mut w, mut h, mut straight)| {
+        // Premultiplied in the decoder's own buffer: one image held, not two.
+        match Arc::get_mut(&mut straight) {
+            Some(own) => premultiply(own),
+            None => {
+                let mut copy = straight.to_vec();
+                premultiply(&mut copy);
+                straight = copy.into();
+            }
+        }
+        // Halved, then shrunk to the size drawn; the whole decode let go
+        // once the first half is made.
+        let mut rgba: Option<Vec<u8>> = None;
         while w.div_ceil(2) >= size.0 && h.div_ceil(2) >= size.1 && (w, h) != (1, 1) {
-            (rgba, w, h) = resample::halve(&rgba, w, h);
+            let half;
+            (half, w, h) = resample::halve(rgba.as_deref().unwrap_or(&straight), w, h);
+            rgba = Some(half);
+            straight = Arc::from(&[][..]);
         }
         if (w, h) != size {
-            rgba = resample::shrink(&rgba, w, h, size);
+            rgba = Some(resample::shrink(
+                rgba.as_deref().unwrap_or(&straight),
+                w,
+                h,
+                size,
+            ));
         }
         Held {
             width: size.0,
             height: size.1,
-            pixels: rgba.into(),
+            pixels: rgba.map_or(straight, Arc::from),
         }
     });
     *kept.pending.lock().unwrap_or_else(|p| p.into_inner()) = None;
@@ -684,6 +734,34 @@ mod kept_tests {
         let held = sync.pixels_at((150, 150)).expect("waited for");
         assert_eq!((held.width, held.height), (150, 150));
         assert_eq!(&held.pixels[..4], &[0, 0, 255, 255]);
+    }
+
+    /// An 8 by 4 file decoded at a quarter (`kept_scaled`): 2 by 1, all
+    /// opaque green, whatever was asked for, so its use shows.
+    fn quarter(bytes: &[u8], _: (u32, u32)) -> Result<(u32, u32, Arc<[u8]>), String> {
+        assert_eq!(bytes, b"file");
+        Ok((2, 1, [0, 255, 0, 255].repeat(2).into()))
+    }
+
+    /// A file that decodes smaller is drawn from that, never decoded whole;
+    /// what `pixels` borrows is still all of it.
+    #[test]
+    fn a_scaled_file_draws_from_its_smaller_decode() {
+        let image = ImageData::kept_scaled(8, 4, Arc::from(&b"file"[..]), decode, quarter).unwrap();
+        let held = image.pixels_at((2, 1)).expect("small: decoded at once");
+        assert_eq!((held.width, held.height), (2, 1));
+        assert_eq!(&held.pixels[..4], &[0, 255, 0, 255], "the scaled decode's");
+        // Smaller still: shrunk from it.
+        assert_eq!(
+            image.pixels_at((1, 1)).unwrap().width,
+            2,
+            "what it holds serves"
+        );
+        assert_eq!(
+            &image.pixels()[..4],
+            &[255, 0, 0, 255],
+            "whole, from `decode`"
+        );
     }
 
     /// A file that won't decode is tried once, not at every draw.

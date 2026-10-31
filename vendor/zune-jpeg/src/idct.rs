@@ -163,6 +163,55 @@ mod tests {
         assert_eq!(output_scalar, output_vector, "IDCT and scalar do not match");
     }
 
+    /// zgx: a scaled IDCT (`set_scale`) is the full IDCT shrunk by area, to
+    /// rounding, in every block shape a scaled decode uses.
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    fn idct_scaled_is_the_full_idct_area_averaged() {
+        let mut seed = 0x2545_f491_u32;
+        let mut next = |range: i32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed % (2 * range as u32 + 1)) as i32 - range
+        };
+        for _ in 0..2000 {
+            // Dequantized coefficients that keep the pixels inside 0..=255,
+            // where clamping and averaging commute.
+            let mut coeff = [0_i32; 64];
+            for (i, c) in coeff.iter_mut().enumerate() {
+                let (u, v) = (i % 8, i / 8);
+                *c = next(if i == 0 { 300 } else { 120 / (1 + u as i32 + v as i32) });
+            }
+            let mut full = [0_i16; 64];
+            idct_int(&mut coeff.clone(), &mut full, 8);
+            for block_w in [8, 4, 2, 1] {
+                for block_h in [8, 4, 2, 1] {
+                    let mut out = [0_i16; 64];
+                    scalar::idct_scaled(block_w, block_h, &mut coeff.clone(), &mut out, 8);
+                    let (gw, gh) = (8 / block_w, 8 / block_h);
+                    for y in 0..block_h {
+                        for x in 0..block_w {
+                            let mut sum = 0;
+                            for yy in y * gh..(y + 1) * gh {
+                                for xx in x * gw..(x + 1) * gw {
+                                    sum += i32::from(full[yy * 8 + xx]);
+                                }
+                            }
+                            let n = (gw * gh) as i32;
+                            let mean = (sum + n / 2) / n;
+                            let got = i32::from(out[y * 8 + x]);
+                            assert!(
+                                (got - mean).abs() <= 1,
+                                "{block_w}x{block_h} at ({x}, {y}): {got} vs {mean}, {coeff:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn idct_4x4() {
         #[rustfmt::skip]

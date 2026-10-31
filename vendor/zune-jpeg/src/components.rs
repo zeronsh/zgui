@@ -76,7 +76,18 @@ pub(crate) struct Components {
     pub y: usize,
     pub sample_ratio: SampleRatios,
     // a very annoying bug
-    pub fix_an_annoying_bug: usize
+    pub fix_an_annoying_bug: usize,
+    /// zgx: the width and height of the pixel block each 8x8 block of this
+    /// component's coefficients becomes: 8 unless scaled (see
+    /// `JpegDecoder::set_scale`), and larger than the image's `scale_block`
+    /// for a subsampled component made at the image's scaled size.
+    pub block_w: usize,
+    pub block_h: usize,
+    /// zgx: the component's size in its own samples (libjpeg's
+    /// `downsampled_width` and `_height`): a scaled decode averages only the
+    /// samples inside it where a block straddles the image's edge.
+    pub full_w: usize,
+    pub full_h: usize
 }
 
 impl Components {
@@ -174,7 +185,11 @@ impl Components {
             y: 0,
             w2: 0,
             sample_ratio: SampleRatios::None,
-            fix_an_annoying_bug: 1
+            fix_an_annoying_bug: 1,
+            block_w: 8,
+            block_h: 8,
+            full_w: 0,
+            full_h: 0
         })
     }
     /// Setup space for upsampling
@@ -187,13 +202,17 @@ impl Components {
     ///
     /// # Requirements
     ///  - width stride of this element is set for the component.
-    pub fn setup_upsample_scanline(&mut self) {
+    ///
+    /// zgx: `block` is the height of this component's decoded pixel block, 8
+    /// unless scaled (see `JpegDecoder::set_scale`): an MCU row of up-sampled
+    /// samples is that many rows.
+    pub fn setup_upsample_scanline(&mut self, block: usize) {
         self.row = vec![0; self.width_stride * self.vertical_sample];
         self.row_up = vec![0; self.width_stride * self.vertical_sample];
         self.first_row_upsample_dest =
             vec![128; self.vertical_sample * self.width_stride * self.sample_ratio.sample()];
         self.upsample_dest =
-            vec![0; self.width_stride * self.sample_ratio.sample() * self.fix_an_annoying_bug * 8];
+            vec![0; self.width_stride * self.sample_ratio.sample() * self.fix_an_annoying_bug * block];
     }
 }
 
