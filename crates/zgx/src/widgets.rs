@@ -3272,8 +3272,11 @@ impl Ui {
             let nodes: Vec<String> = moved.iter().map(|n| format!("@{}", n.number())).collect();
             format!("still moving: {}", nodes.join(" "))
         };
-        crate::issues::report(
+        // The app goes on, and the cause can be the engine's (#1027): a
+        // developer's to see, not an end user's.
+        crate::issues::report_kind(
             &self.runtime,
+            crate::issues::IssueKind::Degraded,
             &format!("{error} ({what}); the layout stays as it is until something changes it"),
         );
     }
@@ -7176,7 +7179,9 @@ mod bounds_observer_tests {
         ui.contain_layout_feedback();
         let issues = Rc::new(RefCell::new(Vec::<String>::new()));
         let heard = issues.clone();
-        let _listener = crate::issues::on_issue(&ui.runtime, move |issue| {
+        // A degradation: the app goes on, and the cause can be the engine's.
+        let _listener = crate::issues::on_issue_kind(&ui.runtime, move |kind, issue| {
+            assert_eq!(kind, crate::issues::IssueKind::Degraded);
             heard.borrow_mut().push(issue.to_string());
         });
         let delivered = Rc::new(Cell::new(0));

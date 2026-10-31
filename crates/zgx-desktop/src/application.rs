@@ -1378,6 +1378,8 @@ struct Host {
     render_fault: Option<crate::contain::Fault>,
     popups_fault: Option<crate::contain::Fault>,
     _layout_issues: zgx::issues::IssueListener,
+    /// What its listener heard, for its own banner (`show_issues`).
+    issues: crate::contain::WindowIssues,
     frames_tried: u64,
     adapter: Option<accesskit_winit::Adapter>,
     tree: AccessibilityTree,
@@ -1616,10 +1618,8 @@ impl Host {
         ui.set_assistive_technology(false);
         // A layout that doesn't settle is reported, and the app goes on.
         ui.contain_layout_feedback();
-        let layout_issues = zgx::issues::on_issue(&ui.runtime, |issue| {
-            eprintln!("zgx: {issue}");
-            crate::contain::queue(issue);
-        });
+        // Each issue logged once, and kept for this window's banner alone.
+        let (layout_issues, issues) = crate::contain::window_issues(&ui.runtime);
         let viewport = ui.signal((options.width as f32, options.height as f32));
         let frames = FrameClock::new();
         frames.set_max_rate(options.max_frame_rate);
@@ -1782,6 +1782,7 @@ impl Host {
             render_fault: None,
             popups_fault: None,
             _layout_issues: layout_issues,
+            issues: issues.clone(),
             frames_tried: 0,
             adapter: None,
             tree: AccessibilityTree::new(),
@@ -2175,18 +2176,15 @@ impl Host {
             // something changes.
             Err(error) if error.is::<zgx_gpu::GpuError>() => {
                 let error = error.downcast_ref::<zgx_gpu::GpuError>().unwrap();
-                let mut faults = Vec::new();
                 let news = crate::contain::failed(
                     &mut self.render_fault,
                     self.frames_tried,
                     std::time::Instant::now(),
                     "the window's frame",
-                    |message| faults.push(message.to_string()),
                     error,
                 );
-                for message in faults {
-                    self.show_error(&message);
-                }
+                crate::contain::report_issues(&self.context.ui.runtime);
+                self.show_issues();
                 self.force = true;
                 if news && let Some(window) = &self.window {
                     window.request_redraw();
@@ -2262,6 +2260,7 @@ impl Host {
         for message in crate::contain::take_reported() {
             self.show_error(&message);
         }
+        self.show_issues();
         // A large removal's effects are freed a chunk per frame (`Ui::reclaim`,
         // as the frame is prepared): frames keep coming until they are.
         if self.context.ui.reclaiming() {
@@ -2356,8 +2355,9 @@ impl Host {
                         || renderer.render(&scene, damage),
                     );
                     for issue in renderer.take_issues() {
-                        zgx::issues::report(&self.context.ui.runtime, &issue);
+                        crate::contain::queue_issue(issue);
                     }
+                    crate::contain::report_issues(&self.context.ui.runtime);
                     if let Some(stats) = rendered {
                         let stats = stats?;
                         first_mark(&FIRST_RENDER, "first frame rendered");
@@ -2606,6 +2606,7 @@ impl Host {
         for message in faults {
             self.show_error(&message);
         }
+        self.show_issues();
         // Native geometry that changed without zgx pixels to show with it.
         self.native.flush();
         let ui = &self.context.ui;
@@ -3014,6 +3015,14 @@ impl Host {
             .borrow_mut()
             .push(renderer.context());
         Ok(renderer)
+    }
+    /// This window's issues since the last call: errors in its banner, and
+    /// what the renderer went on without (`IssueKind::Degraded`) there in
+    /// debug builds alone; release builds have logged them, once.
+    fn show_issues(&mut self) {
+        for message in crate::contain::banner(&self.issues, cfg!(debug_assertions)) {
+            self.show_error(&message);
+        }
     }
     /// Say in the window that something failed (a contained panic): a
     /// banner over its content, read out by assistive technology, which a

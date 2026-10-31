@@ -4806,3 +4806,30 @@ fn a_text_takes_a_shadow() {
     h.frames(2);
     assert!(shadows(&mut h, "one").is_empty(), "taken away");
 }
+
+/// The framework's issues reach a script host by kind: `on_issue` with it,
+/// `on_error` as before (the message alone), and `issues` (what `zgx
+/// inspect errors` lists) keeps the last of them.
+#[test]
+fn a_host_hears_issues_by_kind() {
+    use zgx::issues::IssueKind;
+    let h = Harness::inline(r#"return ui.text { "hi" }"#);
+    let kinds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let (k, e) = (kinds.clone(), errors.clone());
+    h.host
+        .on_issue(move |kind, issue| k.borrow_mut().push((kind, issue.to_string())));
+    h.host
+        .on_error(move |issue| e.borrow_mut().push(issue.to_string()));
+    zgx::issues::report_kind(&h.ui.runtime, IssueKind::Degraded, "a layer went coarser");
+    zgx::issues::report(&h.ui.runtime, "a script failed");
+    assert_eq!(
+        *kinds.borrow(),
+        [
+            (IssueKind::Degraded, "a layer went coarser".to_string()),
+            (IssueKind::Error, "a script failed".to_string()),
+        ]
+    );
+    assert_eq!(errors.borrow().len(), 2, "on_error hears both");
+    assert_eq!(h.host.issues().len(), 2);
+}
