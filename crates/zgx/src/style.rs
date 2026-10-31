@@ -747,6 +747,8 @@ pub(crate) struct ColdStyles {
     pub(crate) outline_style: Option<crate::decoration::BorderStyle>,
     /// `Styled::mask_gradient`.
     pub(crate) mask_gradient: Option<crate::decoration::Gradient>,
+    /// `Styled::text_gradient`.
+    pub(crate) text_gradient: Option<crate::decoration::Gradient>,
     /// `Styled::w_calc` and the like.
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
     /// `Styled::text_balance`.
@@ -949,6 +951,9 @@ impl RareStyles {
             }
             if theirs.mask_gradient.is_some() {
                 mine.mask_gradient = theirs.mask_gradient.clone();
+            }
+            if theirs.text_gradient.is_some() {
+                mine.text_gradient = theirs.text_gradient.clone();
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -2525,6 +2530,17 @@ pub trait Styled: Sized {
             .cold
             .get_or_insert_default()
             .mask_gradient = Some(gradient);
+        self
+    }
+    /// Fill a text's glyphs with `gradient` over its box rather than its
+    /// colour (CSS's `background-clip: text`): a heading in a gradient. Its
+    /// selection, highlights and shadows show as plain text's do.
+    fn text_gradient(mut self, gradient: crate::decoration::Gradient) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .text_gradient = Some(gradient);
         self
     }
     /// Mix the view with what lies beneath it by `mode`, as CSS

@@ -5343,6 +5343,20 @@ fn line_style(name: &str) -> zgx::decoration::BorderStyle {
         _ => zgx::decoration::BorderStyle::Solid,
     }
 }
+/// A `gradient` or `radial` literal as a `Gradient` over a node's box.
+fn gradient_of(gradient: &crate::node::GradientLit) -> zgx::decoration::Gradient {
+    match gradient {
+        crate::node::GradientLit::Linear(angle, stops) => zgx::decoration::Gradient::Linear {
+            angle: *angle,
+            stops: stops.clone(),
+        },
+        crate::node::GradientLit::Radial(radial) => zgx::decoration::Gradient::Radial {
+            center: radial.center,
+            radius: radial.radius,
+            stops: radial.stops,
+        },
+    }
+}
 fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
     match source {
         Owned::Lit(l) => Some(l.clone()),
@@ -7216,6 +7230,9 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Hidden, Lit::Bool(false)) => s.visible(),
         (Invisible, Lit::Bool(true)) => s.invisible(),
         (Bg, Lit::Color(c)) => s.bg(*c),
+        (TextGradient | TextRadial, Lit::Gradient(gradient)) => {
+            s.text_gradient(gradient_of(gradient))
+        }
         (MaskGradient | MaskRadial, Lit::Gradient(gradient)) => {
             s.mask_gradient(match &**gradient {
                 crate::node::GradientLit::Linear(angle, stops) => {

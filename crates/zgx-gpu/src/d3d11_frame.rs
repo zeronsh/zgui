@@ -95,6 +95,9 @@ enum Bound {
     Opaque,
     Copy,
     Polyline,
+    /// Gradient text's (`Shading::SourceIn`, `Shading::Behind`).
+    SourceIn,
+    Behind,
 }
 
 struct Pipeline {
@@ -129,7 +132,7 @@ pub(crate) struct Device {
     pub(crate) device: ID3D11Device,
     pub(crate) context: ID3D11DeviceContext,
     /// By `Bound`, in its order.
-    pipelines: [Pipeline; 6],
+    pipelines: [Pipeline; 8],
     rasterizer: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
     /// Pixelated images' sampler, the nearest texel's, made with the first
@@ -206,25 +209,17 @@ impl Device {
                 .map_err(failed("input layout"))?;
             layout.ok_or_else(|| GpuError("Direct3D 11 made no input layout".into()))
         };
-        let blend = |over: bool| {
+        // The colour's factor and the target's, for colour and alpha alike.
+        let blend = |(source, destination): (D3D11_BLEND, D3D11_BLEND)| {
             let mut desc = D3D11_BLEND_DESC::default();
-            // Premultiplied alpha, as wgpu's PREMULTIPLIED_ALPHA_BLENDING;
-            // otherwise the colour replaces the target's.
             desc.RenderTarget[0] = D3D11_RENDER_TARGET_BLEND_DESC {
-                BlendEnable: over.into(),
-                SrcBlend: D3D11_BLEND_ONE,
-                DestBlend: if over {
-                    D3D11_BLEND_INV_SRC_ALPHA
-                } else {
-                    D3D11_BLEND_ZERO
-                },
+                // (Replacing: no blending at all.)
+                BlendEnable: ((source, destination) != (D3D11_BLEND_ONE, D3D11_BLEND_ZERO)).into(),
+                SrcBlend: source,
+                DestBlend: destination,
                 BlendOp: D3D11_BLEND_OP_ADD,
-                SrcBlendAlpha: D3D11_BLEND_ONE,
-                DestBlendAlpha: if over {
-                    D3D11_BLEND_INV_SRC_ALPHA
-                } else {
-                    D3D11_BLEND_ZERO
-                },
+                SrcBlendAlpha: source,
+                DestBlendAlpha: destination,
                 BlendOpAlpha: D3D11_BLEND_OP_ADD,
                 RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
             };
@@ -237,7 +232,13 @@ impl Device {
         let (full_vs, basic_vs) = (vertex(DRAW_VS)?, vertex(BASIC_VS)?);
         let (full_fs, basic_fs) = (pixel(DRAW_FS)?, pixel(BASIC_FS)?);
         let (full_layout, basic_layout) = (layout(&quads, DRAW_VS)?, layout(&quads, BASIC_VS)?);
-        let (over, replace) = (blend(true)?, blend(false)?);
+        // Premultiplied alpha, as wgpu's PREMULTIPLIED_ALPHA_BLENDING, or
+        // the colour replacing the target's; and lib.rs's SOURCE_IN and
+        // BEHIND.
+        let over = blend((D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_ALPHA))?;
+        let replace = blend((D3D11_BLEND_ONE, D3D11_BLEND_ZERO))?;
+        let source_in = blend((D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_ZERO))?;
+        let behind = blend((D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ONE))?;
         let pipeline = |vertex: &ID3D11VertexShader,
                         pixel: &ID3D11PixelShader,
                         layout: &ID3D11InputLayout,
@@ -264,6 +265,8 @@ impl Device {
                 layout: layout(&quads, POLYLINE_VS)?,
                 blend: over.clone(),
             },
+            pipeline(&full_vs, &full_fs, &full_layout, &source_in),
+            pipeline(&full_vs, &full_fs, &full_layout, &behind),
         ];
         // As wgpu's quad pipelines: no culling, depth clipped, scissored.
         let rasterizer = {
@@ -1155,6 +1158,8 @@ impl Frame<'_> {
             (Shading::Basic, false) => Bound::Basic,
             (Shading::Opaque, false) => Bound::Opaque,
             (Shading::Polyline, false) => Bound::Polyline,
+            (Shading::SourceIn, false) => Bound::SourceIn,
+            (Shading::Behind, false) => Bound::Behind,
             // The proof draws nothing else (`GpuRenderer::d3d11_lacks`).
             (_, false) => Bound::Full,
         };

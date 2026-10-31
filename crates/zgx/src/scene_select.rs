@@ -2,7 +2,8 @@
 //! on it. Both are rare, kept beside the nodes: a scene without selectable
 //! text pays a length check for them.
 use super::{
-    Color, NodeId, NodeKind, PAINTED, Rect, Scene, Transform, clipped_bounds, own_visible,
+    COMPOSITE, Color, NodeId, NodeKind, PAINTED, Rect, Scene, Transform, clipped_bounds,
+    own_visible,
 };
 use std::collections::HashMap;
 
@@ -474,6 +475,81 @@ impl Scene {
             .as_ref()
             .and_then(|cold| cold.mask_gradients.get(&id))
             .map(|(gradient, _)| gradient)
+    }
+    /// Fill text node `id`'s glyphs with `gradient` over its box rather than
+    /// its colour (CSS's `background-clip: text`); `None`: its colour again.
+    /// It paints as a cached layer while it has one: its glyphs drawn, then
+    /// the gradient kept where they are; its selection, highlights and
+    /// shadows behind, as plain text has them. Text alone: on another
+    /// node, nothing.
+    pub fn set_text_gradient(&mut self, id: NodeId, gradient: Option<crate::decoration::Gradient>) {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.text_gradients.get(&id))
+            .map(|fill| &fill.gradient);
+        if !self.contains(id) || held == gradient.as_ref() {
+            return;
+        }
+        // (Text alone: a box filled so would be a layer drawing nothing new.)
+        let gradient = gradient.filter(|_| self.is_text(id));
+        if held.is_none() && gradient.is_none() {
+            return;
+        }
+        self.damage_subtree(id);
+        let filled = gradient.is_some();
+        let maps = self.cold.get_or_insert_default();
+        match gradient {
+            Some(gradient) => maps.text_gradients.insert(
+                id,
+                crate::scene::TextGradient {
+                    gradient,
+                    made: (-1., -1.),
+                    image: None,
+                },
+            ),
+            None => maps.text_gradients.remove(&id),
+        };
+        self.sync_cold(id);
+        let node = self.node_mut(id);
+        node.relayer(filled);
+        if filled && !std::mem::replace(&mut node.promoted, true) {
+            self.promoted_count += 1;
+        }
+        self.invalidate(id, PAINTED | COMPOSITE);
+    }
+    /// Whether `id` is plain or rich text.
+    pub(crate) fn is_text(&self, id: NodeId) -> bool {
+        matches!(
+            self.node(id).kind,
+            NodeKind::Text { .. } | NodeKind::RichText { .. }
+        )
+    }
+    /// Text node `id`'s gradient fill (`set_text_gradient`), if it has one.
+    pub fn text_gradient(&self, id: NodeId) -> Option<&crate::decoration::Gradient> {
+        self.cold
+            .as_ref()
+            .filter(|cold| !cold.text_gradients.is_empty())
+            .and_then(|cold| cold.text_gradients.get(&id))
+            .map(|fill| &fill.gradient)
+    }
+    /// Its gradient's colours over text node `id`'s box as last laid out
+    /// (`set_text_gradient`): what the renderer keeps where its glyphs are.
+    pub fn text_gradient_image(
+        &self,
+        id: NodeId,
+    ) -> Option<&std::sync::Arc<crate::image::ImageData>> {
+        self.cold
+            .as_ref()
+            .and_then(|cold| cold.text_gradients.get(&id))
+            .and_then(|fill| fill.image.as_ref())
+    }
+    /// Whether any text is filled with a gradient.
+    #[inline(always)]
+    pub fn has_text_gradients(&self) -> bool {
+        self.cold
+            .as_ref()
+            .is_some_and(|cold| !cold.text_gradients.is_empty())
     }
     /// Whether any node has text shadows.
     #[inline(always)]

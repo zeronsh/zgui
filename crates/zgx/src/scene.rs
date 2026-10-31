@@ -1847,9 +1847,20 @@ struct ColdMaps {
     image_rendering: NodeMap<crate::image::ImageRendering>,
     /// Outlines drawn dashed or dotted (`set_outline_style`).
     outline_styles: NodeMap<crate::decoration::BorderStyle>,
+    /// Text filled with a gradient (`set_text_gradient`).
+    text_gradients: NodeMap<TextGradient>,
     /// Gradient masks (`set_mask_gradient`), each with the size its mask
     /// image was last made at.
     mask_gradients: NodeMap<(crate::decoration::Gradient, (f32, f32))>,
+}
+/// A text's gradient fill (`Scene::set_text_gradient`): its colours over
+/// its box, made again as the box changes size (`place_mask_gradients`).
+#[derive(Debug)]
+pub(crate) struct TextGradient {
+    pub(crate) gradient: crate::decoration::Gradient,
+    /// The size `image` was made at.
+    pub(crate) made: (f32, f32),
+    pub(crate) image: Option<Arc<crate::image::ImageData>>,
 }
 /// Where a node takes hits while an animation moves it: the place it's
 /// going, not the place it shows (Core Animation's model layer against its
@@ -2027,10 +2038,13 @@ impl Node {
     fn effect_layer(&self) -> bool {
         self.filtered() || self.layered
     }
-    /// Works `layered` out again after its mask, layer shader or blend changes.
-    fn relayer(&mut self) {
-        self.layered =
-            self.image_mask.is_some() || self.layer_shaded() || self.blend != BlendMode::Normal;
+    /// Works `layered` out again after its mask, layer shader, blend or
+    /// text gradient (`filled`, `Scene::set_text_gradient`) changes.
+    fn relayer(&mut self, filled: bool) {
+        self.layered = self.image_mask.is_some()
+            || self.layer_shaded()
+            || self.blend != BlendMode::Normal
+            || filled;
     }
     fn set_local(&mut self, transform: LocalTransform) {
         match &mut self.local {
@@ -3854,9 +3868,10 @@ impl Scene {
         // A mask only hides: what it reveals or hides lies within what the
         // subtree paints anyway.
         self.damage_subtree(id);
+        let filled = self.text_gradient(id).is_some();
         let node = self.node_mut(id);
         node.image_mask = mask.map(Box::new);
-        node.relayer();
+        node.relayer(filled);
         if node.image_mask.is_some() && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
@@ -3874,9 +3889,10 @@ impl Scene {
             return;
         }
         self.damage_subtree(id);
+        let filled = self.text_gradient(id).is_some();
         let node = self.node_mut(id);
         node.blend = mode;
-        node.relayer();
+        node.relayer(filled);
         if mode != BlendMode::Normal && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
@@ -3938,9 +3954,10 @@ impl Scene {
         } else {
             self.layer_shaders.insert(id, layer);
         }
+        let filled = self.text_gradient(id).is_some();
         let node = self.node_mut(id);
         node.paint_flags = node.paint_flags.with(shaded, node.corners_clip());
-        node.relayer();
+        node.relayer(filled);
         if shaded && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
@@ -6327,6 +6344,7 @@ impl Scene {
                 || cold.image_rendering.contains_key(&id)
                 || cold.outline_styles.contains_key(&id)
                 || cold.mask_gradients.contains_key(&id)
+                || cold.text_gradients.contains_key(&id)
         }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
@@ -6636,8 +6654,9 @@ impl Scene {
             .as_ref()
             .is_some_and(|cold| !cold.size_calcs.is_empty())
     }
-    /// Gradient masks' images (`set_mask_gradient`) made again for nodes
-    /// laid out at another size since: the mask is the box's.
+    /// Gradient masks' images (`set_mask_gradient`) and gradient text's
+    /// (`set_text_gradient`) made again for nodes laid out at another size
+    /// since: the gradient is the box's.
     #[cold]
     #[inline(never)]
     fn place_mask_gradients(&mut self) {
@@ -6662,6 +6681,23 @@ impl Scene {
         }
         if let Some(maps) = &mut self.cold {
             maps.mask_gradients = masks;
+        }
+        // Gradient text's colours, likewise.
+        let Some(maps) = &mut self.cold else { return };
+        let mut fills = std::mem::take(&mut maps.text_gradients);
+        for (id, fill) in &mut fills {
+            if !self.contains(*id) {
+                continue;
+            }
+            let bounds = self.world_bounds(*id);
+            let size = (bounds.width, bounds.height);
+            if fill.made != size {
+                fill.made = size;
+                fill.image = fill.gradient.colors(size.0, size.1).map(Arc::new);
+            }
+        }
+        if let Some(maps) = &mut self.cold {
+            maps.text_gradients = fills;
         }
     }
     /// Move each sticky node to where its scroll view's position puts it,
@@ -6770,6 +6806,7 @@ impl Scene {
             maps.image_rendering.remove(&id);
             maps.outline_styles.remove(&id);
             maps.mask_gradients.remove(&id);
+            maps.text_gradients.remove(&id);
         }
     }
     /// Hit `id` and what it holds where an animation is taking it, not
@@ -10036,7 +10073,7 @@ impl Scene {
         if self
             .cold
             .as_ref()
-            .is_some_and(|cold| !cold.mask_gradients.is_empty())
+            .is_some_and(|cold| !cold.mask_gradients.is_empty() || !cold.text_gradients.is_empty())
         {
             self.place_mask_gradients();
         }
@@ -14851,6 +14888,61 @@ mod local_transform_tests {
         scene.set_mask_gradient(id, None);
         scene.flush();
         assert!(scene.mask(id).is_none());
+    }
+    /// Gradient text's colours are an image of its box made at the next
+    /// flush and again as it resizes, never as its text changes; it is a
+    /// layer while it has one, and plain text again without.
+    #[test]
+    fn gradient_text_follows_the_box() {
+        use crate::canvas::GradientStop;
+        use crate::decoration::Gradient;
+        let mut scene = Scene::new(200., 100.);
+        let id = scene.append(
+            scene.root(),
+            NodeKind::Text {
+                text: "Count 1".into(),
+                color: Color(255, 255, 255, 255),
+                font_size: 14.,
+            },
+            fixed(40., 20.),
+        );
+        scene.flush();
+        assert!(!scene.is_layer(id), "plain text is no layer");
+        let stops: Arc<[GradientStop]> = vec![
+            GradientStop {
+                offset: 0.,
+                color: Color(255, 0, 0, 255),
+            },
+            GradientStop {
+                offset: 1.,
+                color: Color(0, 0, 255, 255),
+            },
+        ]
+        .into();
+        scene.set_text_gradient(id, Some(Gradient::Linear { angle: 0., stops }));
+        scene.flush();
+        assert!(scene.is_layer(id));
+        let image = scene
+            .text_gradient_image(id)
+            .expect("made at the flush")
+            .clone();
+        assert_eq!((image.width(), image.height()), (40, 20));
+        let pixel = |x: usize| &image.pixels()[x * 4..x * 4 + 4];
+        assert!(pixel(0)[0] > 245 && pixel(0)[2] < 10, "red at its start");
+        assert!(pixel(39)[2] > 245 && pixel(39)[0] < 10, "blue at its end");
+        // Its text changed: the same image.
+        scene.set_text(id, "Count 2");
+        scene.flush();
+        assert!(Arc::ptr_eq(scene.text_gradient_image(id).unwrap(), &image));
+        // Resized: made again.
+        scene.set_style(id, fixed(80., 20.));
+        scene.flush();
+        assert_eq!(scene.text_gradient_image(id).unwrap().width(), 80);
+        // Gone: plain text.
+        scene.set_text_gradient(id, None);
+        scene.flush();
+        assert!(scene.text_gradient_image(id).is_none());
+        assert!(!scene.is_layer(id));
     }
     #[test]
     fn masks_promote_and_move_by_compositing_alone() {

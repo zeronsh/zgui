@@ -1966,6 +1966,16 @@ fn apply_rare(
             cold.and_then(|cold| cold.outline_style).unwrap_or_default(),
         );
         scene.set_mask_gradient(node, cold.and_then(|cold| cold.mask_gradient.clone()));
+        let gradient = cold.and_then(|cold| cold.text_gradient.clone());
+        if gradient.is_some() || scene.has_text_gradients() {
+            // On a box holding one text (a decorated text's,
+            // `mount_element`), its text's.
+            let filled = match scene.children(node) {
+                [label] if !scene.is_text(node) && scene.is_text(*label) => *label,
+                _ => node,
+            };
+            scene.set_text_gradient(filled, gradient);
+        }
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

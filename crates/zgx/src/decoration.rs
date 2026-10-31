@@ -251,6 +251,14 @@ impl Gradient {
     /// `MASK_TEXELS` a side, each then covering more), sampled at each
     /// texel's middle: a mask image (`ImageMask`) of the box.
     pub(crate) fn image(&self, width: f32, height: f32) -> Option<crate::image::ImageData> {
+        self.raster(width, height, false)
+    }
+    /// Its colours over a `width` by `height` box, as `image` samples its
+    /// alpha: what gradient text shows (`Scene::set_text_gradient`).
+    pub(crate) fn colors(&self, width: f32, height: f32) -> Option<crate::image::ImageData> {
+        self.raster(width, height, true)
+    }
+    fn raster(&self, width: f32, height: f32, colored: bool) -> Option<crate::image::ImageData> {
         if !(width.is_finite() && height.is_finite()) || width <= 0. || height <= 0. {
             return None;
         }
@@ -262,12 +270,14 @@ impl Gradient {
             Self::Linear { stops, .. } => stops.to_vec(),
             Self::Radial { stops, .. } => stops.stops().collect(),
         };
-        let alpha = |t: f32| -> u8 {
+        // Its colour at `t`, or white of its alpha alone.
+        let color = |t: f32| -> [u8; 4] {
             let t = if t.is_finite() { t.clamp(0., 1.) } else { 0. };
             let at = stops.iter().position(|stop| stop.offset >= t);
-            let a = match at {
-                None => stops.last().map_or(255., |stop| f32::from(stop.color.3)),
-                Some(0) => f32::from(stops[0].color.3),
+            let channels = |c: crate::scene::Color| [c.0, c.1, c.2, c.3].map(f32::from);
+            let c = match at {
+                None => stops.last().map_or([255.; 4], |stop| channels(stop.color)),
+                Some(0) => channels(stops[0].color),
                 Some(i) => {
                     let (before, after) = (stops[i - 1], stops[i]);
                     let span = after.offset - before.offset;
@@ -276,11 +286,12 @@ impl Gradient {
                     } else {
                         1.
                     };
-                    f32::from(before.color.3)
-                        + (f32::from(after.color.3) - f32::from(before.color.3)) * f
+                    let (b, a) = (channels(before.color), channels(after.color));
+                    std::array::from_fn(|k| b[k] + (a[k] - b[k]) * f)
                 }
             };
-            a.round().clamp(0., 255.) as u8
+            let c = c.map(|v| v.round().clamp(0., 255.) as u8);
+            if colored { c } else { [255, 255, 255, c[3]] }
         };
         let t: Box<dyn Fn(f32, f32) -> f32> = match *self {
             Self::Linear { angle, .. } => {
@@ -313,7 +324,7 @@ impl Gradient {
             let y = (row as f32 + 0.5) * height / rows as f32;
             for column in 0..columns {
                 let x = (column as f32 + 0.5) * width / columns as f32;
-                pixels.extend([255, 255, 255, alpha(t(x, y))]);
+                pixels.extend(color(t(x, y)));
             }
         }
         crate::image::ImageData::new(columns, rows, pixels).ok()

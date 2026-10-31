@@ -367,6 +367,35 @@ fn borders_and_outlines_take_their_styles() {
     assert_eq!(scene.outline_style(ids[2]), BorderStyle::Solid);
 }
 
+/// `text_gradient` and `text_radial` fill text with a gradient; text
+/// without one is no layer.
+#[test]
+fn gradient_text_reaches_the_scene() {
+    use zgx::decoration::Gradient;
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.text { id = "linear", text_gradient = { angle = 90, stops = { "#f00f", "#00ff" } },
+                "Linear" },
+            ui.text { id = "radial", text_radial = { "#f00f", "#00ff" }, "Radial" },
+            ui.text { id = "plain", "Plain" } }"##,
+    );
+    h.ui.prepare_frame();
+    let boxes = ["linear", "radial", "plain"].map(|id| h.find(id).unwrap());
+    let scene = h.ui.scene.borrow();
+    // On the text inside: `id` names `ui.text`'s box.
+    let ids = boxes.map(|node| scene.children(node).first().copied().unwrap_or(node));
+    assert!(matches!(
+        scene.text_gradient(ids[0]),
+        Some(Gradient::Linear { .. })
+    ));
+    assert!(matches!(
+        scene.text_gradient(ids[1]),
+        Some(Gradient::Radial { .. })
+    ));
+    assert!(scene.text_gradient(ids[2]).is_none());
+    assert!(scene.is_layer(ids[0]) && !scene.is_layer(ids[2]));
+}
+
 /// `mask_gradient` and `mask_radial` reach the scene as gradient masks.
 #[test]
 fn gradient_masks_reach_the_scene() {

@@ -1507,6 +1507,7 @@ props! {
     "areas" => Areas: Areas, "flow" => Flow: GridFlow, "area" => Area: Str,
     "grid_column" => GridColumn: GridLines, "grid_row" => GridRow: GridLines,
     "display" => Display: Str,
+    "text_gradient" => TextGradient: Gradient, "text_radial" => TextRadial: Radial,
     // Transforms: after layout, about `origin` (fractions of the node).
     // Last, so that `is_transform` is a single comparison.
     "x" => X: Num, "y" => Y: Num,

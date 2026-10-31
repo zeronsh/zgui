@@ -1021,11 +1021,92 @@ fn pixelated_images_through_metal_frames_take_the_nearest_pixel() {
     );
 }
 
+/// Gradient text presented through Metal frames (`metal_frame`), its layer
+/// drawn by wgpu and composited by them: its glyphs red to blue where plain
+/// text's are alone, never white, and selected, the highlight behind.
+#[cfg(target_os = "macos")]
+fn gradient_text_through_metal_frames_fills_its_glyphs() {
+    use zgx::canvas::GradientStop;
+    use zgx::decoration::Gradient;
+    let draw = |filled: bool, select: bool| {
+        let host = objc2_quartz_core::CALayer::new();
+        let mut gpu = GpuRenderer::debug_for_layer(host.clone(), 320, 80).unwrap();
+        let mut ui = Ui::new(320., 80.);
+        gpu.install_text(&mut ui.scene.borrow_mut());
+        ui.refresh_text_geometry();
+        let stop = |offset, color| GradientStop { offset, color };
+        let line = text("MMMMMMMM");
+        let line = match filled {
+            true => line.text_gradient(Gradient::Linear {
+                angle: 0.,
+                stops: vec![
+                    stop(0., Color(255, 0, 0, 255)),
+                    stop(1., Color(0, 0, 255, 255)),
+                ]
+                .into(),
+            }),
+            false => line,
+        };
+        ui.mount(
+            column()
+                .size(320., 80.)
+                .p(10.)
+                .bg(zgx::style::rgb(0x000000))
+                .text_color(zgx::style::rgb(0xffffff))
+                .text_size(40.)
+                .selectable(true)
+                .selection_color(Color(0, 255, 0, 255))
+                .child(line),
+        );
+        if select {
+            let node = {
+                let scene = ui.scene.borrow();
+                let column = scene.children(scene.root())[0];
+                scene.children(column)[0]
+            };
+            assert!(ui.select_text(
+                zgx::selection::TextPoint { node, offset: 0 },
+                zgx::selection::TextPoint { node, offset: 4 },
+            ));
+        }
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        gpu.present().unwrap();
+        let (_, _, pixels) = gpu.shown_pixels().expect("a surface shown");
+        // BGRA: (red, green, blue) pixels lit, and of them those white.
+        let pixels: Vec<[u8; 3]> = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| [p[2], p[1], p[0]])
+            .collect();
+        let count = |test: fn(&[u8; 3]) -> bool| pixels.iter().filter(|p| test(p)).count();
+        (
+            count(|p| p[0] > 150 && p[1] < 40 && p[2] < 60),
+            count(|p| p[2] > 150 && p[1] < 40 && p[0] < 60),
+            count(|p| p[1] > 150 && p[0] > 150),
+            count(|p| *p == [0, 255, 0]),
+            count(|p| p.iter().any(|c| *c > 0)),
+        )
+    };
+    let (_, _, white, _, glyphs) = draw(false, false);
+    assert!(white > 300, "plain text is white: {white}");
+    let (red, blue, white, _, lit) = draw(true, false);
+    assert!(red > 100 && blue > 100, "red {red}, blue {blue}");
+    assert_eq!(white, 0, "nothing white");
+    assert_eq!(lit, glyphs, "where plain text's glyphs are alone");
+    let (_, _, _, highlight, _) = draw(true, true);
+    assert!(highlight > 200, "the highlight behind: {highlight}");
+}
+
 fn main() {
     #[cfg(target_os = "macos")]
     {
         pixelated_images_through_metal_frames_take_the_nearest_pixel();
         println!("layer_frames: pixelated images through Metal frames take the nearest pixel");
+        gradient_text_through_metal_frames_fills_its_glyphs();
+        println!("layer_frames: gradient text through Metal frames fills its glyphs");
         scattered_damage_presented_through_surfaces_matches_drawing_whole();
         println!("layer_frames: scattered damage through surfaces matches drawing whole");
         plain_frames_flip_tiles_whose_contents_are_set_once();
