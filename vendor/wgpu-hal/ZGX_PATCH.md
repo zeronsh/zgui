@@ -98,8 +98,10 @@ given (its flags, target, entry point and source) and holds that key in
 full, which must match byte for byte before its bytecode (a DXBC container)
 is used: a hash collision, other flags or another version's HLSL compile
 again. Files are written whole and renamed into place, so another process
-never reads half of one. DXC's output is not kept: its DLL is the app's
-own, of any version. zgx-gpu sets `%LOCALAPPDATA%\zgx\shaders`
+never reads half of one. DXC's output is kept the same way, its key also
+naming the DLL's version and its file's size and time (the DLL is the
+app's own, so another one compiles again); a DLL found only by name on the
+search path, with no file to read, isn't kept. zgx-gpu sets `%LOCALAPPDATA%\zgx\shaders`
 (`keep_compiled_shaders`); a window's shaders take about 52 KB there. With
 them kept, its first text came at 278 ms instead of 330 ms (medians of 12
 alternating launches), sooner than GPUI Fast's 307 ms, whose shaders are

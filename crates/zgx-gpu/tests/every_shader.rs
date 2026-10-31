@@ -6,7 +6,11 @@
 //! with nothing cached; a shader only a rare frame draws shows that here, not
 //! in an app. A vertex stage reads one instance buffer of its inputs as
 //! declared, a fragment stage follows the vertex stage producing what it
-//! takes, and writes as many targets as it declares.
+//! takes, and writes as many targets as it declares. Its layouts are wgpu's
+//! own (`layout: None`), not the renderer's, so the HLSL naga writes differs
+//! a little: it is the stricter check (v0.1.6's strokes failed it, where
+//! that release's own pipelines compiled), never the looser one.
+//! `WGPU_DX12_COMPILER` chooses the compiler, FXC by default.
 use wgpu::naga;
 
 fn device() -> Option<wgpu::Device> {
@@ -18,7 +22,7 @@ fn device() -> Option<wgpu::Device> {
         // FXC, as on a machine without the app's own DXC, optimizing as a
         // release build does: a debug build's device skips FXC's
         // optimizations, where the overflow was.
-        descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc;
+        descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc.with_env();
         descriptor.flags = wgpu::InstanceFlags::empty();
     }
     let instance = wgpu::Instance::new(descriptor);

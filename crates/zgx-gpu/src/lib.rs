@@ -2906,6 +2906,32 @@ fn keep_compiled_shaders() {
 }
 #[cfg(not(all(windows, zgx_wgpu_hal_patched)))]
 fn keep_compiled_shaders() {}
+/// The compilers Direct3D 12 tries, in order. DXC where the app ships
+/// Microsoft's dxcompiler.dll beside its executable (no dxil.dll needed
+/// since DXC 1.8): FXC is
+/// deprecated, slower to start a window cold, and its optimizer has
+/// overflowed its stack on shaders DXC compiles. Otherwise FXC alone, as
+/// Direct3D 11's ahead-of-time DXBC is compiled: wgpu would take DXC from a
+/// developer shell's PATH, whose code rounds antialiased edges a level
+/// apart. `WGPU_DX12_COMPILER` chooses one alone.
+fn dx12_compilers() -> Vec<wgpu::Dx12Compiler> {
+    if let Some(chosen) = wgpu::Dx12Compiler::from_env() {
+        return vec![chosen];
+    }
+    let shipped = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("dxcompiler.dll")))
+        .filter(|dll| cfg!(windows) && dll.is_file());
+    match shipped {
+        Some(dll) => vec![
+            wgpu::Dx12Compiler::DynamicDxc {
+                dxc_path: dll.to_string_lossy().into_owned(),
+            },
+            wgpu::Dx12Compiler::Fxc,
+        ],
+        None => vec![wgpu::Dx12Compiler::Fxc],
+    }
+}
 /// What the shaders kept between launches (Windows) did in this process.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShaderCacheCounts {
@@ -3060,8 +3086,23 @@ impl GpuContext {
             &[wgpu::Backends::PRIMARY]
         };
         keep_compiled_shaders();
+        // Direct3D 12's compiler: DXC where the app ships Microsoft's
+        // dxcompiler.dll beside its executable, and FXC if that fails, as
+        // where it doesn't (`dx12_compilers`).
+        let attempts: Vec<(wgpu::Backends, wgpu::Dx12Compiler)> = attempts
+            .iter()
+            .flat_map(|&backends| {
+                let compilers = match backends {
+                    wgpu::Backends::DX12 => dx12_compilers(),
+                    _ => vec![wgpu::Dx12Compiler::Fxc],
+                };
+                compilers
+                    .into_iter()
+                    .map(move |compiler| (backends, compiler))
+            })
+            .collect();
         let mut found = Err(GpuError("no graphics backend".into()));
-        for &backends in attempts {
+        for (backends, compiler) in attempts {
             let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
             descriptor.backends = backends;
             // Windows: swap chains present through a DirectComposition
@@ -3069,11 +3110,7 @@ impl GpuContext {
             // glass windows), where a window's own swap chain is opaque.
             descriptor.backend_options.dx12.presentation_system =
                 wgpu::Dx12SwapchainKind::DxgiFromVisual;
-            // Shaders through FXC, as Direct3D 11's ahead-of-time DXBC: wgpu
-            // otherwise takes DXC when dxcompiler.dll is on PATH (a developer
-            // shell's), whose code rounds antialiased edges a level apart.
-            // `WGPU_DX12_COMPILER` still chooses.
-            descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc.with_env();
+            descriptor.backend_options.dx12.shader_compiler = compiler;
             #[cfg(d3d11)]
             {
                 descriptor.backend_options.noop.enable = noop;
