@@ -1812,6 +1812,8 @@ struct ColdMaps {
     /// Track lists of grids that have them (`set_grid_template`): none kept
     /// for a list no node has any more.
     grid_templates: NodeMap<Arc<crate::grid_tracks::GridTemplate>>,
+    /// Items' places in their grids by name or line (`set_grid_place`).
+    grid_places: NodeMap<Arc<crate::grid_tracks::GridPlace>>,
     /// Paint order, back to front, of parents with raised children: the
     /// paint and hit walks' exceptional path, so none pays nothing.
     stacked: NodeMap<Vec<NodeId>>,
@@ -6234,6 +6236,7 @@ impl Scene {
     fn sync_cold(&mut self, id: NodeId) {
         let cold = self.cold.as_ref().is_some_and(|cold| {
             cold.grid_templates.contains_key(&id)
+                || cold.grid_places.contains_key(&id)
                 || cold.raised.contains_key(&id)
                 || cold.stacked.contains_key(&id)
                 || cold.sticky.contains_key(&id)
@@ -6641,6 +6644,7 @@ impl Scene {
     fn forget_cold(&mut self, id: NodeId) {
         if let Some(maps) = &mut self.cold {
             maps.grid_templates.remove(&id);
+            maps.grid_places.remove(&id);
             maps.raised.remove(&id);
             maps.stacked.remove(&id);
             maps.sticky.remove(&id);
@@ -6711,6 +6715,39 @@ impl Scene {
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
     #[cold]
     #[inline(never)]
+    /// Place `id` in its grid by name or line (`GridPlace`), over its
+    /// numbered place.
+    pub(crate) fn set_grid_place(
+        &mut self,
+        id: NodeId,
+        place: Option<&Arc<crate::grid_tracks::GridPlace>>,
+    ) {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.grid_places.get(&id));
+        if held == place {
+            return;
+        }
+        let maps = self.cold.get_or_insert_default();
+        match place {
+            Some(place) => {
+                maps.grid_places.insert(id, place.clone());
+            }
+            None => {
+                maps.grid_places.remove(&id);
+            }
+        }
+        self.sync_cold(id);
+        let node = self.node_mut(id);
+        node.style_writes = node.style_writes.wrapping_add(1);
+        self.invalidate_layout(id);
+    }
+    /// `id`'s place by name or line (`set_grid_place`).
+    pub(super) fn grid_place(&self, id: NodeId) -> Option<&crate::grid_tracks::GridPlace> {
+        let cold = self.cold.as_ref()?;
+        cold.grid_places.get(&id).map(|place| &**place)
+    }
     pub(crate) fn set_grid_template(
         &mut self,
         id: NodeId,

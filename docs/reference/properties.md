@@ -56,6 +56,10 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `grid` | `boolean` | `false` | lay children out in a grid |
 | `cols`, `rows` | `number \| string` | | a number of equal tracks, or a track list as CSS's `grid-template-columns` writes it (see [Grid tracks](#grid-tracks)) |
 | `col_start`, `row_start` | `number` | the next free cell | one-based grid lines; negative count from the end |
+| `areas` | `{ string }` | | named cells, a string a row ([grid tracks](#grid-tracks)) |
+| `flow` | `"row" \| "column" \| "dense" \| "column dense"` | `"row"` | how items without a place fill the grid |
+| `area` | `string` | | the area an item fills, by name |
+| `grid_column`, `grid_row` | `string \| number` | | an item's lines: `"side / main"`, `"2 / span 3"` |
 | `col_span`, `row_span` | `number` | `1` | |
 | `col_span_full`, `row_span_full` | `boolean` | `false` | span every track |
 | `overflow`, `overflow_x`, `overflow_y` | `"visible" \| "hidden" \| "clip"` | `"visible"` (scroll views: `"hidden"`) | `"hidden"` and `"clip"` clip paint and hit testing |
@@ -224,7 +228,28 @@ return ui.div {
 - The rules are CSS's: `repeat(auto-fill, …)` needs a fixed size to count what fits (`minmax(240, 1fr)`, not `1fr` or `auto`), a grid takes one of `auto-fill` and `auto-fit`, beside one every other track has a fixed size, and a minimum can't be `fr`.
 - A list that can't be read is an error, not a silent fallback. Written as a literal it stops the script with the reason. From a state or a function it shows in the error banner and the grid keeps its last list.
 - A state or function may produce a new list every frame (a dragged sidebar's `` `{w:get()} 1fr` ``): a list is held by the node showing it and goes with it.
-- Not supported: named lines, `grid-template-areas`, `dense` auto-flow and subgrid.
+- Not supported: subgrid, and line names inside `repeat()`.
+
+Areas name a grid's cells, a string a row, and items place themselves in them by name (CSS `grid-template-areas` and `grid-area`). Each name has to cover a rectangle; `.` is an empty cell.
+
+```lua
+return ui.div {
+	grid = true,
+	w = 600,
+	h = 400,
+	cols = "200 1fr",
+	rows = "48 1fr",
+	areas = { "head head", "side main" },
+	ui.div { area = "head", bg = "$surface.raised" },
+	ui.div { area = "side", bg = "$surface.raised" },
+	ui.div { area = "main" },
+}
+```
+
+- `[name]` in a track list names the line there, and `grid_column` and `grid_row` take lines as CSS's `grid-column` and `grid-row` write them: `"side / main"`, `"2 / span 3"`, `"1 / -1"`, or a number. An area's edges are lines too, named `head-start` and `head-end`.
+- `flow = "dense"` (CSS `grid-auto-flow: dense`) fills holes earlier items left with later small ones; `"column"` places down columns.
+- Lines and areas go over `col_start` and the like.
+
 
 ## Paint
 

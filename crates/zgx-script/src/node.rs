@@ -1417,6 +1417,12 @@ pub(crate) enum Ty {
     Len,
     /// A grid's equal tracks (a number) or a track list (`"220 1fr auto"`).
     Tracks,
+    /// A grid's named areas: a string a row, or one string a row a line.
+    Areas,
+    /// An item's lines in its grid (`"side / main"`, `"2 / span 3"`, a number).
+    GridLines,
+    /// How a grid places items without a place (`"row"`, `"dense"`…).
+    GridFlow,
     Shadow,
     Gradient,
     Radial,
@@ -1496,7 +1502,12 @@ props! {
     "align" => Align: Str, "font" => Font: Str, "wrap" => Wrap: Wrap, "truncate" => Truncate: Bool,
     "lines" => Lines: Num, "line_height" => LineHeight: Num, "letter_spacing" => LetterSpacing: Num,
     "tabular" => Tabular: Bool, "font_features" => FontFeatures: Str, "underline" => Underline: Bool, "underline_offset" => UnderlineOffset: Num,
+    // After the rest, so that the props before keep their numbers
+    // (`specificity` compiles to a test of them).
+    "areas" => Areas: Areas, "flow" => Flow: GridFlow, "area" => Area: Str,
+    "grid_column" => GridColumn: GridLines, "grid_row" => GridRow: GridLines,
     // Transforms: after layout, about `origin` (fractions of the node).
+    // Last, so that `is_transform` is a single comparison.
     "x" => X: Num, "y" => Y: Num,
     "scale" => Scale: Num, "scale_x" => ScaleX: Num, "scale_y" => ScaleY: Num,
     "rotate" => Rotate: Num, "skew" => Skew: Num, "skew_x" => SkewX: Num, "skew_y" => SkewY: Num,
@@ -2090,6 +2101,36 @@ fn refused_lit(value: &Value, ty: Ty, name: &str) -> mlua::Result<Lit> {
             .parse::<zgx::grid_tracks::GridTracks>()
             .err()
             .map(|why| format!("`{name}`: {why}")),
+        (Ty::Areas, Value::Str(s)) => s
+            .parse::<zgx::grid_tracks::GridAreas>()
+            .err()
+            .map(|why| format!("`{name}`: {why}")),
+        (Ty::Areas, Value::List(rows)) => {
+            let rows: Option<Vec<&str>> = rows
+                .iter()
+                .map(|row| match row {
+                    Value::Str(row) => Some(&**row),
+                    _ => None,
+                })
+                .collect();
+            Some(match rows {
+                Some(rows) => match rows.join("\n").parse::<zgx::grid_tracks::GridAreas>() {
+                    Err(why) => format!("`{name}`: {why}"),
+                    Ok(_) => format!("`{name}`: rows of names"),
+                },
+                None => {
+                    format!("`{name}` takes a string a row: {{ \"head head\", \"side main\" }}")
+                }
+            })
+        }
+        (Ty::GridLines, Value::Str(s)) => s
+            .parse::<zgx::grid_tracks::GridLines>()
+            .err()
+            .map(|why| format!("`{name}`: {why}")),
+        (Ty::GridFlow, Value::Str(s)) => s
+            .parse::<zgx::grid_tracks::GridFlow>()
+            .err()
+            .map(|why| format!("`{name}`: {why}")),
         (Ty::Radial, _) => return Err(mlua::Error::runtime(RADIAL_STOPS)),
         (Ty::Len, Value::Str(s)) => match s.parse::<SizeCalc>() {
             Ok(_) if takes_size_math(name) => return Ok(Lit::Str(s.clone())),
@@ -2117,6 +2158,43 @@ pub(crate) fn size_math(value: &Value) -> Option<Lit> {
     text.parse::<SizeCalc>().ok()?;
     Some(Lit::Str(text.clone()))
 }
+/// A grid's other texts (`areas`, `grid_column`, `flow`), checked and kept
+/// as strings, as a track list is.
+#[cold]
+#[inline(never)]
+fn grid_lit(value: &Value, ty: Ty) -> Option<Lit> {
+    Some(match (ty, value) {
+        (Ty::Areas, Value::List(rows)) => {
+            let rows: Vec<&str> = rows
+                .iter()
+                .map(|row| match row {
+                    Value::Str(row) => Some(&**row),
+                    _ => None,
+                })
+                .collect::<Option<_>>()?;
+            let areas = rows.join("\n");
+            areas.parse::<zgx::grid_tracks::GridAreas>().ok()?;
+            Lit::Str(areas.into())
+        }
+        (Ty::Areas, Value::Str(s)) => {
+            s.parse::<zgx::grid_tracks::GridAreas>().ok()?;
+            Lit::Str(s.clone())
+        }
+        (Ty::GridLines, Value::Str(s)) => {
+            s.parse::<zgx::grid_tracks::GridLines>().ok()?;
+            Lit::Str(s.clone())
+        }
+        (Ty::GridLines, Value::Num(n)) if n.fract() == 0. && *n != 0. => {
+            Lit::Str(format!("{n}").into())
+        }
+        (Ty::GridFlow, Value::Str(s)) => {
+            s.parse::<zgx::grid_tracks::GridFlow>().ok()?;
+            Lit::Str(s.clone())
+        }
+        _ => return None,
+    })
+}
+
 /// Converts a value to a property's type, or `None` if it does not fit.
 pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
     if let Value::Str(s) = value
@@ -2147,6 +2225,8 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
             Lit::Str(s.clone())
         }
         (Ty::Tracks, v) => Lit::Num(v.as_f64()? as f32),
+        // A grid's other texts, out of line: every literal comes this way.
+        (Ty::Areas | Ty::GridLines | Ty::GridFlow, v) => return grid_lit(v, ty),
         (Ty::Shadow, Value::List(items)) => {
             Lit::Shadows(items.iter().map(shadow).collect::<Option<Vec<_>>>()?.into())
         }

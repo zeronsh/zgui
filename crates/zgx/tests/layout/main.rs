@@ -14,6 +14,8 @@ mod composition_wrap;
 mod contents_layout;
 #[path = "../element_zoom.rs"]
 mod element_zoom;
+#[path = "../grid_areas.rs"]
+mod grid_areas;
 #[path = "../grid_tracks.rs"]
 mod grid_tracks;
 #[path = "../incremental_layout_equivalence.rs"]

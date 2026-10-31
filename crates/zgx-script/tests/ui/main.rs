@@ -19,6 +19,8 @@ mod exiting_rows;
 mod failures;
 #[path = "../file_drop.rs"]
 mod file_drop;
+#[path = "../grid_areas.rs"]
+mod grid_areas;
 #[path = "../grid_tracks.rs"]
 mod grid_tracks;
 #[path = "../hit_target.rs"]

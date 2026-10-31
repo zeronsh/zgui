@@ -729,6 +729,8 @@ pub(crate) struct ColdStyles {
     pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
     /// `Styled::grid_template_columns` and `grid_template_rows`.
     pub(crate) grid_template: Option<std::sync::Arc<crate::grid_tracks::GridTemplate>>,
+    /// `Styled::grid_area`, `grid_column` and `grid_row`.
+    pub(crate) grid_place: Option<std::sync::Arc<crate::grid_tracks::GridPlace>>,
     /// `Styled::z`.
     pub(crate) z: Option<i32>,
     /// `Styled::sticky_top`.
@@ -763,6 +765,14 @@ fn size_calcs(styles: &mut Styles) -> &mut crate::size_calc::SizeCalcs {
     styles.layout_options_mut().reverse.get_or_insert(false);
     let cold = styles.rare_mut().cold.get_or_insert_default();
     std::sync::Arc::make_mut(cold.size_calcs.get_or_insert_default())
+}
+/// Where `styles` lies in its grid by name or line.
+fn grid_place(styles: &mut Styles) -> &mut crate::grid_tracks::GridPlace {
+    // Its parent maps it for taffy (`map_cold_child`) where it maps what has
+    // options: a value that changes nothing, to say so.
+    styles.layout_options_mut().reverse.get_or_insert(false);
+    let cold = styles.rare_mut().cold.get_or_insert_default();
+    std::sync::Arc::make_mut(cold.grid_place.get_or_insert_default())
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
@@ -936,8 +946,28 @@ impl RareStyles {
                         if template.rows.is_some() {
                             mine.rows = template.rows.clone();
                         }
+                        if template.areas.is_some() {
+                            mine.areas = template.areas.clone();
+                        }
+                        if template.flow.is_some() {
+                            mine.flow = template.flow;
+                        }
                     }
                     None => mine.grid_template = Some(template.clone()),
+                }
+            }
+            if let Some(place) = &theirs.grid_place {
+                match &mut mine.grid_place {
+                    Some(mine) => {
+                        let mine = std::sync::Arc::make_mut(mine);
+                        if place.column.is_some() {
+                            mine.column = place.column.clone();
+                        }
+                        if place.row.is_some() {
+                            mine.row = place.row.clone();
+                        }
+                    }
+                    None => mine.grid_place = Some(place.clone()),
                 }
             }
         }
@@ -1540,6 +1570,37 @@ pub trait Styled: Sized {
         let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
         let template = cold.grid_template.get_or_insert_default();
         std::sync::Arc::make_mut(template).rows = Some(std::sync::Arc::new(tracks));
+        self
+    }
+    /// A grid's named areas (CSS `grid-template-areas`), which its items
+    /// place themselves in (`grid_area`).
+    fn grid_template_areas(mut self, areas: crate::grid_tracks::GridAreas) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).areas = Some(std::sync::Arc::new(areas));
+        self
+    }
+    /// How a grid places items without a place (CSS `grid-auto-flow`).
+    fn grid_flow(mut self, flow: crate::grid_tracks::GridFlow) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).flow = Some(flow);
+        self
+    }
+    /// In its grid's area `name` (CSS `grid-area`).
+    fn grid_area(self, name: &str) -> Self {
+        let area = crate::grid_tracks::GridLines::area(name);
+        self.grid_column(area.clone()).grid_row(area)
+    }
+    /// Its columns in its grid, by line, name or span (CSS `grid-column`):
+    /// `"side / main"`, `"2 / span 3"`.
+    fn grid_column(mut self, lines: crate::grid_tracks::GridLines) -> Self {
+        grid_place(self.styles_mut()).column = Some(lines);
+        self
+    }
+    /// Its rows in its grid, as `grid_column` (CSS `grid-row`).
+    fn grid_row(mut self, lines: crate::grid_tracks::GridLines) -> Self {
+        grid_place(self.styles_mut()).row = Some(lines);
         self
     }
     /// A grid's number of equal columns (at least 1).

@@ -149,27 +149,99 @@ fn tracks(tracks: &crate::grid_tracks::GridTracks) -> Vec<t::GridTemplateCompone
     tracks
         .0
         .iter()
-        .map(|track| match track {
-            Track::Size(track) => t::GridTemplateComponent::Single(size(*track)),
+        .filter_map(|track| match track {
+            Track::Names(_) => None,
+            Track::Size(track) => Some(t::GridTemplateComponent::Single(size(*track))),
             Track::Repeat(times, sizes) => {
                 let count = match times {
                     TrackRepeat::Times(times) => t::RepetitionCount::Count(*times),
                     TrackRepeat::AutoFill => t::RepetitionCount::AutoFill,
                     TrackRepeat::AutoFit => t::RepetitionCount::AutoFit,
                 };
-                taffy::style_helpers::repeat(count, sizes.iter().copied().map(size).collect())
+                Some(taffy::style_helpers::repeat(
+                    count,
+                    sizes.iter().copied().map(size).collect(),
+                ))
             }
         })
         .collect()
 }
+/// A track list's line names, as taffy takes them: those of each line,
+/// before each track and after the last.
+fn line_names(tracks: &crate::grid_tracks::GridTracks) -> Vec<Vec<String>> {
+    use crate::grid_tracks::Track;
+    let mut lines = vec![Vec::new()];
+    for track in &tracks.0 {
+        match track {
+            Track::Names(names) => lines
+                .last_mut()
+                .expect("a line")
+                .extend(names.iter().cloned()),
+            _ => lines.push(Vec::new()),
+        }
+    }
+    lines
+}
 /// `output` with `template`'s track lists, over its equal ones.
 #[cold]
 fn grid_template(output: &mut t::Style, template: &crate::grid_tracks::GridTemplate) {
+    use crate::grid_tracks::{GridFlow, Track};
+    let named = |tracks: &crate::grid_tracks::GridTracks| {
+        tracks
+            .0
+            .iter()
+            .any(|track| matches!(track, Track::Names(_)))
+    };
     if let Some(columns) = &template.columns {
         output.grid_template_columns = tracks(columns);
+        if named(columns) {
+            output.grid_template_column_names = line_names(columns);
+        }
     }
     if let Some(rows) = &template.rows {
         output.grid_template_rows = tracks(rows);
+        if named(rows) {
+            output.grid_template_row_names = line_names(rows);
+        }
+    }
+    if let Some(areas) = &template.areas {
+        output.grid_template_areas = areas
+            .areas
+            .iter()
+            .map(|(name, [row_start, row_end, column_start, column_end])| {
+                taffy::style::GridTemplateArea {
+                    name: name.clone(),
+                    row_start: *row_start,
+                    row_end: *row_end,
+                    column_start: *column_start,
+                    column_end: *column_end,
+                }
+            })
+            .collect();
+    }
+    if let Some(flow) = template.flow {
+        output.grid_auto_flow = match flow {
+            GridFlow::Row => t::GridAutoFlow::Row,
+            GridFlow::Column => t::GridAutoFlow::Column,
+            GridFlow::RowDense => t::GridAutoFlow::RowDense,
+            GridFlow::ColumnDense => t::GridAutoFlow::ColumnDense,
+        };
+    }
+}
+/// An item's place in its grid by name or line (`Scene::set_grid_place`),
+/// over its numbered one.
+fn grid_lines(lines: &crate::grid_tracks::GridLines) -> t::Line<t::GridPlacement<String>> {
+    use crate::grid_tracks::GridEdge as E;
+    let edge = |edge: &E| match edge {
+        E::Auto => t::GridPlacement::Auto,
+        E::Line(n) => line(*n),
+        E::Span(n) => span(*n),
+        E::Name(name, n) => t::GridPlacement::NamedLine(name.clone(), *n),
+        E::NameSpan(name, n) => t::GridPlacement::NamedSpan(name.clone(), *n),
+    };
+    t::Line {
+        start: edge(&lines.start),
+        end: edge(&lines.end),
     }
 }
 fn style(style: &Style, layout: Layout, leaf: bool) -> t::Style {
@@ -715,6 +787,20 @@ impl Scene {
         );
         true
     }
+    /// Place `id` in its grid by name or line, if it has such a place.
+    #[cold]
+    #[inline(never)]
+    fn map_grid_place(&self, id: NodeId, mapped: &mut t::Style) {
+        let Some(place) = self.grid_place(id) else {
+            return;
+        };
+        if let Some(column) = &place.column {
+            mapped.grid_column = grid_lines(column);
+        }
+        if let Some(row) = &place.row {
+            mapped.grid_row = grid_lines(row);
+        }
+    }
     pub(super) fn uses_advanced_layout(&self, id: NodeId) -> bool {
         // By reference: most nodes have no options, and a copy is ~170 bytes.
         let node = self.node(id);
@@ -834,6 +920,7 @@ impl Scene {
                     let mut mapped = style(&scene.node(*child).style, Layout::Column, true);
                     if scene.node(*child).style.layout_options.is_some() {
                         scene.map_size_calcs(*child, &mut mapped, bases);
+                        scene.map_grid_place(*child, &mut mapped);
                     }
                     // A `contents` child clips as the child it lays out as.
                     mapped.overflow = overflow(super::clips(&scene.node(laid).style));

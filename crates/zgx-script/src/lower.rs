@@ -6918,6 +6918,8 @@ fn is_corner(prop: Prop) -> bool {
         Prop::RoundedTl | Prop::RoundedTr | Prop::RoundedBr | Prop::RoundedBl
     )
 }
+// The transforms are the last props, so this compiles to one comparison:
+// a prop added after them costs every literal style on mount.
 fn is_transform(prop: Prop) -> bool {
     matches!(
         prop,
@@ -6984,6 +6986,32 @@ fn align(v: &str) -> Align {
     }
 }
 
+/// A grid's areas, flow, or an item's area or lines, checked as they came
+/// in (`node::lit`).
+#[cold]
+#[inline(never)]
+fn grid_text<S: Styled>(s: S, prop: Prop, text: &str) -> S {
+    match prop {
+        Prop::Cols | Prop::Rows => track_list(s, prop, text),
+        Prop::Areas => match text.parse() {
+            Ok(areas) => s.grid_template_areas(areas),
+            Err(_) => s,
+        },
+        Prop::Flow => match text.parse() {
+            Ok(flow) => s.grid_flow(flow),
+            Err(_) => s,
+        },
+        Prop::Area => s.grid_area(text),
+        Prop::GridColumn => match text.parse() {
+            Ok(lines) => s.grid_column(lines),
+            Err(_) => s,
+        },
+        _ => match text.parse() {
+            Ok(lines) => s.grid_row(lines),
+            Err(_) => s,
+        },
+    }
+}
 /// A grid's track list, checked as it came in (`node::lit`).
 #[cold]
 #[inline(never)]
@@ -7145,7 +7173,11 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Grid, Lit::Bool(true)) => s.grid(),
         (Cols, Lit::Num(v)) => s.grid_cols(v.max(1.) as u16),
         (Rows, Lit::Num(v)) => s.grid_rows(v.max(1.) as u16),
-        (Cols | Rows, Lit::Str(list)) => track_list(s, prop, list),
+        // One arm for a grid's texts: an arm more makes the match, and every
+        // prop's apply, cost more.
+        (Cols | Rows | Areas | Flow | Area | GridColumn | GridRow, Lit::Str(text)) => {
+            grid_text(s, prop, text)
+        }
         (W | H | MinW | MaxW | MinH | MaxH, Lit::Str(size)) => size_math(s, prop, size),
         (Z, Lit::Num(v)) => s.z(*v as i32),
         (StickyTop, Lit::Num(v)) => s.sticky_top(*v),
