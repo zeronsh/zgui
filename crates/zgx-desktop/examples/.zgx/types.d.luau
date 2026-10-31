@@ -1205,8 +1205,6 @@ declare extern type Element with
 	-- The same in bytes from 0, as `string.find` counts them (its match `s,
 	-- e` is `s - 1, e`): a code editor's search. A selection set this way
 	-- scrolls into view, focused or not.
-	-- A textarea's line, from 1, at that place in its view; its caret stays.
-	function scroll_to_line(self, line: number, options: { align: ("start" | "center" | "end" | "nearest")? }?): boolean
 	function set_selection_bytes(self, a: number, b: number?): boolean
 	function selection_bytes(self): (number?, number?)
 	-- The selection replaced by `text`, as typing it would (one step of
@@ -17816,6 +17814,8 @@ declare ui: {
 		-- The byte, from 0, a click at `x`, `y` (the window's points, as a drop's)
 		-- would put the caret at.
 		offset_at: (el: Element, x: number, y: number) -> number?,
+		-- A textarea's line, from 1, at that place in its view; its caret stays.
+		scroll_to_line: (el: Element, line: number, options: { align: ("start" | "center" | "end" | "nearest")? }?) -> boolean,
 	},
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
