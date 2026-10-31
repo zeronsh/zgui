@@ -198,6 +198,19 @@ jobs:
         if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
         timeout-minutes: 15
         run: python3 scripts/linux_smokes.py --jobs 8
+      # The tall menu's protocol trace, green or not (#1199): the order that
+      # closed it as it opened is counted in its result.
+      - name: Keep the Wayland popups trace
+        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayland-popups-trace
+          retention-days: 3
+          if-no-files-found: ignore
+          path: |
+            /tmp/zgx-wayland-popups/sway-tall.trace
+            /tmp/zgx-wayland-popups/result.json
       - name: Preserve Vulkan and native window evidence
         if: failure()
         continue-on-error: true

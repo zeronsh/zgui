@@ -1413,6 +1413,9 @@ struct Host {
     #[cfg(target_os = "linux")]
     title_press: Option<(f32, f32)>,
     cursor: (f32, f32),
+    /// Where winit last put the pointer, while a popup's input has moved
+    /// `cursor` since (`own_event`).
+    window_cursor: WindowCursor,
     pending_file_drops: crate::file_drop::FileDropBatch,
     /// The files dragged over the window, while they are: a drag holds the
     /// pointer, and each move it reports (`CursorMoved`) hovers them where
@@ -1834,6 +1837,7 @@ impl Host {
             #[cfg(target_os = "linux")]
             title_press: None,
             cursor: (0., 0.),
+            window_cursor: WindowCursor::default(),
             scroll: Default::default(),
             touch: Default::default(),
             touch_focus: None,
@@ -3857,6 +3861,33 @@ impl Host {
         self.window = None;
         self.force = true;
     }
+    /// A window event winit reported, as `window_event` has it, though a
+    /// button or wheel heard after a popup moved the cursor is where winit
+    /// last put the pointer, the popup's point restored after. Winit's events
+    /// are the window's surface's: a release ending a press there (its grab)
+    /// is the window's though the pointer then went into a popup. On Wayland
+    /// a popup's pointer is heard on zgx's own queue, which can be dispatched
+    /// before winit's when a read between them took both (a GPU present
+    /// waiting on its queue): the popup's enter heard first, the release that
+    /// came before it was a drag to there, and a menu opened by its press
+    /// closed.
+    fn own_event(&mut self, event: WindowEvent) -> Result<(), Box<dyn Error>> {
+        let Some(own) = self.window_cursor.heard(&event) else {
+            return self.window_event(event);
+        };
+        let popup = std::mem::replace(&mut self.cursor, own);
+        // (`wayland_popups_smoke.py` counts these: the order that closed a
+        // menu opened by its press, now heard where it was.)
+        zgx_gpu::present_log::log(|| format!("window button at {own:?}, a popup's at {popup:?}"));
+        self.window_event(event)?;
+        let position = LogicalPosition::new(popup.0, popup.1).to_physical(self.scale_factor);
+        self.window_event(WindowEvent::CursorMoved {
+            device_id: winit::event::DeviceId::dummy(),
+            position,
+        })?;
+        self.window_cursor.popup_moved(own);
+        Ok(())
+    }
     fn window_event(&mut self, event: WindowEvent) -> Result<(), Box<dyn Error>> {
         // The GPU wakes while the frame the input makes is built, or while a
         // scroll waits for the refresh it starts on.
@@ -4809,6 +4840,13 @@ impl Host {
         // Winit's placeholder device, for events it did not report.
         let device_id = winit::event::DeviceId::dummy();
         let at = |x: f32, y: f32| LogicalPosition::new(x, y).to_physical(self.scale_factor);
+        // Winit's point, kept for the window's own buttons (`own_event`).
+        if matches!(
+            input,
+            PopupInput::Moved { .. } | PopupInput::Button { .. } | PopupInput::Wheel { .. }
+        ) {
+            self.window_cursor.popup_moved(self.cursor);
+        }
         match input {
             PopupInput::Moved { x, y } => {
                 let moved = self.window_event(WindowEvent::CursorMoved {
@@ -6651,7 +6689,7 @@ impl WindowManager {
             self.drop_elsewhere(token);
         }
         if let Some(host) = self.hosts.get_mut(&token)
-            && let Err(e) = host.window_event(event)
+            && let Err(e) = host.own_event(event)
         {
             self.fail(event_loop, e);
         }
@@ -7457,9 +7495,73 @@ fn spring_delay() -> Option<std::time::Duration> {
     }
 }
 
+/// Where winit last put the pointer once a popup's input has moved the
+/// window's cursor (`Host::own_event`): winit's buttons and wheel are the
+/// window's surface's, heard where it last saw the pointer.
+#[derive(Default)]
+struct WindowCursor(Option<(f32, f32)>);
+impl WindowCursor {
+    /// A popup moved the cursor from `cursor` (the first time since winit
+    /// last did: that is winit's).
+    fn popup_moved(&mut self, cursor: (f32, f32)) {
+        self.0.get_or_insert(cursor);
+    }
+    /// Winit reported `event`: for a button or wheel heard since a popup
+    /// moved the cursor, where winit had the pointer. Winit's own motion
+    /// (or a scale change) makes its cursor the window's again.
+    fn heard(&mut self, event: &WindowEvent) -> Option<(f32, f32)> {
+        match event {
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::ScaleFactorChanged { .. } => {
+                self.0 = None;
+                None
+            }
+            WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } => self.0.take(),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `wayland-popups` on a loaded runner: a press on a menu's trigger opens
+    /// it, the compositor cuts it and slides it over the trigger, and the
+    /// popup's enter (zgx's queue) is heard before the release winit read
+    /// with it. That release is winit's, where it had the pointer (a click on
+    /// the trigger, the menu staying open), not where the popup put the
+    /// cursor (428 points down: a drag away, which closed it).
+    #[test]
+    fn the_windows_release_heard_after_a_popups_move_is_where_winit_had_it() {
+        let device_id = winit::event::DeviceId::dummy();
+        let button = |state| WindowEvent::MouseInput {
+            device_id,
+            state,
+            button: MouseButton::Left,
+        };
+        let moved = |x: f64, y: f64| WindowEvent::CursorMoved {
+            device_id,
+            position: (x, y).into(),
+        };
+        let mut cursor = WindowCursor::default();
+        // Winit's own motion and press: nothing kept.
+        assert_eq!(cursor.heard(&moved(76., 410.)), None);
+        assert_eq!(cursor.heard(&button(ElementState::Pressed)), None);
+        // The popup's enter (from winit's point), then winit's release.
+        cursor.popup_moved((76., 410.));
+        cursor.popup_moved((76., 838.));
+        assert_eq!(
+            cursor.heard(&button(ElementState::Released)),
+            Some((76., 410.))
+        );
+        // Once winit moves the pointer itself, its buttons are where that is.
+        cursor.popup_moved((76., 410.));
+        assert_eq!(cursor.heard(&moved(300., 20.)), None);
+        assert_eq!(cursor.heard(&button(ElementState::Pressed)), None);
+    }
 
     #[test]
     fn presses_scrolls_and_gestures_act_and_a_passing_pointer_does_not() {
