@@ -30,6 +30,7 @@ SMOKES = [
     ("window-controls", "timeout 30s {bin}/window_controls --smoke-test", True),
     ("standard-menu-items", "timeout 30s {bin}/standard_menu_items --smoke-test", True),
     ("form", "python3 scripts/form_smoke.py {bin}/form", True),
+    ("terminal", "python3 scripts/terminal_smoke.py {bin}/terminal_pane --output {out}", True),
     ("checkbox", "python3 scripts/checkbox_smoke.py {bin}/checkbox --output {out}", True),
     ("slider", "python3 scripts/slider_smoke.py {bin}/slider --output {out}", True),
     ("progress", "python3 scripts/progress_smoke.py {bin}/progress --output {out}", True),

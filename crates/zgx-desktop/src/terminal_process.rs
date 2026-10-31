@@ -31,7 +31,21 @@ thread_local! {
 /// when it changes: [`terminal_processes_pushed`]) and when one is asked to
 /// close.
 pub fn resolve_terminal_processes(resolver: impl Fn(u32) -> Option<ForegroundProcess> + 'static) {
-    RESOLVER.with(|slot| *slot.borrow_mut() = Some(Box::new(resolver)));
+    let resolver = std::rc::Rc::new(resolver);
+    // Terminals zgx draws see through by the same resolver.
+    #[cfg(feature = "terminal")]
+    {
+        let resolver = resolver.clone();
+        zgx_terminal::front::resolve_with(move |pid| {
+            resolver(pid).map(|front| zgx_terminal::Foreground {
+                name: front.name,
+                pid: front.pid,
+                idle: front.idle,
+                status: front.status,
+            })
+        });
+    }
+    RESOLVER.with(|slot| *slot.borrow_mut() = Some(Box::new(move |pid| resolver(pid))));
 }
 
 /// Whether the app hears every change to what is in front of the terminals
@@ -39,6 +53,8 @@ pub fn resolve_terminal_processes(resolver: impl Fn(u32) -> Option<ForegroundPro
 /// polled then, and nothing runs while nothing changes. Others still are.
 /// On the UI thread.
 pub fn terminal_processes_pushed(pushed: bool) {
+    #[cfg(feature = "terminal")]
+    zgx_terminal::front::set_pushed(pushed);
     if PUSHED.replace(pushed) && !pushed {
         terminal_processes_changed();
     }
@@ -49,6 +65,8 @@ pub fn terminal_processes_pushed(pushed: bool) {
 pub fn terminal_processes_changed() {
     #[cfg(all(target_os = "macos", feature = "ghostty"))]
     crate::native_host::processes_changed();
+    #[cfg(feature = "terminal")]
+    zgx_terminal::front::changed();
 }
 
 #[allow(dead_code)]

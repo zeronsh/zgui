@@ -245,7 +245,7 @@ impl Demo {
         let removed: Vec<_> = self
             .rows
             .keys()
-            .filter(|i| !range.contains(i))
+            .filter(|i| !range.contains(*i))
             .copied()
             .collect();
         for i in removed {

@@ -5185,6 +5185,7 @@ dependencies = [
  "zgx-gpu",
  "zgx-run",
  "zgx-script",
+ "zgx-terminal",
  "zgx-workload",
 ]
 

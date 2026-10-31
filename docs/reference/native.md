@@ -1,6 +1,6 @@
 # Web views, terminals, commands: webview, web, terminal, term, command
 
-Native content laid out as nodes, and the app's menu commands. A web view is a WebKit page (macOS), a WebView2 page (Windows, the desktop host's `webview2` feature) or a WebKitGTK page drawn as an image (Linux, the `webkitgtk` feature, which `zgx-run` has; see [the Linux notes](../linux.md#web-views)), and a terminal a Ghostty surface (macOS, the `ghostty` feature); each is placed, sized, rounded and clipped like any node, and zgx draws over it (a frosted popover over a page works). Without a native host (headless, other platforms) each shows a labelled placeholder box and its controller still answers. Pages and sessions belong to the host, not to a run, so a reload keeps them.
+Native content laid out as nodes, and the app's menu commands. A web view is a WebKit page (macOS), a WebView2 page (Windows, the desktop host's `webview2` feature) or a WebKitGTK page drawn as an image (Linux, the `webkitgtk` feature, which `zgx-run` has; see [the Linux notes](../linux.md#web-views)), and a terminal is drawn by zgx (every platform, the desktop host's `terminal` feature, which zgx-run turns on) or is a Ghostty surface (macOS, the `ghostty` feature, which wins there); each is placed, sized, rounded and clipped like any node, and zgx draws over it (a frosted popover over a page works). Without a native host (headless, other platforms) each shows a labelled placeholder box and its controller still answers. Pages and sessions belong to the host, not to a run, so a reload keeps them.
 
 ```luau
 ui.webview(props: WebViewProps) -> Node
@@ -53,7 +53,7 @@ A `Web` controller's `url`, `title`, `loading`, `progress`, `can_go_back`, `can_
 | `command` | `string` | the login shell | a command line |
 | `cwd` | `string` | home | where it starts; `"~"` is home |
 | `env` | `{ [string]: string }` | none | added to the environment |
-| `font_size` | `number` | Ghostty's | points |
+| `font_size` | `number` | 13 (Ghostty's own, under Ghostty) | points |
 | `on_title` | `(title: string) -> ()` | none | the program set its title (OSC 0/2) |
 | `on_pwd` | `(pwd: string) -> ()` | none | the shell reported its directory (OSC 7) |
 | `on_process` | `(name: string) -> ()` | none | the foreground program changed |
@@ -307,7 +307,8 @@ return ui.row {
 - Sessions outlive reloads and the nodes that show them: a reload keeps every shell running, and moving the `terminal` node (another split, another tab) moves the terminal with its process. End one with `term:close()`, usually from `on_close`.
 - `ui.term` rejects an unknown option. The `on_*` options are a session's events, not a node's: give them to `ui.term`, not `ui.terminal`.
 - A page from `ui.web(id)` is kept until `web:close()`; `ui.web(opts)` and a `webview` without `web` make a page for the run (a reload makes a new one).
-- Over a page or a terminal that takes input, zgx's nodes hear no pointer moves (they had their leave): follow `web.pointer` or `term.pointer` instead. The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its commands, whose keys work wherever focus is.
+- Over a page or a Ghostty terminal that takes input, zgx's nodes hear no pointer moves (they had their leave): follow `web.pointer` or `term.pointer` instead (an engine-drawn terminal reports `pointer` too).
+- The engine-drawn terminal's fidelity, keys and limits (no images, no kitty keyboard protocol yet, clipboard reads unanswered) are in [native surfaces](../native-surfaces.md#terminals). The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its commands, whose keys work wherever focus is.
 - Terminals hand the right clicks their program does not use to the node, so a `context_menu` on the `terminal` node opens over it.
 - Each successful load declares its commands afresh, replacing the last; a failed reload keeps them. Declaring an id twice in one run is an error.
 - `on_message` and `eval` get the page's JSON as Luau data, typed `any`: check its shape before using it.

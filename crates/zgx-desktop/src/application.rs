@@ -726,6 +726,15 @@ impl WindowContext {
             crate::native_host::webkitgtk::page_views(self.windows.clipboard.clone()),
             view,
         );
+        // Terminals zgx draws, where Ghostty doesn't.
+        #[cfg(all(
+            feature = "terminal",
+            not(all(target_os = "macos", feature = "ghostty"))
+        ))]
+        let view = zgx::compose::provide(
+            zgx::terminal::TerminalRenderer::new(zgx_terminal::terminal_view),
+            view,
+        );
         self.ui.render(zgx::compose::provide(
             self.frames.clone(),
             zgx::compose::provide(

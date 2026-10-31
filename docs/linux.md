@@ -415,6 +415,19 @@ Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
 so keys must come through a `wl_keyboard` of zgx's own with winit's
 keymap).
 
+## Terminals
+
+Terminals are drawn by zgx (the desktop host's `terminal` feature, which
+zgx-run turns on): a pseudoterminal from openpty, the shell started in a
+session of its own (`setsid`), its screen kept by `alacritty_terminal` and
+drawn in the window's own text, on X11 and Wayland alike. Input methods
+(XIM, IBus or Fcitx over Wayland's text input) compose at the cursor. See
+[native surfaces](native-surfaces.md#terminals) for what they show and
+what they can't do yet. `scripts/terminal_smoke.py` checks one on X11:
+typed keys and the app's input reach the shell, Ctrl+C interrupts, the
+grid follows the window's size, and an idle, focused terminal spends no
+CPU.
+
 ## Web views
 
 `zgx::web_view` pages are WebKitGTK's (`webkit2gtk-4.1`), with the

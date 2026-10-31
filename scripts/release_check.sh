@@ -101,7 +101,7 @@ mkdir -p "$app/src"
     printf '[package]\nname = "zgx-fresh-app"\nversion = "0.0.0"\nedition = "2024"\npublish = false\n\n'
     # A workspace of its own, not a member of zgx's when under its target/.
     printf '[workspace]\n\n[dependencies]\nzgx-script = "=%s"\n\n[patch.crates-io]\n' "$zgx"
-    for crate in zgx zgx-components zgx-gpu zgx-desktop zgx-script zgx-run zgx-ghostty-sys; do
+    for crate in zgx zgx-components zgx-gpu zgx-desktop zgx-script zgx-run zgx-terminal zgx-ghostty-sys; do
         printf '%s = { path = "../package/%s-%s" }\n' "$crate" "$crate" "$zgx"
     done
     for fork in $forks; do
