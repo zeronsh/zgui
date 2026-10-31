@@ -5302,6 +5302,7 @@ dependencies = [
  "libc",
  "polling",
  "windows-sys 0.59.0",
+ "zgx",
  "zgx-alacritty-terminal",
 ]
 

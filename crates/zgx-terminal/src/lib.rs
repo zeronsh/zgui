@@ -18,17 +18,23 @@
 //! ```
 #![warn(missing_docs)]
 
+pub mod front;
+mod keys;
 mod osc;
+mod paint;
 mod palette;
 mod process;
 mod session;
+mod view;
 
 pub use alacritty_terminal;
+pub use front::Foreground;
 pub use palette::{Palette, dim};
 pub use process::process_name;
 pub use session::{
     ClipboardRequest, GridSize, Listener, Session, SessionEvent, SessionOptions, Term,
 };
+pub use view::{EngineTerminal, is_engine_drawn, terminal_view};
 
 /// A program's progress report (OSC 9;4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
