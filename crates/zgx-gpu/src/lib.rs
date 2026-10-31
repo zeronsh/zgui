@@ -7620,7 +7620,23 @@ impl GpuRenderer {
                         // Its quads from the shape's, placed and coloured.
                         // (One extend, written straight into the room it makes: a
                         // push a glyph would check that room each time.)
+                        // Its shadows, under it: the last lowest (CSS's list),
+                        // each its glyphs again, moved on whole device pixels.
+                        let shadows = scene.text_shadows(item.id);
+                        let scale = self.scale;
                         let place = |quads: &mut Vec<Quad>, source: &[TextQuad]| {
+                            for shadow in shadows.iter().rev() {
+                                let shadow_color = rgba(shadow.color, item.effects.opacity);
+                                place_text_quads(
+                                    quads,
+                                    source,
+                                    x + (shadow.offset.x * scale).round() / scale,
+                                    y + (shadow.offset.y * scale).round() / scale,
+                                    fade,
+                                    item.effects.edge_fade,
+                                    |_| shadow_color,
+                                );
+                            }
                             // Plain and unselected: one colour, chosen once.
                             if selected.is_none() && rich.is_none() {
                                 place_text_quads(

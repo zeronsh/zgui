@@ -4765,3 +4765,44 @@ fn a_refs_window_rect_is_where_it_shows() {
     );
     assert_eq!(own[0], 100., "{said}");
 }
+
+/// `text_shadow` gives a text its shadows, the box shadow's form; `false`
+/// takes them away.
+#[test]
+fn a_text_takes_a_shadow() {
+    let mut h = Harness::inline(
+        r##"local on = ui.state("on", true)
+        return ui.column {
+            ui.text { id = "one", "Hi", text_shadow = function()
+                return if on:get() then { x = 1, y = 2, blur = 4, color = "#ff0000" } else false
+            end },
+            ui.text { id = "two", "Hi", text_shadow = { { x = 1, y = 1 }, { x = -1, y = -1, color = "#00ff00" } } },
+            ui.column { text_shadow = { x = 3, y = 3 }, ui.text { id = "three", "Inherits" } },
+        }"##,
+    );
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+    // On the text inside: `id` names `ui.text`'s box.
+    let shadows = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        let scene = h.ui.scene.borrow();
+        let text = scene.children(node)[0];
+        scene.text_shadows(text).to_vec()
+    };
+    let one = shadows(&mut h, "one");
+    assert_eq!(one.len(), 1);
+    assert_eq!(
+        (one[0].offset.x, one[0].offset.y, one[0].blur),
+        (1., 2., 2.)
+    );
+    assert_eq!(one[0].color, zgx::scene::Color(255, 0, 0, 255));
+    assert_eq!(shadows(&mut h, "two").len(), 2);
+    let three = shadows(&mut h, "three");
+    assert_eq!(three.len(), 1, "inherited from its column");
+    assert_eq!(three[0].offset.x, 3.);
+    h.host
+        .set_state("on", zgx_script::Value::Bool(false))
+        .unwrap();
+    h.frames(2);
+    assert!(shadows(&mut h, "one").is_empty(), "taken away");
+}

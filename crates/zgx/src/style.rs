@@ -735,6 +735,8 @@ pub(crate) struct ColdStyles {
     pub(crate) sticky_top: Option<f32>,
     /// `Styled::object_position`.
     pub(crate) object_position: Option<(f32, f32)>,
+    /// `Styled::text_shadow` and `text_shadows`.
+    pub(crate) text_shadows: Option<std::sync::Arc<[crate::scene::TextShadow]>>,
     /// `Styled::w_calc` and the like.
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
     /// `Styled::text_balance`.
@@ -917,6 +919,9 @@ impl RareStyles {
             }
             if theirs.text_balance.is_some() {
                 mine.text_balance = theirs.text_balance;
+            }
+            if theirs.text_shadows.is_some() {
+                mine.text_shadows = theirs.text_shadows.clone();
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -1824,6 +1829,30 @@ pub trait Styled: Sized {
             .cold
             .get_or_insert_default()
             .object_position = Some((x, y));
+        self
+    }
+    /// A shadow under a text's glyphs, as CSS `text-shadow`: its glyphs
+    /// again, moved by `x`, `y` points and painted in `color`. `blur` is the
+    /// Gaussian's sigma in points; for now it draws sharp whatever it is.
+    /// Inherited, as CSS's is: on a container it shadows the text inside.
+    fn text_shadow(self, x: f32, y: f32, blur: f32, color: Color) -> Self {
+        self.text_shadows([crate::scene::TextShadow {
+            offset: crate::scene::Transform { x, y },
+            blur,
+            color,
+        }])
+    }
+    /// Several shadows under a text's glyphs, the first on top (CSS's list);
+    /// none: no shadow.
+    fn text_shadows(
+        mut self,
+        shadows: impl Into<std::sync::Arc<[crate::scene::TextShadow]>>,
+    ) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .text_shadows = Some(shadows.into());
         self
     }
     /// Set centered image fitting within its padded content box. Not inherited.

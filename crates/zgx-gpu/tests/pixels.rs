@@ -6357,3 +6357,48 @@ fn a_tilted_card_is_hit_where_it_shows() {
         );
     }
 }
+
+/// A text's shadow paints its glyphs again, moved and in its colour, under
+/// them; without one, nothing does. Moved, it leaves no trail: its old place
+/// is damage.
+#[test]
+fn a_text_shadow_paints_under_its_glyphs_and_moves_without_a_trail() {
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let _gpu_fixture = gpu_fixture();
+    let red = |p: &[u8]| p[0] > 180 && p[1] < 80 && p[2] < 80;
+    let draw = |shadow: bool| {
+        let (mut gpu, mut ui) = (GpuRenderer::new(200, 100).unwrap(), Ui::new(200., 100.));
+        let label = text("HHHH").text_size(40.).text_color(Color(0, 0, 0, 255));
+        let label = match shadow {
+            true => label.text_shadow(0., 30., 0., Color(230, 20, 20, 255)),
+            false => label,
+        };
+        ui.mount(
+            div()
+                .size(200., 100.)
+                .bg(Color(255, 255, 255, 255))
+                .child(label),
+        );
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        (pixels.chunks(4).filter(|p| red(p)).count(), ui)
+    };
+    assert_eq!(draw(false).0, 0, "no shadow, no red");
+    let (count, ui) = draw(true);
+    assert!(count > 200, "the shadow shows: {count} red pixels");
+    // Its glyphs reach at most 50 down; its shadow 30 below that.
+    let mut scene = ui.scene.borrow_mut();
+    let node = scene
+        .children(scene.root())
+        .first()
+        .and_then(|div| scene.children(*div).first().copied())
+        .unwrap();
+    scene.set_transform(node, Transform { x: 100., y: 0. });
+    let damage = scene.flush().damage;
+    assert!(
+        damage.iter().any(|d| d.x <= 10. && d.y + d.height >= 75.),
+        "its old shadow is damage: {damage:?}"
+    );
+}

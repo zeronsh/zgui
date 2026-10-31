@@ -1830,6 +1830,10 @@ struct ColdMaps {
     /// The min-content and max-content widths of those of them that size
     /// themselves by what they hold, as their parent last measured them.
     content_widths: NodeMap<(f32, f32)>,
+    /// Text shadows, by the node that sets them (`set_text_shadows`).
+    text_shadows: NodeMap<Arc<[TextShadow]>>,
+    /// Where each shadowed text's shadows showed last flush.
+    shadows_shown: NodeMap<Rect>,
 }
 /// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
 #[derive(Clone, Copy)]
@@ -6042,7 +6046,7 @@ impl Scene {
                 || cold.sticky.contains_key(&id)
                 || cold.size_calcs.contains_key(&id)
                 || cold.balanced.contains_key(&id)
-        });
+        }) || self.has_own_text_shadows(id);
         self.set_special(id, COLD, cold);
     }
     /// Paint and hit `id` by `z` among its siblings, higher over lower, equal
@@ -6448,6 +6452,7 @@ impl Scene {
             maps.sticky.remove(&id);
             maps.size_calcs.remove(&id);
             maps.balanced.remove(&id);
+            maps.text_shadows.remove(&id);
         }
     }
     /// `id`'s grid track lists, over `LayoutOptions`' equal tracks.
@@ -9649,6 +9654,10 @@ impl Scene {
         self.dirty.clear();
         self.measure_overflow_fades();
         // Backdrop-filter output depends on pixels behind it, even when its own node is clean.
+        // Text shadows reach past their text's ink: where they were and are.
+        if self.has_text_shadows() || self.text_shadows_shown() {
+            self.damage_text_shadows();
+        }
         if (!self.damage.is_empty() || self.damage_grid.is_some()) && !self.blur_nodes.is_empty() {
             let mut blur_regions: Vec<(Rect, bool)> = self
                 .blur_nodes
@@ -13155,7 +13164,7 @@ mod nonfinite_transform_tests {
 mod advanced_layout;
 #[path = "scene_select.rs"]
 mod select;
-pub use select::{HighlightPiece, TextHighlight, TextLeaf, TextMark};
+pub use select::{HighlightPiece, TextHighlight, TextLeaf, TextMark, TextShadow};
 #[path = "scene_view.rs"]
 mod view;
 pub use view::{CanvasView, GridFill, GridMark};
