@@ -58,10 +58,11 @@ pub type CloseTab = Rc<dyn Fn(&str) -> bool>;
 /// label.
 pub type MoveTab = Rc<dyn Fn(&str, &str)>;
 
-/// Told a tab was torn off: released outside every window of the app, it
-/// left the strip. Its id, and where (the drag's `x`, `y`, `grab_x` and
-/// `grab_y`), to open it in a window of its own under the pointer.
-pub type TearOffTab = Rc<dyn Fn(&str, &DragEvent)>;
+/// Told a tab was released outside every window of the app: its id, and
+/// where (the drag's `x`, `y`, `grab_x` and `grab_y`), to open it in a
+/// window of its own under the pointer. `true` takes it: it leaves the
+/// strip. `false` keeps it, its preview sliding home.
+pub type TearOffTab = Rc<dyn Fn(&str, &DragEvent) -> bool>;
 
 /// How [`tabs`] behave beyond choosing.
 #[derive(Clone, Default)]
@@ -414,10 +415,27 @@ pub fn tabs(
                                 }
                             }
                         })
-                        .on_drag_outside(move |torn: &TabDrag, event| {
+                        // Out of every window: torn off if the app takes it
+                        // (its preview goes), else it stays and slides home.
+                        .on_event(move |cx| {
+                            if cx.phase != EventPhase::Target {
+                                return;
+                            }
+                            let InputEvent::Drag(event) = &cx.event else {
+                                return;
+                            };
+                            if event.phase != DragPhase::End || !event.outside {
+                                return;
+                            }
+                            let event = event.clone();
+                            let Some(torn) = event.payload.downcast_ref::<TabDrag>() else {
+                                return;
+                            };
                             let (items, selected, told) = &gone;
-                            take(items, selected, &torn.tab.id);
-                            told(&torn.tab.id, event);
+                            if told(&torn.tab.id, &event) {
+                                cx.prevent_default();
+                                take(items, selected, &torn.tab.id);
+                            }
                         });
                 }
                 let (close, move_to, reveal, nodes, items) = (

@@ -10642,10 +10642,11 @@ export type TabsProps = {
 	-- A tab of this strip went to another: its id, and that strip's `label`.
 	on_move: ((id: string, to: string) -> ())?,
 	-- Reorderable tabs tear off: one dragged off the strip drops on a strip
-	-- of its group in any window, or, released outside every window, leaves
-	-- `items` and this is told its id and where (`x`, `y`, `grab_x`,
-	-- `grab_y`, as `on_drag_outside`), to open it in a window of its own.
-	on_tear_off: ((id: string, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ())?,
+	-- of its group in any window, or, released outside every window, this
+	-- is told its id and where (`x`, `y`, `grab_x`, `grab_y`, as
+	-- `on_drag_outside`), to open it in a window of its own: it leaves
+	-- `items`, unless this returns false (a tab that stays home).
+	on_tear_off: ((id: string, e: { x: number, y: number, grab_x: number, grab_y: number }) -> boolean?)?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
 	label: Label?,
