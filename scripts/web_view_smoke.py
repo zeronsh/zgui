@@ -16,6 +16,9 @@ messages carry their origin.
 app; the clipboard through wl-clipboard). `--ime`: Pinyin composed into the
 page's field instead (IBus over XIM on X11; Fcitx5 over text-input-v3 in
 Sway with `--wayland`), checked as the page's composition events and value.
+`--slow-replies`: WebKit's answer on each key 800 ms late, after Ctrl is
+up, as on a loaded machine: a shortcut the page leaves alone still reaches
+the app with the modifiers it was pressed with.
 `--transparent`: a transparent page with no background of its own shows
 its box's yellow through it. `--orca` (X11): over a private AT-SPI bus, the
 page's own accessible tree is a child of its box (an internal frame) and
@@ -487,6 +490,8 @@ def main():
     parser.add_argument("--ime", action="store_true", help="Pinyin composed into the page's field")
     parser.add_argument("--transparent", action="store_true", help="a transparent page over its box's colour")
     parser.add_argument("--orca", action="store_true", help="the page's accessible tree, and Orca reading it (X11)")
+    parser.add_argument("--slow-replies", action="store_true",
+                        help="WebKit's answer on each key comes 800 ms late (ZGX_WEBKITGTK_REPLY_DELAY_MS, debug builds only), after Ctrl is up")
     args = parser.parse_args()
     needed = ["Xvfb", "openbox", "xdotool", "xwininfo"]
     needed += ["sway", "dbus-daemon", "wl-copy", "wl-paste"] + (["fcitx5", "fcitx5-remote"] if args.ime else []) if args.wayland else []
@@ -498,6 +503,8 @@ def main():
             parser.error("Missing executable: " + name)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "result.json").unlink(missing_ok=True)
+    if args.slow_replies:
+        os.environ["ZGX_WEBKITGTK_REPLY_DELAY_MS"] = "800"
     with private_runtime("zgx-web-view-") as private:
         checks, backend = (wayland if args.wayland else x11)(args, args.output, private)
     result = {"result": "pass", "backend": backend + (" IME" if args.ime else "") + (" Orca" if args.orca else "") + (" transparent" if args.transparent else ""), "checks": checks}

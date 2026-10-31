@@ -1363,6 +1363,30 @@ unsafe extern "C" fn on_unhandled_key(
     // SAFETY: GTK passes the key event and this handler's page.
     let (page, time) = unsafe { (page(data), (*event).time) };
     let id = page.id;
+    // A test's slow web process (`ZGX_WEBKITGTK_REPLY_DELAY_MS`): the
+    // answer comes after the modifiers are up, as on a loaded machine.
+    // Debug builds only (the probes'): no release build reads it.
+    #[cfg(debug_assertions)]
+    {
+        static DELAY: OnceLock<u64> = OnceLock::new();
+        let delay = *DELAY.get_or_init(|| {
+            std::env::var("ZGX_WEBKITGTK_REPLY_DELAY_MS")
+                .ok()
+                .and_then(|ms| ms.parse().ok())
+                .unwrap_or(0)
+        });
+        if delay > 0 {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                deliver(move || {
+                    if let Some(page) = ui_page(id) {
+                        page.unhandled(time);
+                    }
+                });
+            });
+            return 1;
+        }
+    }
     deliver(move || {
         if let Some(page) = ui_page(id) {
             page.unhandled(time);
@@ -2109,7 +2133,7 @@ enum ImChange {
 thread_local! {
     static UI_PAGES: RefCell<HashMap<u64, Weak<UiPage>>> = RefCell::new(HashMap::new());
     /// Keys pages left alone, for the app's shortcuts (`take_unhandled_keys`).
-    static UNHANDLED: RefCell<Vec<(Weak<RefCell<Scene>>, winit::event::KeyEvent)>> = const { RefCell::new(Vec::new()) };
+    static UNHANDLED: RefCell<Vec<(Weak<RefCell<Scene>>, KeyPress)>> = const { RefCell::new(Vec::new()) };
     /// zgx focus to move to or from pages' boxes (`sync_focus`).
     static FOCUS: RefCell<Vec<(NodeId, bool)>> = const { RefCell::new(Vec::new()) };
 }
@@ -2134,7 +2158,7 @@ struct UiPage {
     scale: Rc<Cell<f32>>,
     shown: Cell<usize>,
     /// Keys sent, by their time (GDK's), until handled or not.
-    keys: RefCell<VecDeque<(u32, winit::event::KeyEvent)>>,
+    keys: RefCell<VecDeque<(u32, KeyPress)>>,
     last_key: Cell<u32>,
     /// An editable has the page's focus, and where its caret is (device pixels).
     editing: Cell<bool>,
@@ -2190,9 +2214,9 @@ impl UiPage {
     fn unhandled(&self, time: u32) {
         let mut keys = self.keys.borrow_mut();
         if let Some(at) = keys.iter().position(|(t, _)| *t == time) {
-            let (_, event) = keys.remove(at).expect("found");
+            let (_, press) = keys.remove(at).expect("found");
             let scene = self.scene.borrow().clone();
-            UNHANDLED.with(|unhandled| unhandled.borrow_mut().push((scene, event)));
+            UNHANDLED.with(|unhandled| unhandled.borrow_mut().push((scene, press)));
         }
     }
     fn ime_changed(&self, change: ImChange) {
@@ -2621,7 +2645,7 @@ pub(crate) fn page_key(
     page.last_key.set(time);
     if press {
         let mut keys = page.keys.borrow_mut();
-        keys.push_back((time, event.clone()));
+        keys.push_back((time, (event.clone(), modifiers)));
         while keys.len() > 64 {
             keys.pop_front();
         }
@@ -2649,9 +2673,13 @@ pub(crate) fn page_key(
     });
     true
 }
+/// A key sent to a page, with the modifiers held as it was pressed: WebKit
+/// answers after its web process has seen it, by when they may be up (on a
+/// loaded machine, Ctrl+K came back as K, and no binding took it).
+pub(crate) type KeyPress = (winit::event::KeyEvent, Modifiers);
 /// Keys pages in `ui`'s window left alone since last asked, for the app's
 /// shortcuts.
-pub(crate) fn take_unhandled_keys(ui: &Ui) -> Vec<winit::event::KeyEvent> {
+pub(crate) fn take_unhandled_keys(ui: &Ui) -> Vec<KeyPress> {
     if !live() {
         return Vec::new();
     }
@@ -2668,7 +2696,7 @@ pub(crate) fn take_unhandled_keys(ui: &Ui) -> Vec<winit::event::KeyEvent> {
         *unhandled = kept;
         taken
             .into_iter()
-            .map(|(_, event)| event)
+            .map(|(_, press)| press)
             .collect::<Vec<_>>()
     })
 }
