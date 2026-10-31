@@ -7,6 +7,8 @@
 declare extern type TestApp with
 	-- Press and release the primary button at the target's middle.
 	function click(self, target: string): ()
+	-- Twice, as a double click.
+	function double_click(self, target: string): ()
 	-- Click the target (a field), then type `text` into it.
 	function type(self, target: string, text: string): ()
 	-- Click the target (a field) and replace its whole text with `text`, as

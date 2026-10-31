@@ -228,6 +228,8 @@ test("reads", function()
     expect(app:has('~"nothing like it"')).to_be(false)
     expect(app:tree("#echo")).to_contain("Hello, Ada")
     expect(app:tree("#echo")).never.to_contain("Count")
+    app:double_click("#inc")
+    expect(app:text("#label")).to_be("Count: 2")
 end)
 "##,
         )],

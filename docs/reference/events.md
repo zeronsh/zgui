@@ -7,6 +7,7 @@ on_click: (Handler | Action)?
 on_press: (((e: PointerEvent) -> ()) | Action)?
 on_release: (((e: PointerEvent) -> ()) | Action)?
 on_aux_click: (((e: AuxClickEvent) -> ()) | Action)?
+on_double_click: (((e: PointerEvent) -> ()) | Action)?
 on_navigate: (((e: NavigateEvent) -> ()) | Action)?
 on_hover: (((inside: boolean) -> ()) | Action)?
 on_pointer_move: (((e: PointerEvent) -> ()) | Action)?
@@ -42,6 +43,7 @@ on_drag_spring: ((payload: any) -> boolean?)?
 | `on_press` | `{ x, y, local_x, local_y, clicks, shift, ctrl, alt, meta, cmd }` | the primary button goes down on the node or anything in it; `clicks` counts presses in a row (2 for a double click's second, 3 for a triple's, and on past it) |
 | `on_release` | the same | the primary button comes up |
 | `on_aux_click` | `{ button, x, y, local_x, local_y, shift, ctrl, alt, meta, cmd }` (`button`: `"middle"`, or the platform's number for another extra button) | the middle button (or another beyond the primary and secondary) goes down and comes back up on the node or anything in it, the pointer not leaving it in between, as the DOM's `auxclick`: a tab closing on a middle click, a link opening in the background. The innermost node with `on_aux_click` takes it. The secondary button opens `context_menu` |
+| `on_double_click` | `{ x, y, local_x, local_y, shift, ctrl, alt, meta, cmd }` | the primary button is clicked twice on one spot within the system's double-click time, as the DOM's `dblclick`: heard as the second is let go, after its `on_click`; the innermost node with one takes it |
 | `on_navigate` | `{ direction }` (`"back"` or `"forward"`) | the platform's gesture for a step back or forward is made over it: on macOS, a trackpad's swipe between pages (two fingers across, or three, as the system's Trackpad setting has it), as Safari goes back and forward. A two-finger swipe navigates only where it starts: where nothing under the fingers scrolls that way (each scroll view at its edge), so a carousel in the middle of its content still scrolls; with no `on_navigate` under it, it scrolls and stretches as before. The nearest node with `on_navigate` takes it. `ui.router`'s view goes back and forward on it |
 | `on_file_drop` | the dropped files, each a `File` (`{ path, name, size, type }`), then `{ x, y, local_x, local_y }` | files are dropped on it from outside the window (Finder, Explorer, a file manager), as react-dropzone's `onDrop`. The innermost node with `on_file_drop` takes them. Send them with `ui.fetch`'s `file` or `multipart` ([the network](state.md#the-clipboard-and-files)) |
 | `on_file_hover` | `true`, then `false` | files dragged from outside the window come over it or anything in it, then leave it, are dropped or the drag ends (react-dropzone's `isDragActive`): a drop zone's highlight, or on the window's root, a "Drop files to upload" overlay |

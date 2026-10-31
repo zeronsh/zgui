@@ -4307,6 +4307,9 @@ fn with_rare(
     if let Some(handler) = &rare.navigate {
         view = with_navigate(view, handler.clone(), vm, low);
     }
+    if let Some(handler) = &rare.double_click {
+        view = with_double_click(view, handler.clone(), vm, low, handle.clone());
+    }
     if rare.file_drop.is_some() || rare.file_hover.is_some() {
         view = with_file_drop(view, rare, vm, low, handle);
     }
@@ -4444,6 +4447,63 @@ fn with_aux_click(
         }
         InputEvent::PointerLeave => (pressed, armed) = (None, false),
         _ => {}
+    })
+}
+
+/// `on_double_click`: a listener of its own, so a node without one pays
+/// nothing for it. A second press on one spot within the system's
+/// double-click time arms it, and its release clicks, as the DOM's
+/// `dblclick` follows the second `click`.
+#[inline(never)]
+fn with_double_click(
+    view: View,
+    handler: Handler,
+    vm: &Rc<Vm>,
+    low: &Rc<Lowering>,
+    handle: Rc<OnceCell<NodeHandle>>,
+) -> View {
+    let (vm, actions) = (vm.clone(), low.actions.clone());
+    let mut armed = false;
+    view.on_event(move |event| {
+        if event.phase == EventPhase::Capture {
+            return;
+        }
+        match &event.event {
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                ..
+            } => armed = event.click_count() == 2,
+            InputEvent::PointerUp {
+                x,
+                y,
+                button: PointerButton::Primary,
+            } if std::mem::take(&mut armed) => {
+                let lua = &vm.lua;
+                let local = handle
+                    .get()
+                    .and_then(|h| h.scene().map(|s| s.borrow().local_point(h.node(), *x, *y)))
+                    .unwrap_or((*x, *y));
+                let held = event.pointer_modifiers();
+                let table = lua.create_table().and_then(|t| {
+                    t.set("x", *x)?;
+                    t.set("y", *y)?;
+                    t.set("local_x", local.0)?;
+                    t.set("local_y", local.1)?;
+                    t.set("shift", held.shift)?;
+                    t.set("ctrl", held.control)?;
+                    t.set("alt", held.alt)?;
+                    t.set("meta", held.meta)?;
+                    t.set("cmd", held.primary_shortcut())?;
+                    Ok(t)
+                });
+                if let Ok(t) = table {
+                    event.stop_propagation();
+                    run(&handler, &vm, &actions, t);
+                }
+            }
+            InputEvent::PointerLeave => armed = false,
+            _ => {}
+        }
     })
 }
 

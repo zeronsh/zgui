@@ -668,6 +668,36 @@ fn a_tab_moved_to_another_strip_is_in_its_states() {
 }
 
 #[test]
+fn a_double_click_is_heard_once_by_the_innermost_node() {
+    let mut h = Harness::inline(
+        r#"local outer = ui.state("outer", 0)
+        local inner = ui.state("inner", 0)
+        local clicks = ui.state("clicks", 0)
+        return ui.column {
+            ui.column { id = "outer", w = 200, h = 100,
+                on_double_click = function() outer:add(1) end,
+                ui.div { id = "inner", w = 50, h = 50,
+                    on_click = function() clicks:add(1) end,
+                    on_double_click = function() inner:add(1) end },
+            },
+            ui.text { id = "said", function() return `{outer:get()} {inner:get()} {clicks:get()}` end },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.click("inner");
+    assert_eq!(h.text("said"), "0 0 1", "one click is no double");
+    h.ui.input
+        .set_double_click_time(std::time::Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    h.double_click("inner");
+    assert_eq!(
+        h.text("said"),
+        "0 1 3",
+        "both clicks, then the double, the inner's"
+    );
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")

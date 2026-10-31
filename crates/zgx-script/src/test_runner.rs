@@ -315,6 +315,14 @@ impl UserData for Mounted {
             app.settle();
             Ok(())
         });
+        methods.add_method("double_click", |_, m, target: String| {
+            let mut app = m.app.borrow_mut();
+            let node = Self::node(&mut app, &target)?;
+            let bounds = app.ui.scene.borrow().bounds(node);
+            crate::driver::double_click_at(&mut app.ui, bounds);
+            app.settle();
+            Ok(())
+        });
         methods.add_method("type", |_, m, (target, text): (String, String)| {
             let mut app = m.app.borrow_mut();
             let node = Self::node(&mut app, &target)?;

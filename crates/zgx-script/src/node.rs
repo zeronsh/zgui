@@ -731,6 +731,10 @@ pub(crate) struct RareEvents {
     /// `fn(over)`: files dragged from outside the window come over it
     /// (`true`), then leave it, are dropped or the drag ends (`false`).
     pub file_hover: Option<Handler>,
+    /// `fn({ x, y, local_x, local_y, … })`: the primary button clicked twice
+    /// on one spot, as the DOM's `dblclick`, heard as the second is let go;
+    /// the innermost node with one takes it.
+    pub double_click: Option<Handler>,
 }
 impl Kind {
     /// Regions that become a box of any number of children, laid out as
@@ -3034,6 +3038,7 @@ fn set_handler(
         "on_press" => &mut events.press,
         "on_release" => &mut events.release,
         "on_aux_click" => &mut events.rare.get_or_insert_default().aux_click,
+        "on_double_click" => &mut events.rare.get_or_insert_default().double_click,
         "on_navigate" => &mut events.rare.get_or_insert_default().navigate,
         "on_file_drop" => &mut events.rare.get_or_insert_default().file_drop,
         "on_file_hover" => &mut events.rare.get_or_insert_default().file_hover,
