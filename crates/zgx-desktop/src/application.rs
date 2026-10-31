@@ -4923,8 +4923,14 @@ impl Host {
         {
             crate::native_host::webkitgtk::sync_focus(&self.context.ui);
             // Keys pages left alone: the app's shortcuts have them now.
-            for event in crate::native_host::webkitgtk::take_unhandled_keys(&self.context.ui) {
-                self.key_input(event, false)?;
+            // With the modifiers held as each was pressed, not now.
+            for (event, held) in
+                crate::native_host::webkitgtk::take_unhandled_keys(&self.context.ui)
+            {
+                let now = std::mem::replace(&mut self.modifiers, held);
+                let replayed = self.key_input(event, false);
+                self.modifiers = now;
+                replayed?;
             }
         }
         self.poll_frame_deadline(std::time::Instant::now());
