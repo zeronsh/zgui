@@ -531,6 +531,13 @@ enum Shading {
     /// A canvas's polyline strokes (polyline.wgsl): their own pipeline,
     /// reading their points, never joined with another shading's quads.
     Polyline,
+    /// `shade`, keeping what's drawn where it's drawn over and nothing
+    /// else (source-in): a gradient text's gradient over its glyphs, in
+    /// its layer (`gradient_text_quads`).
+    SourceIn,
+    /// `shade` behind what's drawn (destination-over): a gradient text's
+    /// box, marks, selection and shadows under its filled glyphs.
+    Behind,
 }
 fn shading(quad: &Quad, scale: f32) -> Shading {
     // A panel with square corners and no border only antialiases its edges:
@@ -579,6 +586,9 @@ struct QuadPipelines {
     full_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
     basic: std::cell::OnceCell<wgpu::RenderPipeline>,
     basic_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
+    /// `Shading::SourceIn`'s and `Shading::Behind`'s: gradient text's.
+    source_in: std::cell::OnceCell<wgpu::RenderPipeline>,
+    behind: std::cell::OnceCell<wgpu::RenderPipeline>,
     /// The quad pipelines' group layouts (texture, viewport), for the
     /// polyline layout.
     texture_layout: wgpu::BindGroupLayout,
@@ -606,10 +616,12 @@ impl QuadPipelines {
             | Shading::Filter(_)
             | Shading::Blend
             | Shading::FilterBlend(_)
-            | Shading::ImageEffect => (&self.full, false, true),
-            Shading::Basic => (&self.basic, true, true),
-            Shading::Opaque => (&self.basic_clear, true, false),
+            | Shading::ImageEffect => (&self.full, false, Some(OVER)),
+            Shading::Basic => (&self.basic, true, Some(OVER)),
+            Shading::Opaque => (&self.basic_clear, true, None),
             Shading::Polyline => return &self.polylines().pipeline,
+            Shading::SourceIn => (&self.source_in, false, Some(SOURCE_IN)),
+            Shading::Behind => (&self.behind, false, Some(BEHIND)),
         };
         cell.get_or_init(|| {
             quad_pipeline(
@@ -675,14 +687,7 @@ impl QuadPipelines {
             self.get(Shading::Opaque)
         } else {
             self.full_clear.get_or_init(|| {
-                quad_pipeline(
-                    &self.device,
-                    self.shader(),
-                    &self.layout,
-                    false,
-                    None,
-                    false,
-                )
+                quad_pipeline(&self.device, self.shader(), &self.layout, None, None, false)
             })
         }
     }
@@ -1099,6 +1104,64 @@ struct TextQuad {
     uv: [f32; 4],
     color: [f32; 4],
     paint: [f32; 4],
+}
+/// A gradient text's quads from `start`, its glyphs from `glyphs` on, put
+/// in the order its own layer draws them (`Scene::set_text_gradient`): its
+/// glyphs (white, a mask), its `gradient` kept where they are
+/// (`Shading::SourceIn`), its box, marks, selection and shadows behind them
+/// (`Shading::Behind`), then its `selected` glyphs over all in the
+/// selected-text colour. Where each run after the glyphs starts.
+#[cold]
+#[inline(never)]
+fn gradient_text_quads(
+    quads: &mut Vec<Quad>,
+    (start, glyphs): (u32, usize),
+    gradient: Quad,
+    selected: Vec<Quad>,
+) -> [u32; 3] {
+    let under: Vec<Quad> = quads.drain(start as usize..glyphs).collect();
+    let filled = quads.len() as u32;
+    quads.push(gradient);
+    let behind = quads.len() as u32;
+    quads.extend(under);
+    let over = quads.len() as u32;
+    quads.extend(selected);
+    [filled, behind, over]
+}
+/// `gradient_text_quads`' runs as `draw`'s draws, the gradient from `image`.
+#[cold]
+#[inline(never)]
+fn push_gradient_text(
+    draws: &mut Vec<Draw>,
+    quads: &[Quad],
+    draw: &Draw,
+    [filled, behind, over]: [u32; 3],
+    image: u64,
+) {
+    let runs = [
+        (draw.start, filled, Shading::Full, TextureSource::Atlas),
+        (
+            filled,
+            behind,
+            Shading::SourceIn,
+            TextureSource::Image(image),
+        ),
+        (behind, over, Shading::Behind, TextureSource::Atlas),
+        (over, draw.end, Shading::Full, TextureSource::Atlas),
+    ];
+    for (start, end, shading, source) in runs {
+        if end > start {
+            draws.push(Draw {
+                shading,
+                blur: None,
+                start,
+                end,
+                clip: draw.clip,
+                bounds: quad_bounds(&quads[start as usize..end as usize]),
+                source,
+            });
+        }
+    }
 }
 /// A kept text's quads at `x`, `y`, each coloured by `color`.
 fn place_text_quads(
@@ -2910,6 +2973,7 @@ impl PickedPipelines {
             basic: &self.basic,
             opaque: &self.opaque,
             polyline: polylines.then(|| self.polyline.get_or_init(make)),
+            quads: None,
         }
     }
 }
@@ -2923,6 +2987,8 @@ struct Picks<'p> {
     opaque: &'p wgpu::RenderPipeline,
     /// For frames drawing polylines.
     polyline: Option<&'p wgpu::RenderPipeline>,
+    /// The rest, made as they're first drawn (a layer's frames).
+    quads: Option<&'p QuadPipelines>,
 }
 impl<'p> Picks<'p> {
     fn get(&self, shading: Shading) -> &'p wgpu::RenderPipeline {
@@ -2936,6 +3002,10 @@ impl<'p> Picks<'p> {
             Shading::Basic => self.basic,
             Shading::Opaque => self.opaque,
             Shading::Polyline => self.polyline.expect("made for a frame with polylines"),
+            // Drawn in a gradient text's layer alone (`gradient_text_quads`).
+            Shading::SourceIn | Shading::Behind => {
+                self.quads.expect("drawn into layers").get(shading)
+            }
         }
     }
 }
@@ -2978,7 +3048,9 @@ fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
         | Shading::Blend
         | Shading::FilterBlend(_)
         | Shading::ImageEffect
-        | Shading::Polyline => None,
+        | Shading::Polyline
+        | Shading::SourceIn
+        | Shading::Behind => None,
     };
     Some(if cost(a)? >= cost(b)? { a } else { b })
 }
@@ -3463,6 +3535,8 @@ impl GpuContext {
             full_clear: Default::default(),
             basic: Default::default(),
             basic_clear: Default::default(),
+            source_in: Default::default(),
+            behind: Default::default(),
             texture_layout: texture_layout.clone(),
             viewport_layout: viewport_layout.clone(),
             polylines: Default::default(),
@@ -3641,6 +3715,9 @@ pub struct GpuRenderer {
     single_pass_format: Option<wgpu::TextureFormat>,
     /// Rendering an isolated layer's texture, never presented directly.
     in_layer: bool,
+    /// The node whose layer this is, while rendering one: a gradient
+    /// text fills its glyphs in its own (`gradient_text_quads`).
+    layer_root: Option<NodeId>,
     /// The present blit converts to straight alpha (see `unpremultiplies`).
     /// Single-pass presentation then only matches for opaque windows.
     present_unpremultiplies: bool,
@@ -4349,6 +4426,7 @@ impl GpuRenderer {
             #[cfg(own_surfaces)]
             copy_offset: None,
             in_layer: false,
+            layer_root: None,
             present_unpremultiplies,
             copy_present,
             single_pass_frames: 0,
@@ -5707,7 +5785,9 @@ impl GpuRenderer {
         // separately so the same texture can be composed into any ancestor layer.
         let old_origin = std::mem::replace(&mut self.layer_origin, (bounds.x, bounds.y));
         let in_layer = std::mem::replace(&mut self.in_layer, true);
+        let root = std::mem::replace(&mut self.layer_root, items.first().map(|item| item.id));
         let result = self.render_flat::<FRAME>(scene, items, damage, None, false);
+        self.layer_root = root;
         self.in_layer = in_layer;
         self.layer_origin = old_origin;
         let texture = std::mem::replace(&mut self.target, target);
@@ -7207,6 +7287,9 @@ impl GpuRenderer {
                 // And a text whose quads are its glyphs alone (no selection, no
                 // decorations): drawn with one shading (`push_draw`).
                 let mut glyphs_alone = false;
+                // A gradient text in its own layer: its gradient's image, where
+                // its glyphs start and its selected glyphs (`gradient_text_quads`).
+                let mut gradient_text: Option<(u64, usize, Vec<Quad>)> = None;
                 match item.kind {
                     NodeKind::Canvas(canvas) => {
                         if bounds.width <= 0. || bounds.height <= 0. {
@@ -8056,6 +8139,17 @@ impl GpuRenderer {
                         let blurred = shadows.iter().any(|shadow| shadow.blur > 0.);
                         // Where its shadows' quads went, to be drawn apart.
                         let shadows_at = std::cell::Cell::new((usize::MAX, 0));
+                        // Filled with a gradient, as its layer's root: its glyphs
+                        // a mask, its selected ones again above (`gradient_text_quads`).
+                        let filled = match scene.has_text_gradients()
+                            && self.layer_root == Some(item.id)
+                            && item.effects.blur_radius <= 0.
+                        {
+                            true => self.gradient_text_image(scene, item.id, &mut stats)?,
+                            false => None,
+                        };
+                        let glyphs_from = std::cell::Cell::new(0);
+                        let selected_glyphs = std::cell::RefCell::new(Vec::new());
                         let place = |quads: &mut Vec<Quad>, source: &[TextQuad]| {
                             if !shadows.is_empty() {
                                 shadows_at.set((quads.len(), quads.len()));
@@ -8075,8 +8169,48 @@ impl GpuRenderer {
                             if !shadows.is_empty() {
                                 shadows_at.set((shadows_at.get().0, quads.len()));
                             }
+                            glyphs_from.set(quads.len());
+                            if filled.is_some() {
+                                let mask = [1., 1., 1., item.effects.opacity];
+                                let edge_fade = item.effects.edge_fade;
+                                place_text_quads(
+                                    quads,
+                                    source,
+                                    glyph_x,
+                                    y,
+                                    fade,
+                                    edge_fade,
+                                    |_| mask,
+                                );
+                                if let Some(highlight) = selected {
+                                    let mut chosen = selected_glyphs.borrow_mut();
+                                    place_text_quads(
+                                        &mut chosen,
+                                        source,
+                                        glyph_x,
+                                        y,
+                                        fade,
+                                        edge_fade,
+                                        |cached| {
+                                            (cached.paint[1] > 0.5)
+                                                .then(|| {
+                                                    highlight.glyph_color(
+                                                        inset
+                                                            + cached.rect[0]
+                                                            + cached.rect[2] * 0.5,
+                                                        cached.rect[1] + cached.rect[3] * 0.5,
+                                                    )
+                                                })
+                                                .flatten()
+                                                .map_or([0.; 4], |color| {
+                                                    rgba(color, item.effects.opacity)
+                                                })
+                                        },
+                                    );
+                                    chosen.retain(|quad| quad.color[3] > 0.);
+                                }
                             // Plain and unselected: one colour, chosen once.
-                            if selected.is_none() && rich.is_none() {
+                            } else if selected.is_none() && rich.is_none() {
                                 place_text_quads(
                                     quads,
                                     source,
@@ -8249,6 +8383,15 @@ impl GpuRenderer {
                             }
                             shadow_quads = (at as u32, end as u32);
                         }
+                        if let Some(image) = filled {
+                            // (Blurred shadows went in where its glyphs started.)
+                            let glyphs = match shadow_quads.1 > shadow_quads.0 {
+                                true => shadow_quads.1 as usize,
+                                false => glyphs_from.get(),
+                            };
+                            gradient_text = Some((image, glyphs, selected_glyphs.into_inner()));
+                            glyphs_alone = false;
+                        }
                     }
                     NodeKind::Container(_) => {}
                 }
@@ -8269,7 +8412,9 @@ impl GpuRenderer {
                 // takes them in, then the rest under its own.
                 let (start, clip) = match own_clip {
                     Some(own)
-                        if shadow_quads.1 > shadow_quads.0 && item.effects.blur_radius <= 0. =>
+                        if shadow_quads.1 > shadow_quads.0
+                            && item.effects.blur_radius <= 0.
+                            && gradient_text.is_none() =>
                     {
                         let glyphs = match item.effects.edge_fade != 0. || in_region {
                             true => Shading::Full,
@@ -8291,7 +8436,23 @@ impl GpuRenderer {
                 // batch: neighbouring text, icons and rows become one draw. Quads
                 // it would cut, transformed quads and filters keep the scissor.
                 // (The kept quads' bounds, when the clip culls on the CPU.)
+                // A gradient text's runs, in their order (under the scissor).
+                let filled_runs = gradient_text.take().map(|(image, glyphs, selected)| {
+                    let gradient = Quad {
+                        rect: fade,
+                        uv: [0., 0., 1., 1.],
+                        color: [1.; 4],
+                        fade,
+                        options: [item.effects.edge_fade, 2., 0., 0.],
+                        shape: [0.; 4],
+                        border: [0.; 4],
+                        mask: NO_MASK,
+                    };
+                    let runs = gradient_text_quads(&mut quads, (start, glyphs), gradient, selected);
+                    (image, runs)
+                });
                 let (draw_clip, culled_bounds) = match item.effects.blur_radius <= 0. {
+                    true if filled_runs.is_some() => (clip, None),
                     true if glyphs_alone => {
                         cull_glyphs(&mut quads, start as usize, clip, viewport, self.scale)
                     }
@@ -8332,6 +8493,10 @@ impl GpuRenderer {
                             TextureSource::Atlas
                         },
                     };
+                    if let Some((image, runs)) = filled_runs {
+                        push_gradient_text(&mut draws, &quads, &draw, runs, image);
+                        continue;
+                    }
                     let split = self.split_shading;
                     // A glyph's quad (`glyph_quad`) is plain unless faded or in a
                     // clip region, and textured: one shading for all of them.
@@ -8591,8 +8756,13 @@ impl GpuRenderer {
                     .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
                     .as_ref()
                     .is_some_and(|frame| frame.image_effects()),
-                // Layer shaders and blend modes take the wgpu path.
-                Shading::Filter(_) | Shading::Blend | Shading::FilterBlend(_) => false,
+                // Layer shaders and blend modes take the wgpu path, as layers'
+                // own frames do (gradient text's, `!self.in_layer` above).
+                Shading::Filter(_)
+                | Shading::Blend
+                | Shading::FilterBlend(_)
+                | Shading::SourceIn
+                | Shading::Behind => false,
                 _ => true,
             }))
             && effect_jobs.iter().all(|job| {
@@ -9264,7 +9434,15 @@ impl GpuRenderer {
                 {
                     Some("GPU-drawn image")
                 }
-                (_, Shading::Full | Shading::Basic | Shading::Opaque | Shading::Polyline) => None,
+                (
+                    _,
+                    Shading::Full
+                    | Shading::Basic
+                    | Shading::Opaque
+                    | Shading::Polyline
+                    | Shading::SourceIn
+                    | Shading::Behind,
+                ) => None,
                 _ => Some("shader fill, layer shader, blend mode or image effect"),
             })
     }
@@ -9695,6 +9873,7 @@ impl GpuRenderer {
                     .points
                     .is_some()
                     .then(|| quads.get(Shading::Polyline)),
+                quads: Some(quads),
             };
             self.encode_damage(&mut pass, &deferred, picks, &mut stats);
         }
@@ -9823,12 +10002,12 @@ impl GpuRenderer {
             if let Some(spare) = &mut self.spare {
                 spare.copy_bind = None;
             }
-            let both = |blend, basic| {
+            let both = |blend: bool, basic| {
                 quad_pipeline(
                     &self.device,
                     inner.quads.shader(),
                     &inner.quad_layout,
-                    blend,
+                    blend.then_some(OVER),
                     Some(format),
                     basic,
                 )
@@ -10675,6 +10854,24 @@ impl GpuRenderer {
             mask: NO_MASK,
         };
         Ok((found.id, quad))
+    }
+    /// Gradient text `node`'s gradient image (`Scene::text_gradient_image`),
+    /// uploaded if it is new, the one it replaced let go: its id, or `None`
+    /// to draw the text as plain text. Out of line: plain text never comes
+    /// here.
+    #[cold]
+    #[inline(never)]
+    fn gradient_text_image(
+        &mut self,
+        scene: &Scene,
+        node: NodeId,
+        stats: &mut GpuStats,
+    ) -> Result<Option<u64>, GpuError> {
+        let Some(image) = scene.text_gradient_image(node) else {
+            return Ok(None);
+        };
+        self.retire_node_image(node, image.id());
+        Ok(self.ensure_image(image, None, stats)?.then(|| image.id()))
     }
     /// The texture of `node`'s canvas raster, uploaded if it is new; the
     /// cache then keeps no pixels. A lost texture rasterizes again.
@@ -14411,15 +14608,40 @@ fn drawable_pipeline(
         cache: None,
     })
 }
+/// Premultiplied colour over the target: every quad's but gradient text's.
+const OVER: wgpu::BlendState = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
+/// The colour where the target has some, as much as it has (source-in).
+const SOURCE_IN: wgpu::BlendState = {
+    let component = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::DstAlpha,
+        dst_factor: wgpu::BlendFactor::Zero,
+        operation: wgpu::BlendOperation::Add,
+    };
+    wgpu::BlendState {
+        color: component,
+        alpha: component,
+    }
+};
+/// The colour under the target's (destination-over).
+const BEHIND: wgpu::BlendState = {
+    let component = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    wgpu::BlendState {
+        color: component,
+        alpha: component,
+    }
+};
 fn quad_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
-    blend: bool,
+    blend: Option<wgpu::BlendState>,
     drawable: Option<wgpu::TextureFormat>,
     basic: bool,
 ) -> wgpu::RenderPipeline {
-    let blend = blend.then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
     let all = wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x4,2=>Float32x4,3=>Float32x4,4=>Float32x4,5=>Float32x4,6=>Float32x4,7=>Float32x4];
     // `basic` reads rect, uv, colour and options only.
     let basic_attributes = [all[0], all[1], all[2], all[4]];
@@ -14597,6 +14819,13 @@ pub(crate) fn image_effect_source() -> String {
         include_str!("draw.wgsl"),
         include_str!("image_effects.wgsl")
     )
+}
+/// The blends quads draw with besides premultiplied alpha, by name: gradient
+/// text's (`Shading::SourceIn`, `Shading::Behind`), for `tests/every_shader.rs`
+/// to make draw.wgsl's pipelines with.
+#[doc(hidden)]
+pub fn quad_blends() -> [(&'static str, wgpu::BlendState); 2] {
+    [("source-in", SOURCE_IN), ("behind", BEHIND)]
 }
 /// Every shader module the renderer compiles, named, composed as it
 /// composes them (a fill and a layer shader around a plain user part), for

@@ -6,7 +6,8 @@
 //! isolated layers (translucent, nested, and turning inside), and images
 //! (a picture with straight alpha and a gradient's ramp), and canvas
 //! polylines (a moving sparkline, a translucent stroke over itself), and
-//! a truncated text's blurred shadow reaching past its box, at
+//! a truncated text's blurred shadow reaching past its box, and a counter
+//! filled with a gradient (source-in and behind blends), at
 //! 1×, 1.5× and 2×, byte for byte: both compile the same HLSL with FXC
 //! (Direct3D 12 pinned to it, docs/windows.md). `ZGX_D3D11` is read once a
 //! process, so the test runs itself again with it and compares that run's
@@ -31,6 +32,7 @@ const CHILD: &str = "ZGX_D3D11_PARITY_CHILD";
 #[cfg(windows)]
 fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
     let (spark, progress, turn, wave) = (live.clone(), live.clone(), live.clone(), live.clone());
+    let counted = live.clone();
     let card = move |index: u32| {
         let (value, bars) = (live.clone(), live.clone());
         div()
@@ -259,6 +261,29 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .absolute()
         .ml(260.)
         .mt(250.);
+    // A counter filled with a gradient, with a shadow: its own layer's
+    // glyphs, the gradient source-in and the shadow behind them.
+    let filled = text_signal(move || format!("{} frames", counted.get()))
+        .size(110., 24.)
+        .text_size(18.)
+        .text_shadow(1., 2., 0., Color(20, 20, 20, 255))
+        .text_gradient(zgx::decoration::Gradient::Linear {
+            angle: 0.3,
+            stops: vec![
+                zgx::canvas::GradientStop {
+                    offset: 0.,
+                    color: Color(255, 120, 40, 255),
+                },
+                zgx::canvas::GradientStop {
+                    offset: 1.,
+                    color: Color(80, 140, 255, 255),
+                },
+            ]
+            .into(),
+        })
+        .absolute()
+        .ml(140.)
+        .mt(270.);
     div()
         .w(SIZE.0)
         .h(SIZE.1)
@@ -271,6 +296,7 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .child(pictured)
         .child(lines)
         .child(shadowed)
+        .child(filled)
 }
 
 /// Each frame's pixels, RGBA, as this process draws them at `scale`.

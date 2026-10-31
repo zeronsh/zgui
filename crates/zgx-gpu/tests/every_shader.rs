@@ -193,36 +193,46 @@ fn every_shader_module_compiles_each_entry_point() {
                         },
                         alpha: wgpu::BlendComponent::REPLACE,
                     });
-                    let targets: Vec<_> = (0..count)
-                        .map(|_| {
-                            Some(wgpu::ColorTargetState {
-                                format: wgpu::TextureFormat::Bgra8Unorm,
-                                blend,
-                                write_mask: wgpu::ColorWrites::ALL,
+                    // draw.wgsl's quads also blend source-in and behind
+                    // (gradient text's): the same shader, other pipelines.
+                    let mut blends = vec![blend];
+                    if name == "draw" && entry.name == "fs" {
+                        blends.extend(zgx_gpu::quad_blends().map(|(_, blend)| Some(blend)));
+                    }
+                    // (One counted below.)
+                    made += blends.len() - 1;
+                    for blend in blends {
+                        let targets: Vec<_> = (0..count)
+                            .map(|_| {
+                                Some(wgpu::ColorTargetState {
+                                    format: wgpu::TextureFormat::Bgra8Unorm,
+                                    blend,
+                                    write_mask: wgpu::ColorWrites::ALL,
+                                })
                             })
-                        })
-                        .collect();
-                    let _ = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some(&label),
-                        layout: None,
-                        vertex: wgpu::VertexState {
-                            module: &module,
-                            entry_point: Some(&vertex.name),
-                            compilation_options: Default::default(),
-                            buffers: if attributes.is_empty() { &[] } else { &buffers },
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &module,
-                            entry_point: Some(&entry.name),
-                            compilation_options: Default::default(),
-                            targets: &targets,
-                        }),
-                        primitive: Default::default(),
-                        depth_stencil: None,
-                        multisample: Default::default(),
-                        multiview_mask: None,
-                        cache: None,
-                    });
+                            .collect();
+                        let _ = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                            label: Some(&label),
+                            layout: None,
+                            vertex: wgpu::VertexState {
+                                module: &module,
+                                entry_point: Some(&vertex.name),
+                                compilation_options: Default::default(),
+                                buffers: if attributes.is_empty() { &[] } else { &buffers },
+                            },
+                            fragment: Some(wgpu::FragmentState {
+                                module: &module,
+                                entry_point: Some(&entry.name),
+                                compilation_options: Default::default(),
+                                targets: &targets,
+                            }),
+                            primitive: Default::default(),
+                            depth_stencil: None,
+                            multisample: Default::default(),
+                            multiview_mask: None,
+                            cache: None,
+                        });
+                    }
                 }
                 // Each made with the fragment stages it feeds.
                 _ => continue,

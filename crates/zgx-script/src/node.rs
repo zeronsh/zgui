@@ -1481,7 +1481,7 @@ props! {
     "hidden" => Hidden: Bool, "invisible" => Invisible: Bool, "z" => Z: Num,
     "sticky_top" => StickyTop: Num,
     // Paint.
-    "bg" => Bg: Color, "gradient" => Gradient: Gradient, "radial" => Radial: Radial, "color" => TextColor: Color,
+    "bg" => Bg: Color, "gradient" => Gradient: Gradient, "radial" => Radial: Radial, "mask_gradient" => MaskGradient: Gradient, "mask_radial" => MaskRadial: Radial, "color" => TextColor: Color,
     "bg_image" => BgImage: Str, "bg_fit" => BgFit: Str,
     "rounded" => Rounded: Num, "corners" => Corners: Corners,
     "rounded_tl" => RoundedTl: Num, "rounded_tr" => RoundedTr: Num,
@@ -1507,6 +1507,7 @@ props! {
     "areas" => Areas: Areas, "flow" => Flow: GridFlow, "area" => Area: Str,
     "grid_column" => GridColumn: GridLines, "grid_row" => GridRow: GridLines,
     "display" => Display: Str,
+    "text_gradient" => TextGradient: Gradient, "text_radial" => TextRadial: Radial,
     // Transforms: after layout, about `origin` (fractions of the node).
     // Last, so that `is_transform` is a single comparison.
     "x" => X: Num, "y" => Y: Num,

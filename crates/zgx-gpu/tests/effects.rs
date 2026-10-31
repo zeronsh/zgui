@@ -379,3 +379,63 @@ fn erf(x: f32) -> f32 {
         * t;
     (1. - poly * (-x * x).exp()).copysign(x)
 }
+
+/// A gradient mask (`Scene::set_mask_gradient`) shows a white box over
+/// black through the gradient's alpha: left to right, it brightens across
+/// the box; radial, it's brightest in the middle and dark at the corners.
+#[test]
+fn gradient_masks_show_the_box_through_the_gradient() {
+    use zgx::canvas::GradientStop;
+    use zgx::decoration::{Gradient, RadialStops};
+    let _gpu_fixture = gpu_fixture();
+    let stop = |offset, alpha| GradientStop {
+        offset,
+        color: Color(0, 0, 0, alpha),
+    };
+    let draw = |gradient: Gradient| {
+        let mut scene = Scene::new(120., 120.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(0, 0, 0, 255)),
+            Style {
+                width: Some(120.),
+                height: Some(120.),
+                ..Default::default()
+            },
+        );
+        let node = scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(255, 255, 255, 255)),
+            Style {
+                width: Some(100.),
+                height: Some(100.),
+                ..Default::default()
+            },
+        );
+        scene.set_transform(node, Transform { x: 10., y: 10. });
+        scene.set_mask_gradient(node, Some(gradient));
+        let mut gpu = GpuRenderer::new(120, 120).unwrap();
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap();
+        gpu.readback().unwrap()
+    };
+    let at = |pixels: &[u8], x: usize, y: usize| pixels[(y * 120 + x) * 4];
+    let linear = draw(Gradient::Linear {
+        angle: 0.,
+        stops: vec![stop(0., 0), stop(1., 255)].into(),
+    });
+    let row: Vec<u8> = (10..110).step_by(10).map(|x| at(&linear, x, 60)).collect();
+    assert!(row.windows(2).all(|w| w[0] <= w[1]), "brightening: {row:?}");
+    assert!(row[0] < 20 && row[9] > 220, "{row:?}");
+    let radial = draw(Gradient::Radial {
+        center: (0.5, 0.5),
+        radius: 1.,
+        stops: RadialStops::from([stop(0., 255), stop(1., 0)]),
+    });
+    let (middle, corner) = (at(&radial, 60, 60), at(&radial, 12, 12));
+    assert!(
+        middle > 240 && corner < 30,
+        "middle {middle}, corner {corner}"
+    );
+}

@@ -1612,6 +1612,17 @@ export type Styles = {
 	bg: Color?,
 	gradient: Gradient?,
 	radial: RadialGradient?,
+	-- Shows the node through a gradient's alpha over its box, whatever its
+	-- size (CSS's `mask-image` with a gradient): `mask_gradient` as
+	-- `gradient` takes it, `mask_radial` as `radial` does. In place of `mask`.
+	mask_gradient: Gradient?,
+	mask_radial: RadialGradient?,
+	-- Fills a text's glyphs with a gradient over its box rather than its
+	-- colour (CSS's `background-clip: text`), written as `gradient` and
+	-- `radial` are. Its selection, highlights and shadows show as plain
+	-- text's do.
+	text_gradient: Gradient?,
+	text_radial: RadialGradient?,
 	color: Color?,
 	bg_image: string?,
 	bg_fit: Fit?,
@@ -1824,6 +1835,10 @@ export type StyleProps = {
 	bg: Reactive<Color>?,
 	gradient: Reactive<Gradient>?,
 	radial: Reactive<RadialGradient>?,
+	mask_gradient: Reactive<Gradient>?,
+	mask_radial: Reactive<RadialGradient>?,
+	text_gradient: Reactive<Gradient>?,
+	text_radial: Reactive<RadialGradient>?,
 	color: Reactive<Color>?,
 	bg_image: Reactive<string>?,
 	bg_fit: Reactive<Fit>?,

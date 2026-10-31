@@ -3819,6 +3819,21 @@ fn widget_style(pick: impl FnOnce(&WidgetStyles) -> &Styles) -> Styles {
     thread_local! { static STYLES: WidgetStyles = WidgetStyles::new(); }
     STYLES.with(|styles| pick(styles).clone())
 }
+/// A decorated text's `label` with its box's text gradient
+/// (`Styled::text_gradient`), if it has one. Out of line: few texts do.
+#[cold]
+#[inline(never)]
+fn label_gradient(styles: &Styles, label: View) -> View {
+    match styles
+        .rare()
+        .cold
+        .as_ref()
+        .and_then(|cold| cold.text_gradient.clone())
+    {
+        Some(gradient) => label.text_gradient(gradient),
+        None => label,
+    }
+}
 fn mount_element(
     ui: &mut Ui,
     parent: NodeId,
@@ -3847,7 +3862,15 @@ fn mount_element(
             || view.variants.disabled.is_some()
             || view.variants.reactive.is_some();
         if boxed {
-            let label = View::new(kind);
+            let mut label = View::new(kind);
+            // Its glyphs are the label's: so is their gradient.
+            if view
+                .styles
+                .rare_set()
+                .is_some_and(|rare| rare.cold.is_some())
+            {
+                label = label_gradient(&view.styles, label);
+            }
             view.children.push(label);
             // The label spans the box, so its lines align (`text_align`)
             // and truncate at the box's edges, not its own.
