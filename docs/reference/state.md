@@ -40,7 +40,8 @@ ui.open_files(opts: FilePickerOptions?) -> Promise<{ File }>
 ui.save_file(opts: FilePickerOptions?) -> Promise<File?>
 ui.read_file(file: File | string) -> Promise<string>
 ui.write_file(file: File | string, text: string) -> Promise<nil>
-ui.open_folder(opts: FilePickerOptions?) -> Promise<Folder?>
+ui.open_folder(opts: FolderPickerOptions?) -> Promise<Folder?>
+ui.remembered_folder(key: string) -> Promise<Folder?>
 ui.args: { string }
 ui.on_open(handler: (e: { files: { File }, urls: { string } }) -> ())
 ```
@@ -363,6 +364,7 @@ return ui.button { "Open a vault", on_click = open }
 | `read(path)` | a promise of a text file's contents |
 | `file(path)` | a promise of a file inside it as a `File`, its `path` absolute, which `ui.image`, `ui.read_file` and `drag_export`'s `files` take as they do a dialog's (a thumbnail, a drag out to Finder). `list(path, { files = true })` gives each file entry its `file` the same way |
 | `write(path, text)` | a promise settled once the file is replaced whole: its folders made, a temporary file beside it renamed over it, its permissions kept. A failure leaves the old file as it was |
+| `forget()` | the host keeps it no more: a later launch's `ui.remembered_folder` is nil. This run's handle still reaches it |
 
 Everything runs off the main thread, and a failure is a `UiError`: `kind` `"denied"` for a path the handle refuses, `"io"` for what the system says.
 
@@ -370,7 +372,22 @@ Everything runs off the main thread, and a failure is a `UiError`: `kind` `"deni
 
 **Who gets one:** a plugin only with the `folders` grant (`zgx.json`, or `ScriptHost::grant(plugin, Capability::Folders)`). A Rust host can refuse it to every script, the app's own too, with `ScriptHost::refuse_folders()`, and a platform without a folder dialog settles with an error.
 
-**A handle lasts the run.** It isn't saved by `ui.persist` and doesn't survive a relaunch, so an app asks again. On macOS, a sandboxed app needs the `com.apple.security.files.user-selected.read-write` entitlement for the dialog's folder to be readable at all, and to reopen one after a relaunch it would need a security-scoped bookmark (`com.apple.security.files.bookmarks.app-scope`, and `startAccessingSecurityScopedResource` around each use). zgx doesn't build bookmarks yet.
+**A handle lasts the run, unless the host keeps it.** `ui.persist` doesn't save one. `ui.open_folder({ remember = "library" })` asks the host to keep the grant under that key, and on a later launch `ui.remembered_folder("library")` settles with the handle if the folder still resolves, or nil (gone, refused, or never kept). The handle keeps every rule above, and `folder:forget()` drops the grant.
+
+```lua
+local library = ui.state("library", nil :: Folder?)
+ui.task(function()
+	library:set(ui.remembered_folder("library"):await())
+end)
+local function choose()
+	ui.task(function()
+		library:set(ui.open_folder({ title = "Choose a library", remember = "library" }):await())
+	end)
+end
+return ui.button { "Choose a library", on_click = choose }
+```
+
+What the host keeps, and where: on macOS a security-scoped bookmark, which reaches the folder sandboxed or not and follows it moved or renamed; elsewhere the folder's path. It goes in the host's storage (`ScriptHost::storage`, or the app's data directory under `app_id`, in `.folders`, a file per key), where no script reads, since scripts read only what was picked. A host without storage keeps it in memory, for the run. A sandboxed macOS app needs the `com.apple.security.files.user-selected.read-write` entitlement for the dialog's folder to be readable at all, and `com.apple.security.files.bookmarks.app-scope` to make bookmarks. Plugins keep no folders. A Rust host can refuse to keep any with `ScriptHost::refuse_remembered_folders()`: `remember` then picks as without it, and `ui.remembered_folder` settles with nil. `ui.remembered_folder` is a promise rather than a value because a script's first load runs before its window exists, and resolving a grant takes the window's platform (on macOS, resolving the bookmark and entering its scope). It settles once the window is there, so it works at a script's top level, inside `ui.task`.
 
 In a test, `app:pick_folder(name)` answers the next dialog with a folder of the test's own files ([testing](../scripting.md#testing-an-app)).
 

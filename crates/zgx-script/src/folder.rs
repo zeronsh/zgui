@@ -4,7 +4,8 @@
 //! a symbolic link counts where it leads. Everything runs off the main
 //! thread, and a write replaces its file whole (a temporary file beside it,
 //! renamed over it). Scripts make no links, so a link that changes between
-//! the check and the open takes another process.
+//! the check and the open takes another process. A host may keep a grant
+//! past the run (`remember`): the platform's bookmark, where no script reads.
 use crate::{
     calls::{PromiseUd, pending, settle_failing},
     errors::{Failure, Kind},
@@ -12,6 +13,8 @@ use crate::{
 };
 use mlua::{Lua, Table, UserData, UserDataFields, UserDataMethods};
 use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
     fs,
     io::Write as _,
     path::{Path, PathBuf},
@@ -205,11 +208,145 @@ fn write(root: &Path, path: &str, text: &str) -> Result<(), Trouble> {
     written.map_err(|error| failed(path, error))
 }
 
-/// A folder a person picked. Only `ui.open_folder` makes one.
-#[derive(Debug)]
+/// A folder a person picked. Only `ui.open_folder` makes one, and
+/// `ui.remembered_folder` from a grant it kept.
 pub struct Folder {
     root: Arc<Path>,
     name: String,
+    /// Kept past the run under this key, by this host.
+    kept: RefCell<Option<(String, Rc<Access>)>>,
+    /// Ends the access a kept grant began, when the handle goes.
+    release: Option<(zgx::platform::PlatformService, PathBuf)>,
+}
+impl std::fmt::Debug for Folder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Folder")
+            .field("root", &self.root)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+impl Drop for Folder {
+    fn drop(&mut self) {
+        if let Some((platform, path)) = self.release.take() {
+            platform.0.release_folder(&path);
+        }
+    }
+}
+impl Folder {
+    /// The folder at `root` (canonical) as a script holds it.
+    fn value(self) -> Value {
+        Value::Element(crate::value::ElementHandle(Rc::new(
+            crate::value::Held::Folder(Rc::new(self)),
+        )))
+    }
+}
+
+/// What a host lets scripts have of folders, and the grants it keeps past a
+/// run (`ui.open_folder { remember }`): the platform's, in its storage
+/// directory's `.folders`, which no script reads (scripts read only what
+/// was picked), or in memory without one.
+pub(crate) struct Access {
+    /// `ScriptHost::refuse_folders`: no folder at all.
+    pub(crate) refused: Cell<bool>,
+    /// `ScriptHost::refuse_remembered_folders`: none kept past a run.
+    pub(crate) forgetful: Cell<bool>,
+    persist: Rc<crate::persist::Persist>,
+    memory: RefCell<HashMap<String, Vec<u8>>>,
+}
+impl Access {
+    pub(crate) fn new(persist: Rc<crate::persist::Persist>) -> Self {
+        Self {
+            refused: Cell::new(false),
+            forgetful: Cell::new(false),
+            persist,
+            memory: RefCell::default(),
+        }
+    }
+    /// Where `key`'s grant lies, with a storage directory: its key in hex.
+    fn file(&self, key: &str) -> Option<PathBuf> {
+        let name: String = key.bytes().map(|b| format!("{b:02x}")).collect();
+        Some(self.persist.dir()?.join(".folders").join(name))
+    }
+    fn keep(&self, key: &str, grant: Vec<u8>) {
+        match self.file(key) {
+            Some(file) => {
+                let written = file
+                    .parent()
+                    .map_or(Ok(()), fs::create_dir_all)
+                    .and_then(|()| fs::write(&file, grant));
+                if let Err(error) = written {
+                    eprintln!("zgx: keeping folder `{key}`: {}: {error}", file.display());
+                }
+            }
+            None => {
+                self.memory.borrow_mut().insert(key.to_owned(), grant);
+            }
+        }
+    }
+    fn grant(&self, key: &str) -> Option<Vec<u8>> {
+        match self.file(key) {
+            Some(file) => fs::read(file).ok(),
+            None => self.memory.borrow().get(key).cloned(),
+        }
+    }
+    fn forget(&self, key: &str) {
+        match self.file(key) {
+            Some(file) => {
+                let _ = fs::remove_file(file);
+            }
+            None => {
+                self.memory.borrow_mut().remove(key);
+            }
+        }
+    }
+}
+
+/// The folder `key`'s grant names, if it still resolves, its access begun
+/// (until the handle goes); nil otherwise.
+fn kept_folder(
+    access: &Rc<Access>,
+    key: String,
+    platform: zgx::platform::PlatformService,
+) -> Value {
+    let Some(grant) = access.grant(&key) else {
+        return Value::Nil;
+    };
+    let Some(found) = platform.0.resolve_folder(&grant) else {
+        return Value::Nil;
+    };
+    if let Some(renewed) = &found.renewed {
+        access.keep(&key, renewed.clone());
+    }
+    let Ok(root) = fs::canonicalize(&found.path) else {
+        platform.0.release_folder(&found.path);
+        return Value::Nil;
+    };
+    let name = root
+        .file_name()
+        .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+    Folder {
+        root: root.into(),
+        name,
+        kept: RefCell::new(Some((key, access.clone()))),
+        release: Some((platform, found.path)),
+    }
+    .value()
+}
+
+/// Whether the script running is a plugin's.
+fn in_plugin(lua: &Lua) -> bool {
+    lua.app_data_ref::<crate::node::Env>()
+        .is_some_and(|env| matches!(*env.grants, crate::Grants::Only(_)))
+}
+/// A key to keep a folder under: some text.
+fn key_of(what: &str, key: String) -> mlua::Result<String> {
+    if key.is_empty() {
+        return Err(mlua::Error::runtime(format!(
+            "{what}: a folder's key is some text"
+        )));
+    }
+    Ok(key)
 }
 /// A folder as a script holds it.
 pub(crate) struct FolderUd(pub(crate) Rc<Folder>);
@@ -266,6 +403,14 @@ impl UserData for FolderUd {
         fields.add_field_method_get("name", |_, folder| Ok(folder.0.name.clone()));
     }
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // The host keeps it no more: a later launch's
+        // `ui.remembered_folder` is nil. This run's handle still reaches it.
+        methods.add_method("forget", |_, folder, ()| {
+            if let Some((key, access)) = folder.0.kept.borrow_mut().take() {
+                access.forget(&key);
+            }
+            Ok(())
+        });
         // `folder:list(path?, { recursive?, limit?, files? })`.
         methods.add_method(
             "list",
@@ -348,32 +493,78 @@ impl UserData for FolderUd {
     }
 }
 
-/// Installs `ui.open_folder`. `allowed` is false for a plugin the host did
-/// not grant it and for a host that refuses it (`ScriptHost::refuse_folders`).
+/// Installs `ui.open_folder` and `ui.remembered_folder`. `allowed` is false
+/// for a plugin the host did not grant folders; `access` says what the host
+/// refuses and keeps.
 pub(crate) fn install(
     lua: &Lua,
     ui: &Table,
     shared: crate::io::SharedPlatform,
     allowed: bool,
-    refused: Rc<std::cell::Cell<bool>>,
+    access: Rc<Access>,
 ) -> mlua::Result<()> {
+    let (remembering, platforms) = (access.clone(), shared.clone());
+    ui.set(
+        "remembered_folder",
+        lua.create_function(move |lua, key: String| {
+            const WHAT: &str = "ui.remembered_folder";
+            if !allowed {
+                return Err(crate::io::denied(WHAT, "Folders"));
+            }
+            if in_plugin(lua) {
+                return Err(mlua::Error::runtime(format!(
+                    "{WHAT}: a plugin keeps no folders"
+                )));
+            }
+            let key = key_of(WHAT, key)?;
+            let promise = pending(lua, "remembered_folder".into())?;
+            let access = remembering.clone();
+            let kept = !access.refused.get() && !access.forgetful.get();
+            // The platform as the promise's work first runs: a script asking
+            // as it loads has its window's by then.
+            let platforms = platforms.clone();
+            settle_failing(lua, &promise, async move {
+                let platform = platforms.borrow().clone();
+                Ok(match (kept, platform) {
+                    (true, Some(platform)) => kept_folder(&access, key, platform),
+                    _ => Value::Nil,
+                })
+            })?;
+            Ok(PromiseUd(promise))
+        })?,
+    )?;
     ui.set(
         "open_folder",
         lua.create_function(move |lua, opts: Option<Table>| {
             if !allowed {
                 return Err(crate::io::denied("ui.open_folder", "Folders"));
             }
+            let remember = match &opts {
+                Some(opts) => opts.raw_get::<Option<String>>("remember")?,
+                None => None,
+            };
+            if remember.is_some() && in_plugin(lua) {
+                return Err(mlua::Error::runtime(
+                    "ui.open_folder: a plugin keeps no folders (`remember`)",
+                ));
+            }
+            let remember = remember
+                .map(|key| key_of("ui.open_folder", key))
+                .transpose()?
+                .filter(|_| !access.forgetful.get());
             let promise = pending(lua, "open_folder".into())?;
-            if refused.get() {
+            if access.refused.get() {
                 let message = "ui.open_folder: this app's host refuses folder access".to_owned();
                 settle_failing(lua, &promise, async move {
                     Err(Failure::new(Kind::Denied, message))
                 })?;
                 return Ok(PromiseUd(promise));
             }
-            let dialog = crate::io::platform(&shared, "ui.open_folder")?
+            let platform = crate::io::platform(&shared, "ui.open_folder")?;
+            let dialog = platform
                 .0
                 .open_folder(crate::io::picker(opts, "Open Folder")?);
+            let access = access.clone();
             settle_failing(lua, &promise, async move {
                 let picked = dialog.await.map_err(|e| Failure::new(Kind::Io, e))?;
                 let Some(path) = picked else {
@@ -384,12 +575,19 @@ pub(crate) fn install(
                 let name = root
                     .file_name()
                     .map_or(String::new(), |n| n.to_string_lossy().into_owned());
-                Ok(Value::Element(crate::value::ElementHandle(Rc::new(
-                    crate::value::Held::Folder(Rc::new(Folder {
-                        root: root.into(),
-                        name,
-                    })),
-                ))))
+                // Kept past the run, if asked and the platform can.
+                let kept = remember.and_then(|key| {
+                    let grant = platform.0.bookmark_folder(&root)?;
+                    access.keep(&key, grant);
+                    Some((key, access))
+                });
+                Ok(Folder {
+                    root: root.into(),
+                    name,
+                    kept: RefCell::new(kept),
+                    release: None,
+                }
+                .value())
             })?;
             Ok(PromiseUd(promise))
         })?,

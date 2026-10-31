@@ -51,6 +51,32 @@ impl Notification {
         self
     }
 }
+/// A folder a kept grant names (`Platform::resolve_folder`), its access
+/// begun.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ResolvedFolder {
+    /// Where it is now.
+    pub path: PathBuf,
+    /// The grant to keep instead, the old one gone stale: the folder moved
+    /// or was renamed.
+    pub renewed: Option<Vec<u8>>,
+}
+impl ResolvedFolder {
+    /// The folder at `path`, its grant still current.
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            renewed: None,
+        }
+    }
+    /// With `grant` to keep instead of the stale one.
+    pub fn renewed(mut self, grant: Vec<u8>) -> Self {
+        self.renewed = Some(grant);
+        self
+    }
+}
+
 /// Why a notification was not shown.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NotifyError {
@@ -182,6 +208,24 @@ pub trait Platform {
     fn open_folder(&self, picker: FilePicker) -> Pending<Result<Option<PathBuf>, String>> {
         let _ = picker;
         Box::pin(async { Err("no folder dialog here".into()) })
+    }
+    /// A grant to `folder`, which the user picked, kept past this run: what
+    /// to store, for `resolve_folder` on a later launch. macOS's is a
+    /// security-scoped bookmark, which reaches the folder sandboxed or not
+    /// and follows it moved or renamed. Its path by default (a UTF-8 one);
+    /// None keeps none.
+    fn bookmark_folder(&self, folder: &std::path::Path) -> Option<Vec<u8>> {
+        folder.to_str().map(|path| path.as_bytes().to_vec())
+    }
+    /// The folder a kept grant names, if it still resolves to one, with its
+    /// access begun until `release_folder`.
+    fn resolve_folder(&self, grant: &[u8]) -> Option<ResolvedFolder> {
+        let path = PathBuf::from(std::str::from_utf8(grant).ok()?);
+        path.is_dir().then(|| ResolvedFolder::new(path))
+    }
+    /// The access `resolve_folder` began ends: the handle went.
+    fn release_folder(&self, folder: &std::path::Path) {
+        let _ = folder;
     }
     /// Show `notification`, settled once the system has it, or with why
     /// not. The first asks the person's permission where the system does

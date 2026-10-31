@@ -836,6 +836,8 @@ declare extern type Folder with
 	function read(self, path: string): Promise<string>
 	-- The file replaced whole, its folders made.
 	function write(self, path: string, text: string): Promise<nil>
+	-- Kept past the run no more: a later `ui.remembered_folder` is nil.
+	function forget(self): ()
 end
 declare extern type Node with
 end
@@ -968,6 +970,13 @@ export type FilePickerOptions = {
 	-- `{ { "Images", { "png", "jpg" } } }`: extensions without the dot.
 	filters: { { any } }?,
 	multiple: boolean?,
+}
+-- `ui.open_folder`'s: a dialog's, and `remember`, a key the host keeps the
+-- folder under past the run (`ui.remembered_folder`).
+export type FolderPickerOptions = {
+	title: string?,
+	directory: string?,
+	remember: string?,
 }
 
 -- A value to come (`ui.call`, `ui.fetch`, the file functions), of type
@@ -18079,7 +18088,12 @@ declare ui: {
 	save_file: (opts: FilePickerOptions?) -> Promise<File?>,
 	-- A folder the user picks: a promise of its handle, or nil if they cancel.
 	-- Only this makes a `Folder`, and it reaches nothing outside what was picked.
-	open_folder: (opts: FilePickerOptions?) -> Promise<Folder?>,
+	-- `remember` asks the host to keep it past the run under that key.
+	open_folder: (opts: FolderPickerOptions?) -> Promise<Folder?>,
+	-- The folder kept under `key` (`ui.open_folder { remember }`) on an
+	-- earlier run, if it still resolves (moved, on macOS): a promise of its
+	-- handle, or nil.
+	remembered_folder: (key: string) -> Promise<Folder?>,
 	-- A system notification (Notification Center, a toast, the desktop's
 	-- server), the app's: a promise settled once the system has it, or
 	-- with why not (`kind` "unsupported": no bundle, no server; "denied":

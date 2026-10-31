@@ -217,6 +217,78 @@ fn a_host_can_refuse_folders_to_every_script() {
     assert!(h.desktop.clone().unwrap().asked().is_empty(), "no dialog");
 }
 
+/// A folder kept past the run (`remember`): a later launch on the same
+/// storage has it again, until it is forgotten. A host can refuse, and a
+/// plugin keeps none.
+#[test]
+fn a_remembered_folder_comes_back_on_a_later_launch_until_forgotten() {
+    const KEEPS: &str = r#"local said = ui.state("said", "")
+        return ui.column {
+            ui.button { id = "open", w = 40, h = 20, "o", on_click = function()
+                ui.task(function()
+                    local folder = ui.open_folder({ remember = "library" }):await()
+                    said:set(if folder then "picked " .. folder.name else "none")
+                end)
+            end },
+            ui.text { id = "label", "{said}" },
+        }"#;
+    const COMES_BACK: &str = r#"local folder
+        local said = ui.state("said", "")
+        ui.task(function()
+            folder = ui.remembered_folder("library"):await()
+            said:set(if folder then "kept " .. folder.name else "nothing")
+        end)
+        return ui.column {
+            ui.button { id = "forget", w = 40, h = 20, "f", on_click = function()
+                if folder then folder:forget() end
+                said:set("forgot")
+            end },
+            ui.text { id = "label", "{said}" },
+        }"#;
+    let storage = dir("remember-storage");
+    let library = dir("remember-library");
+    let name = library.file_name().unwrap().to_string_lossy().into_owned();
+    let launch = |code: &'static str, forgetful: bool| {
+        let storage = storage.clone();
+        Harness::with_desktop(move |runtime| {
+            let host = ScriptHost::inline(runtime, "app", code).storage(storage);
+            if forgetful {
+                host.refuse_remembered_folders()
+            } else {
+                host
+            }
+        })
+    };
+    let mut h = launch(KEEPS, false);
+    h.desktop.clone().unwrap().pick_folder(&library);
+    h.click("open");
+    wait_for(&mut h, &format!("picked {name}"));
+    drop(h);
+    // The next launch has it, unasked; a host refusing keeps nothing.
+    let mut h = launch(COMES_BACK, false);
+    wait_for(&mut h, &format!("kept {name}"));
+    wait_for(&mut launch(COMES_BACK, true), "nothing");
+    h.click("forget");
+    drop(h);
+    wait_for(&mut launch(COMES_BACK, false), "nothing");
+
+    // Kept where no script reads: the storage's `.folders`, by key in hex.
+    let mut h = launch(KEEPS, false);
+    h.desktop.clone().unwrap().pick_folder(&library);
+    h.click("open");
+    wait_for(&mut h, &format!("picked {name}"));
+    assert!(storage.join(".folders/6c696272617279").is_file());
+
+    // A plugin, granted folders, keeps none.
+    let h = Harness::with_desktop(|runtime| {
+        ScriptHost::inline(runtime, "app", r#"return ui.text { "app", id = "label" }"#)
+            .plugin("keep.luau", r#"ui.remembered_folder("library")"#)
+            .grant("keep.luau", zgx_script::Capability::Folders)
+    });
+    let error = h.host.error().get().unwrap_or_default();
+    assert!(error.contains("a plugin keeps no folders"), "{error}");
+}
+
 #[test]
 fn without_a_platform_it_says_so() {
     let mut h = Harness::new(|runtime| ScriptHost::inline(runtime, "app", APP));

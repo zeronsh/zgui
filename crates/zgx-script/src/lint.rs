@@ -269,6 +269,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "actions",
     "open_files",
     "open_folder",
+    "remembered_folder",
     "save_file",
     "notify",
     "badge",
