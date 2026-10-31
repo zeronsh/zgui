@@ -7197,12 +7197,18 @@ fn font_family(name: &str) -> FontFamily {
 }
 
 /// `"ss01 cv02=3 liga=0"`: OpenType features, as CSS's
-/// `font-feature-settings`, a tag on or `tag=value`. What isn't a four-letter
-/// tag with a number is left out, as CSS drops a declaration it can't read.
+/// `font-feature-settings`, a tag on or `tag=value`; `hyphens` breaks words
+/// at their hyphenation points (`FontFeatures::with_hyphens`). What isn't a
+/// four-letter tag with a number is left out, as CSS drops a declaration it
+/// can't read.
 fn font_features(text: &str) -> zgx::text_layout::FontFeatures {
     zgx::text_layout::FontFeatures::new(text.split_whitespace().filter_map(|setting| {
         let (tag, value) = setting.split_once('=').unwrap_or((setting, "1"));
-        Some((tag.as_bytes().try_into().ok()?, value.parse().ok()?))
+        let tag = match tag {
+            "hyphens" => zgx::text_layout::FontFeatures::HYPHENS,
+            tag => tag.as_bytes().try_into().ok()?,
+        };
+        Some((tag, value.parse().ok()?))
     }))
 }
 

@@ -76,6 +76,11 @@ here, to land together:
 - [ ] `Background::Image` with a position and a repeat (CSS's
   `background-position` and `-repeat`): it is public and exhaustive, so a box's
   `bg_image` stays centred and whole until then.
+- [ ] Hyphenation as a `FontStyle` field (`hyphens`), with `Styled::hyphens`
+  and Luau's `hyphens = "auto"`, rather than `FontFeatures::HYPHENS` (#1167):
+  `FontStyle` is exhaustive, so 0.1 carries it as a private feature tag that
+  replaces with the rest when a text sets features of its own. Resolve it in
+  the cold style path, so a node without it pays nothing.
 - [ ] Deprecate `Styled::blur`: it is the backdrop blur, where Luau's `blur` is
   the content blur. `backdrop_blur` and `filter_blur` say which.
 - [ ] Named keys outside `Key`'s vocabulary. The desktop host drops every

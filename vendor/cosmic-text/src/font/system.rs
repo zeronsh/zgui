@@ -146,6 +146,20 @@ impl FontCachedCodepointSupportInfo {
     }
 }
 
+/// zgx: whether any text has asked for hyphenation (`FontFeatures::HYPHENS`), set by
+/// the caller the first time one does (`note_hyphens`): until then, shaping a
+/// line looks for nothing.
+static HYPHENS_IN_USE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// zgx: some text hyphenates: lines shaped from now on look for their points.
+pub fn note_hyphens() {
+    HYPHENS_IN_USE.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// zgx: a word's hyphenation points, as byte offsets inside it, given the
+/// word and a locale (`FontSystem::set_hyphenator`).
+pub type Hyphenator = std::sync::Arc<dyn Fn(&str, &str) -> Vec<usize> + Send + Sync>;
+
 /// Access to the system fonts.
 pub struct FontSystem {
     /// The locale of the system.
@@ -175,6 +189,9 @@ pub struct FontSystem {
     /// zgx patch: the matches and first font of the last attributes runs
     /// shaped with, newest last (`FontSystem::first_font`).
     first_font: Vec<FirstFont>,
+
+    /// zgx: where a word may break with a hyphen (`FontFeatures::HYPHENS`).
+    hyphenator: Option<Hyphenator>,
 
     /// zgx patch: each face's `wght` axis range (`None`: not variable in
     /// weight), read from its file the first time a match needs it.
@@ -330,6 +347,7 @@ impl FontSystem {
             font_cache: HashMap::default(),
             font_matches_cache: HashMap::default(),
             first_font: Vec::new(),
+            hyphenator: None,
             weight_axes: HashMap::default(),
             font_codepoint_support_info_cache: HashMap::default(),
             monospace_fallbacks_buffer: BTreeSet::default(),
@@ -349,6 +367,24 @@ impl FontSystem {
     /// Get the locale.
     pub fn locale(&self) -> &str {
         &self.locale
+    }
+
+    /// zgx: where words with `FontFeatures::HYPHENS` may break, a hyphen drawn at
+    /// the end of the line: given a word and the system's locale, the byte
+    /// offsets inside it. `None`, the default: none do, but at soft hyphens.
+    pub fn set_hyphenator(&mut self, hyphenator: Option<Hyphenator>) {
+        self.hyphenator = hyphenator;
+    }
+
+    /// zgx: whether words may be hyphenated (a hyphenator is set).
+    pub(crate) fn hyphenates(&self) -> bool {
+        HYPHENS_IN_USE.load(core::sync::atomic::Ordering::Relaxed) && self.hyphenator.is_some()
+    }
+
+    /// zgx: the hyphenation points of `word`, if words are hyphenated.
+    pub(crate) fn hyphenate(&self, word: &str) -> Option<Vec<usize>> {
+        let hyphenator = self.hyphenator.as_ref()?;
+        Some(hyphenator(word, &self.locale))
     }
 
     /// Get the database.

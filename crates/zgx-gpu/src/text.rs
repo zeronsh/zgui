@@ -82,6 +82,20 @@ impl FontData {
             )));
     }
 }
+/// A text's OpenType features (`FontStyle::features`), apart from `attrs`'
+/// path for the most text, which sets none.
+#[inline(never)]
+fn font_features(settings: &[([u8; 4], u32)]) -> cosmic_text::FontFeatures {
+    let mut features = cosmic_text::FontFeatures::new();
+    for (tag, value) in settings {
+        // zgx's hyphenation tag, which no font has: the shaper reads it.
+        if *tag == zgx::text_layout::FontFeatures::HYPHENS && *value != 0 {
+            cosmic_text::note_hyphens();
+        }
+        features.set(cosmic_text::FeatureTag::new(tag), *value);
+    }
+    features
+}
 pub(crate) fn attrs(font: &zgx::text_layout::FontStyle, size: f32) -> Attrs<'_> {
     use zgx::text_layout::FontFamily;
     let family = match &font.family {
@@ -90,10 +104,10 @@ pub(crate) fn attrs(font: &zgx::text_layout::FontStyle, size: f32) -> Attrs<'_> 
         FontFamily::Monospace => Family::Monospace,
         FontFamily::Named(name) => Family::Name(name),
     };
-    let mut features = cosmic_text::FontFeatures::new();
-    for (tag, value) in font.features.settings() {
-        features.set(cosmic_text::FeatureTag::new(tag), *value);
-    }
+    let features = match font.features.settings() {
+        [] => cosmic_text::FontFeatures::new(),
+        settings => font_features(settings),
+    };
     let attrs = Attrs::new()
         .font_features(features)
         .family(family)
@@ -841,6 +855,56 @@ impl CpuTextRaster {
 mod visual_line_tests {
     use super::*;
     use zgx::text_layout::{TextAffinity, TextLayout, TextPosition};
+
+    /// With hyphenation, words break inside at their points, a hyphen
+    /// (holding no text) ending the line; without, at their ends.
+    #[cfg(feature = "hyphens")]
+    #[test]
+    fn hyphenated_words_break_inside_with_a_hyphen() {
+        use zgx::text_layout::{FontFeatures, FontStyle};
+        let mut fonts = crate::font_cache::system_fonts();
+        let text = "Characteristically incomprehensible internationalization";
+        let plain = FontStyle::default();
+        let hyphenated = FontStyle {
+            features: FontFeatures::default().with_hyphens(true),
+            ..FontStyle::default()
+        };
+        let lines = |font: &FontStyle, fonts: &mut FontSystem| {
+            let shaped = ShapedText::with_font(fonts, text, 18., Some(140.), font);
+            let mut rows = Vec::new();
+            for run in shaped.buffer.layout_runs() {
+                let glyphs: Vec<_> = run.glyphs.iter().map(|g| (g.start, g.end)).collect();
+                rows.push(glyphs);
+            }
+            (rows, shaped)
+        };
+        let (plain_rows, _) = lines(&plain, &mut fonts);
+        let (rows, shaped) = lines(&hyphenated, &mut fonts);
+        let hyphen = |rows: &[Vec<(usize, usize)>]| {
+            (rows.iter()).any(|row| row.iter().any(|(start, end)| start == end))
+        };
+        assert!(!hyphen(&plain_rows), "no hyphens without: {plain_rows:?}");
+        // Some line ends with the hyphen: a glyph at the break, holding no
+        // text, inside a word.
+        let ends: Vec<usize> = rows
+            .iter()
+            .filter_map(|row| row.last().filter(|(start, end)| start == end).map(|g| g.0))
+            .collect();
+        assert!(!ends.is_empty(), "{rows:?}");
+        for at in ends {
+            let (before, after) = (text[..at].chars().last(), text[at..].chars().next());
+            assert!(before.is_some_and(char::is_alphabetic), "{at}");
+            assert!(after.is_some_and(char::is_alphabetic), "{at}");
+        }
+        // All the text is still there, and selects.
+        let selected: f32 = shaped
+            .selection(0..text.len())
+            .iter()
+            .map(|r| r.width)
+            .sum();
+        assert!(selected > 0.);
+        assert!(shaped.hit_test(0., 0.).is_some());
+    }
 
     #[test]
     fn a_selection_shows_an_empty_line_as_a_sliver() {

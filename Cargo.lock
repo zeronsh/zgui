@@ -1444,6 +1444,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hypher"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45f2b4f6b5da34d400d4c112eadcc14512cc5d04307a8eee182586d9bebd7ce6"
+
+[[package]]
 name = "icu_calendar"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5098,7 +5104,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-cosmic-text"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "bitflags 2.13.2",
  "fontdb",
@@ -5200,6 +5206,7 @@ dependencies = [
  "block2 0.6.2",
  "bytemuck",
  "gif",
+ "hypher",
  "image",
  "objc2 0.6.4",
  "objc2-core-foundation",
