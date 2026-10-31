@@ -59,5 +59,5 @@ pub use pick::Hit;
 pub use texture::{Map, MapPlacement, Texture, Wrap};
 pub use world::{
     Camera, Light, LightId, MAX_JOINTS, Material, Object, ObjectId, POINT_LIGHTS, Skin, Spot,
-    ToneMapping, World, srgb_to_linear,
+    ToneMapping, Transmission, World, srgb_to_linear,
 };

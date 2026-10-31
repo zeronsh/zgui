@@ -17,7 +17,9 @@
 //! read, and where their maps sit: a second set of coordinates (`TEXCOORD_1`),
 //! samplers' wrapping and `KHR_texture_transform`, and vertex colours
 //! (`COLOR_0`). Its lights (`KHR_lights_punctual`) come with it, and its
-//! cameras (`Placed::cameras`). Not yet: points and lines (skipped); geometry compressed with Draco
+//! cameras (`Placed::cameras`), and its glass: `KHR_materials_transmission`,
+//! `KHR_materials_ior` and `KHR_materials_volume`, their factors (not yet
+//! their textures). Not yet: points and lines (skipped); geometry compressed with Draco
 //! or meshopt, an error where the file requires it.
 use crate::{
     Geometry, MapPlacement, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform,
@@ -102,9 +104,22 @@ type Maps = [Option<Texture>; crate::texture::MAPS];
 /// Where they sit on it, in the same order.
 type Placements = [MapPlacement; crate::texture::MAPS];
 /// A material, read.
-type Look = (Material, Maps, Surface, Placements);
+type Look = (
+    Material,
+    Maps,
+    Surface,
+    Placements,
+    Option<crate::Transmission>,
+);
 /// A primitive, read.
-type Mesh = (Geometry, Material, Maps, Surface, Placements);
+type Mesh = (
+    Geometry,
+    Material,
+    Maps,
+    Surface,
+    Placements,
+    Option<crate::Transmission>,
+);
 
 /// Deeper than this, a node tree is taken for a cycle.
 const MAX_DEPTH: usize = 256;
@@ -179,7 +194,8 @@ impl Model {
                         .clone()
                 });
                 let placements = MAP_TEXTURES.map(|path| map_placement(&doc, value, path));
-                (material(value), maps, surface(value), placements)
+                let through = transmission(value);
+                (material(value), maps, surface(value), placements, through)
             })
             .collect::<Vec<_>>();
         let meshes = list(&doc, "meshes")
@@ -370,13 +386,16 @@ impl World {
             if let Some(&camera) = node.camera.and_then(|c| model.cameras.get(c)) {
                 cameras.push((id, camera));
             }
-            for (geometry, material, maps, surface, placements) in &node.meshes {
+            for (geometry, material, maps, surface, placements, through) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
                 if surface.double_sided {
                     self.set_double_sided(mesh, true);
                 }
                 if surface.alpha_cutoff.is_some() {
                     self.set_alpha_cutoff(mesh, surface.alpha_cutoff);
+                }
+                if through.is_some() {
+                    self.set_transmission(mesh, *through);
                 }
                 for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
                     if texture.is_some() {
@@ -663,6 +682,34 @@ const BLENDED_BY_TEXTURE: f32 = 0.9999;
 /// How a material's faces show: `doubleSided`, and `MASK` as a cutoff for
 /// its texture's alpha alone (its factor's taken out: a mesh is drawn
 /// opaque, its colour's alpha 1 here).
+/// How light passes through a material: `KHR_materials_transmission`'s
+/// factor, `KHR_materials_ior`'s index and `KHR_materials_volume`'s depth
+/// and attenuation (their textures not read yet). `None` without the first,
+/// or with nothing passing.
+fn transmission(value: &Value) -> Option<crate::Transmission> {
+    let extensions = value.get("extensions")?;
+    let number = |extension: &str, key: &str| {
+        let v = extensions.get(extension)?.get(key)?.as_f64()?;
+        v.is_finite().then_some(v as f32)
+    };
+    let factor = number("KHR_materials_transmission", "transmissionFactor")
+        .or_else(|| extensions.get("KHR_materials_transmission").map(|_| 0.))?;
+    if factor <= 0. {
+        return None;
+    }
+    let mut through = crate::Transmission::new(factor);
+    if let Some(ior) = number("KHR_materials_ior", "ior") {
+        through = through.ior(ior);
+    }
+    if let Some(volume) = extensions.get("KHR_materials_volume") {
+        let thickness = number("KHR_materials_volume", "thicknessFactor").unwrap_or(0.);
+        let color = floats::<3>(volume.get("attenuationColor")).unwrap_or([1.; 3]);
+        let distance =
+            number("KHR_materials_volume", "attenuationDistance").unwrap_or(f32::INFINITY);
+        through = through.volume(thickness, color, distance);
+    }
+    Some(through)
+}
 fn surface(value: &Value) -> Surface {
     let masked = value.get("alphaMode").and_then(Value::as_str) == Some("MASK");
     let cutoff = value
@@ -930,7 +977,7 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let (mut material, maps, surface, placements) = primitive
+            let (mut material, maps, surface, placements, through) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
                 .and_then(|m| materials.get(m as usize).cloned())
@@ -946,6 +993,7 @@ impl Reader<'_> {
                         Maps::default(),
                         Surface::default(),
                         Placements::default(),
+                        None,
                     )
                 });
             let mut geometry =
@@ -1012,7 +1060,7 @@ impl Reader<'_> {
                     .with_morph_targets(targets)
                     .map_err(|e| ModelError(e.into()))?;
             }
-            out.push((geometry, material, maps, surface, placements));
+            out.push((geometry, material, maps, surface, placements, through));
         }
         Ok(out)
     }
@@ -2014,6 +2062,43 @@ mod tests {
         world.update(placed.root, |root| root.visible = false);
         assert!(shining(&world).is_empty());
         assert!(placed.cameras(&world).is_empty());
+    }
+
+    #[test]
+    fn transmission_ior_and_volume_are_read_together() {
+        let read = |extensions: Value| {
+            let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+                doc["materials"][0]["extensions"] = extensions;
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].meshes[0].5
+        };
+        let glass = read(json!({
+            "KHR_materials_transmission": { "transmissionFactor": 0.75 },
+            "KHR_materials_ior": { "ior": 1.33 },
+            "KHR_materials_volume": {
+                "thicknessFactor": 0.2,
+                "attenuationColor": [0.5, 0.75, 1.0],
+                "attenuationDistance": 2.0,
+            },
+        }));
+        let expected = crate::Transmission::new(0.75)
+            .ior(1.33)
+            .volume(0.2, [0.5, 0.75, 1.], 2.);
+        assert_eq!(glass, Some(expected));
+        // Its factor defaults to nothing passing; an index alone is no glass.
+        assert_eq!(read(json!({ "KHR_materials_transmission": {} })), None);
+        assert_eq!(read(json!({ "KHR_materials_ior": { "ior": 1.4 } })), None);
+        // A model's meshes take theirs.
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["materials"][0]["extensions"] =
+                json!({ "KHR_materials_transmission": { "transmissionFactor": 1.0 } });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        let mesh = placed.meshes[0][0];
+        assert_eq!(world.transmission(mesh), Some(crate::Transmission::new(1.)));
     }
 
     #[test]
