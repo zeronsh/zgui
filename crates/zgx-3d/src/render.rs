@@ -48,7 +48,9 @@ struct FrameUniforms {
     params: [f32; 4],
     /// The sun's view of the scene, onto the shadow map.
     shadow: [[f32; 4]; 4],
-    /// A shadow map texel's size in the scene, and in the map (1 / side).
+    /// A shadow map texel's size in the scene, and in the map (1 / side);
+    /// a lookup's offset off a surface facing the sun, and how much less it
+    /// is the more it faces it.
     shadow_texel: [f32; 4],
     /// The environment's intensity, its rotation's cosine and sine, and its
     /// cube's last level (zeros without one).
@@ -296,7 +298,9 @@ impl Viewport for Renderer {
         let shadow = sun.and_then(|sun| sun_view(&all, sun));
         if let Some((matrix, texel)) = shadow {
             uniforms.shadow = matrix.columns;
-            uniforms.shadow_texel = [texel, 1. / SHADOW_SIZE as f32, 0., 0.];
+            // The lookup's offset off a surface: 1.5 texels facing the sun,
+            // up to 6 more turned from it (`sunlit`).
+            uniforms.shadow_texel = [texel, 1. / SHADOW_SIZE as f32, texel * 7.5, texel * 6.];
             uniforms.params[3] = 1.;
         }
         gpu.shadows(frame.device, world.shadows);
@@ -1517,36 +1521,48 @@ const COLOR_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![15
 /// second coordinates), `//C ` a colored one's (its vertex colours), `//K ` a cut-out one's and `//N ` any other's,
 /// comments in others'. (A cut-out or placed one is textured; a line with
 /// two prefixes is for a variant with both.)
+// Made with a pipeline, rarely: kept out of the frame's code.
+#[cold]
+#[inline(never)]
 fn shader_source(variant: Variant) -> String {
-    let mut source = SHADER.to_owned();
-    if variant.textured {
-        source = source.replace("//T ", "");
+    // A line's own prefixes, in one pass over the text (one `replace` a
+    // prefix copied all of it each time).
+    let on = |tag: u8| match tag {
+        b'T' => variant.textured,
+        b'S' => variant.skinned,
+        b'M' => variant.morphing,
+        b'P' => variant.skinned || variant.morphing,
+        b'E' => variant.lit,
+        b'U' => variant.placed,
+        b'C' => variant.colored,
+        b'K' => variant.masked,
+        b'N' => !variant.masked,
+        _ => false,
+    };
+    let mut source = String::with_capacity(SHADER.len());
+    for line in SHADER.lines() {
+        // Of its leading prefixes, those on go and those off stay (a line
+        // of two is for a variant with both).
+        let mut rest = line;
+        while let [b'/', b'/', tag, b' ', ..] = *rest.as_bytes() {
+            if !on(tag) {
+                source.push_str(&rest[..4]);
+            }
+            rest = &rest[4..];
+        }
+        source.push_str(rest);
+        source.push('\n');
     }
-    if variant.skinned {
-        source = source.replace("//S ", "");
-    }
-    if variant.morphing {
-        source = source.replace("//M ", "");
-    }
-    if variant.skinned || variant.morphing {
-        source = source.replace("//P ", "");
-    }
-    if variant.lit {
-        source = source.replace("//E ", "");
-    }
-    if variant.placed {
-        source = source.replace("//U ", "");
-    }
-    if variant.colored {
-        source = source.replace("//C ", "");
-    }
-    source.replace(if variant.masked { "//K " } else { "//N " }, "")
+    source
 }
 /// `source` drawing `samples` a pixel: multisampled, its `//A ` lines
 /// (geometric specular anti-aliasing) are its own; at one sample they stay
 /// comments, and cost nothing.
 /// `source` without its comment lines: naga reads every byte of a shader,
 /// and a variant's are half other variants' lines, commented out.
+// Made with a pipeline, rarely: kept out of the frame's code.
+#[cold]
+#[inline(never)]
 fn compact(source: String) -> String {
     let mut out = String::with_capacity(source.len() / 2);
     for line in source.lines().filter(|l| !l.trim_start().starts_with("//")) {
@@ -1555,6 +1571,9 @@ fn compact(source: String) -> String {
     }
     out
 }
+// Made with a pipeline, rarely: kept out of the frame's code.
+#[cold]
+#[inline(never)]
 fn antialiased(source: String, samples: u32) -> String {
     if samples > 1 {
         source.replace("//A ", "")
@@ -2100,8 +2119,11 @@ const PI: f32 = 3.14159265;
 // between at a shadow's edge (four filtered comparisons half a texel
 // about it: each blends 2 by 2 texels, so 3 by 3 in all).
 fn sunlit(world: vec3<f32>, n: vec3<f32>) -> f32 {
-    // Off the surface by a texel or so, against its own shadow.
-    let p = frame.shadow * vec4(world + n * frame.shadow_texel.x * 1.5, 1.0);
+    // Off the surface by a texel or so, against its own shadow; more as it
+    // turns from the sun, where a coarse curve's flat faces fall behind
+    // its smooth normals (the frame's numbers: no literals to parse).
+    let facing = saturate(dot(n, -frame.sun_direction.xyz));
+    let p = frame.shadow * vec4(world + n * (frame.shadow_texel.z - frame.shadow_texel.w * facing), 1.0);
     let uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) || p.z > 1.0 {
         return 1.0;
