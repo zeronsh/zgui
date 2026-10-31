@@ -196,11 +196,36 @@ struct Gpu {
 pub(crate) struct Renderer {
     world: Weak<RefCell<Inner>>,
     gpu: Option<Gpu>,
+    scratch: Scratch,
 }
 impl Renderer {
     pub(crate) fn new(world: Weak<RefCell<Inner>>) -> Self {
-        Self { world, gpu: None }
+        Self {
+            world,
+            gpu: None,
+            scratch: Scratch::default(),
+        }
     }
+}
+/// A frame's lists, kept for the next to fill again: a frame allocates
+/// none of its own, so what it costs doesn't follow where the heap is.
+#[derive(Default)]
+struct Scratch {
+    poses: crate::world::Poses,
+    all: Vec<crate::world::Drawn<'static>>,
+    sorted: Vec<&'static crate::world::Drawn<'static>>,
+    order: Vec<((u64, [u64; MAPS]), usize)>,
+    palette: Vec<[[f32; 4]; 4]>,
+    instances: Vec<Instance>,
+    runs: Vec<Run>,
+    /// What the shadow map held before, its lists to fill again.
+    casting: Option<Casting>,
+}
+/// `list` emptied, as a list of another type of one size: its allocation
+/// kept (a `Vec` collected in place from its own iterator reuses it).
+fn recycle<T, U>(mut list: Vec<T>) -> Vec<U> {
+    list.clear();
+    list.into_iter().map(|_| unreachable!()).collect()
 }
 
 impl Viewport for Renderer {
@@ -258,7 +283,9 @@ impl Viewport for Renderer {
         let view = camera.view();
         let view_projection = camera.projection(aspect) * view;
         let mut uniforms = frame_uniforms(&world, view_projection, encode);
-        let all = world.drawn();
+        let scratch = &mut self.scratch;
+        let mut all = recycle(std::mem::take(&mut scratch.all));
+        world.drawn_into(&mut scratch.poses, &mut all);
         let sun = world
             .shadows
             .then(|| {
@@ -308,31 +335,34 @@ impl Viewport for Renderer {
                 (d.geometry.id() & !(1 << 63), map_set(d))
             }
         };
-        let mut order: Vec<((u64, [u64; MAPS]), usize)> = all.iter().map(key).zip(0..).collect();
+        let order = &mut scratch.order;
+        order.clear();
+        order.extend(all.iter().map(key).zip(0..));
         order.sort_unstable();
-        let drawn: Vec<&crate::world::Drawn> = order.iter().map(|&(_, i)| &all[i]).collect();
+        let mut drawn: Vec<&crate::world::Drawn> = recycle(std::mem::take(&mut scratch.sorted));
+        drawn.extend(order.iter().map(|&(_, i)| &all[i]));
         // Skinned meshes' joint matrices, one after another; each mesh's
         // instance says where its own start.
         let skinning = gpu.skinning;
         let posing = skinning && world.posing();
         let skinned = |d: &crate::world::Drawn| posing && d.palette.is_some();
         let morphing = |d: &crate::world::Drawn| posing && d.morph.is_some();
-        let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
-        let instances: Vec<Instance> = drawn
-            .iter()
-            .map(|d| {
-                let base = palette.len() as u32;
-                if morphing(d) {
-                    morph_block(d, &mut palette);
-                }
-                if skinned(d) {
-                    palette.extend(d.palette.iter().flatten().map(|m| m.columns));
-                }
-                instance(d, base)
-            })
-            .collect();
+        let palette = &mut scratch.palette;
+        palette.clear();
+        let instances = &mut scratch.instances;
+        instances.clear();
+        instances.extend(drawn.iter().map(|d| {
+            let base = palette.len() as u32;
+            if morphing(d) {
+                morph_block(d, palette);
+            }
+            if skinned(d) {
+                palette.extend(d.palette.iter().copied().flatten().map(|m| m.columns));
+            }
+            instance(d, base)
+        }));
         if !palette.is_empty() {
-            let bytes: &[u8] = bytemuck::cast_slice(&palette);
+            let bytes: &[u8] = bytemuck::cast_slice(palette);
             if gpu
                 .palettes
                 .as_ref()
@@ -360,7 +390,7 @@ impl Viewport for Renderer {
                 .write_buffer(&gpu.palettes.as_ref().unwrap().0, 0, bytes);
         }
         if !instances.is_empty() {
-            let bytes: &[u8] = bytemuck::cast_slice(&instances);
+            let bytes: &[u8] = bytemuck::cast_slice(instances);
             if gpu
                 .instances
                 .as_ref()
@@ -384,7 +414,7 @@ impl Viewport for Renderer {
         // What they draw with, kept and marked used. (Meshes sharing it are
         // mostly neighbours by now.)
         let mut last = None;
-        for (d, ((_, set), _)) in drawn.iter().zip(&order) {
+        for (d, ((_, set), _)) in drawn.iter().zip(order.iter()) {
             if last == Some((d.geometry.id(), set)) {
                 continue;
             }
@@ -484,7 +514,7 @@ impl Viewport for Renderer {
         // Each set of maps bound once, against stand-ins where a map is
         // missing. (Meshes sharing one are mostly neighbours by now.)
         let mut last = &[0; MAPS];
-        for (d, ((_, key), _)) in drawn.iter().zip(&order) {
+        for (d, ((_, key), _)) in drawn.iter().zip(order.iter()) {
             if std::mem::replace(&mut last, key) == key || *key == [0; MAPS] {
                 continue;
             }
@@ -570,7 +600,8 @@ impl Viewport for Renderer {
         // Of one geometry and maps, a world without poses or surfaces has
         // one variant.
         let one_variant = !posing && !world.has_surfaces();
-        let mut runs: Vec<Run> = Vec::new();
+        let runs = &mut scratch.runs;
+        runs.clear();
         let mut start = 0;
         while start < drawn.len() {
             let first = drawn[start];
@@ -601,33 +632,26 @@ impl Viewport for Renderer {
             start = end;
         }
         // What the map would hold now; drawn only if it holds something else.
-        let casting = shadow.map(|(matrix, _)| {
-            let meshes = drawn
-                .iter()
-                .filter(|d| !translucent(d))
-                .map(|d| {
-                    let cutoff = d.surface.alpha_cutoff.map_or(0, f32::to_bits);
-                    (d.geometry.id(), d.matrix, cutoff)
-                })
-                .collect::<Vec<_>>();
+        let spare = &mut scratch.casting;
+        let mut casting = shadow.map(|(matrix, _)| {
+            let (_, mut meshes, mut joints, mut weights) = spare.take().unwrap_or_default();
+            meshes.clear();
+            joints.clear();
+            weights.clear();
+            let opaque = || drawn.iter().filter(|d| !translucent(d));
+            meshes.extend(opaque().map(|d| {
+                let cutoff = d.surface.alpha_cutoff.map_or(0, f32::to_bits);
+                (d.geometry.id(), d.matrix, cutoff)
+            }));
             // Poses: an empty palette has none, so no mesh need be asked.
-            if palette.is_empty() {
-                return (matrix, meshes, Vec::new(), Vec::new());
+            if !palette.is_empty() {
+                joints.extend(opaque().flat_map(|d| d.palette.iter().copied().flatten().copied()));
+                weights.extend(opaque().flat_map(|d| d.morph.iter().copied().flatten().copied()));
             }
-            let joints = drawn
-                .iter()
-                .filter(|d| !translucent(d))
-                .flat_map(|d| d.palette.iter().flatten().copied())
-                .collect::<Vec<_>>();
-            let weights = drawn
-                .iter()
-                .filter(|d| !translucent(d))
-                .flat_map(|d| d.morph.iter().flatten().copied())
-                .collect::<Vec<_>>();
             (matrix, meshes, joints, weights)
         });
         if casting.is_some() {
-            for run in &runs {
+            for run in runs.iter() {
                 let Variant {
                     skinned,
                     morphing,
@@ -745,10 +769,13 @@ impl Viewport for Renderer {
                 pass.draw_indexed(0..buffers.count, 0, run.instances.clone());
             }
             drop(pass);
-            gpu.shadow_drawn = casting;
+            *spare = std::mem::replace(&mut gpu.shadow_drawn, casting.take());
+        }
+        if casting.is_some() {
+            *spare = casting;
         }
 
-        for run in &runs {
+        for run in runs.iter() {
             let variant = run.variant;
             if variant == Variant::default() || gpu.variants.contains_key(&variant) {
                 continue;
@@ -843,7 +870,7 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, frame_bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
-        for run in runs {
+        for run in runs.iter() {
             let buffers = &gpu.geometries[&run.geometry];
             let maps = gpu.bindings.get(&run.maps).map(|(binding, _)| binding);
             let skin = buffers.skin.as_ref().filter(|_| run.variant.skinned);
@@ -881,8 +908,11 @@ impl Viewport for Renderer {
             }
             pass.set_vertex_buffer(0, buffers.vertices.slice(..));
             pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..buffers.count, 0, run.instances);
+            pass.draw_indexed(0..buffers.count, 0, run.instances.clone());
         }
+        drop(pass);
+        scratch.sorted = recycle(drawn);
+        scratch.all = recycle(all);
     }
     fn device_changed(&mut self) {
         self.gpu = None;
@@ -932,7 +962,7 @@ fn instance(d: &crate::world::Drawn, base: u32) -> Instance {
 /// are active and how many targets it has, then matrices of `[target,
 /// weight]`s, one a column (the shader's `morph`). Joints follow.
 fn morph_block(d: &crate::world::Drawn, palette: &mut Vec<[[f32; 4]; 4]>) {
-    let active = d.morph.as_deref().unwrap_or_default();
+    let active = d.morph.unwrap_or_default();
     let targets = d.geometry.morphs().map_or(0, |m| m.targets());
     palette.push([
         [active.len() as f32, targets as f32, 0., 0.],
@@ -1048,7 +1078,9 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
     // The point lights nearest the camera's target, nearest first, past the
     // eight a frame shades with (ties in the order they were added).
     let target = world.camera.target;
-    let mut points: Vec<(f32, [[f32; 4]; 3])> = Vec::with_capacity(POINT_LIGHTS + 1);
+    // Nearest first, in place: `shaded` of them so far.
+    let mut points = [(f32::INFINITY, [[0.; 4]; 3]); POINT_LIGHTS];
+    let mut shaded = 0;
     world.for_each_light(|light, spot| {
         match light {
             // The first sun shades; others add to it as one.
@@ -1082,10 +1114,10 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
                 range,
             } => {
                 let distance = (position - target).length();
-                let at = points
+                let at = points[..shaded]
                     .iter()
                     .position(|(nearer, _)| distance.total_cmp(nearer).is_lt())
-                    .unwrap_or(points.len());
+                    .unwrap_or(shaded);
                 if at < POINT_LIGHTS {
                     // A spot's cone as glTF fades it: (cos θ · scale +
                     // offset)², θ from its direction; all round, 1.
@@ -1100,16 +1132,18 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
                         [color[0], color[1], color[2], intensity],
                         cone,
                     ];
-                    points.insert(at, (distance, slot));
-                    points.truncate(POINT_LIGHTS);
+                    // The farthest falls off the end when they're all taken.
+                    points.copy_within(at..POINT_LIGHTS - 1, at + 1);
+                    points[at] = (distance, slot);
+                    shaded = (shaded + 1).min(POINT_LIGHTS);
                 }
             }
         }
     });
-    for (slot, (_, light)) in uniforms.points.iter_mut().zip(&points) {
+    for (slot, (_, light)) in uniforms.points.iter_mut().zip(&points[..shaded]) {
         *slot = *light;
     }
-    uniforms.params[0] = points.len() as f32;
+    uniforms.params[0] = shaded as f32;
     uniforms
 }
 
@@ -1143,7 +1177,7 @@ fn sun_view(all: &[crate::world::Drawn], direction: Vec3) -> Option<(Mat4, f32)>
             Some(active) => d.geometry.morphed_bounds(active),
             None => d.geometry.bounds(),
         };
-        let matrices = d.palette.as_deref();
+        let matrices = d.palette;
         (bounds, matrices.unwrap_or(std::slice::from_ref(&d.matrix)))
     }
     let opaque = || all.iter().filter(|d| d.material.color[3] >= 1.);
