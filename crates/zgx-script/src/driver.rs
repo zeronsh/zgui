@@ -323,7 +323,7 @@ impl<'a> Logical<'a> {
     }
 }
 
-fn describe(ui: &Ui, node: NodeId) -> String {
+pub(crate) fn describe(ui: &Ui, node: NodeId) -> String {
     let scene = ui.scene.borrow();
     let semantics = ui.semantics.borrow();
     let mut out = format!("@{}", number(node));

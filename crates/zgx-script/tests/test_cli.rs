@@ -766,3 +766,55 @@ return ui.column {
     assert_eq!(code, Some(0), "{output}");
     assert!(output.contains("1 passed"), "{output}");
 }
+
+#[test]
+fn a_test_names_an_items_window_by_its_key() {
+    let dir = app(
+        "window-key",
+        &[(
+            "keys.test.luau",
+            r##"
+test("an item's window by its key, and a key two lists share refused", function()
+    local app = mount("keys.luau")
+    local photo = app:window("p1")
+    expect(photo:text("#title")).to_be("Photo p1")
+    photo:click("#close")
+    expect(app:window("p1")).to_be_nil()
+    local ok, message = pcall(function() return app:window("both") end)
+    expect(ok).to_be(false)
+    expect(tostring(message)).to_contain("give their keys apart")
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("keys.luau"),
+        r##"
+local photos = ui.state("photos", { { id = "p1" }, { id = "both" } })
+local notes = ui.state("notes", { { id = "both" } })
+local function drop(list, id)
+    list:update(function(items)
+        local kept = {}
+        for _, item in items do
+            if item.id ~= id then table.insert(kept, item) end
+        end
+        return kept
+    end)
+end
+ui.windows(photos, function(p)
+    return { title = p.id, ui.column {
+        ui.text { id = "title", "Photo " .. p.id },
+        ui.button { id = "close", "Close", on_click = function() drop(photos, p.id) end },
+    } }
+end)
+ui.windows(notes, function(n)
+    return { title = n.id, ui.text { id = "title", "Note " .. n.id } }
+end)
+return ui.text { "main" }
+"##,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+    assert!(output.contains("1 passed"), "{output}");
+}

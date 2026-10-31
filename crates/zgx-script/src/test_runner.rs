@@ -582,8 +582,11 @@ impl UserData for Mounted {
         methods.add_method("error", |_, m, ()| Ok(m.app()?.error()));
         // Another window the app declares (`ui.window`, `ui.windows`), with
         // these same methods; nil while it is closed.
-        methods.add_method("window", |lua, m, id: String| {
+        methods.add_method("window", |lua, m, name: String| {
             let app = m.app()?;
+            let Some(id) = app.window_id(&name).map_err(mlua::Error::runtime)? else {
+                return Ok(None);
+            };
             let mut windows = m.windows.borrow_mut();
             windows.retain(|(_, window)| {
                 window.borrow::<Mounted>().is_ok_and(|window| {
