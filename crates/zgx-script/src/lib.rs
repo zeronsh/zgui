@@ -2098,11 +2098,21 @@ impl ScriptHost {
     pub fn reload(&self) -> Result<(), String> {
         self.0.commands.begin();
         self.0.windows.begin();
+        let reports = self.0.error.version();
         let loaded = self.load();
         // After loading: the files it required are watched too.
         *self.0.stamps.borrow_mut() = self.stamps();
         match loaded {
-            Ok(loaded) => {
+            Ok(mut loaded) => {
+                // What the load reported as it ran (a task's error, a
+                // dialog that can't open) stays shown: its success doesn't
+                // clear it.
+                if self.0.error.version() != reports
+                    && let Some(reported) = self.0.error.with_untracked(Clone::clone)
+                    && !loaded.broken.contains(&reported)
+                {
+                    loaded.broken.push(reported);
+                }
                 *self.0.current.borrow_mut() = Some(Rc::new(loaded));
                 self.0.commands.publish();
                 let mut problems = self

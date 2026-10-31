@@ -31,6 +31,13 @@ pub(crate) fn platform(shared: &SharedPlatform, what: &str) -> mlua::Result<Plat
         ))
     })
 }
+/// The platform as a promise's work first runs: a script asking as it
+/// loads (before its view mounts in a window) has it by then.
+pub(crate) fn later(shared: &SharedPlatform, what: &str) -> Result<PlatformService, String> {
+    shared.borrow().clone().ok_or_else(|| {
+        format!("{what}: no platform here (the clipboard and file dialogs need a desktop window)")
+    })
+}
 pub(crate) fn denied(what: &str, capability: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
         "{what}: a plugin does this only if the host grants it \
@@ -258,11 +265,12 @@ pub(crate) fn install(
                 if !clipboard {
                     return Err(denied("ui.clipboard.read_image", "Clipboard"));
                 }
-                let reading = platform(&shared, "ui.clipboard.read_image")?
-                    .0
-                    .clipboard_image();
                 let promise = pending(lua, "clipboard.read_image".into())?;
+                let shared = shared.clone();
                 settle_with(lua, &promise, crate::errors::Kind::Io, async move {
+                    let reading = later(&shared, "ui.clipboard.read_image")?
+                        .0
+                        .clipboard_image();
                     Ok(reading
                         .await
                         .map_or(Value::Nil, |image| Value::Image(Arc::new(image))))
@@ -281,12 +289,11 @@ pub(crate) fn install(
                     if !clipboard {
                         return Err(denied("ui.clipboard.write_image", "Clipboard"));
                     }
-                    let writing = platform(&shared, "ui.clipboard.write_image")?
-                        .0
-                        .set_clipboard_image(image.0.clone());
+                    let (image, shared) = (image.0.clone(), shared.clone());
                     let promise = pending(lua, "clipboard.write_image".into())?;
                     settle_with(lua, &promise, crate::errors::Kind::Io, async move {
-                        Ok(Value::Bool(writing.await))
+                        let platform = later(&shared, "ui.clipboard.write_image")?;
+                        Ok(Value::Bool(platform.0.set_clipboard_image(image).await))
                     })?;
                     Ok(PromiseUd(promise))
                 },
@@ -303,13 +310,14 @@ pub(crate) fn install(
                 if !files {
                     return Err(denied("ui.open_files", "Files"));
                 }
-                let dialog = platform(&shared, "ui.open_files")?
-                    .0
-                    .open_files(picker(opts, "Open")?);
+                let picker = picker(opts, "Open")?;
                 let promise = pending(lua, "open_files".into())?;
-                let picked = picked.clone();
+                let (shared, picked) = (shared.clone(), picked.clone());
                 settle_with(lua, &promise, crate::errors::Kind::Io, async move {
-                    let paths = dialog.await?;
+                    let paths = later(&shared, "ui.open_files")?
+                        .0
+                        .open_files(picker)
+                        .await?;
                     picked.borrow_mut().extend(paths.iter().cloned());
                     Ok(Value::List(paths.iter().map(|p| file_value(p)).collect()))
                 })?;
@@ -418,13 +426,12 @@ pub(crate) fn install(
                 if !files {
                     return Err(denied("ui.save_file", "Files"));
                 }
-                let dialog = platform(&shared, "ui.save_file")?
-                    .0
-                    .save_file(picker(opts, "Save")?);
+                let picker = picker(opts, "Save")?;
                 let promise = pending(lua, "save_file".into())?;
-                let picked = picked.clone();
+                let (shared, picked) = (shared.clone(), picked.clone());
                 settle_with(lua, &promise, crate::errors::Kind::Io, async move {
-                    Ok(match dialog.await? {
+                    let saved = later(&shared, "ui.save_file")?.0.save_file(picker).await?;
+                    Ok(match saved {
                         Some(path) => {
                             picked.borrow_mut().insert(path.clone());
                             file_value(&path)

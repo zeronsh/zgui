@@ -432,3 +432,68 @@ fn files_on_the_clipboard_reach_on_paste_and_can_be_read() {
     let _ = std::fs::remove_file(&file);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A dialog asked for as a script loads (a task at its top level, before
+/// its view mounts in a window) opens once the window is there; one that
+/// can't open, or is refused, reports why rather than doing nothing.
+#[test]
+fn a_dialog_asked_for_as_the_script_loads_opens_or_says_why_not() {
+    const ASKS: &str = r#"local _ = ui.task(function()
+            local files = ui.open_files():await()
+            ui.shared("said", ""):set("got " .. #files)
+        end)"#;
+    let shown = r#"local said = ui.shared("said", "")
+        return ui.text { id = "label", "{said}" }"#;
+    // The app's `said`, which a plugin may write.
+    let exposed = |host: ScriptHost| {
+        host.expose_shared("said", None);
+        host
+    };
+    let settled = |h: &mut Harness| {
+        for _ in 0..10 {
+            h.frames(1);
+            h.settle();
+        }
+    };
+    // The app's own, and a plugin's granted files: the dialog opens.
+    for plugin in [false, true] {
+        let mut h = Harness::with_desktop(move |runtime| {
+            let app = format!("{}\n{shown}", if plugin { "" } else { ASKS });
+            let host = exposed(ScriptHost::inline(runtime, "app", &app));
+            match plugin {
+                true => host
+                    .plugin("asks.luau", ASKS)
+                    .grant("asks.luau", zgx_script::Capability::Files),
+                false => host,
+            }
+        });
+        settled(&mut h);
+        assert_eq!(
+            h.desktop.clone().unwrap().asked().len(),
+            1,
+            "plugin {plugin}"
+        );
+        assert_eq!(h.text("label"), "got 0", "nothing picked: cancelled");
+        assert_eq!(h.host.error().get(), None);
+    }
+    // Without a window: the error shows.
+    let mut h = Harness::new(|runtime| {
+        exposed(ScriptHost::inline(
+            runtime,
+            "app",
+            format!("{ASKS}\n{shown}"),
+        ))
+    });
+    settled(&mut h);
+    let error = h.host.error().get().unwrap_or_default();
+    assert!(error.contains("no platform here"), "{error}");
+    // Refused to a plugin, as it loads: the error shows, the load's success
+    // doesn't clear it.
+    let mut h = Harness::with_desktop(|runtime| {
+        exposed(ScriptHost::inline(runtime, "app", shown)).plugin("asks.luau", ASKS)
+    });
+    settled(&mut h);
+    let error = h.host.error().get().unwrap_or_default();
+    assert!(error.contains("Capability::Files"), "{error}");
+    assert!(h.desktop.clone().unwrap().asked().is_empty(), "no dialog");
+}
