@@ -106,6 +106,8 @@ api! {
     fn gtk_main_do_event(Ptr);
     fn gtk_widget_get_accessible(Ptr) -> Ptr;
     fn atk_socket_get_type() -> GType;
+    fn atk_object_get_type() -> GType;
+    fn g_type_class_ref(GType) -> Ptr;
     fn atk_object_set_role(Ptr, c_int);
     fn g_type_check_instance_is_a(Ptr, GType) -> gboolean;
     fn gdk_error_trap_push();

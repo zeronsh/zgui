@@ -88,6 +88,21 @@ fn started() -> bool {
                         string((api.gdk_display_get_name)((api.gdk_display_get_default)()))
                     };
                     BRIDGED.store(!name.contains(':'), std::sync::atomic::Ordering::Relaxed);
+                    // SAFETY: ATK's socket class on GTK's thread:
+                    // `AtkSocketClass` is an `AtkObjectClass` (its size
+                    // GObject's registry gives), then `embed`, which ATK's
+                    // bridge set. WebKit names a page's root through it (as
+                    // the web process's accessibility starts, maybe after
+                    // the page loaded): wrapped, the page hears it then.
+                    unsafe {
+                        let mut query = std::mem::zeroed::<gtk::GTypeQuery>();
+                        (api.g_type_query)((api.atk_object_get_type)(), &mut query);
+                        let class = (api.g_type_class_ref)((api.atk_socket_get_type)());
+                        let slot =
+                            (class as *mut u8).add(query.class_size as usize) as *mut Option<Embed>;
+                        let _ = BRIDGE_EMBED.set(*slot);
+                        *slot = Some(embedded);
+                    }
                 }
                 let _ = sender.send(ready);
                 if ready {
@@ -639,6 +654,32 @@ fn profile_directories(name: &str) -> (String, String) {
     )
 }
 
+type Embed = unsafe extern "C" fn(Ptr, *const c_char);
+/// ATK's bridge's `AtkSocketClass::embed`, which `embedded` calls first.
+static BRIDGE_EMBED: OnceLock<Option<Embed>> = OnceLock::new();
+/// A socket (a page's view's accessible) was given its plug: the bridge's
+/// own embedding, then the page reports it (`Page::report_plug_id`).
+unsafe extern "C" fn embedded(socket: Ptr, plug: *const c_char) {
+    if let Some(Some(bridge)) = BRIDGE_EMBED.get() {
+        // SAFETY: the bridge's function with the arguments ATK gave.
+        unsafe { bridge(socket, plug) };
+    }
+    // SAFETY: ATK passes the plug's id, a string, for this call.
+    let plug = unsafe { string(plug) };
+    let api = gtk::api().expect("GTK runs");
+    GTK.with(|gtk| {
+        // SAFETY: GTK's accessibles of live views, on GTK's thread.
+        let page = gtk
+            .pages
+            .borrow()
+            .values()
+            .find(|page| unsafe { (api.gtk_widget_get_accessible)(page.view) } == socket)
+            .cloned();
+        if let Some(page) = page {
+            page.report_plug_id(&plug);
+        }
+    });
+}
 /// The page a handler was given.
 ///
 /// # Safety
@@ -733,6 +774,9 @@ impl Page {
     /// view's accessible is an ATK socket (`AtkSocket`) embedding the web
     /// process's root, named by its `embedded_plug_id` ("bus:path"), the
     /// last field of the socket's instance.
+    /// WebKit names the root once the web process's accessibility has
+    /// started, which on a busy machine can be after the page loaded (then
+    /// `embedded` reports it).
     fn report_plug(&self) {
         let api = gtk::api().expect("GTK runs");
         // SAFETY: GTK's accessible for the live view, on GTK's thread, read
@@ -749,6 +793,10 @@ impl Page {
             let at = query.instance_size as usize - std::mem::size_of::<*const c_char>();
             string(*((accessible as *const u8).add(at) as *const *const c_char))
         };
+        self.report_plug_id(&plug);
+    }
+    /// The page's root is `plug` ("bus:path"): the box embeds it.
+    fn report_plug_id(&self, plug: &str) {
         let Some((bus, path)) = plug.split_once(':') else {
             return;
         };
