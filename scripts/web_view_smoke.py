@@ -17,7 +17,10 @@ app; the clipboard through wl-clipboard). `--ime`: Pinyin composed into the
 page's field instead (IBus over XIM on X11; Fcitx5 over text-input-v3 in
 Sway with `--wayland`), checked as the page's composition events and value.
 `--transparent`: a transparent page with no background of its own shows
-its box's yellow through it.
+its box's yellow through it. `--orca` (X11): over a private AT-SPI bus, the
+page's own accessible tree is a child of its box (an internal frame) and
+has the box for its parent, and Orca reads the page's field as it takes
+focus.
 """
 import argparse
 import json
@@ -28,6 +31,7 @@ import select
 import shutil
 import signal
 import subprocess
+import sys
 import time
 
 from platform_smoke import private_runtime, stop, use_ibus_engine, wait_for_ibus_xim, wait_for_wm
@@ -198,6 +202,104 @@ def compose(session, checks):
     return checks
 
 
+def start_orca(env, output, owned):
+    """A private AT-SPI bus, accessibility on, and Orca on it (its speech in
+    its debug log, which needs no speech server)."""
+    env["GSETTINGS_BACKEND"] = "memory"
+    with (output / "a11y-bus.log").open("w") as log:
+        owned.append(subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately", "--a11y=1", "--screen-reader=1"],
+                                      env=env, stdout=log, stderr=log, start_new_session=True))
+    def bus(*call):
+        return subprocess.run(["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", *call],
+                              env=env, capture_output=True, text=True)
+    deadline = time.monotonic() + 10
+    while True:
+        address = bus("org.a11y.Bus.GetAddress")
+        if address.returncode == 0:
+            break
+        if time.monotonic() > deadline:
+            raise RuntimeError("the accessibility bus never answered: " + address.stderr)
+        time.sleep(.1)
+    for name in ("IsEnabled", "ScreenReaderEnabled"):
+        bus("org.freedesktop.DBus.Properties.Set", "org.a11y.Status", name, "<true>")
+    env["AT_SPI_BUS_ADDRESS"] = re.search(r"'([^']+)'", address.stdout).group(1)
+    with (output / "orca.log").open("w") as log:
+        orca = subprocess.Popen(["orca", "--replace", "--debug-file=" + str(output / "orca-debug.log")], env=env, stdout=log, stderr=log)
+    owned.append(orca)
+    deadline = time.monotonic() + 20
+    while "Screen reader on." not in spoken(output):
+        if time.monotonic() > deadline or orca.poll() is not None:
+            raise RuntimeError("Orca never started; see orca.log")
+        time.sleep(.2)
+
+
+def spoken(output):
+    """What Orca said so far (its debug log's speech)."""
+    path = output / "orca-debug.log"
+    text = path.read_text(errors="replace") if path.exists() else ""
+    return [m.group(1) for m in re.finditer(r"SPEECH OUTPUT: '([^']*)'", text)]
+
+
+def orca_checks(session, env, output, checks):
+    """The page's tree under its box, and what Orca reads of it."""
+    tree = subprocess.run([sys.executable, "-c", TREE], env=env, capture_output=True, text=True, timeout=60)
+    (output / "tree.txt").write_text(tree.stdout + tree.stderr)
+    if "EMBEDDED" not in tree.stdout:
+        raise AssertionError("the page's tree is not under its box; see tree.txt")
+    checks["tree"] = tree.stdout.strip().splitlines()[0]
+    checks["heading in the tree"] = "Probe heading"
+    session.click(120, 80)
+    session.wait(lambda: "Probe field entry." in spoken(output), "Orca never read the focused field", 20)
+    checks["focused field"] = "Probe field entry."
+    # Orca's heading keys read the page's heading too, in browse mode; but
+    # GTK's own window, active for the page's focus, sometimes swaps Orca's
+    # script as Escape switches modes, so that isn't asserted (the tree
+    # check above finds the heading).
+    return checks
+
+
+# Over the accessibility bus: the probe's box (an internal frame named Web
+# page) holds the page's document, which holds its heading, and the
+# document's ancestors reach the box and the window. One application.
+TREE = """
+import gi, time
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi
+Atspi.init()
+Atspi.set_timeout(1500, 3000)
+def children(node):
+    node.clear_cache()
+    return [node.get_child_at_index(i) for i in range(node.get_child_count())]
+def find(node, role, name=None, depth=0):
+    if node is None or depth > 14:
+        return None
+    if node.get_role_name() == role and (name is None or node.get_name() == name):
+        return node
+    for child in children(node):
+        found = find(child, role, name, depth + 1)
+        if found:
+            return found
+deadline = time.monotonic() + 30
+frame = document = None
+while time.monotonic() < deadline:
+    apps = [a for a in children(Atspi.get_desktop(0)) if a and a.get_name() == "web_view_probe"]
+    frame = next(filter(None, (find(a, "internal frame", "Web page") for a in apps)), None)
+    document = frame and find(frame, "document web")
+    if document and find(document, "heading", "Probe heading"):
+        break
+    time.sleep(.5)
+chain, node = [], document
+while node is not None and len(chain) < 10:
+    node.clear_cache()
+    node = node.get_parent()
+    if node is not None:
+        chain.append(node.get_role_name() + " " + repr(node.get_name()))
+print("chain: " + " <- ".join(chain))
+if document and "internal frame 'Web page'" in chain and "frame 'Web view probe'" in chain:
+    print("EMBEDDED")
+"""
+
+
 def x11(args, output, private):
     env = dict(os.environ, XDG_RUNTIME_DIR=private, WINIT_X11_SCALE_FACTOR="1", LANG="C.UTF-8",
                XDG_CONFIG_HOME=private + "/config", XDG_CACHE_HOME=private + "/cache", XDG_DATA_HOME=private + "/data")
@@ -213,9 +315,7 @@ def x11(args, output, private):
             raise RuntimeError("Xvfb startup timed out")
         env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
         ime = None
-        if args.ime:
-            memconf = next(p for p in ("/usr/libexec/ibus-memconf", "/usr/lib/ibus/ibus-memconf") if os.access(p, os.X_OK))
-            env.update(XMODIFIERS="@im=ibus", IBUS_ENABLE_SYNC_MODE="0")
+        if args.ime or args.orca:
             with (output / "dbus.log").open("w") as log:
                 bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"], stdout=subprocess.PIPE,
                                        stderr=log, env=env, text=True, start_new_session=True)
@@ -223,6 +323,9 @@ def x11(args, output, private):
             if not select.select([bus.stdout], [], [], 10)[0]:
                 raise RuntimeError("D-Bus startup timed out")
             env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
+        if args.ime:
+            memconf = next(p for p in ("/usr/libexec/ibus-memconf", "/usr/lib/ibus/ibus-memconf") if os.access(p, os.X_OK))
+            env.update(XMODIFIERS="@im=ibus", IBUS_ENABLE_SYNC_MODE="0")
             subprocess.run(["gsettings", "set", "org.freedesktop.ibus.general", "use-system-keyboard-layout", "true"], env=env, check=True)
         with (output / "openbox.log").open("w") as log:
             owned.append(subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log))
@@ -233,6 +336,8 @@ def x11(args, output, private):
                                         "--config=" + memconf, "--xim"], env=env, stdout=log, stderr=log, start_new_session=True)
             owned.append(ime)
             wait_for_ibus_xim(env)
+        if args.orca:
+            start_orca(env, output, owned)
         with (output / "application.log").open("w") as log:
             app = subprocess.Popen([str(args.binary.resolve())] + (["--transparent"] if args.transparent else []), env=env, stdout=log, stderr=subprocess.STDOUT)
         owned.append(app)
@@ -271,7 +376,10 @@ def x11(args, output, private):
                 return found
             checks["candidates at the caret"] = session.wait(candidates, "IBus's candidates are not under the page's caret")[0]
             return compose(session, checks)
-        return page_checks(session, ime_x11 if args.ime else None, args.transparent), "X11"
+        def read(session, checks):
+            return orca_checks(session, env, output, checks)
+        check = ime_x11 if args.ime else read if args.orca else None
+        return page_checks(session, check, args.transparent), "X11"
     finally:
         end(owned)
 
@@ -367,10 +475,12 @@ def main():
     parser.add_argument("--wayland", action="store_true", help="the app on Wayland")
     parser.add_argument("--ime", action="store_true", help="Pinyin composed into the page's field")
     parser.add_argument("--transparent", action="store_true", help="a transparent page over its box's colour")
+    parser.add_argument("--orca", action="store_true", help="the page's accessible tree, and Orca reading it (X11)")
     args = parser.parse_args()
     needed = ["Xvfb", "openbox", "xdotool", "xwininfo"]
     needed += ["sway", "dbus-daemon", "wl-copy", "wl-paste"] + (["fcitx5", "fcitx5-remote"] if args.ime else []) if args.wayland else []
-    needed += ["xclip"] if not args.wayland and not args.ime else []
+    needed += ["xclip"] if not args.wayland and not args.ime and not args.orca else []
+    needed += ["orca", "gdbus", "dbus-daemon"] if args.orca else []
     needed += ["ibus-daemon", "ibus", "dbus-daemon", "gsettings"] if args.ime and not args.wayland else []
     for name in needed:
         if shutil.which(name) is None:
@@ -379,7 +489,7 @@ def main():
     (args.output / "result.json").unlink(missing_ok=True)
     with private_runtime("zgx-web-view-") as private:
         checks, backend = (wayland if args.wayland else x11)(args, args.output, private)
-    result = {"result": "pass", "backend": backend + (" IME" if args.ime else "") + (" transparent" if args.transparent else ""), "checks": checks}
+    result = {"result": "pass", "backend": backend + (" IME" if args.ime else "") + (" Orca" if args.orca else "") + (" transparent" if args.transparent else ""), "checks": checks}
     (args.output / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     print("PASS: " + ", ".join(checks))
 

@@ -51,6 +51,25 @@ Chromium give it:
    it as `DescribedBy`. The crate's `accesskit_consumer` dependency is the
    vendored one (`path`).
 
+6. Another process's tree embedded under a node (a web page's, WebKitGTK
+   drawing it in a process of its own; zgx-desktop's `webkitgtk`). A node
+   whose author ID is `accesskit_atspi_common::EMBED`, a bus name and an
+   object path (and a count, changed to embed again), each on a line:
+   - `accesskit_unix/src/atspi/interfaces/accessible.rs`: lists that object
+     as its last child (`ChildCount`, `GetChildAtIndex`, `GetChildren`);
+     the author ID is no `AccessibleId`.
+   - `accesskit_unix/src/atspi/bus.rs`: as the node is registered, and
+     whenever its embedding changes (`ObjectEvent::Embedded`, from
+     `accesskit_atspi_common/src/adapter.rs`), calls
+     `org.a11y.atspi.Socket.Embedded` on the object from the adapter's own
+     connection, as an AT-SPI socket asks the plug it embeds: the object
+     takes the node for its parent, so a reader following focus into it
+     finds the app's window above it.
+   - `accesskit_atspi_common/src/adapter.rs` and `node.rs`: the node itself
+     is never focused for AT-SPI (no `Focused` state or event): the
+     embedded tree says what is focused, and a reader hearing the node
+     focused after the page's field would leave the page.
+
 zgx-desktop's `atspi_tests` (`src/accessibility.rs`, Linux) read a zgx
 data grid and tree, and an invalid field, through the patched adapter.
 Run the vendored tests with

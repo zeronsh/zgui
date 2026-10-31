@@ -23,8 +23,9 @@ const PAGE: &str = r#"<!doctype html><html><head><title>probe page</title><style
 html, body { margin: 0; background: rgb(0, 0, 255); height: 3000px; }
 #field { position: absolute; left: 20px; top: 20px; width: 300px; height: 40px; font-size: 20px; box-sizing: border-box; }
 #choice { position: absolute; left: 360px; top: 20px; width: 200px; height: 30px; }
+#heading { position: absolute; left: 20px; top: 200px; margin: 0; font-size: 20px; color: white; }
 #target { position: absolute; left: 20px; top: 100px; width: 200px; height: 80px; background: rgb(0, 255, 0); }
-</style></head><body><input id="field"><select id="choice"><option>Alpha</option><option>Beta</option><option>Gamma</option></select><div id="target"></div><script>
+</style></head><body><h1 id="heading">Probe heading</h1><input id="field" aria-label="Probe field"><select id="choice"><option>Alpha</option><option>Beta</option><option>Gamma</option></select><div id="target"></div><script>
 const post = (value) => window.zgx.postMessage(value);
 const field = document.getElementById('field');
 document.getElementById('target').addEventListener('click', (e) => post({ click: [e.offsetX, e.offsetY], detail: e.detail }));

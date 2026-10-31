@@ -424,6 +424,19 @@ impl Semantics {
             revision: entry.revision,
         })
     }
+    /// Count `id`'s information as changed though none of it did: what a
+    /// host adds to the node for assistive technology changed (a page's
+    /// own tree, another process's, embedded under it), so it is projected
+    /// again. Nothing for a node with no information.
+    pub fn touch(&mut self, id: NodeId) {
+        if self.buried(id) {
+            return;
+        }
+        if let Some(entry) = self.nodes.get_mut(&id) {
+            self.revision = self.revision.wrapping_add(1);
+            entry.revision = self.revision;
+        }
+    }
     /// Change `id`'s information in place, if it has any. It counts as
     /// changed only if `f` changed it.
     pub fn update(&mut self, id: NodeId, f: impl FnOnce(&mut SemanticNode)) {
@@ -887,5 +900,32 @@ mod tests {
         s.remove(n);
         a.retain_mounted(&s);
         assert!(a.get(n).is_none());
+    }
+    /// A node touched (what a host adds to it changed) is projected again:
+    /// its token and the store's revision move, its information doesn't;
+    /// a node with none is left alone.
+    #[test]
+    fn a_touched_node_reads_as_changed() {
+        let mut s = Scene::new(100., 100.);
+        let n = s.append(
+            s.root(),
+            NodeKind::Rect(Color(0, 0, 0, 255)),
+            Style::default(),
+        );
+        let bare = s.append(
+            s.root(),
+            NodeKind::Rect(Color(0, 0, 0, 255)),
+            Style::default(),
+        );
+        let mut a = Semantics::new();
+        a.set(n, SemanticNode::new(Role::Group, "Web page"));
+        let (rev, token) = (a.revision(), a.node_revision(n));
+        a.touch(n);
+        assert_eq!(a.revision(), rev + 1);
+        assert_ne!(a.node_revision(n), token);
+        assert_eq!(a.get(n).unwrap().label, "Web page");
+        a.touch(bare);
+        assert_eq!(a.revision(), rev + 1);
+        assert!(a.get(bare).is_none());
     }
 }

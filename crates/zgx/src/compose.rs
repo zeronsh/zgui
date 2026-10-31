@@ -2094,7 +2094,8 @@ pub fn image_signal(
 /// A box whose pixels `view` draws on the GPU (see [`crate::gpu_view`]):
 /// a frame at the box's size as it first shows, as it resizes, as the view
 /// is invalidated and, while it animates, every refresh it shows. It has no
-/// size of its own: give it one. `label` is its accessible name.
+/// size of its own: give it one. `label` is its accessible name; empty,
+/// it has none, and what holds it speaks for it.
 pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> View {
     // A box mounted as any is, its frames set up once it is: no kind of its
     // own for every element's mount to tell apart.
@@ -2106,9 +2107,13 @@ pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> Vi
         div().overflow_hidden().on_mount(move |handle| {
             if let Some(mut ui) = handle.ui.upgrade() {
                 ui.scene.borrow_mut().set_replaced(handle.node, true);
-                ui.semantics
-                    .borrow_mut()
-                    .set(handle.node, SemanticNode::new(Role::Image, label));
+                // Unnamed, it is none of assistive technology's: what holds
+                // it speaks for it (a page's box, its page's own tree).
+                if !label.is_empty() {
+                    ui.semantics
+                        .borrow_mut()
+                        .set(handle.node, SemanticNode::new(Role::Image, label));
+                }
                 mount_gpu_view(&mut ui, handle.node, view, runner, frames);
             }
         })
@@ -6603,6 +6608,20 @@ impl NodeHandle {
     }
     pub(crate) fn weak_ui(&self) -> WeakUi {
         self.ui.clone()
+    }
+    /// Have assistive technology read the node anew, its information
+    /// unchanged (`Semantics::touch`): what the host adds to it changed.
+    /// False if it has none.
+    pub fn touch_semantics(&self) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        let mut semantics = ui.semantics.borrow_mut();
+        if semantics.get(self.node).is_none() {
+            return false;
+        }
+        semantics.touch(self.node);
+        true
     }
     /// Change what assistive technology is told of the node (its
     /// `SemanticNode`) in place: what a component works out itself, as a

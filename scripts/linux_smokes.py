@@ -83,6 +83,7 @@ SMOKES = [
     ("web-view-wayland", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --output {out}", False),
     ("web-view-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --ime --output {out}", False),
     ("web-view-transparent", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --transparent --output {out}", False),
+    ("web-view-orca", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --orca --output {out}", False),
     ("web-view-wayland-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --ime --output {out}", False),
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("caret-blink", "python3 scripts/caret_blink_smoke.py {bin}/primary_selection --output {out}", False),

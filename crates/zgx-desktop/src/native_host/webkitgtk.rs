@@ -425,6 +425,10 @@ impl Gtk {
             let im = (api.g_object_new)(im_context_type(api), std::ptr::null::<c_char>());
             (api.webkit_web_view_set_input_method_context)(view, im);
             let window = (api.gtk_offscreen_window_new)();
+            // No window a screen reader should follow: focus given to the
+            // page activates this one, and a reader taking it for the active
+            // window would leave the app's (ATK_ROLE_FILLER).
+            (api.atk_object_set_role)((api.gtk_widget_get_accessible)(window), 20);
             (api.gtk_window_resize)(window, 1, 1);
             (api.gtk_container_add)(window, view);
             let page = Rc::new(Page {
@@ -722,6 +726,37 @@ impl Page {
                 && let Some(web) = page.web.upgrade()
             {
                 delivery(&web);
+            }
+        });
+    }
+    /// Tell the UI thread where the page's accessible tree is: WebKit's
+    /// view's accessible is an ATK socket (`AtkSocket`) embedding the web
+    /// process's root, named by its `embedded_plug_id` ("bus:path"), the
+    /// last field of the socket's instance.
+    fn report_plug(&self) {
+        let api = gtk::api().expect("GTK runs");
+        // SAFETY: GTK's accessible for the live view, on GTK's thread, read
+        // as an AtkSocket only once GObject says it is one; its plug id is a
+        // string WebKit keeps (or null), copied now.
+        let plug = unsafe {
+            let accessible = (api.gtk_widget_get_accessible)(self.view);
+            let socket = (api.atk_socket_get_type)();
+            if accessible.is_null() || (api.g_type_check_instance_is_a)(accessible, socket) == 0 {
+                return;
+            }
+            let mut query = std::mem::zeroed::<gtk::GTypeQuery>();
+            (api.g_type_query)(socket, &mut query);
+            let at = query.instance_size as usize - std::mem::size_of::<*const c_char>();
+            string(*((accessible as *const u8).add(at) as *const *const c_char))
+        };
+        let Some((bus, path)) = plug.split_once(':') else {
+            return;
+        };
+        let (bus, path) = (bus.to_owned(), path.to_owned());
+        let id = self.id;
+        deliver(move || {
+            if let Some(page) = ui_page(id) {
+                page.embed(bus, path);
             }
         });
     }
@@ -1308,6 +1343,11 @@ unsafe extern "C" fn on_load_changed(_: Ptr, event: c_int, data: Ptr) {
         _ => {}
     }
     page.report(true);
+    // The page's accessible tree, maybe in a web process new for this
+    // navigation, for the window's (`embedding`).
+    if event == 2 || event == 3 {
+        page.report_plug();
+    }
 }
 unsafe extern "C" fn on_load_failed(
     _: Ptr,
@@ -2053,12 +2093,30 @@ struct UiPage {
     caret: Cell<Option<(f32, f32, f32, f32)>>,
     /// The window's clipboard, for Wayland's bridge (`BRIDGED`).
     clipboard: Rc<RefCell<Option<crate::clipboard::Clipboard>>>,
+    /// Where the page's accessible tree is (another process's object), as
+    /// the box's author ID embedding it (`accesskit_atspi_common::EMBED`),
+    /// and the box, to project anew.
+    embedding: RefCell<Option<String>>,
+    embeddings: Cell<u64>,
+    handle: RefCell<Option<zgx::compose::NodeHandle>>,
     /// The `<select>` popup to show, and a count its box follows (made
     /// with the first box, in its runtime).
     options: RefCell<Option<Rc<OptionMenu>>>,
     options_shown: RefCell<Option<zgx::reactive::Signal<u64>>>,
 }
 impl UiPage {
+    /// The page's accessible tree is at `path` on `bus`: the box embeds it,
+    /// asking it again for each report (a reload leaves it where it was,
+    /// but WebKit's socket may have taken it back).
+    fn embed(&self, bus: String, path: String) {
+        let count = self.embeddings.get() + 1;
+        self.embeddings.set(count);
+        *self.embedding.borrow_mut() = Some(format!("zgx-atspi-embed\n{bus}\n{path}\n{count}"));
+        if let Some(handle) = &*self.handle.borrow() {
+            // Projected again: its node's revision moves.
+            handle.touch_semantics();
+        }
+    }
     fn show_options(&self, menu: Option<OptionMenu>) {
         *self.options.borrow_mut() = menu.map(Rc::new);
         if let Some(shown) = &*self.options_shown.borrow() {
@@ -2319,6 +2377,9 @@ fn backend(
         clipboard,
         options: RefCell::new(None),
         options_shown: RefCell::new(None),
+        embedding: RefCell::new(None),
+        embeddings: Cell::new(0),
+        handle: RefCell::new(None),
     });
     let spec = Spec {
         id: web.id(),
@@ -2361,9 +2422,11 @@ pub(crate) fn page_views(clipboard: Rc<RefCell<Option<crate::clipboard::Clipboar
                 .focusable(true)
                 .overflow_hidden()
                 .on_event(move |event| input.input(event))
+                .accessible_label("Web page")
                 .on_mount(move |handle| {
                     let page = mounted;
                     page.node.set(Some(handle.node()));
+                    *page.handle.borrow_mut() = Some(handle.clone());
                     *page.scene.borrow_mut() = handle
                         .scene()
                         .as_ref()
@@ -2374,7 +2437,8 @@ pub(crate) fn page_views(clipboard: Rc<RefCell<Option<crate::clipboard::Clipboar
                     handle.retain(Shown(page.clone(), handle.node()));
                 })
                 .child(
-                    gpu_view("Web page", &page.gpu)
+                    // Unnamed: the page's own tree stands for it (`embedding`).
+                    gpu_view("", &page.gpu)
                         .absolute()
                         .left(0.)
                         .top(0.)
@@ -2447,6 +2511,21 @@ impl Drop for Shown {
 
 // The window's hooks (`NativeHost`).
 
+/// Whether `node` is a page's box, and its author ID embedding the page's
+/// accessible tree once WebKit has named it (`accesskit_atspi_common::EMBED`).
+pub(crate) fn embedding(node: NodeId) -> Option<Option<String>> {
+    if !live() {
+        return None;
+    }
+    UI_PAGES.with(|pages| {
+        pages
+            .borrow()
+            .values()
+            .filter_map(Weak::upgrade)
+            .find(|page| page.node.get() == Some(node))
+            .map(|page| page.embedding.borrow().clone())
+    })
+}
 /// The page whose box has zgx's focus.
 fn focused_page(ui: &Ui) -> Option<Rc<UiPage>> {
     if !live() {
