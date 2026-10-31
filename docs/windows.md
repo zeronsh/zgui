@@ -200,16 +200,17 @@ It draws what the Windows suite's scenes do: quads (borders, rounded
 corners, shadows' shading), text, clip regions with their rounded corners
 and fades, kept frames, scroll copies, and isolated layers (translucent,
 nested, transformed), each drawn into a texture of its own and composited,
-and images the CPU writes (pictures, gradients, canvases' and SVGs' images).
-Images a GPU view draws, layer effects, backdrop blur, polylines and shader
-fills are not drawn yet (so
-neither are what they make: canvas strokes and filled areas, `radial`
+images the CPU writes (pictures, gradients, canvases' and SVGs' images),
+and canvases' polyline strokes and filled areas. Images a GPU view draws,
+layer effects, backdrop blur and shader fills are not drawn yet (so
+neither are what they make: `radial`
 gradients, blurred inset shadows, masks, blends, content blur, and
 `hue_rotate`, `sepia` and `invert`, layer shaders): a frame
 needing one fails with an error naming it (and panics in a debug build),
 since there is no Direct3D 12 to fall back to. What it draws is Direct3D 12's
 frame byte for byte (`tests/d3d11_parity.rs`, at 1×, 1.5× and 2×). Both run
-the same HLSL compiled by FXC: Direct3D 11 ahead of time (`dxbc/`), and zgx
+the same HLSL compiled by FXC: Direct3D 11 ahead of time (`dxbc/`, written
+again by `python scripts/d3d11_shaders.py`, on Windows), and zgx
 pins wgpu's Direct3D 12 to FXC too. Left to choose, wgpu takes DXC wherever
 dxcompiler.dll is on PATH (a developer shell with the Windows SDK), and DXC's
 code rounds antialiased edges a level apart from FXC's.

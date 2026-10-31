@@ -4,7 +4,8 @@
 //! inside a rounded clip (scroll copies, clip regions), and heavy's
 //! continuous geometry (bars and a progress bar with fractional edges),
 //! isolated layers (translucent, nested, and turning inside), and images
-//! (a picture with straight alpha and a gradient's ramp), at
+//! (a picture with straight alpha and a gradient's ramp), and canvas
+//! polylines (a moving sparkline, a translucent stroke over itself), at
 //! 1×, 1.5× and 2×, byte for byte: both compile the same HLSL with FXC
 //! (Direct3D 12 pinned to it, docs/windows.md). `ZGX_D3D11` is read once a
 //! process, so the test runs itself again with it and compares that run's
@@ -28,7 +29,7 @@ const CHILD: &str = "ZGX_D3D11_PARITY_CHILD";
 
 #[cfg(windows)]
 fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
-    let (spark, progress, turn) = (live.clone(), live.clone(), live.clone());
+    let (spark, progress, turn, wave) = (live.clone(), live.clone(), live.clone(), live.clone());
     let card = move |index: u32| {
         let (value, bars) = (live.clone(), live.clone());
         div()
@@ -204,6 +205,48 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
                     ],
                 ),
         );
+    // Polylines: a sparkline moving each frame, mitred, and a translucent
+    // round stroke over itself, on a canvas over the first card.
+    let lines = canvas(move |_| {
+        use zgx::canvas::{Canvas, Path, Stroke};
+        let line = |points: &[(f32, f32)]| {
+            let mut path = Path::builder();
+            path.move_to(points[0].0, points[0].1);
+            for &(x, y) in &points[1..] {
+                path.line_to(x, y);
+            }
+            path.build().unwrap()
+        };
+        let phase = wave.get() as f32 * 0.31;
+        let spark: Vec<(f32, f32)> = (0..40)
+            .map(|k| {
+                let t = k as f32;
+                (2.3 + t * 2.4, 14. + 7. * (t * 0.7 + phase).sin())
+            })
+            .collect();
+        let mut canvas = Canvas::new();
+        canvas.stroke(
+            line(&spark),
+            Color(63, 185, 80, 255),
+            Stroke {
+                width: 1.5,
+                ..Default::default()
+            },
+        );
+        canvas.stroke(
+            line(&[(4., 40.), (30., 22.), (52., 44.), (90., 26.)]),
+            Color(255, 255, 255, 140),
+            Stroke {
+                width: 5.,
+                ..Default::default()
+            },
+        );
+        canvas
+    })
+    .absolute()
+    .ml(12.)
+    .mt(36.)
+    .size(100., 50.);
     div()
         .w(SIZE.0)
         .h(SIZE.1)
@@ -214,6 +257,7 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .child(continuous)
         .child(layered)
         .child(pictured)
+        .child(lines)
 }
 
 /// Each frame's pixels, RGBA, as this process draws them at `scale`.
