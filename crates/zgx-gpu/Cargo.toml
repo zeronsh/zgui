@@ -18,8 +18,12 @@ categories = ["gui", "rendering"]
 default = ["svg", "png", "jpeg", "gif"]
 svg = ["dep:resvg"]
 png = ["image/png"]
-jpeg = ["image/jpeg"]
+jpeg = ["dep:zune-jpeg"]
 gif = ["dep:gif"]
+# Words break at their hyphenation points where text asks (zgx's `hyphens`):
+# typst's `hypher`, all its 48 languages' patterns, about 1.2 MB of a release
+# binary, read in place (no heap). The system's language picks them.
+hyphens = ["zgx/hyphens", "dep:hypher"]
 # Windows: presentation into DirectComposition visuals of the caller's
 # (composition.rs), with native views composited between the planes.
 composition = ["windows/Win32_Graphics_DirectComposition"]
@@ -34,16 +38,20 @@ vulkan = ["wgpu/vulkan"]
 d3d11 = ["wgpu/noop", "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics_Direct3D11"]
 
 [dependencies]
+hypher = { version = "0.1.8", optional = true }
 smallvec = "1.16"
 zgx = { path = "../zgx", version = "0.1.6", default-features = false }
 # wgpu's defaults less WebGPU (the browser's), and Vulkan and GL, which only
 # Linux and its kind always build (below).
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "wgsl"] }
 winit = "0.30.13"
-cosmic-text = { package = "zgx-cosmic-text", version = "0.19.3", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
+cosmic-text = { package = "zgx-cosmic-text", version = "0.19.7", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25.10", default-features = false }
+# JPEGs, decoded at 1/2, 1/4 or 1/8 of their size where shown that small
+# (vendor/zune-jpeg/ZGX_PATCH.md); `image` reads their format alone.
+zune-jpeg = { package = "zgx-zune-jpeg", version = "0.5.15", path = "../../vendor/zune-jpeg", optional = true }
 resvg = { version = "0.46.0", default-features = false, optional = true }
 # Canvas, decoration and image rasterization (what resvg draws with).
 tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
@@ -86,6 +94,8 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["
 # wgpu (see docs/validation.md, docs/windows.md); only examples and tests
 # build these.
 [dev-dependencies]
+# Tests encode JPEGs, and check ours against `image`'s decode of them.
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 # Shaping with and without its kept advances (tests/variable_advances.rs).
 harfrust = { package = "zgx-harfrust", version = "0.5.3", path = "../../vendor/harfrust" }
 
@@ -96,6 +106,10 @@ wgpu-hal = { version = "29.0.4", default-features = false, features = ["validati
 
 # Tests of a format need its feature.
 # On the main thread, as layer presentation runs (`fn main`).
+[[test]]
+name = "baked_loops"
+harness = false
+
 [[test]]
 name = "layer_frames"
 harness = false

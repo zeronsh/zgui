@@ -210,6 +210,48 @@ struct Edit {
     before: Selection,
     after: Selection,
 }
+impl Edit {
+    fn bytes(&self) -> usize {
+        self.deleted.len() + self.inserted.len()
+    }
+    /// What undoes it.
+    fn inverted(self) -> Self {
+        Self {
+            start: self.start,
+            deleted: self.inserted,
+            inserted: self.deleted,
+            before: self.after,
+            after: self.before,
+        }
+    }
+    /// `first` and then `second`, as one step; `text` is what `second`
+    /// left.
+    fn joined(first: Edit, second: Edit, text: &str) -> Self {
+        let first_end = first.start + first.inserted.len();
+        let second_end = second.start + second.deleted.len();
+        let (from, to) = (first.start.min(second.start), first_end.max(second_end));
+        // What lay between them after `first`: `text`, with `second` undone.
+        let beyond = second.start + second.inserted.len();
+        let mut between = String::with_capacity(to - from);
+        between.push_str(&text[from..second.start]);
+        between.push_str(&second.deleted);
+        between.push_str(&text[beyond..beyond + (to - second_end)]);
+        let swapped = |start: usize, end: usize, with: &str| {
+            let mut out = String::with_capacity(between.len() + with.len());
+            out.push_str(&between[..start - from]);
+            out.push_str(with);
+            out.push_str(&between[end - from..]);
+            out
+        };
+        Self {
+            start: from,
+            deleted: swapped(first.start, first_end, &first.deleted),
+            inserted: swapped(second.start, second_end, &second.inserted),
+            before: first.before,
+            after: second.after,
+        }
+    }
+}
 /// A plain-text editing model: the text, its selection, IME preedit
 /// and a bounded undo history.
 pub struct TextEditor {
@@ -219,6 +261,12 @@ pub struct TextEditor {
     composition_cancel_revision: u64,
     /// How many times its text changed (`revision`).
     revision: u64,
+    /// `load_next`: the next text it is given leaves nothing to undo.
+    loading: bool,
+    /// `answer_next`: the next text it is given joins the last step.
+    answering: bool,
+    /// Its last step undone, rather than redone or edited.
+    undone: bool,
     undo: VecDeque<Edit>,
     redo: VecDeque<Edit>,
     undo_bytes: usize,
@@ -260,6 +308,9 @@ impl TextEditor {
             preedit: None,
             composition_cancel_revision: 0,
             revision: 0,
+            loading: false,
+            answering: false,
+            undone: false,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             undo_bytes: 0,
@@ -509,6 +560,34 @@ impl TextEditor {
         }
         self.take(Incoming::Value(value))
     }
+    /// The next text it is given (`set_text`, `set_value`, its binding) is a
+    /// document rather than an edit: it leaves nothing to undo.
+    pub fn load_next(&mut self) {
+        self.loading = true;
+    }
+    /// The line byte `at` is on, from 0.
+    pub fn line_of(&self, at: usize) -> usize {
+        match &self.text {
+            TextValue::Long(text) => text.line_of(at),
+            TextValue::Flat(text) => text[..at.min(text.len())].matches('\n').count(),
+        }
+    }
+    /// Where line `line` (from 0) starts; past the last, the text's end.
+    pub fn line_start(&self, line: usize) -> usize {
+        match &self.text {
+            TextValue::Long(text) => text.line_start(line),
+            TextValue::Flat(_) if line == 0 => 0,
+            TextValue::Flat(text) => text
+                .match_indices('\n')
+                .nth(line - 1)
+                .map_or(text.len(), |(at, _)| at + 1),
+        }
+    }
+    /// The next text it is given answers the last step (an app trimming
+    /// what was typed): it joins that step.
+    pub fn answer_next(&mut self) {
+        self.answering = true;
+    }
     /// Its committed text as a value to keep: a copy while short, the
     /// long one shared.
     pub fn value(&self) -> TextValue {
@@ -542,8 +621,11 @@ impl TextEditor {
         let deleted = self.text.slice(prefix..old_end).into_owned();
         let inserted = value.slice(prefix..new_end).into_owned();
         self.cancel_preedit();
-        self.redo.clear();
-        self.redo_bytes = 0;
+        // An answer to an undo keeps what redoes it.
+        if !(self.answering && self.undone) {
+            self.redo.clear();
+            self.redo_bytes = 0;
+        }
         match value {
             // A long text is taken as it is, shared with whoever gave it.
             Incoming::Value(TextValue::Long(text)) if text.len() >= LONG / 2 => {
@@ -570,7 +652,44 @@ impl TextEditor {
             self.history_limit,
             self.history_bytes,
         );
+        if std::mem::take(&mut self.loading) {
+            self.undo.clear();
+            self.undo_bytes = 0;
+        }
+        if std::mem::take(&mut self.answering) {
+            self.fold_answer();
+        }
         true
+    }
+    /// The step just taken is what the app made of the one before: they
+    /// are one step, or undo would go to text the app answers again and
+    /// stick there. After an undo, it joins what redoes it.
+    fn fold_answer(&mut self) {
+        let Some(answer) = self.undo.pop_back() else {
+            return;
+        };
+        self.undo_bytes -= answer.bytes();
+        let text = self.text.to_cow().into_owned();
+        if self.undone
+            && let Some(redo) = self.redo.pop_back()
+        {
+            // Offsets of older steps hold only if the text kept its length.
+            if answer.deleted.len() != answer.inserted.len() {
+                self.undo.clear();
+                self.undo_bytes = 0;
+            }
+            self.redo_bytes -= redo.bytes();
+            let joined = Edit::joined(redo.inverted(), answer, &text).inverted();
+            self.redo_bytes += joined.bytes();
+            self.redo.push_back(joined);
+        } else if let Some(edit) = self.undo.pop_back() {
+            self.undo_bytes -= edit.bytes();
+            let joined = Edit::joined(edit, answer, &text);
+            if joined.deleted != joined.inserted {
+                self.undo_bytes += joined.bytes();
+                self.undo.push_back(joined);
+            }
+        }
     }
     fn previous(&self, word: bool) -> usize {
         let pos = self.selection.focus;
@@ -596,6 +715,12 @@ impl TextEditor {
                 0
             }
         }
+    }
+    /// Where Backspace takes the text back to (`backspace_takes`).
+    fn backspaced(&self) -> usize {
+        let pos = self.selection.focus;
+        let start = self.previous(false);
+        pos - backspace_takes(&self.text.slice(start..pos), cfg!(target_os = "macos"))
     }
     fn next(&self, word: bool) -> usize {
         if word && cfg!(windows) {
@@ -684,17 +809,26 @@ impl TextEditor {
         self.move_to(pos, extend);
     }
     /// Left (`left`) or right as the text shows it, which right-to-left
-    /// text runs the other way from its order: of the boundaries before and
-    /// after the caret, the nearest whose caret (`caret`) lies that way on
-    /// the same line; else the one its order says. A selection collapses to
-    /// its edge that way.
+    /// text runs the other way from its order: of the places before and
+    /// after the caret (`from`, where it shows), the nearest whose caret
+    /// (`caret`) lies that way on the same line; else on through the text
+    /// the way that goes in the line's direction. A selection collapses to its edge that way. Where runs meet, a
+    /// boundary has a place on each side (its affinities), and each is a
+    /// stop: after a number ending a right-to-left run, as well as after the
+    /// run. The place it goes, to draw the caret there.
     pub fn move_visually(
         &mut self,
         word: bool,
         extend: bool,
         left: bool,
-        caret: impl Fn(usize) -> crate::scene::Rect,
-    ) {
+        from: crate::text_layout::TextPosition,
+        caret: impl Fn(crate::text_layout::TextPosition) -> crate::scene::Rect,
+    ) -> crate::text_layout::TextPosition {
+        use crate::text_layout::{TextAffinity, TextPosition};
+        let at = |byte_offset| TextPosition {
+            byte_offset,
+            affinity: TextAffinity::After,
+        };
         let toward = |from: f32, to: f32| {
             if left {
                 to < from - 0.5
@@ -704,20 +838,27 @@ impl TextEditor {
         };
         if !extend && !self.selection.is_empty() {
             let range = self.selection.range();
-            let (start, end) = (caret(range.start).x, caret(range.end).x);
+            let (start, end) = (caret(at(range.start)).x, caret(at(range.end)).x);
             let pos = if toward(end, start) || (start == end && left) {
                 range.start
             } else {
                 range.end
             };
-            return self.move_to(pos, false);
+            self.move_to(pos, false);
+            return at(pos);
         }
         let focus = self.selection.focus;
-        let here = caret(focus);
+        let from = if from.byte_offset == focus {
+            from
+        } else {
+            at(focus)
+        };
+        let here = caret(from);
         // Every caret place on its line (a grapheme's edges, or a word's),
         // and the nearest past it the way it goes: the order the text
         // shows, as AppKit's text views move, not its logical neighbours
         // (which, where its direction changes, can lie back where it was).
+        // Of two places at one spot, the one logically nearer.
         let line = self.text.line_around(focus);
         let (base, text) = (line.start, self.text.slice(line.clone()));
         let places: Vec<usize> = if word {
@@ -731,21 +872,73 @@ impl TextEditor {
                 .chain([line.end])
                 .collect()
         };
-        let pick = places
+        let row: Vec<(TextPosition, crate::scene::Rect)> = places
             .into_iter()
-            .filter(|p| *p != focus)
+            .flat_map(|byte_offset| {
+                // A line's start has no side before it, its end none after.
+                let sides: &[TextAffinity] = if byte_offset == line.start {
+                    &[TextAffinity::After]
+                } else if byte_offset == line.end {
+                    &[TextAffinity::Before]
+                } else {
+                    &[TextAffinity::After, TextAffinity::Before]
+                };
+                sides.iter().map(move |&affinity| TextPosition {
+                    byte_offset,
+                    affinity,
+                })
+            })
             .map(|p| (p, caret(p)))
-            .filter(|(_, r)| (r.y - here.y).abs() < 0.5 && toward(here.x, r.x))
-            .min_by(|a, b| (a.1.x - here.x).abs().total_cmp(&(b.1.x - here.x).abs()))
-            .map(|(p, _)| p);
+            .filter(|(_, r)| (r.y - here.y).abs() < 0.5)
+            .collect();
+        let pick = row
+            .iter()
+            .filter(|(_, r)| toward(here.x, r.x))
+            .min_by(|a, b| {
+                let far = |(p, r): &&(TextPosition, crate::scene::Rect)| {
+                    ((r.x - here.x).abs(), p.byte_offset.abs_diff(focus))
+                };
+                let (a, b) = (far(a), far(b));
+                a.0.total_cmp(&b.0).then(a.1.cmp(&b.1))
+            })
+            .map(|(p, _)| *p);
+        // None that way on its row: on to the row before or after it in the
+        // text, from the row's logical edge, the way the key goes in the
+        // row's direction (Right in a right-to-left row goes back); at the
+        // text's ends, nowhere.
         let pos = pick.unwrap_or_else(|| {
-            if left {
-                self.previous(word)
-            } else {
-                self.next(word)
+            let offsets = row.iter().map(|(p, _)| p.byte_offset).chain([focus]);
+            let (first, last) = (
+                offsets.clone().min().unwrap_or(focus),
+                offsets.max().unwrap_or(focus),
+            );
+            let rtl = caret(at(first)).x
+                > caret(TextPosition {
+                    byte_offset: last,
+                    affinity: TextAffinity::Before,
+                })
+                .x + 0.5;
+            let forward = left == rtl;
+            let edge = if forward { last } else { first };
+            if (forward && edge >= self.text.len()) || (!forward && edge == 0) {
+                return from;
             }
+            let held = self.selection.focus;
+            self.selection.focus = edge;
+            let on = if forward {
+                self.next(word)
+            } else {
+                self.previous(word)
+            };
+            self.selection.focus = held;
+            at(on)
         });
-        self.move_to(pos, extend);
+        self.move_to(pos.byte_offset, extend);
+        if self.selection.focus == pos.byte_offset {
+            pos
+        } else {
+            at(self.selection.focus)
+        }
     }
     /// Move the caret to the start of its line, just after the line break
     /// before it. `extend` moves only the focus.
@@ -905,17 +1098,22 @@ impl TextEditor {
     pub fn move_document_end(&mut self, extend: bool) {
         self.move_to(self.text.len(), extend);
     }
-    /// Delete the selection, or the grapheme before the caret. False when
-    /// there was nothing to delete.
+    /// Delete the selection, or what is before the caret: its last code
+    /// point, or an emoji or a line break whole. False when there was
+    /// nothing to delete.
     pub fn backspace(&mut self) -> bool {
         self.delete_backward(false)
     }
-    /// Delete the selection, or before the caret: a grapheme, or back to
-    /// the start of a word with `word`. False when there was nothing to
-    /// delete.
+    /// Delete the selection, or before the caret: what Backspace takes
+    /// (`backspaced`), or back to the start of a word with `word`. False
+    /// when there was nothing to delete.
     pub fn delete_backward(&mut self, word: bool) -> bool {
         if self.selection.is_empty() {
-            let pos = self.previous(word);
+            let pos = if word {
+                self.previous(true)
+            } else {
+                self.backspaced()
+            };
             if pos == self.selection.focus {
                 return false;
             }
@@ -1007,6 +1205,14 @@ impl TextEditor {
         self.replace("", None);
         value
     }
+    /// Whether there is a step to undo.
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    /// Whether there is an undone step to redo.
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
     /// Undo the last step, restoring the selection from before it. False
     /// when there is none.
     pub fn undo(&mut self) -> bool {
@@ -1014,6 +1220,7 @@ impl TextEditor {
         let Some(edit) = self.undo.pop_back() else {
             return false;
         };
+        self.undone = true;
         self.text
             .replace_range(edit.start..edit.start + edit.inserted.len(), &edit.deleted);
         self.revision = self.revision.wrapping_add(1);
@@ -1038,6 +1245,7 @@ impl TextEditor {
         let Some(edit) = self.redo.pop_back() else {
             return false;
         };
+        self.undone = false;
         self.text
             .replace_range(edit.start..edit.start + edit.deleted.len(), &edit.inserted);
         self.revision = self.revision.wrapping_add(1);
@@ -1140,6 +1348,29 @@ impl TextEditor {
         }
         changed
     }
+    /// `replace_range`, the selection staying where it was (moved with the
+    /// text): a substitution made as text is typed (`View::autocorrect`).
+    /// Undone, the selection goes back there too, and typing goes on.
+    pub fn substitute(&mut self, range: Range<usize>, text: &str) -> bool {
+        let before = self.selection;
+        if !self.replace_range(range.clone(), text) {
+            return false;
+        }
+        let moved = |at: usize| match at {
+            at if at >= range.end => at + text.len() - range.len(),
+            at if at > range.start => range.start + text.len(),
+            at => at,
+        };
+        let after = Selection {
+            anchor: moved(before.anchor),
+            focus: moved(before.focus),
+        };
+        self.selection = after;
+        if let Some(last) = self.undo.back_mut() {
+            (last.before, last.after) = (before, after);
+        }
+        true
+    }
     /// The committed text's length in UTF-16 code units, as Windows counts.
     pub fn utf16_len(&mut self) -> usize {
         self.utf16_starts(|starts, _| starts.last().map_or(0, |(_, u)| *u))
@@ -1211,6 +1442,49 @@ impl TextEditor {
         }
     }
 }
+/// The bytes Backspace takes off the end of `grapheme`. Backspace undoes a
+/// keystroke, so a mistyped mark in a syllable goes and the syllable stays;
+/// what counts as one differs by platform, measured against its native field
+/// and browsers. A line break always goes whole.
+///
+/// `macos`, as `NSTextView` does, and Safari: one code point in the scripts
+/// from Hebrew to Limbu, U+0590 to U+193F (every combining mark in Unicode
+/// tried) but for Hangul's jamo, a trailing joiner with it; otherwise the
+/// whole grapheme, an accent with its letter.
+///
+/// Otherwise as Chromium does: one code point, unless the grapheme holds an
+/// emoji, a keycap or a variation selector. On Windows too, whose `RichEdit`
+/// agrees but for flags and keycaps: there it leaves half of one behind, the
+/// defect this rule exists to avoid.
+fn backspace_takes(grapheme: &str, macos: bool) -> usize {
+    let mut last = grapheme.chars().rev();
+    let code_point = last.next().map_or(0, char::len_utf8);
+    if grapheme == "\r\n" {
+        return grapheme.len();
+    }
+    if macos {
+        let one_by_one = |c: char| matches!(c, '\u{590}'..='\u{10FF}' | '\u{1200}'..='\u{193F}');
+        return match (grapheme.chars().next_back(), last.next()) {
+            (Some('\u{200D}'), Some(before)) if one_by_one(before) => {
+                code_point + before.len_utf8()
+            }
+            (Some(end), _) if one_by_one(end) => code_point,
+            _ => grapheme.len(),
+        };
+    }
+    let whole = grapheme.chars().any(|c| {
+        matches!(
+            c,
+            '\u{20E3}'
+                | '\u{180B}'..='\u{180D}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{1F000}'..='\u{1FAFF}'
+                | '\u{E0100}'..='\u{E01EF}'
+        )
+    });
+    if whole { grapheme.len() } else { code_point }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1281,7 +1555,12 @@ mod tests {
     #[test]
     fn graphemes_are_atomic() {
         let mut e = TextEditor::new("a👩‍💻e\u{301}");
-        assert!(e.backspace());
+        // Backspace's own measure is `backspace_takes`; the caret and
+        // forward delete take graphemes.
+        e.delete_to(
+            e.selection().focus - "e\u{301}".len(),
+            Run::DeletingBackward,
+        );
         assert_eq!(e.text(), "a👩‍💻");
         e.move_left(false, false);
         assert_eq!(e.selection().focus, 1);
@@ -1623,6 +1902,66 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_joins_the_step_it_answers() {
+        let mut editor = TextEditor::new("ab");
+        editor.set_selection(2, 2);
+        editor.insert("c ");
+        editor.answer_next();
+        editor.set_text("ABC");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "ab", "one step back, past the answer");
+        assert!(!editor.undo());
+        assert!(editor.redo());
+        assert_eq!(editor.text(), "ABC");
+        assert!(!editor.redo());
+        assert_eq!(editor.undo_bytes + editor.redo_bytes, 2 + 3);
+    }
+
+    #[test]
+    fn an_answer_that_takes_an_edit_back_leaves_no_step() {
+        let mut editor = TextEditor::new("ab");
+        editor.set_selection(2, 2);
+        editor.insert(" ");
+        editor.answer_next();
+        editor.set_text("ab");
+        assert_eq!(editor.text(), "ab");
+        assert!(!editor.undo(), "nothing happened, in the end");
+        assert_eq!(editor.undo_bytes, 0);
+    }
+
+    #[test]
+    fn an_answer_to_an_undo_joins_what_redoes_it() {
+        let mut editor = TextEditor::new("one");
+        editor.set_selection(3, 3);
+        editor.insert(" two");
+        assert!(editor.undo());
+        // The app makes something else of what the undo left.
+        editor.answer_next();
+        editor.set_text("ONE");
+        assert_eq!(editor.text(), "ONE");
+        assert!(!editor.undo());
+        assert!(editor.redo());
+        assert_eq!(editor.text(), "one two", "redo goes where it went");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "ONE");
+    }
+
+    #[test]
+    fn an_answer_that_moves_text_keeps_older_steps_whole() {
+        let mut editor = TextEditor::new("日本");
+        editor.set_selection(6, 6);
+        editor.insert("語");
+        editor.set_selection(9, 9);
+        editor.insert(" x");
+        editor.answer_next();
+        editor.set_text("日本語 X");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "日本語");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "日本");
+    }
+
+    #[test]
     fn minimal_model_delta_obeys_limits_and_equal_values_preserve_state() {
         let mut editor = TextEditor::new("prefix-old-suffix");
         editor.set_history_limits(2, 6);
@@ -1676,6 +2015,90 @@ mod tests {
 #[cfg(test)]
 mod undo_run_tests {
     use super::*;
+    /// What Backspace takes off one grapheme, as `NSTextView` and Chromium
+    /// were measured to (Oct 30): code points on macOS, on the rest.
+    #[test]
+    fn backspace_takes_what_the_platform_does() {
+        let cases: &[(&str, &str, usize, usize)] = &[
+            ("accent", "e\u{301}", 2, 1),
+            ("two accents", "a\u{323}\u{302}", 3, 1),
+            ("Thai tone mark", "\u{E01}\u{E35}\u{E48}", 1, 1),
+            ("Thai sara am", "\u{E49}\u{E33}", 1, 1),
+            ("Lao", "\u{E81}\u{EC9}", 1, 1),
+            ("Devanagari vowel", "\u{915}\u{93F}", 1, 1),
+            ("Devanagari conjunct", "\u{915}\u{94D}\u{937}", 1, 1),
+            ("Devanagari joiner", "\u{915}\u{94D}\u{200D}", 2, 1),
+            ("Tamil", "\u{B95}\u{BCA}", 1, 1),
+            ("Bengali", "\u{995}\u{9BF}", 1, 1),
+            ("Arabic", "\u{628}\u{651}\u{64E}", 1, 1),
+            ("Hebrew", "\u{5E9}\u{5C1}\u{5B8}", 1, 1),
+            ("Hangul jamo", "\u{1112}\u{1161}\u{11AB}", 3, 1),
+            ("dakuten", "\u{304B}\u{3099}", 2, 1),
+            ("skin tone", "\u{1F44D}\u{1F3FD}", 2, 2),
+            (
+                "ZWJ family",
+                "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+                5,
+                5,
+            ),
+            ("flag", "\u{1F1EE}\u{1F1F9}", 2, 2),
+            ("keycap", "1\u{FE0F}\u{20E3}", 3, 3),
+            ("variation sequence", "\u{2764}\u{FE0F}", 2, 2),
+            ("line break", "\r\n", 2, 2),
+            ("letter", "a", 1, 1),
+        ];
+        let bytes = |text: &str, code_points: usize| {
+            text.chars()
+                .rev()
+                .take(code_points)
+                .map(char::len_utf8)
+                .sum::<usize>()
+        };
+        for (name, text, macos, other) in cases {
+            assert_eq!(
+                backspace_takes(text, true),
+                bytes(text, *macos),
+                "{name} on macOS"
+            );
+            assert_eq!(
+                backspace_takes(text, false),
+                bytes(text, *other),
+                "{name} elsewhere"
+            );
+        }
+    }
+
+    /// A long document's buffer takes the same as a short one's.
+    #[test]
+    fn backspace_is_the_same_in_a_long_document() {
+        for text in [
+            "\u{E01}\u{E35}\u{E48}",
+            "e\u{301}",
+            "\u{1F1EE}\u{1F1F9}",
+            "ab",
+        ] {
+            let mut short = TextEditor::new(text);
+            short.move_document_end(false);
+            short.backspace();
+            let lines = "line\n".repeat(20_000);
+            let mut long = TextEditor::new(format!("{lines}{text}"));
+            long.move_document_end(false);
+            long.backspace();
+            let kept = long.text().to_string();
+            assert_eq!(kept.strip_prefix(&lines), Some(&*short.text().to_string()));
+        }
+    }
+
+    /// Caret movement stays on graphemes.
+    #[test]
+    fn the_caret_still_moves_by_grapheme() {
+        let mut e = TextEditor::new("e\u{301}x");
+        e.move_document_end(false);
+        e.move_left(false, false);
+        e.move_left(false, false);
+        assert_eq!(e.selection().focus, 0);
+    }
+
     #[test]
     fn typing_and_deleting_undo_in_runs_as_appkit_does() {
         let mut e = TextEditor::new("");

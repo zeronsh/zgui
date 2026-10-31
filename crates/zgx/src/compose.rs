@@ -2,7 +2,7 @@
 //! reactive properties update individual nodes without rebuilding their component.
 use crate::{
     compose_style::{Typography, Variants, mount_style_with_intrinsic},
-    input::{EventContext, EventPhase, InputEvent, PointerButton},
+    input::{EventContext, EventPhase, InputEvent, Navigation, PointerButton},
     reactive::{Runtime, ServiceScope, Signal},
     scene::{Layout, NodeId, NodeKind},
     semantics::{Live, Role, SemanticNode},
@@ -68,8 +68,10 @@ impl TaskRunner {
             })
         })
     }
-    /// Run `future`; dropping the token cancels it.
-    pub(crate) fn spawn(&self, future: LocalFuture) -> TaskToken {
+    /// Run `future`; dropping the token cancels it. For work that outlives
+    /// the component starting it (a session reading its process's output
+    /// while no view shows it); [`Context::tasks`] ties work to a component.
+    pub fn spawn(&self, future: LocalFuture) -> TaskToken {
         (self.0)(future)
     }
 }
@@ -227,18 +229,39 @@ type Builder = Box<dyn FnOnce(&mut Context) -> View>;
 type RegionBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment)>;
 type VirtualBuilder = Box<dyn FnOnce(&mut Ui, NodeId, Environment, ListOptions)>;
 /// What a virtual list is mounted with, beside its rows: its scrollbar,
-/// keyboard navigation, and what its end coming in reach calls.
+/// keyboard navigation, and what it reports of its edges.
 pub(crate) struct ListOptions {
     pub(crate) scrollbar: bool,
     pub(crate) keyboard_navigation: bool,
-    pub(crate) end: Option<EndWatch>,
+    /// `View::overscroll_contain`.
+    pub(crate) contain: bool,
+    pub(crate) edges: Option<Box<ListEdges>>,
 }
-/// `View::on_end`: what a virtual list calls as its end comes within
-/// `distance` points of the bottom of its viewport.
-pub(crate) struct EndWatch {
+/// What a virtual list reports of its edges: its end and its start coming
+/// in reach (`View::on_end`, `View::on_start`) and whether it rests at its
+/// end (`View::on_at_end`). Boxed: few lists have any.
+#[derive(Default)]
+pub(crate) struct ListEdges {
+    end: Option<EdgeWatch>,
+    start: Option<EdgeWatch>,
+    at_end: Option<Box<dyn FnMut(bool)>>,
+}
+impl ListEdges {
+    /// Whether its start is watched (`View::on_start`): rows coming in
+    /// above are then kept from moving the rows in view.
+    pub(crate) fn watches_start(&self) -> bool {
+        self.start.is_some()
+    }
+}
+/// What a virtual list calls as an edge comes within `distance` points of
+/// its viewport's.
+pub(crate) struct EdgeWatch {
     distance: f32,
     reached: Box<dyn FnMut()>,
 }
+/// How close to its end a list rests at it (`View::on_at_end`), in points:
+/// what a fractional scroll position leaves.
+const AT_END: f32 = 4.;
 /// A virtual list's region: its mount, given its options. Out of line: a
 /// list's mount is rare beside the elements `open_element` makes, which it
 /// is inlined into.
@@ -247,39 +270,83 @@ fn virtual_region(
     build: VirtualBuilder,
     scrollbar: bool,
     keyboard_navigation: bool,
-    end: Option<EndWatch>,
+    contain: bool,
+    edges: Option<Box<ListEdges>>,
 ) -> RegionBuilder {
     let options = ListOptions {
         scrollbar,
         keyboard_navigation,
-        end,
+        contain,
+        edges,
     };
     Box::new(move |ui: &mut Ui, root, environment| build(ui, root, environment, options))
 }
-/// Call `end.reached` once each time the end of a virtual list (its content
-/// `extent`, scrolled by `offset`, in a viewport `size`) comes within
-/// `end.distance`: again only once its content has grown, so a list
-/// shorter than its viewport asks until it fills or nothing comes. Rust
-/// watches; the script runs only as it is reached.
-pub(crate) fn watch_end(
+/// Report a virtual list's edges (its content `extent`, scrolled by
+/// `offset`, in a viewport `size`): call `edges.end.reached` once each time
+/// its end comes within `edges.end.distance`, and `edges.start.reached`
+/// its start, again only once its content has changed size, so a list
+/// shorter than its viewport asks until it fills or nothing comes; and
+/// tell `edges.at_end` whether it rests at its end, as that changes. Rust
+/// watches; the script runs only as an edge is reached or left.
+pub(crate) fn watch_edges(
     ui: &mut Ui,
     root: NodeId,
     offset: Signal<f32>,
     size: Signal<(f32, f32)>,
     extent: Signal<f32>,
-    mut end: EndWatch,
+    edges: ListEdges,
 ) {
+    let ListEdges {
+        end,
+        start,
+        mut at_end,
+    } = edges;
     let runtime = ui.runtime.clone();
-    let mut reached_at: Option<u32> = None;
+    let weak = ui.downgrade();
+    // An edge reached is told after the frame's layout, the list's
+    // position settled: rows the call adds above then keep the rows in
+    // view where they are.
+    let tell = move |reached: &Rc<RefCell<Box<dyn FnMut()>>>| {
+        let (reached, runtime) = (reached.clone(), runtime.clone());
+        if let Some(ui) = weak.upgrade() {
+            ui.after_layout(Box::new(move || {
+                runtime.untracked(|| (reached.borrow_mut())());
+            }));
+        }
+    };
+    let shared = |watch: Option<EdgeWatch>| {
+        watch.map(|watch| (watch.distance, Rc::new(RefCell::new(watch.reached))))
+    };
+    let (end, start) = (shared(end), shared(start));
+    let runtime = ui.runtime.clone();
+    let (mut end_at, mut start_at): (Option<u32>, Option<u32>) = (None, None);
+    let mut was_at_end: Option<bool> = None;
     let effect = ui.runtime.effect(move || {
         let (offset, (_, height), extent) = (offset.get(), size.get(), extent.get());
         if height <= 0. {
             // Not laid out yet.
             return;
         }
-        if extent - offset - height <= end.distance && reached_at != Some(extent.to_bits()) {
-            reached_at = Some(extent.to_bits());
-            runtime.untracked(|| (end.reached)());
+        let to_end = extent - offset - height;
+        if let Some(at_end) = &mut at_end {
+            let now = to_end <= AT_END;
+            if was_at_end.replace(now) != Some(now) {
+                runtime.untracked(|| at_end(now));
+            }
+        }
+        if let Some((distance, reached)) = &end
+            && to_end <= *distance
+            && end_at != Some(extent.to_bits())
+        {
+            end_at = Some(extent.to_bits());
+            tell(reached);
+        }
+        if let Some((distance, reached)) = &start
+            && offset <= *distance
+            && start_at != Some(extent.to_bits())
+        {
+            start_at = Some(extent.to_bits());
+            tell(reached);
         }
     });
     ui.retain(root, effect);
@@ -370,6 +437,9 @@ struct PortalOptions {
     over: Option<Rc<dyn Fn() -> String>>,
     /// `View::arrow`: how far a popover's arrow reaches from its edge.
     arrow: Option<f32>,
+    /// `View::at_caret`: placed at the caret of the editor in its trigger,
+    /// focus left there.
+    at_caret: bool,
 }
 /// A declarative view: a node to mount, its styles, children, handlers and
 /// semantics. Built with the functions here ([`column()`], [`text()`],
@@ -393,15 +463,19 @@ pub struct View {
 }
 /// Ranges of a text marked with a colour (`View::decorations`).
 type Decorations = Vec<(std::ops::Range<usize>, crate::scene::Color)>;
+/// Ranges of a text underlined (`View::underlines`).
+type Underlines = Vec<crate::widgets::EditorUnderline>;
 /// What a code editor adds to a text area: its lines' colours, ranges
 /// marked behind its text, its current line and what Tab inserts.
 #[derive(Default)]
 pub(crate) struct CodeOptions {
     highlighter: Option<crate::widgets::SpanHighlighter>,
     decorations: Option<Box<dyn FnMut() -> Decorations>>,
+    underlines: Option<Box<dyn FnMut() -> Underlines>>,
     current_line: Option<Box<dyn FnMut() -> Option<crate::scene::Color>>>,
     indent: Option<String>,
     on_caret: Option<Box<dyn FnMut(crate::widgets::Caret)>>,
+    on_top_line: Option<Box<dyn FnMut(usize)>>,
 }
 /// `View`'s fields few views set (`View::rare`).
 #[derive(Default)]
@@ -418,9 +492,14 @@ pub(crate) struct Rare {
     pointer_events: Option<Box<dyn FnMut() -> bool>>,
     scrollbar: Option<bool>,
     follow_end: Option<bool>,
+    /// `View::overscroll_contain`: a wheel over it stays with it.
+    overscroll_contain: bool,
     animation: Option<animation::Animated>,
     keyboard_navigation: Option<bool>,
-    end: Option<EndWatch>,
+    /// `View::on_end`, `on_start`, `at_end`: a virtual list's edges.
+    edges: Option<Box<ListEdges>>,
+    /// `View::active_descendant`: the id of the item it is on.
+    active_descendant: Option<Box<dyn Fn() -> Option<String>>>,
     dismiss_backdrop: Option<bool>,
     /// Where an overlay opens and a submenu's own trigger row: boxed, as
     /// few views have them (views are moved through the mount recursion).
@@ -455,12 +534,14 @@ pub(crate) struct Rare {
     line_numbers: Option<bool>,
     /// What a code editor adds to a text area (`View::highlighter`, …).
     code: Option<Box<CodeOptions>>,
-    /// `WINDOW_DRAG` (`View::window_drag`) and `HOLLOW` (`View::hollow`):
-    /// rare, tested together as the element mounts.
+    /// `WINDOW_DRAG` (`View::window_drag`), `HOLLOW` (`View::hollow`) and an
+    /// editor's `AUTOCORRECT` and `SMART_PUNCTUATION`: rare, tested together
+    /// as the element mounts.
     mount_flags: u8,
     /// `View::selectable`.
     selectable: Option<bool>,
-    /// `View::selection_color`, `selected_text_color`: few views have them.
+    /// `View::selection_color`, `selected_text_color`, `selection_radius`:
+    /// few views have them.
     selection_style: Option<Box<crate::selection::SelectionStyle>>,
     /// `View::row_text`.
     row_text: Option<crate::selection::RowText>,
@@ -483,8 +564,11 @@ impl Rare {
         if self.portal.is_some() {
             inner.portal = self.portal;
         }
-        if self.end.is_some() {
-            inner.end = self.end;
+        if self.edges.is_some() {
+            inner.edges = self.edges;
+        }
+        if self.active_descendant.is_some() {
+            inner.active_descendant = self.active_descendant;
         }
         if self.keyboard_navigation.is_some() {
             inner.keyboard_navigation = self.keyboard_navigation;
@@ -494,6 +578,9 @@ impl Rare {
         }
         if self.follow_end.is_some() {
             inner.follow_end = self.follow_end;
+        }
+        if self.overscroll_contain {
+            inner.overscroll_contain = true;
         }
         if self.drag_preview.is_some() {
             inner.drag_preview = self.drag_preview;
@@ -762,6 +849,16 @@ impl View {
         self.rare_mut().scrollbar = Some(visible);
         self
     }
+    /// Keep a wheel or trackpad gesture that starts over this scroll view,
+    /// virtual list or text area with it at its edges, as CSS's
+    /// `overscroll-behavior: contain`: what it can't scroll goes to none of
+    /// the scroll views around it (no page moving under a transcript, nor
+    /// stretching), its momentum included. Without it a gesture at an edge
+    /// goes on to them.
+    pub fn overscroll_contain(mut self) -> Self {
+        self.rare_mut().overscroll_contain = true;
+        self
+    }
     /// Keep a scroll viewport at its end while its content grows, as long as
     /// it was at the end (a chat transcript); scrolling away releases it.
     pub fn follow_end(mut self, follow: bool) -> Self {
@@ -775,11 +872,34 @@ impl View {
     /// call adds nothing. Watched in Rust: nothing runs while it scrolls
     /// short of it. For a virtual list.
     pub fn on_end(mut self, distance: f32, reached: impl FnMut() + 'static) -> Self {
-        self.rare_mut().end = Some(EndWatch {
+        self.edges_mut().end = Some(EdgeWatch {
             distance: distance.max(0.),
             reached: Box::new(reached),
         });
         self
+    }
+    /// Call `reached` as a virtual list's start comes within `distance`
+    /// points of the top of its viewport (a history's earlier page): once
+    /// each time, and again once its content has changed size. Rows the
+    /// call adds above keep the rows in view where they are, a measured
+    /// list's by key (`measured_virtual_list`, `measured_rows`). Watched in
+    /// Rust, as `on_end` is. For a virtual list.
+    pub fn on_start(mut self, distance: f32, reached: impl FnMut() + 'static) -> Self {
+        self.edges_mut().start = Some(EdgeWatch {
+            distance: distance.max(0.),
+            reached: Box::new(reached),
+        });
+        self
+    }
+    /// Tell `changed` whether a virtual list rests at its end (within a
+    /// few points of it), once laid out and then as that changes: a "jump
+    /// to the latest" button shows while it does not. For a virtual list.
+    pub fn on_at_end(mut self, changed: impl FnMut(bool) + 'static) -> Self {
+        self.edges_mut().at_end = Some(Box::new(changed));
+        self
+    }
+    fn edges_mut(&mut self) -> &mut ListEdges {
+        self.rare_mut().edges.get_or_insert_default()
     }
     /// Enable bounded keyboard row navigation on a virtual list.
     pub fn keyboard_navigation(mut self, enabled: bool) -> Self {
@@ -795,6 +915,40 @@ impl View {
     /// it, start-aligned, 4 points away unless set).
     pub fn placement(mut self, placement: crate::compose_popover::Placement) -> Self {
         self.rare_mut().portal.get_or_insert_default().placement = Some(placement);
+        self
+    }
+    /// Hear a person's paste into this editor before it goes in, from a
+    /// key, a menu or a middle click, as HTML's `paste` event does: handed
+    /// the clipboard's text (none where it holds no text, as with an
+    /// image), and true takes the paste, so nothing goes in. For a composer
+    /// that makes a pasted picture or a long text an attachment. It may
+    /// read the clipboard. Only editor roots accept this.
+    pub fn on_paste(self, hook: impl Fn(Option<&str>) -> bool + 'static) -> Self {
+        self.on_mount(move |handle| {
+            if let Some(ui) = handle.ui.upgrade() {
+                ui.set_paste_hook(handle.node, Rc::new(hook));
+            }
+        })
+    }
+    /// The item this view is on while focus stays in it (`aria-activedescendant`):
+    /// the id of a node, as `id()` names it, or `None`. An editor driving a
+    /// list of suggestions (a mention's, `View::at_caret`) keeps focus and
+    /// moves through them with its keys; assistive technology hears the
+    /// one it is on. `id` is read again as what it reads changes.
+    pub fn active_descendant(mut self, id: impl Fn() -> Option<String> + 'static) -> Self {
+        self.rare_mut().active_descendant = Some(Box::new(id));
+        self
+    }
+    /// A popover placed at the caret of the text editor in its trigger, not
+    /// at the trigger's box, following it as it moves (typing, a click, a
+    /// line wrapping, the editor scrolling, an input method's composition),
+    /// as a mention's or a command's suggestions follow the caret. It takes
+    /// no focus: keys go on to the editor, which drives it (Up, Down,
+    /// Enter, Escape) with its own handlers, and tells assistive technology
+    /// the suggestion it is on (`View::active_descendant`). Pointer presses
+    /// outside it pass through, and close it only as the app says (`open`).
+    pub fn at_caret(mut self) -> Self {
+        self.rare_mut().portal.get_or_insert_default().at_caret = true;
         self
     }
     /// A non-modal layer over the window (toasts, a heads-up): a modal view
@@ -1112,6 +1266,13 @@ impl View {
         self.accessibility_mut().checked = Some(Box::new(checked));
         self
     }
+    /// A checkable menu item (`Role::MenuItem` with `checked_when`) that is
+    /// one of a group: a radio item, `menuitemradio`, rather than
+    /// `menuitemcheckbox`.
+    pub fn radio_item(mut self) -> Self {
+        self.accessibility_mut().radio_item = true;
+        self
+    }
     /// What this control's value reads as to assistive technology, followed:
     /// a select's chosen option, a combobox's text. Worked out only while
     /// assistive technology listens, as `accessible_label_when`.
@@ -1178,6 +1339,22 @@ impl View {
             if let Some(ui) = handle.ui.upgrade() {
                 ui.input.take_unfocused_keys(handle.node);
             }
+        })
+    }
+    /// Go back or forward on the platform's gesture for it over this view:
+    /// a trackpad's swipe between pages (macOS), where nothing under the
+    /// fingers scrolls that way (`Ui::set_navigation_swipes`). The nearest
+    /// such view around what is under the swipe takes it.
+    pub fn on_navigate(self, mut callback: impl FnMut(Navigation) + 'static) -> Self {
+        self.on_mount(|handle| {
+            if let Some(ui) = handle.ui.upgrade() {
+                ui.input.take_navigation(handle.node, &ui.scene.borrow());
+            }
+        })
+        .on_action(move |navigation: &Navigation, cx| {
+            callback(*navigation);
+            cx.prevent_default();
+            cx.stop_propagation();
         })
     }
     /// Hear every event the document is given while this view is mounted,
@@ -1286,6 +1463,31 @@ impl View {
         self.rare_mut().spellcheck = Some(Box::new(check));
         self
     }
+    /// Correct a misspelled word as it ends, and expand the person's text
+    /// replacements ("omw" to "On my way!"), as the system's own text
+    /// fields do (macOS's `NSSpellChecker`), where the person has them on.
+    /// Undo puts back what was typed. Off by default; a password field
+    /// never corrects. Only editor views take it.
+    pub fn autocorrect(mut self, correct: bool) -> Self {
+        self.set_mount_flag(AUTOCORRECT, correct);
+        self
+    }
+    /// Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’
+    /// for " and ', — for --), in the person's language, where the person
+    /// has the system's smart quotes and dashes on (macOS). Undo puts back
+    /// what was typed. Off by default, as code and data fields want it.
+    /// Only editor views take it.
+    pub fn smart_punctuation(mut self, smart: bool) -> Self {
+        self.set_mount_flag(SMART_PUNCTUATION, smart);
+        self
+    }
+    fn set_mount_flag(&mut self, flag: u8, on: bool) {
+        if on {
+            self.rare_mut().mount_flags |= flag;
+        } else if let Some(rare) = self.rare.as_deref_mut() {
+            rare.mount_flags &= !flag;
+        }
+    }
     /// Number a multiline editor's lines in a gutter at its left, as a code
     /// editor does (see `EditorHandle::set_line_numbers`). Only editor roots
     /// accept this.
@@ -1329,6 +1531,16 @@ impl View {
         self.code_mut().decorations = Some(Box::new(ranges));
         self
     }
+    /// Ranges of a text area's text underlined (a spelling mistake's, a
+    /// diagnostic's wave), kept current as what `ranges` reads changes. Only
+    /// those in view are drawn.
+    pub fn underlines(
+        mut self,
+        ranges: impl FnMut() -> Vec<crate::widgets::EditorUnderline> + 'static,
+    ) -> Self {
+        self.code_mut().underlines = Some(Box::new(ranges));
+        self
+    }
     /// A colour behind a text area's caret row (a code editor's current
     /// line), kept current as what `color` reads changes.
     pub fn current_line(
@@ -1349,6 +1561,12 @@ impl View {
     /// status bar's line and column); see `EditorHandle::on_caret`.
     pub fn on_caret(mut self, told: impl FnMut(crate::widgets::Caret) + 'static) -> Self {
         self.code_mut().on_caret = Some(Box::new(told));
+        self
+    }
+    /// Call `told` with a text area's first line in view, from 1, whenever
+    /// it changes; see `EditorHandle::on_top_line`.
+    pub fn on_top_line(mut self, told: impl FnMut(usize) + 'static) -> Self {
+        self.code_mut().on_top_line = Some(Box::new(told));
         self
     }
     /// Make the view a window drag region, like CSS's
@@ -1405,6 +1623,20 @@ impl View {
         color: impl FnMut() -> crate::scene::Color + 'static,
     ) -> Self {
         self.rare_mut().selection_style.get_or_insert_default().text = Some(Box::new(color));
+        self
+    }
+    /// The corner radius of this selectable region's highlight, in place of
+    /// the theme's `selection.radius`, at most half a line; 0 draws its lines
+    /// as plain rectangles. For a selectable view.
+    pub fn selection_radius(self, radius: f32) -> Self {
+        self.selection_radius_when(move || radius)
+    }
+    /// `selection_radius`, following the reactive values it reads.
+    pub fn selection_radius_when(mut self, radius: impl FnMut() -> f32 + 'static) -> Self {
+        self.rare_mut()
+            .selection_style
+            .get_or_insert_default()
+            .radius = Some(Box::new(radius));
         self
     }
     /// A virtual list's plain text of row `index` (`None` past its end):
@@ -1585,6 +1817,125 @@ fn bordered(styles: &Styles) -> bool {
 /// A scroll view's size when nothing else sizes it (`Style::intrinsic_width`).
 /// One scrolling across is as tall as what it holds, as CSS's
 /// `overflow-x: auto` box: a tab strip, a row of chips.
+/// A canvas's text: a text node for each line, over its drawing and through
+/// the same paint as any text. Made when the first line is, in a box of
+/// their own that takes the canvas's pan and zoom. Scene nodes with no
+/// semantics: the canvas's `label` speaks for what it shows.
+#[derive(Default)]
+struct CanvasLabels {
+    group: Option<NodeId>,
+    /// Each line's node, reused by position, and what it shows now: a line
+    /// drawn as it was touches nothing, so a chart redrawn every frame
+    /// costs what changed.
+    nodes: Vec<(NodeId, crate::canvas::CanvasText)>,
+    size: (f32, f32),
+    view: Option<crate::scene::CanvasView>,
+}
+impl CanvasLabels {
+    fn show(
+        &mut self,
+        scene: &mut crate::scene::Scene,
+        root: NodeId,
+        texts: &[crate::canvas::CanvasText],
+        (width, height): (f32, f32),
+    ) {
+        let group = match self.group {
+            Some(group) => group,
+            None => {
+                let group = scene.append(
+                    root,
+                    NodeKind::Container(Layout::Overlay),
+                    crate::scene::Style {
+                        absolute: true,
+                        ..Default::default()
+                    },
+                );
+                self.group = Some(group);
+                if let Some(view) = self.view {
+                    self.follow(scene, view);
+                }
+                group
+            }
+        };
+        if self.size != (width, height) {
+            self.size = (width, height);
+            scene.set_style(
+                group,
+                crate::scene::Style {
+                    width: Some(width),
+                    height: Some(height),
+                    absolute: true,
+                    ..Default::default()
+                },
+            );
+        }
+        for (gone, _) in self.nodes.drain(texts.len().min(self.nodes.len())..) {
+            scene.remove(gone);
+        }
+        for (index, text) in texts.iter().enumerate() {
+            if self
+                .nodes
+                .get(index)
+                .is_some_and(|(_, shown)| shown == text)
+            {
+                continue;
+            }
+            let kind = NodeKind::Text {
+                text: text.text.clone(),
+                color: text.color,
+                font_size: text.size,
+            };
+            let node = match self.nodes.get_mut(index) {
+                Some((node, shown)) => {
+                    scene.set_kind(*node, kind);
+                    *shown = text.clone();
+                    *node
+                }
+                None => {
+                    let node = scene.append(
+                        group,
+                        kind,
+                        crate::scene::Style {
+                            absolute: true,
+                            ..Default::default()
+                        },
+                    );
+                    self.nodes.push((node, text.clone()));
+                    node
+                }
+            };
+            scene.set_font(node, text.font.clone());
+            let size = match (text.anchor, text.baseline) {
+                (crate::canvas::TextAnchor::Start, crate::canvas::TextBaseline::Top) => (0., 0.),
+                _ => scene.measure_text_with_font(&text.text, text.size, None, &text.font),
+            };
+            let (x, y) = text.origin(size);
+            scene.set_transform(node, crate::scene::Transform { x, y });
+        }
+    }
+    /// Pans and zooms the text with its canvas's drawing.
+    fn follow(&mut self, scene: &mut crate::scene::Scene, view: crate::scene::CanvasView) {
+        self.view = Some(view);
+        if let Some(group) = self.group {
+            scene.set_transform(
+                group,
+                crate::scene::Transform {
+                    x: view.x,
+                    y: view.y,
+                },
+            );
+            scene.set_local_transform(
+                group,
+                crate::scene::LocalTransform {
+                    scale: (view.scale, view.scale),
+                    origin: (0., 0.),
+                    ..crate::scene::LocalTransform::IDENTITY
+                },
+            );
+        }
+    }
+}
+
 fn scroll_default_size(horizontal: bool) -> crate::scene::Style {
     crate::scene::Style {
         width: Some(320.),
@@ -1743,7 +2094,8 @@ pub fn image_signal(
 /// A box whose pixels `view` draws on the GPU (see [`crate::gpu_view`]):
 /// a frame at the box's size as it first shows, as it resizes, as the view
 /// is invalidated and, while it animates, every refresh it shows. It has no
-/// size of its own: give it one. `label` is its accessible name.
+/// size of its own: give it one. `label` is its accessible name; empty,
+/// it has none, and what holds it speaks for it.
 pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> View {
     // A box mounted as any is, its frames set up once it is: no kind of its
     // own for every element's mount to tell apart.
@@ -1755,9 +2107,13 @@ pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> Vi
         div().overflow_hidden().on_mount(move |handle| {
             if let Some(mut ui) = handle.ui.upgrade() {
                 ui.scene.borrow_mut().set_replaced(handle.node, true);
-                ui.semantics
-                    .borrow_mut()
-                    .set(handle.node, SemanticNode::new(Role::Image, label));
+                // Unnamed, it is none of assistive technology's: what holds
+                // it speaks for it (a page's box, its page's own tree).
+                if !label.is_empty() {
+                    ui.semantics
+                        .borrow_mut()
+                        .set(handle.node, SemanticNode::new(Role::Image, label));
+                }
                 mount_gpu_view(&mut ui, handle.node, view, runner, frames);
             }
         })
@@ -2371,13 +2727,21 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let ListOptions {
                 scrollbar,
                 keyboard_navigation,
-                end,
+                contain,
+                edges,
             } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
             let size = ui.observe_content_size(root);
             let extent = ui.signal(0.0_f32);
-            if let Some(end) = end {
-                watch_end(ui, root, offset.clone(), size.clone(), extent.clone(), end);
+            if let Some(edges) = edges {
+                watch_edges(
+                    ui,
+                    root,
+                    offset.clone(),
+                    size.clone(),
+                    extent.clone(),
+                    *edges,
+                );
             }
             // Clip rows to the allocated content box, keeping root padding clear.
             let viewport = ui.container(root, Layout::Overlay, Default::default());
@@ -2418,6 +2782,8 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         .min((wheel_extent.get() - wheel_size.get().1).max(0.0));
                     if before != after {
                         wheel_offset.set(after);
+                        cx.scrolled(false);
+                    } else if contain && delta_y != 0. {
                         cx.scrolled(false);
                     }
                 }
@@ -2582,7 +2948,14 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             let at = Some((*index, width.to_bits()));
                             if placed.at != at {
                                 placed.at = at;
-                                scene.set_style(*node, crate::widgets::fixed(width, row_height));
+                                // Its root fills its width, as a block does.
+                                scene.set_style(
+                                    *node,
+                                    crate::scene::Style {
+                                        align: crate::scene::Align::Stretch,
+                                        ..crate::widgets::fixed(width, row_height)
+                                    },
+                                );
                                 scene.set_transform(
                                     *node,
                                     crate::scene::Transform {
@@ -3036,6 +3409,10 @@ fn mount_portal_panel(
 
     let options = view.rare.as_ref().and_then(|r| r.portal.as_ref());
     let is_layer = options.is_some_and(|p| p.layer);
+    // At an editor's caret: placed there, and focus left in the editor, as
+    // a layer leaves it.
+    let at_caret = options.is_some_and(|p| p.at_caret);
+    let keeps_focus = is_layer || at_caret;
     // A layer's panel is only what it holds; a dialog's or menu's is a card.
     let mut defaults = if is_layer {
         Styles::new()
@@ -3237,10 +3614,18 @@ fn mount_portal_panel(
                     size,
                 }
             });
+            // At the caret: placed against the caret of the editor in the
+            // trigger (its box, where it has none).
+            let placed_at = match at_caret {
+                true => ui
+                    .editor_within(anchor)
+                    .map_or(anchor, |editor| editor.caret),
+                false => anchor,
+            };
             crate::compose_popover::mount(
                 ui,
                 owner,
-                anchor,
+                placed_at,
                 portal.overlay,
                 portal.position,
                 panel,
@@ -3276,7 +3661,7 @@ fn mount_portal_panel(
         panel_focusable,
         is_submenu,
         autofocus.unwrap_or(true),
-        is_layer,
+        keeps_focus,
     );
     // An unnamed popover or menu is named by its trigger, as a browser's
     // popover target is (`aria-labelledby`).
@@ -3285,7 +3670,7 @@ fn mount_portal_panel(
     }
     // A popover closes on a press outside it (in the window, in a parent
     // popover's panel), and the press goes on to what it lands on.
-    if let Some(anchor) = anchor.filter(|_| dismiss_backdrop && !is_menu && !is_layer) {
+    if let Some(anchor) = anchor.filter(|_| dismiss_backdrop && !is_menu && !keeps_focus) {
         crate::compose_popover::mount_dismissing(
             ui,
             owner,
@@ -3299,7 +3684,7 @@ fn mount_portal_panel(
     // A layer (a toast, a tooltip) traps nothing, so it isn't modal; a
     // popover traps focus as a dialog does, so it is.
     ui.semantics.borrow_mut().update(panel, |node| {
-        node.modal = node.modal && !is_layer;
+        node.modal = node.modal && !keeps_focus;
         node.hidden |= panel_hidden;
     });
     // A popover's trigger says it opens a dialog, and whether it shows (a
@@ -3538,7 +3923,7 @@ struct Opened {
     root: NodeId,
     child_parent: NodeId,
     submenu_indicator: bool,
-    scroll_offset: Option<(Signal<f32>, bool)>,
+    scroll_offset: Option<(Signal<f32>, bool, bool)>,
     scroll_nodes: Option<(NodeId, NodeId)>,
     scrollbar: bool,
     follow_end: bool,
@@ -3928,7 +4313,8 @@ fn open_element(
                 crate::semantics::ScrollAxis::Vertical
             });
             ui.semantics.borrow_mut().set(root, semantics);
-            scroll_offset = Some((offset, horizontal));
+            let contain = rare.as_deref().is_some_and(|r| r.overscroll_contain);
+            scroll_offset = Some((offset, horizontal, contain));
             root
         }
         Kind::VirtualList(build) => {
@@ -3948,7 +4334,8 @@ fn open_element(
                 build,
                 scrollbar,
                 keyboard_navigation,
-                rare.as_deref_mut().and_then(|r| r.end.take()),
+                rare.as_deref().is_some_and(|r| r.overscroll_contain),
+                rare.as_deref_mut().and_then(|r| r.edges.take()),
             ));
             let root = ui.container(parent, Layout::Overlay, scroll_default_size(false));
             ui.semantics
@@ -3964,6 +4351,9 @@ fn open_element(
     };
     if view.contents {
         ui.scene.borrow_mut().set_contents(root, true);
+    }
+    if let Some(active) = rare.as_deref_mut().and_then(|r| r.active_descendant.take()) {
+        watch_active_descendant(ui, root, environment.registry.clone(), active);
     }
     match rare.as_deref().and_then(|r| r.selectable) {
         Some(true) => crate::selection::mount_root(
@@ -3995,6 +4385,7 @@ fn open_element(
                 return Some(crate::editor_menu::context_menu(
                     editor.clone(),
                     environment.services.get(),
+                    ui.downgrade(),
                 ));
             }
             (rare.as_deref().and_then(|r| r.selectable) == Some(true))
@@ -4018,7 +4409,7 @@ fn open_element(
     if let Some(r) = rare.as_deref()
         && r.mount_flags != 0
     {
-        mount_drag_or_hollow(ui, root, r.mount_flags);
+        mount_flagged(ui, root, r, editor.as_ref(), &environment);
     }
     if let Some(rare) = rare.as_deref_mut()
         && (!rare.keymap.bindings.is_empty()
@@ -4134,7 +4525,7 @@ fn open_element(
         true => scroll_layout_target.clone(),
         false => rare.as_deref_mut().and_then(|r| r.layout_target.take()),
     };
-    let image_fit = is_image.then(|| ui.signal(crate::style::ObjectFit::default()));
+    let image_fit = is_image.then(|| ui.signal(crate::style::ImagePlacement::default()));
     environment.typography = mount_style_with_intrinsic(
         ui,
         root,
@@ -4308,7 +4699,23 @@ fn open_element(
                 let text_end = content.len();
                 runs.push(crate::rich_text::TextRun {
                     background: span.background,
-                    underline: span.underline.or(inherited),
+                    underline: {
+                        let underline = span.underline.or(inherited);
+                        match span.underline_color {
+                            None => underline,
+                            Some(crate::theme::Themed::Value(tint)) => {
+                                underline.map(|d| d.color(tint))
+                            }
+                            Some(crate::theme::Themed::Token(token)) => underline.map(|d| {
+                                d.color(
+                                    theme
+                                        .get(token)
+                                        .color()
+                                        .unwrap_or(crate::scene::Color(0, 0, 0, 0)),
+                                )
+                            }),
+                        }
+                    },
                     strikethrough: span.strikethrough,
                     padding: if lead > 0. {
                         [0., span.padding[1]]
@@ -4431,17 +4838,24 @@ fn open_element(
             },
         );
         let scene = ui.scene.clone();
+        let labels = Rc::new(RefCell::new(CanvasLabels::default()));
+        let shown = labels.clone();
         ui.bind(root, move || {
             let (width, height) = size.get();
             if width.is_nan() || height.is_nan() {
                 return;
             }
             let content = if width > 0. && height > 0. {
-                draw((width, height))
+                crate::canvas::drawing_for(&scene, || draw((width, height)))
             } else {
                 crate::canvas::Canvas::new()
             };
             let mut scene = scene.borrow_mut();
+            if !content.texts().is_empty() || !shown.borrow().nodes.is_empty() {
+                shown
+                    .borrow_mut()
+                    .show(&mut scene, root, content.texts(), (width, height));
+            }
             scene.set_kind(drawing, NodeKind::Canvas(std::sync::Arc::new(content)));
             scene.set_style(
                 drawing,
@@ -4459,7 +4873,9 @@ fn open_element(
             let scene = ui.scene.clone();
             ui.bind(root, move || {
                 let view = view();
-                scene.borrow_mut().set_canvas_view(drawing, Some(view));
+                let mut scene = scene.borrow_mut();
+                scene.set_canvas_view(drawing, Some(view));
+                labels.borrow_mut().follow(&mut scene, view);
             });
         }
         if let Some(mut grid) = grid_fill {
@@ -4502,6 +4918,9 @@ fn open_element(
             let editor = editor.clone();
             ui.bind(root, move || editor.set_read_only(read_only()));
         }
+        if rare.as_deref().is_some_and(|r| r.overscroll_contain) {
+            editor.set_overscroll_contain(true);
+        }
         if let Some(select) = rare.as_deref().and_then(|r| r.select_on_focus) {
             editor.set_select_on_focus(select);
         }
@@ -4526,9 +4945,11 @@ fn open_element(
             let CodeOptions {
                 highlighter,
                 decorations,
+                underlines,
                 current_line,
                 indent,
                 on_caret,
+                on_top_line,
             } = *code;
             if highlighter.is_some() {
                 editor.set_span_highlighter(highlighter);
@@ -4547,10 +4968,17 @@ fn open_element(
             if let Some(told) = on_caret {
                 editor.on_caret(told);
             }
+            if let Some(told) = on_top_line {
+                editor.on_top_line(told);
+            }
             editor.set_indent(indent.as_deref());
             if let Some(mut ranges) = decorations {
                 let editor = editor.clone();
                 ui.bind(root, move || editor.set_decorations(ranges()));
+            }
+            if let Some(mut ranges) = underlines {
+                let editor = editor.clone();
+                ui.bind(root, move || editor.set_underlines(ranges()));
             }
             if let Some(mut color) = current_line {
                 let editor = editor.clone();
@@ -4607,7 +5035,7 @@ fn open_element(
             },
         );
     }
-    let scroll_nodes = scroll_offset.as_ref().map(|(_, horizontal)| {
+    let scroll_nodes = scroll_offset.as_ref().map(|(_, horizontal, _)| {
         let viewport = ui.container(root, Layout::Overlay, Default::default());
         let content = ui.container(
             viewport,
@@ -4649,6 +5077,52 @@ fn open_element(
         pictured,
     }
 }
+/// `View::active_descendant`: `root`'s semantics point at the node named
+/// what `id` says, found again as `id` changes, and after the next layout
+/// when it is not mounted yet (an item in a popover just opening).
+#[inline(never)]
+fn watch_active_descendant(
+    ui: &mut Ui,
+    root: NodeId,
+    registry: Registry,
+    id: Box<dyn Fn() -> Option<String>>,
+) {
+    fn point(ui: &Ui, root: NodeId, registry: &Registry, id: Option<&str>) -> bool {
+        let target = id.and_then(|id| {
+            let scene = ui.scene.borrow();
+            registry
+                .borrow()
+                .get(id)?
+                .iter()
+                .copied()
+                .find(|node| scene.contains(*node))
+        });
+        let mut semantics = ui.semantics.borrow_mut();
+        if semantics.get(root).is_none() {
+            return false;
+        }
+        if semantics
+            .get(root)
+            .is_some_and(|node| node.active_descendant != target)
+        {
+            semantics.update(root, |node| node.active_descendant = target);
+        }
+        target.is_some() || id.is_none()
+    }
+    let weak = ui.downgrade();
+    ui.bind(root, move || {
+        let id = id();
+        let Some(ui) = weak.upgrade() else { return };
+        if !point(&ui, root, &registry, id.as_deref()) {
+            let (weak, registry) = (weak.clone(), registry.clone());
+            ui.after_layout(Box::new(move || {
+                if let Some(ui) = weak.upgrade() {
+                    point(&ui, root, &registry, id.as_deref());
+                }
+            }));
+        }
+    });
+}
 /// The rest of an element's mounting, once its children are in.
 #[cfg_attr(debug_assertions, inline(never))]
 #[cfg_attr(not(debug_assertions), inline(always))]
@@ -4682,9 +5156,11 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
         let indicator = mount(ui, root, text("›"), environment.clone());
         ui.semantics.borrow_mut().remove(indicator);
     }
-    if let (Some((offset, horizontal)), Some((viewport, content))) = (scroll_offset, scroll_nodes) {
+    if let (Some((offset, horizontal, contain)), Some((viewport, content))) =
+        (scroll_offset, scroll_nodes)
+    {
         mount_scroll(
-            ui, root, viewport, content, offset, horizontal, scrollbar, follow_end,
+            ui, root, viewport, content, offset, horizontal, scrollbar, follow_end, contain,
         );
     }
     if let Some(mut compute) = compute {
@@ -4776,11 +5252,39 @@ const WINDOW_DRAG: u8 = 1;
 /// `Rare::mount_flags`: the pointer passes through it while nothing it holds
 /// is displayed.
 const HOLLOW: u8 = 2;
-/// `View::window_drag` and `View::hollow`, rare: apart from the element's
-/// common path.
+/// `Rare::mount_flags`: an editor's words are corrected (`View::autocorrect`).
+const AUTOCORRECT: u8 = 4;
+/// `Rare::mount_flags`: an editor's quotes and dashes are made curly and long
+/// (`View::smart_punctuation`).
+const SMART_PUNCTUATION: u8 = 8;
+/// `View::window_drag`, `View::hollow`, and an editor's `autocorrect` and
+/// `smart_punctuation`, rare: apart from the element's common path.
 #[cold]
 #[inline(never)]
-fn mount_drag_or_hollow(ui: &mut Ui, root: NodeId, flags: u8) {
+fn mount_flagged(
+    ui: &mut Ui,
+    root: NodeId,
+    rare: &Rare,
+    editor: Option<&crate::widgets::EditorHandle>,
+    environment: &Environment,
+) {
+    let flags = rare.mount_flags;
+    if flags & (AUTOCORRECT | SMART_PUNCTUATION) != 0
+        && rare.secure != Some(true)
+        && let Some(editor) = editor
+        && let Some(platform) = environment
+            .services
+            .get::<crate::platform::PlatformService>()
+    {
+        let asked = crate::editor_autocorrect::Asked {
+            kinds: crate::platform::Substitutions {
+                punctuation: flags & SMART_PUNCTUATION != 0,
+                replacements: flags & AUTOCORRECT != 0,
+            },
+            corrections: flags & AUTOCORRECT != 0,
+        };
+        crate::editor_autocorrect::mount(ui, editor.clone(), platform, asked);
+    }
     if flags & WINDOW_DRAG != 0 {
         mount_window_drag(ui, root);
     }
@@ -4938,6 +5442,8 @@ fn mount_scroll(
     horizontal: bool,
     scrollbar: bool,
     follow_end: bool,
+    // `View::overscroll_contain`: a wheel at its edge stays here.
+    contain: bool,
 ) {
     use crate::scene::{Style, Transform};
     let main_size = move |size: (f32, f32)| if horizontal { size.0 } else { size.1 };
@@ -5053,13 +5559,26 @@ fn mount_scroll(
             }
         }
         if let InputEvent::Scroll {
-            delta_x, delta_y, ..
+            x,
+            y,
+            delta_x,
+            delta_y,
         } = cx.event
         {
             // A Control-wheel zooms the window instead.
             if cx.default_prevented() || crate::zoom::wheel_zooms() {
                 return;
             }
+            // In its own points: zoomed, its content moves as far as the
+            // wheel says on screen.
+            let (delta_x, delta_y) = match weak.upgrade() {
+                Some(ui) if ui.wheel_in_window() => {
+                    ui.scene
+                        .borrow()
+                        .local_delta(cx.current_target, (x, y), (delta_x, delta_y))
+                }
+                _ => (delta_x, delta_y),
+            };
             let delta = if horizontal { delta_x } else { delta_y };
             if !delta.is_finite() {
                 return;
@@ -5076,6 +5595,10 @@ fn mount_scroll(
             let after = (before as f64 + delta as f64).clamp(0., limit) as f32;
             if before != after {
                 wheel_offset.set(after);
+                cx.scrolled(horizontal);
+            } else if contain && delta != 0. {
+                // At its edge, contained: taken all the same, so it latches
+                // here and the views around it never see it.
                 cx.scrolled(horizontal);
             }
         }
@@ -5140,7 +5663,7 @@ fn mount_native_surface(
     ui: &mut Ui,
     root: NodeId,
     source: Signal<Option<std::rc::Rc<crate::native_surface::NativeSurface>>>,
-    fit: Signal<crate::style::ObjectFit>,
+    fit: Signal<crate::style::ImagePlacement>,
 ) {
     use crate::scene::{Style, Transform};
     let viewport = ui.container(
@@ -5170,7 +5693,7 @@ fn mount_native_surface(
             height,
             frame.width() as f32,
             frame.height() as f32,
-            fit.get(),
+            fit.get().fit,
         );
         let mut scene = scene.borrow_mut();
         scene.set_kind(bitmap, NodeKind::NativeSurface(frame));
@@ -5323,7 +5846,7 @@ fn mount_image(
     ui: &mut Ui,
     root: NodeId,
     source: Signal<Option<std::sync::Arc<crate::image::ImageData>>>,
-    fit: Signal<crate::style::ObjectFit>,
+    fit: Signal<crate::style::ImagePlacement>,
 ) {
     use crate::scene::{Style, Transform};
     let viewport = ui.container(
@@ -5354,7 +5877,8 @@ fn mount_image(
     ui.bind(root, move || {
         let data = source.get().expect("mounted image source");
         let (width, height) = size.get();
-        let fitting = fit.get();
+        let placement = fit.get();
+        let fitting = placement.fit;
         let crop = data.transform() == crate::affine::Affine::IDENTITY
             || matches!(
                 fitting,
@@ -5369,6 +5893,8 @@ fn mount_image(
         );
         let mut scene = scene.borrow_mut();
         scene.set_kind(bitmap, NodeKind::Image(data));
+        // A crop is a picture past the box: its corners cut that too.
+        scene.set_corners_clip(root, crop);
         scene.set_style(
             viewport,
             Style {
@@ -5391,8 +5917,8 @@ fn mount_image(
         scene.set_transform(
             bitmap,
             Transform {
-                x: (width - image_width) * 0.5,
-                y: (height - image_height) * 0.5,
+                x: (width - image_width) * placement.position.0,
+                y: (height - image_height) * placement.position.1,
             },
         );
     });
@@ -5780,6 +6306,7 @@ pub(crate) struct Accessibility {
     level: Option<usize>,
     selected: Option<Box<dyn FnMut() -> bool>>,
     checked: Option<Box<dyn FnMut() -> bool>>,
+    radio_item: bool,
     expanded: Option<Box<dyn FnMut() -> bool>>,
     value: Option<Box<dyn FnMut() -> String>>,
     numeric: Option<(f64, f64, NumericValue)>,
@@ -5818,6 +6345,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
         level,
         selected,
         checked,
+        radio_item,
         expanded,
         value,
         numeric,
@@ -5905,6 +6433,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
             let mut radio = false;
             tree.borrow_mut().update(root, |node| {
                 node.checked = Some(checked);
+                node.radio = radio_item;
                 radio = node.role == Role::RadioButton;
             });
             if radio
@@ -6080,6 +6609,20 @@ impl NodeHandle {
     pub(crate) fn weak_ui(&self) -> WeakUi {
         self.ui.clone()
     }
+    /// Have assistive technology read the node anew, its information
+    /// unchanged (`Semantics::touch`): what the host adds to it changed.
+    /// False if it has none.
+    pub fn touch_semantics(&self) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        let mut semantics = ui.semantics.borrow_mut();
+        if semantics.get(self.node).is_none() {
+            return false;
+        }
+        semantics.touch(self.node);
+        true
+    }
     /// Change what assistive technology is told of the node (its
     /// `SemanticNode`) in place: what a component works out itself, as a
     /// grid's current cell (`active_descendant`) or a row's place in a
@@ -6107,6 +6650,14 @@ impl NodeHandle {
     /// The scene, while the UI exists.
     pub fn scene(&self) -> Option<Rc<RefCell<crate::scene::Scene>>> {
         self.ui.upgrade().map(|ui| ui.scene.clone())
+    }
+    /// Whether assistive technology reads the UI's semantics now
+    /// (`Ui::assistive_technology`): what only a reader needs (a terminal's
+    /// news of its output) can wait for one.
+    pub fn assistive_technology(&self) -> bool {
+        self.ui
+            .upgrade()
+            .is_some_and(|ui| ui.assistive_technology())
     }
     /// Whether the node is still in the scene.
     pub fn is_mounted(&self) -> bool {
@@ -6277,6 +6828,21 @@ impl NodeHandle {
             pending.extend(ui.scene.borrow().children(node).iter().rev().copied());
         }
         false
+    }
+    /// The node is leaving (a row playing its exit, gone from the data it
+    /// showed): until it unmounts it takes no input. The pointer reaches
+    /// what is under it (`Scene::set_inert`), focus inside it moves to the
+    /// next control (`Input::leave_inert`), no key activates it and
+    /// assistive technology doesn't offer it.
+    pub fn leave(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if !ui.scene.borrow().contains(self.node) {
+            return;
+        }
+        ui.scene.borrow_mut().set_inert(self.node, true);
+        ui.input.leave_inert(&ui.scene);
     }
     /// Clear keyboard focus when it is on the node or inside it.
     pub fn blur(&self) {

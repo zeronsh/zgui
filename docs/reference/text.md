@@ -40,12 +40,14 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `italic` | `boolean` | `false` | |
 | `font` | `string` | the host's | `"mono"` (or `"monospace"`), `"sans"`, `"serif"`, or a family name |
 | `align` | `"start" \| "left" \| "center" \| "right"` | `"start"` | within the text's own box |
-| `wrap` | `boolean` | `false` | wrap at the box's width |
+| `wrap` | `boolean \| "balance"` | `false` | wrap at the box's width; `"balance"` balances the lines, as CSS's `text-wrap: balance` (see [properties](properties.md)) |
 | `lines` | `number` | none | at most this many lines |
 | `truncate` | `boolean` | `false` | end an overflowing line with "…" |
 | `line_height` | `number` | the font's | points |
 | `letter_spacing` | `number` | `0` | points |
 | `tabular` | `boolean` | `false` | tabular figures (OpenType `tnum`): every digit one width, for numbers that change in place |
+| `font_features` | `string` | none | OpenType features: `"ss01 cv02=3 liga=0"` ([properties](properties.md)) |
+| `text_shadow` | `{ x, y, blur, color }` or a list | none | its glyphs again under them, moved by `x`, `y` and in `color` (CSS's `text-shadow`); a list's first is on top. Inherited, as CSS's: on a container it shadows the text inside it. `blur` is the Gaussian's sigma in points (up to 128 device pixels); each glyph's coverage is blurred once and kept, so a blurred shadow costs a frame what a sharp one does. It paints outside the text's box, as CSS's does |
 
 ## Rich text and spans
 
@@ -60,15 +62,18 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | Span option | Type | Default | |
 | --- | --- | --- | --- |
 | `[1]` | `Text` | `""` | the run's text: a template or a function follows state |
-| `color` | `Color` | the paragraph's | |
+| `color` | `Color` | the paragraph's | a state or a function follows, as for the next five rows |
 | `bg` | `Color` | none | behind the run (a highlight) |
 | `text_size` | `number` | the paragraph's | |
 | `weight` | `number` | the paragraph's | `bold = true` is 700 |
 | `bold`, `italic`, `underline`, `strike` | `boolean` | `false` | |
-| `font` | `"mono"` | the paragraph's | |
+| `font` | `string` | the paragraph's | as `ui.text`'s: `"mono"`, `"sans"`, `"serif"`, or a family's name |
 | `padding` | `number` or `{ across, down }` | `0` | room around the run: across, before and after it (it takes space in the line); with `bg`, the background hugs the text plus this instead of filling the line, an inline code chip |
 | `radius` | `number` | `0` | the background's corner radius |
 | `underline_offset` | `number` | a tenth of the text size | how far below the baseline the underline sits (CSS's `text-underline-offset`) |
+| `underline_style` | `"solid"`, `"double"`, `"dotted"`, `"dashed"`, `"wavy"` | `"solid"` | how the underline is drawn (CSS's `text-decoration-style`): `"wavy"` marks a spelling mistake or a diagnostic. The software raster draws them all solid |
+| `underline_color` | `Color` | the text's | its colour, or a token (`"$danger"`) |
+| `underline_thickness` | `number` | `1` | its thickness, in points. Any of these three underlines the span |
 | `on_click` | `ClickHandler \| Handler \| Action` | none | a click on the run (a link, underlined), told the keys held (`{ shift, ctrl, alt, meta }`); a middle click passes as a ⌘-click (Control elsewhere), as a browser opens a background tab |
 | `href` | `string` | none | where the run links (`"https://…"`): a link, underlined, with the pointing hand; a click (after `on_click`'s) opens it with the system's handler if it is a web or mail link (`http:`, `https:`, `mailto:`; other schemes don't open), and its context menu has Open Link (those only) and Copy Link |
 | `hover` | `{ underline: boolean?, color: Color? }` | none | a link's look under the pointer (CSS's `a:hover`); with it, the link isn't underlined at rest unless `underline` says so |
@@ -210,14 +215,14 @@ return ui.column {
 - A widget's `label` (a tab strip's, a select's, a modal's, a menu item's) takes a message or a state too, and follows it: the name screen readers give it, and a menu item's drawn text. A plain string costs nothing more.
 - Items given as data (tab titles, tree rows) follow the locale through a computed list that reads its messages: `items = ui.computed(function() return { { id = "inbox", label = ui.t("tabs.inbox"):get() } } end)`. A select's `options` follow the same way, given as a computed (a table is read once, as it is built).
 - Plural rules and number formatting for every locale come from ICU4X with zgx-script's `i18n` feature (about 90 KB; `zgx run` has it). A host built without it still loads and shows messages, with English's plural rules (`one`, `other`) for every locale and numbers as Rust writes them: turn it on (`zgx-script = { …, features = ["i18n"] }`) to ship translations.
+- `zgx lint` checks each locale against the source (`i18n-missing`, `i18n-extra`, `i18n-args`, `i18n-parse`, and `i18n-key` for `ui.t`'s keys) and each plural for the cases its locale needs (`i18n-plural`), and a debug build shows the findings in the error layer as the script loads. With the `i18n` feature (`zgx run` has it) those cases are CLDR's: French needs `many` too (a million: `"1 000 000 de messages"`), Russian `few` and `many`, Arabic `zero`, `two`, `few` and `many`. A missing one shows `other`'s text and is reported. Without the feature, every locale's are English's two.
 
 ## Gotchas
 
 - Text from data is a template too: a commit message with `{id}` in it looks for state named `id` (an error if there is none), and `{{` shows as `{`. Pass `literal = true` (on `ui.text`, `ui.rich` or a span) for text the script didn't write.
 - A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called (a component's `ui.use_state` has no key: give `ui.text` the state itself, `ui.text { count }`), and `"{state.count}"` is state `state`'s field `count`, not a module's state. A name no state has is an error when the text is built.
 - Text does not wrap by default, and a row shrinks it no narrower than it is (its min-content, unwrapped): `wrap = true` (in a box with a width) lets it wrap down to its longest word, or `min_w = 0, truncate = true` ends it with "…" in a row.
-- Span options are plain values, read once: a state or function there is not followed (its value at build time is used). Only the run's text follows state. To restyle a run, build the paragraph in a function, or use two texts.
-- A span's `font` only knows `"mono"`; any other family is ignored (`ui.text`'s `font` takes names).
+- A span's `color`, `bg`, `text_size`, `weight`, `bold`, `italic`, `underline`, `strike` and `font` follow a state or a function, and its text does. Its other options are plain values, read once.
 - A span is used once: putting the same `ui.span` in two paragraphs is an error. Make a new one each time.
 - `ui.text` and `ui.rich` take no children; extra array entries in `ui.text` are an error.
 - A function's text is called again for each change it read; prefer a template for plain state, which costs no script call.

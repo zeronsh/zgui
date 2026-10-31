@@ -27,6 +27,10 @@ pub(crate) enum Library {
         items: Signal<Value>,
         value: Signal<Value>,
         reorderable: bool,
+        keep: bool,
+        group: Option<String>,
+        on_move: Option<Function>,
+        on_tear_off: Option<Function>,
         on_close: Option<Function>,
         panel: Function,
     },
@@ -199,6 +203,17 @@ fn select_option(option: &Value) -> (Value, String, bool) {
 }
 
 /// Add the library's functions to `ui`.
+/// A combobox's `items`: a state, or a list that never changes.
+fn items_of(lua: &Lua, items: &mlua::Value) -> mlua::Result<Signal<Value>> {
+    match (crate::node::state_of(items), items) {
+        (Some(items), _) => Ok(items),
+        (None, mlua::Value::Table(_)) => Ok(crate::node::env(lua)?
+            .runtime
+            .signal(mlua::FromLua::from_lua(items.clone(), lua)?)),
+        _ => expect_state(items, "ui.combobox's `items`"),
+    }
+}
+
 pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     // `ui.<widget> { label?, value = state, … }`.
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
@@ -233,6 +248,10 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
                 items,
                 value,
                 reorderable: table.get::<Option<bool>>("reorderable")?.unwrap_or(false),
+                keep: table.get::<Option<bool>>("keep")?.unwrap_or(false),
+                group: table.get("group")?,
+                on_move: table.get("on_move")?,
+                on_tear_off: table.get("on_tear_off")?,
                 on_close: table.get("on_close")?,
                 panel,
             }));
@@ -337,7 +356,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
             lua.create_function(move |lua, table: Table| {
                 let kind = Kind::Library(Box::new(Library::Calendar {
                     label: label(&table)?,
-                    value: expect_state(&table.get("value")?, &format!("ui.{name}'s `value`"))?,
+                    value: crate::node::control_value(lua, &table)?,
                     picker,
                     min: table.get("min")?,
                     max: table.get("max")?,
@@ -354,7 +373,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, table: Table| {
             let kind = Kind::Library(Box::new(Library::TimeField {
                 label: label(&table)?,
-                value: expect_state(&table.get("value")?, "ui.time_field's `value`")?,
+                value: crate::node::control_value(lua, &table)?,
                 hour12: table.get::<Option<bool>>("hour12")?.unwrap_or(false),
                 minute_step: table
                     .get::<Option<u8>>("minute_step")?
@@ -378,7 +397,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
                 label: label(&table)?,
                 text: expect_state(&table.get("text")?, "ui.combobox's `text`")?,
                 value: optional_state("value")?,
-                items: expect_state(&table.get("items")?, "ui.combobox's `items`")?,
+                items: items_of(lua, &table.get("items")?)?,
                 loading: optional_state("loading")?,
                 empty: table.get("empty")?,
             }));
@@ -1191,6 +1210,10 @@ pub(crate) fn view(
             items,
             value,
             reorderable,
+            keep,
+            group,
+            on_move,
+            on_tear_off,
             on_close,
             panel,
         } => {
@@ -1214,14 +1237,19 @@ pub(crate) fn view(
                 let old = source.with_untracked(Clone::clone);
                 let kept: Vec<Value> = tabs
                     .iter()
-                    .filter_map(|tab| {
-                        old.list()
-                            .iter()
-                            .find(|item| {
-                                item.field("id").map(Value::to_string).as_deref()
-                                    == Some(tab.id.as_str())
-                            })
-                            .cloned()
+                    .map(|tab| {
+                        let known = old.list().iter().find(|item| {
+                            item.field("id").map(Value::to_string).as_deref()
+                                == Some(tab.id.as_str())
+                        });
+                        // A tab from another strip of the group: what it is.
+                        known.cloned().unwrap_or_else(|| {
+                            Value::record([
+                                ("id", Value::from(tab.id.as_str())),
+                                ("label", Value::from(tab.label.as_str())),
+                                ("closable", Value::Bool(tab.closable)),
+                            ])
+                        })
                     })
                     .collect();
                 Value::List(kept.into())
@@ -1245,6 +1273,39 @@ pub(crate) fn view(
             let options = TabsOptions {
                 reorderable: *reorderable,
                 on_close,
+                keep: *keep,
+                group: group.clone(),
+                on_move: on_move.clone().map(|f| {
+                    let vm = vm.clone();
+                    let told: MoveTab = Rc::new(move |id: &str, to: &str| {
+                        if let Err(error) = vm.call::<()>(&f, (id, to)) {
+                            vm.report(error);
+                        }
+                    });
+                    told
+                }),
+                // Told with where, as `on_drag_outside` is.
+                on_tear_off: on_tear_off.clone().map(|f| {
+                    let vm = vm.clone();
+                    let told: TearOffTab = Rc::new(move |id: &str, event| {
+                        let at = vm.lua.create_table().and_then(|at| {
+                            at.set("x", event.x)?;
+                            at.set("y", event.y)?;
+                            at.set("grab_x", event.grab_x)?;
+                            at.set("grab_y", event.grab_y)?;
+                            Ok(at)
+                        });
+                        // `false` keeps the tab: anything else tears it off.
+                        match at.and_then(|at| vm.call::<mlua::Value>(&f, (id, at))) {
+                            Ok(said) => !matches!(said, mlua::Value::Boolean(false)),
+                            Err(error) => {
+                                vm.report(error);
+                                false
+                            }
+                        }
+                    });
+                    told
+                }),
             };
             let (panel, vm, low) = (panel.clone(), vm.clone(), low.clone());
             tabs(

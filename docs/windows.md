@@ -78,6 +78,28 @@ alternating launches on an RTX 4090:
 | zgx, shaders kept | 278 ms | 219 ms |
 | GPUI Fast | 307 ms | 273 ms |
 
+### Shader compiler
+
+Direct3D 12 compiles shaders with FXC unless the app ships Microsoft's DXC:
+with `dxcompiler.dll` beside the executable, zgx compiles with it, and with
+FXC if that fails. Compiling all 50 of zgx's pipelines took 689 ms with it,
+cold. FXC is deprecated, and its optimizer has overflowed its
+stack on zgx shaders that DXC compiles: canvases' filled areas draw on the
+GPU with DXC, and rasterize with FXC (Windows CI compiles every shader
+under FXC as a release build does, `tests/every_shader.rs`). DXC is quicker
+to a cold window's first text; its output is kept in the shader cache too,
+under a key naming the DLL, so a launch after the first compiles nothing. On
+an RTX 4090, the lab scene's first text, medians of 5 launches:
+
+| | Cold | Kept |
+| --- | --- | --- |
+| FXC | 776 ms | 511 ms |
+| DXC (Windows SDK's 1.8.2502) | 437 ms | to measure with the cache |
+
+`WGPU_DX12_COMPILER` (`fxc`, `dxc`) chooses one alone, the DLL found by
+name. Direct3D 11 (`ZGX_D3D11`) takes its shaders compiled ahead of time
+and never compiles at run time. Shipping DXC is described below.
+
 Most of the rest is the GPU driver opening its device (about 160 ms for a
 Direct3D 11 device and 180 ms for Direct3D 12, alone in a process), a floor
 any app on this GPU pays.
@@ -176,12 +198,19 @@ $env:ZGX_D3D11 = "1"; target\release\examples\component_workload.exe
 
 It draws what the Windows suite's scenes do: quads (borders, rounded
 corners, shadows' shading), text, clip regions with their rounded corners
-and fades, kept frames, and scroll copies. Images, isolated and transformed
-layers, backdrop blur, polylines and shader fills are not drawn yet: a frame
+and fades, kept frames, scroll copies, and isolated layers (translucent,
+nested, transformed), each drawn into a texture of its own and composited,
+images the CPU writes (pictures, gradients, canvases' and SVGs' images),
+and canvases' polyline strokes and filled areas. Images a GPU view draws,
+layer effects, backdrop blur and shader fills are not drawn yet (so
+neither are what they make: `radial`
+gradients, blurred inset shadows, masks, blends, content blur, and
+`hue_rotate`, `sepia` and `invert`, layer shaders): a frame
 needing one fails with an error naming it (and panics in a debug build),
 since there is no Direct3D 12 to fall back to. What it draws is Direct3D 12's
 frame byte for byte (`tests/d3d11_parity.rs`, at 1×, 1.5× and 2×). Both run
-the same HLSL compiled by FXC: Direct3D 11 ahead of time (`dxbc/`), and zgx
+the same HLSL compiled by FXC: Direct3D 11 ahead of time (`dxbc/`, written
+again by `python scripts/d3d11_shaders.py`, on Windows), and zgx
 pins wgpu's Direct3D 12 to FXC too. Left to choose, wgpu takes DXC wherever
 dxcompiler.dll is on PATH (a developer shell with the Windows SDK), and DXC's
 code rounds antialiased edges a level apart from FXC's.
@@ -328,6 +357,44 @@ cargo build --release -p zgx-desktop --example resize_probe
 python scripts/windows_resize_probe.py target/release/examples/resize_probe.exe --drag
 python scripts/windows_resize_probe.py --reference --drag
 ```
+
+### Covered windows
+
+Windows doesn't say when a window is covered, so `WindowEvent::Occluded` comes
+from our winit (`platform_impl/windows/occlusion.rs`). A window is occluded on
+another virtual desktop (cloaked), or when windows above it that are known to
+be opaque leave none of it. It then stops drawing, as on macOS
+and X11; a covered ticker, spinner or heavy dashboard otherwise cost 2.4 to 9.2
+points of one core more than a minimized one, and all of its GPU use. Measured on this branch against main in one sitting, a
+shown heavy dashboard costs what it did, and covered it fell from 14.0 points to
+5.4, its timers' work, and its GPU use to none.
+
+Stopping a window someone can see is far worse than drawing one nobody can, so
+whatever may show what's behind it covers nothing: layered, click-through and
+tool windows (overlays, the taskbar), those composed by their own swap chain
+(`WS_EX_NOREDIRECTIONBITMAP`: WinUI apps, Windows Terminal, Zeron), an acrylic
+backdrop, a
+shaped region, and the window's own owned windows. Mica, as on File Explorer,
+shows the wallpaper and no window behind it, so it covers. A framed
+window's rounded corners don't cover what's under them. So under those a
+covered window goes on drawing, which costs what it did before.
+
+Only a layout free of doubt counts: a window whole on one monitor, under covers
+whole on that monitor, with every monitor at one scale and none at negative
+coordinates. A window spanning two monitors, or partly off screen, a cover
+reaching past the monitor's edge, or mixed scales, and it goes on drawing. This
+holds by construction and made-up layouts in unit tests: it hasn't been run on
+more than one monitor.
+
+A window drawing checks twice a second, from its frames, and two checks must
+agree before it stops; an idle window does nothing. An occluded one hears of
+other windows' changes through `SetWinEventHook` and looks each second for
+those no event reports (a z-order or style change alone).
+
+Two cases it can't see: a window made translucent through the undocumented
+accent API counts as opaque, and a covered window being captured (Teams, OBS)
+stops like any other. `ZGX_RENDER_WHEN_COVERED=1` keeps a covered window
+drawing.
 
 ## Title bars
 
@@ -559,6 +626,14 @@ and how they fit what zgx does at run time.
 - ARM64 machines run x64 builds emulated. Build `aarch64-pc-windows-msvc`
   as well for native speed (see ARM64 above).
 
+**DXC (optional).** Copy `dxcompiler.dll` from the Windows SDK
+(`Windows Kits\10\bin\<version>\x64`) or a DirectXShaderCompiler release
+next to the executable: 14.3 MB for 1.8.2502. It is Microsoft's, signed, and
+redistributable (the release's license allows it). `dxil.dll` (1.5 MB) isn't
+needed: DXC 1.8 validates and signs on its own (every zgx shader compiled
+with `dxcompiler.dll` alone on an RTX 4090). Without it zgx uses FXC, which
+ships with Windows (see Shader compiler).
+
 **Size.** zgx's comparison app (`component_workload`, every image format)
 is 12.1 MiB x64 built as it ships: `lto = "fat"` and `codegen-units = 1`,
 the workspace's `dist` profile, which an app sets in its own `[profile.release]`
@@ -639,12 +714,15 @@ runtime:
 
 ## Limitations
 
+- **A covered window goes on drawing.** winit reports no `Occluded` on Windows, so zgx can't tell: a covered window animating draws at its full rate, where on macOS and X11 it stops. `ZGX_RENDER_WHEN_COVERED=1` makes no difference here (measured on WING-PC, a window fully covered: 51 frames in 2 s without it, 50 with it, 55 shown).
 - Cancelling a file-picker or prompt future invalidates result delivery but
   does not dismiss its native dialog. A pending native dialog can retain its
   parent until dismissed. Backend failures can appear as cancellation.
 - Rendered application menus are supported; native Win32 menu bars are not.
-- Ghostty terminals and `NativeContent::Platform` views are macOS only; web
-  views need the `webview2` feature (see Web views).
+- Terminals are drawn by zgx with the `terminal` feature (ConPTY; see
+  [native surfaces](native-surfaces.md#terminals)); Ghostty terminals and
+  `NativeContent::Platform` views are macOS only; web views need the
+  `webview2` feature (see Web views).
 - The Linux benchmark sampler and the X11/Wayland smoke scripts do not run on
   Windows; Windows has its own (below).
 
@@ -675,6 +753,7 @@ python scripts/windows_touch_smoke.py target/debug/examples
 python scripts/windows_popup_smoke.py target/debug/examples
 python scripts/windows_drag_smoke.py target/debug/examples
 python scripts/windows_window_smoke.py target/debug/examples
+python scripts/windows_occlusion_smoke.py target/release --snap --desktops
 python scripts/windows_text_smoke.py target/debug/examples/text_selection.exe
 python scripts/windows_clipboard_image_smoke.py target/debug/examples/clipboard_image.exe
 python scripts/windows_contrast_smoke.py target/debug/examples/text_selection.exe
@@ -923,6 +1002,11 @@ The probes for the rest of Windows:
   the pointer to the pixel; dropped on the other window's strip it merges
   there. It lays the windows out from the work area, so it fits at any
   scale (checked at 100% and 150%).
+- `windows_occlusion_smoke.py` (`zgx-run`, and windows of its own that it
+  confirms are above the app): a covered window stops drawing and comes back
+  however the cover goes, and a window anything of which can be seen never
+  stops. `--snap` and `--desktops` press Win+Left and make and remove a
+  virtual desktop; all its keys go through `guard_windows`.
 - `windows_window_smoke.py` (`window_probe`): a second window opens a step
   on from the first (`CW_USEDEFAULT`); a window with `frame_autosave` moved and
   closed reopens there at its size, left maximized reopens maximized, and at a

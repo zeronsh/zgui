@@ -9,11 +9,21 @@
 //! factors: colour, metal, roughness, emission, blending (`BLEND`) and
 //! `KHR_materials_unlit` and `KHR_materials_emissive_strength`, and their
 //! base colour, metal and roughness, normal, emission and occlusion
-//! textures (PNG or JPEG, in the file, inline or beside it). Not yet:
-//! skins, morph targets, animations, sparse accessors, points and lines
-//! (skipped).
+//! textures (PNG or JPEG, in the file, inline or beside it), and its
+//! animations' translations, rotations and scales (`Model::clips`,
+//! `Placed::pose`), skins moving its meshes by their joints, and morph
+//! targets (positions and normals; its weights, and clips moving them).
+//! Accessors may be sparse. Materials' `doubleSided` and alpha modes are
+//! read, and where their maps sit: a second set of coordinates (`TEXCOORD_1`),
+//! samplers' wrapping and `KHR_texture_transform`, and vertex colours
+//! (`COLOR_0`). Its lights (`KHR_lights_punctual`) come with it, and its
+//! cameras (`Placed::cameras`), and its glass: `KHR_materials_transmission`,
+//! `KHR_materials_ior` and `KHR_materials_volume`, their factors (not yet
+//! their textures). Not yet: points and lines (skipped); geometry compressed with Draco
+//! or meshopt, an error where the file requires it.
 use crate::{
-    Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
+    Geometry, MapPlacement, Material, MorphTarget, Object, ObjectId, Quat, Texture, Transform,
+    Vec3, Vertex, World, Wrap, vec3, world::Surface,
 };
 use serde_json::Value;
 
@@ -36,16 +46,80 @@ fn error<T>(message: impl Into<String>) -> Result<T, ModelError> {
 pub struct Model {
     nodes: Vec<Node>,
     roots: Vec<usize>,
+    clips: Vec<crate::Clip>,
+    skins: Vec<ModelSkin>,
+    /// `KHR_lights_punctual`'s lights, in their nodes' frames.
+    lights: Vec<(crate::Light, Option<crate::Spot>)>,
+    cameras: Vec<ModelCamera>,
+}
+/// A camera as a node holds it, looking down its −z.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ModelCamera {
+    /// Field of view top to bottom (perspective) or height (orthographic).
+    fov: f32,
+    near: f32,
+    far: Option<f32>,
+    orthographic: bool,
+}
+impl ModelCamera {
+    /// It as a world's camera, placed by its node's `matrix`.
+    pub(crate) fn placed(&self, matrix: &crate::Mat4) -> crate::Camera {
+        let position = matrix.project(Vec3::ZERO);
+        let c = &matrix.columns;
+        let forward = vec3(-c[2][0], -c[2][1], -c[2][2]).normalized();
+        let default = crate::Camera::default();
+        crate::Camera {
+            position,
+            target: position + forward,
+            fov: self.fov,
+            near: self.near,
+            far: self.far.unwrap_or(default.far.max(self.near * 1e3)),
+            orthographic: self.orthographic,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 struct Node {
     transform: Transform,
     children: Vec<usize>,
-    meshes: Vec<(Geometry, Material, Maps)>,
+    meshes: Vec<Mesh>,
+    /// The skin moving its skinned meshes, by index.
+    skin: Option<usize>,
+    /// Its meshes' morph weights: its own, else its mesh's.
+    weights: Vec<f32>,
+    /// The light it holds (`KHR_lights_punctual`), by index.
+    light: Option<usize>,
+    /// The camera it holds, by index.
+    camera: Option<usize>,
+}
+/// A skin: its joints (nodes) and each one's inverse bind matrix.
+#[derive(Clone, Debug)]
+struct ModelSkin {
+    joints: Vec<usize>,
+    inverse_binds: Vec<crate::Mat4>,
 }
 
-/// A mesh's textures, in `Map::ALL`'s order.
-type Maps = [Option<Texture>; crate::texture::MAPS];
+/// A mesh's textures, in `MODEL_MAPS`' order.
+type Maps = [Option<Texture>; MODEL_MAPS.len()];
+/// Where they sit on it, in the same order.
+type Placements = [MapPlacement; crate::texture::MAPS];
+/// A material, read.
+type Look = (
+    Material,
+    Maps,
+    Surface,
+    Placements,
+    Option<crate::Transmission>,
+);
+/// A primitive, read.
+type Mesh = (
+    Geometry,
+    Material,
+    Maps,
+    Surface,
+    Placements,
+    Option<crate::Transmission>,
+);
 
 /// Deeper than this, a node tree is taken for a cycle.
 const MAX_DEPTH: usize = 256;
@@ -69,6 +143,16 @@ impl Model {
         };
         let doc: Value =
             serde_json::from_slice(json).map_err(|e| ModelError(format!("its JSON: {e}")))?;
+        // Its geometry can't be read without these: better said than drawn
+        // as nothing. (Other extensions it requires change how it looks.)
+        for required in list(&doc, "extensionsRequired") {
+            if let Some(name) = required
+                .as_str()
+                .filter(|name| COMPRESSED_GEOMETRY.contains(name))
+            {
+                return error(format!("it needs {name}, which isn't read yet"));
+            }
+        }
         let buffers = list(&doc, "buffers")
             .iter()
             .enumerate()
@@ -109,7 +193,10 @@ impl Model {
                         })
                         .clone()
                 });
-                (material(value), maps)
+                let placements: Placements =
+                    std::array::from_fn(|i| map_placement(&doc, value, MAP_TEXTURES[i]));
+                let through = transmission(value);
+                (material(value), maps, surface(value), placements, through)
             })
             .collect::<Vec<_>>();
         let meshes = list(&doc, "meshes")
@@ -127,10 +214,34 @@ impl Model {
                         .ok_or_else(|| ModelError(format!("no mesh {m}")))?,
                     None => Vec::new(),
                 };
+                let weights = node.get("weights").or_else(|| {
+                    let mesh = node.get("mesh").and_then(Value::as_u64)?;
+                    list(&doc, "meshes").get(mesh as usize)?.get("weights")
+                });
                 Ok(Node {
                     transform: transform(node),
                     children,
                     meshes,
+                    skin: node.get("skin").and_then(Value::as_u64).map(|s| s as usize),
+                    weights: weights
+                        .and_then(Value::as_array)
+                        .map(|w| {
+                            w.iter()
+                                .filter_map(Value::as_f64)
+                                .map(|w| w as f32)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    light: node
+                        .get("extensions")
+                        .and_then(|e| e.get("KHR_lights_punctual"))
+                        .and_then(|l| l.get("light"))
+                        .and_then(Value::as_u64)
+                        .map(|l| l as usize),
+                    camera: node
+                        .get("camera")
+                        .and_then(Value::as_u64)
+                        .map(|c| c as usize),
                 })
             })
             .collect::<Result<Vec<_>, ModelError>>()?;
@@ -152,7 +263,62 @@ impl Model {
         if let Some(bad) = roots.iter().find(|&&r| r >= nodes.len()) {
             return error(format!("no node {bad}"));
         }
-        Ok(Self { nodes, roots })
+        let clips = list(&doc, "animations")
+            .iter()
+            .map(|animation| reader.clip(animation, nodes.len()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let skins = list(&doc, "skins")
+            .iter()
+            .map(|skin| {
+                let joints = indices(skin, "joints");
+                if joints.iter().any(|&j| j >= nodes.len()) || joints.len() > crate::MAX_JOINTS {
+                    return error("a skin's joints are nodes, at most 256");
+                }
+                let inverse_binds = match skin.get("inverseBindMatrices").and_then(Value::as_u64) {
+                    Some(at) => reader
+                        .floats(at as usize, 16)?
+                        .as_chunks::<16>()
+                        .0
+                        .iter()
+                        .map(|m| crate::Mat4 {
+                            columns: std::array::from_fn(|c| std::array::from_fn(|r| m[c * 4 + r])),
+                        })
+                        .collect(),
+                    None => vec![crate::Mat4::IDENTITY; joints.len()],
+                };
+                if inverse_binds.len() != joints.len() {
+                    return error("a skin's inverse bind matrices don't match its joints");
+                }
+                Ok(ModelSkin {
+                    joints,
+                    inverse_binds,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let lights = doc
+            .get("extensions")
+            .and_then(|e| e.get("KHR_lights_punctual"))
+            .map_or(&[][..], |l| list(l, "lights"))
+            .iter()
+            .map(light)
+            .collect();
+        let cameras = list(&doc, "cameras").iter().map(camera).collect();
+        Ok(Self {
+            nodes,
+            roots,
+            lights,
+            cameras,
+            clips,
+            skins,
+        })
+    }
+    /// Its animations (pose one with `Placed::pose`).
+    pub fn clips(&self) -> &[crate::Clip] {
+        &self.clips
+    }
+    /// Its animation named `name`, if it has one.
+    pub fn clip(&self, name: &str) -> Option<&crate::Clip> {
+        self.clips.iter().find(|clip| clip.name() == Some(name))
     }
     /// The box holding its meshes, in its own frame: least and greatest
     /// corners. `None` if it has no meshes.
@@ -190,7 +356,17 @@ impl World {
     /// Add `model`: a group (at the origin, to place as any object) holding
     /// its nodes as groups and their meshes. Its id.
     pub fn add_model(&self, model: &Model) -> ObjectId {
+        self.place_model(model).root
+    }
+    /// Add `model` as `add_model` does: its root, and its nodes' objects,
+    /// to pose its clips on (`Placed::pose`).
+    pub fn place_model(&self, model: &Model) -> crate::Placed {
         let root = self.add(Object::group());
+        let mut nodes = vec![None; model.nodes.len()];
+        let mut meshes = vec![Vec::new(); model.nodes.len()];
+        let (mut lights, mut cameras) = (Vec::new(), Vec::new());
+        // Skinned meshes, given their skins once every joint is placed.
+        let mut skinned = Vec::new();
         let mut stack: Vec<(usize, ObjectId, usize)> =
             model.roots.iter().rev().map(|&r| (r, root, 0)).collect();
         while let Some((index, parent, depth)) = stack.pop() {
@@ -199,19 +375,74 @@ impl World {
             }
             let node = &model.nodes[index];
             let id = self.add(Object::group().transformed(node.transform).child_of(parent));
-            for (geometry, material, maps) in &node.meshes {
+            nodes[index] = Some(id);
+            if let Some(&(light, spot)) = node.light.and_then(|l| model.lights.get(l)) {
+                let light = self.add_light(light);
+                self.set_light_parent(light, Some(id));
+                if spot.is_some() {
+                    self.set_spot(light, spot);
+                }
+                lights.push(light);
+            }
+            if let Some(&camera) = node.camera.and_then(|c| model.cameras.get(c)) {
+                cameras.push((id, camera));
+            }
+            for (geometry, material, maps, surface, placements, through) in &node.meshes {
                 let mesh = self.add(Object::mesh(geometry.clone(), *material).child_of(id));
-                for (map, texture) in crate::Map::ALL.into_iter().zip(maps) {
+                if surface.double_sided {
+                    self.set_double_sided(mesh, true);
+                }
+                if surface.alpha_cutoff.is_some() {
+                    self.set_alpha_cutoff(mesh, surface.alpha_cutoff);
+                }
+                if through.is_some() {
+                    self.set_transmission(mesh, *through);
+                }
+                for (map, texture) in MODEL_MAPS.into_iter().zip(maps) {
                     if texture.is_some() {
                         self.set_map(mesh, map, texture.clone());
                     }
                 }
+                for (map, placement) in crate::Map::ALL.into_iter().zip(placements) {
+                    if *placement != MapPlacement::default() {
+                        self.set_map_placement(mesh, map, Some(*placement));
+                    }
+                }
+                if let Some(skin) = node.skin.and_then(|s| model.skins.get(s)) {
+                    skinned.push((mesh, skin));
+                }
+                if geometry.morphs().is_some() && !node.weights.is_empty() {
+                    self.set_morph_weights(mesh, &node.weights);
+                }
+                meshes[index].push(mesh);
             }
             stack.extend(node.children.iter().rev().map(|&c| (c, id, depth + 1)));
         }
-        root
+        for (mesh, skin) in skinned {
+            // A joint its scene doesn't show leaves the mesh as bound.
+            let joints: Option<Vec<ObjectId>> = skin.joints.iter().map(|&j| nodes[j]).collect();
+            if let Some(joints) = joints
+                && let Ok(skin) = crate::Skin::new(joints, skin.inverse_binds.clone())
+            {
+                self.set_skin(mesh, Some(skin));
+            }
+        }
+        crate::Placed {
+            root,
+            nodes,
+            meshes,
+            lights,
+            cameras,
+        }
     }
 }
+
+/// Extensions a file's geometry may be compressed with.
+const COMPRESSED_GEOMETRY: [&str; 3] = [
+    "KHR_draco_mesh_compression",
+    "KHR_meshopt_compression",
+    "EXT_meshopt_compression",
+];
 
 /// A `.glb`'s JSON chunk and its binary chunk, if any.
 fn glb(bytes: &[u8]) -> Result<(&[u8], Option<&[u8]>), ModelError> {
@@ -348,6 +579,10 @@ fn material(value: &Value) -> Material {
     let mut color = floats::<4>(pbr.and_then(|p| p.get("baseColorFactor"))).unwrap_or([1.; 4]);
     if value.get("alphaMode").and_then(Value::as_str) != Some("BLEND") {
         color[3] = 1.;
+    } else if color[3] >= 1. && pbr.is_some_and(|p| p.get("baseColorTexture").is_some()) {
+        // See-through by its texture alone: only an alpha under 1 draws it
+        // with the translucent meshes, reading that texture's.
+        color[3] = BLENDED_BY_TEXTURE;
     }
     Material {
         color,
@@ -371,13 +606,156 @@ fn material(value: &Value) -> Material {
     }
 }
 
-/// Where a material names each of its maps' textures (`Map::ALL`'s order).
-const MAP_TEXTURES: [&[&str]; crate::texture::MAPS] = [
+/// A punctual light in its node's frame, shining down its −z (glTF's units
+/// are zgx-3d's: lux for a sun, candela for a bulb). One of an unknown type
+/// gives no light.
+fn light(value: &Value) -> (crate::Light, Option<crate::Spot>) {
+    let color = floats::<3>(value.get("color")).unwrap_or([1.; 3]);
+    let number = |v: Option<&Value>| v.and_then(Value::as_f64).map(|n| n as f32);
+    let intensity = number(value.get("intensity")).unwrap_or(1.).max(0.);
+    // No range: as far as it reaches.
+    let range = number(value.get("range"))
+        .filter(|r| *r > 0.)
+        .unwrap_or(1e6);
+    let down = vec3(0., 0., -1.);
+    let bulb = crate::Light::Point {
+        position: Vec3::ZERO,
+        color,
+        intensity,
+        range,
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some("directional") => (
+            crate::Light::Directional {
+                direction: down,
+                color,
+                intensity,
+            },
+            None,
+        ),
+        Some("point") => (bulb, None),
+        Some("spot") => {
+            let spot = value.get("spot");
+            let angle = |key, default| number(spot.and_then(|s| s.get(key))).unwrap_or(default);
+            let cone = crate::Spot::new(
+                down,
+                angle("innerConeAngle", 0.),
+                angle("outerConeAngle", std::f32::consts::FRAC_PI_4),
+            );
+            (bulb, Some(cone))
+        }
+        _ => (
+            crate::Light::Point {
+                position: Vec3::ZERO,
+                color,
+                intensity: 0.,
+                range,
+            },
+            None,
+        ),
+    }
+}
+/// A camera: perspective, or orthographic (its height `2 ymag`).
+fn camera(value: &Value) -> ModelCamera {
+    let number = |v: Option<&Value>| v.and_then(Value::as_f64).map(|n| n as f32);
+    let orthographic = value.get("type").and_then(Value::as_str) == Some("orthographic");
+    let lens = value.get(if orthographic {
+        "orthographic"
+    } else {
+        "perspective"
+    });
+    let field = |key| number(lens.and_then(|l| l.get(key)));
+    let default = crate::Camera::default();
+    ModelCamera {
+        fov: if orthographic {
+            field("ymag").map_or(default.fov, |m| 2. * m.abs())
+        } else {
+            field("yfov").unwrap_or(default.fov)
+        },
+        near: field("znear").filter(|n| *n > 0.).unwrap_or(default.near),
+        far: field("zfar").filter(|f| *f > 0.),
+        orthographic,
+    }
+}
+
+/// A blended material's colour alpha when only its texture has any.
+const BLENDED_BY_TEXTURE: f32 = 0.9999;
+/// How a material's faces show: `doubleSided`, and `MASK` as a cutoff for
+/// its texture's alpha alone (its factor's taken out: a mesh is drawn
+/// opaque, its colour's alpha 1 here).
+/// How light passes through a material: `KHR_materials_transmission`'s
+/// factor, `KHR_materials_ior`'s index and `KHR_materials_volume`'s depth
+/// and attenuation (their textures are maps: `MAP_TEXTURES`). `None` without the first,
+/// or with nothing passing.
+fn transmission(value: &Value) -> Option<crate::Transmission> {
+    let extensions = value.get("extensions")?;
+    let number = |extension: &str, key: &str| {
+        let v = extensions.get(extension)?.get(key)?.as_f64()?;
+        v.is_finite().then_some(v as f32)
+    };
+    let factor = number("KHR_materials_transmission", "transmissionFactor")
+        .or_else(|| extensions.get("KHR_materials_transmission").map(|_| 0.))?;
+    if factor <= 0. {
+        return None;
+    }
+    let mut through = crate::Transmission::new(factor);
+    if let Some(ior) = number("KHR_materials_ior", "ior") {
+        through = through.ior(ior);
+    }
+    if let Some(volume) = extensions.get("KHR_materials_volume") {
+        let thickness = number("KHR_materials_volume", "thicknessFactor").unwrap_or(0.);
+        let color = floats::<3>(volume.get("attenuationColor")).unwrap_or([1.; 3]);
+        let distance =
+            number("KHR_materials_volume", "attenuationDistance").unwrap_or(f32::INFINITY);
+        through = through.volume(thickness, color, distance);
+    }
+    Some(through)
+}
+fn surface(value: &Value) -> Surface {
+    let masked = value.get("alphaMode").and_then(Value::as_str) == Some("MASK");
+    let cutoff = value
+        .get("alphaCutoff")
+        .and_then(Value::as_f64)
+        .map_or(0.5, |c| c as f32);
+    let factor = floats::<4>(
+        value
+            .get("pbrMetallicRoughness")
+            .and_then(|p| p.get("baseColorFactor")),
+    )
+    .map_or(1., |c| c[3]);
+    Surface {
+        double_sided: value
+            .get("doubleSided")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        alpha_cutoff: masked.then(|| if factor > 0. { cutoff / factor } else { 2. }),
+    }
+}
+
+/// The maps a model's meshes may have: `Map::ALL`'s, then light passing
+/// through's.
+const MODEL_MAPS: [crate::Map; 7] = [
+    crate::Map::BaseColour,
+    crate::Map::MetalRoughness,
+    crate::Map::Normal,
+    crate::Map::Emission,
+    crate::Map::Occlusion,
+    crate::Map::Transmission,
+    crate::Map::Thickness,
+];
+/// Where a material names each of its maps' textures (`MODEL_MAPS`' order).
+const MAP_TEXTURES: [&[&str]; MODEL_MAPS.len()] = [
     &["pbrMetallicRoughness", "baseColorTexture"],
     &["pbrMetallicRoughness", "metallicRoughnessTexture"],
     &["normalTexture"],
     &["emissiveTexture"],
     &["occlusionTexture"],
+    &[
+        "extensions",
+        "KHR_materials_transmission",
+        "transmissionTexture",
+    ],
+    &["extensions", "KHR_materials_volume", "thicknessTexture"],
 ];
 /// The image of the texture `material` names at `path`, if it has one.
 fn material_image(doc: &Value, material: &Value, path: &[&str]) -> Option<usize> {
@@ -389,12 +767,165 @@ fn material_image(doc: &Value, material: &Value, path: &[&str]) -> Option<usize>
     let source = list(doc, "textures").get(texture as usize)?.get("source")?;
     source.as_u64().map(|i| i as usize)
 }
+/// Where the texture `material` names at `path` sits: its `texCoord`, its
+/// sampler's wrapping and its `KHR_texture_transform`.
+fn map_placement(doc: &Value, material: &Value, path: &[&str]) -> MapPlacement {
+    let mut placement = MapPlacement::new();
+    let Some(info) = path.iter().try_fold(material, |at, key| at.get(key)) else {
+        return placement;
+    };
+    let mut set = info.get("texCoord").and_then(Value::as_u64);
+    if let Some(transform) = info
+        .get("extensions")
+        .and_then(|e| e.get("KHR_texture_transform"))
+    {
+        if let Some([u, v]) = floats::<2>(transform.get("offset")) {
+            placement = placement.offset(u, v);
+        }
+        if let Some(radians) = transform.get("rotation").and_then(Value::as_f64) {
+            placement = placement.rotated(radians as f32);
+        }
+        if let Some([u, v]) = floats::<2>(transform.get("scale")) {
+            placement = placement.scaled(u, v);
+        }
+        set = transform.get("texCoord").and_then(Value::as_u64).or(set);
+    }
+    let sampler = info
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|texture| list(doc, "textures").get(texture as usize)?.get("sampler"))
+        .and_then(Value::as_u64)
+        .and_then(|sampler| list(doc, "samplers").get(sampler as usize));
+    let wrap = |key: &str| match sampler.and_then(|s| s.get(key)).and_then(Value::as_u64) {
+        Some(33071) => Wrap::Clamp,
+        Some(33648) => Wrap::Mirror,
+        _ => Wrap::Repeat,
+    };
+    placement
+        .uv_set(set.map_or(0, |set| set.min(u64::from(u8::MAX)) as u8))
+        .wrap(wrap("wrapS"), wrap("wrapT"))
+}
 
 struct Reader<'a> {
     doc: &'a Value,
     buffers: &'a [Vec<u8>],
 }
 impl Reader<'_> {
+    /// An animation's channels moving nodes (of `nodes`): translations,
+    /// rotations, scales and morph target weights (a channel a target).
+    fn clip(&self, animation: &Value, nodes: usize) -> Result<crate::Clip, ModelError> {
+        use crate::animation::{Channel, Interpolation, Path};
+        let samplers = list(animation, "samplers");
+        let mut channels = Vec::new();
+        for channel in list(animation, "channels") {
+            let target = channel.get("target");
+            let node = target
+                .and_then(|t| t.get("node"))
+                .and_then(Value::as_u64)
+                .map(|n| n as usize);
+            let path = match target.and_then(|t| t.get("path")).and_then(Value::as_str) {
+                Some("translation") => Some(Path::Translation),
+                Some("rotation") => Some(Path::Rotation),
+                Some("scale") => Some(Path::Scale),
+                Some("weights") => None,
+                _ => continue,
+            };
+            let Some(node) = node.filter(|&n| n < nodes) else {
+                continue;
+            };
+            let Some(sampler) = channel
+                .get("sampler")
+                .and_then(Value::as_u64)
+                .and_then(|s| samplers.get(s as usize))
+            else {
+                return error("an animation channel without its sampler");
+            };
+            let interpolation = match sampler.get("interpolation").and_then(Value::as_str) {
+                Some("STEP") => Interpolation::Step,
+                Some("CUBICSPLINE") => Interpolation::Cubic,
+                _ => Interpolation::Linear,
+            };
+            let accessor = |key: &str| {
+                sampler
+                    .get(key)
+                    .and_then(Value::as_u64)
+                    .map(|i| i as usize)
+                    .ok_or_else(|| ModelError(format!("an animation sampler without its {key}")))
+            };
+            let times = self.floats(accessor("input")?, 1)?;
+            let per = if interpolation == Interpolation::Cubic {
+                3
+            } else {
+                1
+            };
+            let width = match path {
+                Some(Path::Rotation) => 4,
+                Some(_) => 3,
+                None => 1,
+            };
+            let flat = self.floats(accessor("output")?, width)?;
+            let values: Vec<[f32; 4]> = match path {
+                Some(_) => flat
+                    .chunks_exact(width)
+                    .map(|v| [v[0], v[1], v[2], if width == 4 { v[3] } else { 0. }])
+                    .collect(),
+                None => Vec::new(),
+            };
+            let keys = times.len() * per;
+            if times.is_empty()
+                || (path.is_some() && values.len() != keys)
+                || (path.is_none() && (flat.is_empty() || !flat.len().is_multiple_of(keys)))
+            {
+                return error("an animation sampler's keys and values don't match");
+            }
+            // Falling, or not numbers (NaN), times can't be keys.
+            let rising = |t: &[f32]| {
+                matches!(
+                    t[0].partial_cmp(&t[1]),
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                )
+            };
+            if !times.windows(2).all(rising) {
+                return error("an animation sampler's times don't rise");
+            }
+            let Some(path) = path else {
+                // Weights: each key holds every target's. A channel a
+                // target, each sampled as any other.
+                let targets = flat.len() / keys;
+                for target in 0..targets {
+                    channels.push(Channel {
+                        node,
+                        path: Path::Weight(target),
+                        interpolation,
+                        times: times.clone(),
+                        values: (0..keys)
+                            .map(|key| [flat[key * targets + target], 0., 0., 0.])
+                            .collect(),
+                    });
+                }
+                continue;
+            };
+            channels.push(Channel {
+                node,
+                path,
+                interpolation,
+                times,
+                values,
+            });
+        }
+        let duration = channels
+            .iter()
+            .filter_map(|c| c.times.last().copied())
+            .fold(0., f32::max);
+        Ok(crate::Clip {
+            name: animation
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            duration,
+            channels,
+        })
+    }
     /// Image `index`'s encoded bytes: from a buffer view, a data URI or a
     /// file `resolve` gives.
     fn image(
@@ -418,11 +949,7 @@ impl Reader<'_> {
             .map(<[u8]>::to_vec)
     }
     /// A mesh's triangle primitives as geometries in their materials.
-    fn mesh(
-        &self,
-        mesh: &Value,
-        materials: &[(Material, Maps)],
-    ) -> Result<Vec<(Geometry, Material, Maps)>, ModelError> {
+    fn mesh(&self, mesh: &Value, materials: &[Look]) -> Result<Vec<Mesh>, ModelError> {
         let mut out = Vec::new();
         for primitive in list(mesh, "primitives") {
             // Triangles only: points, lines, strips and fans are skipped.
@@ -468,7 +995,7 @@ impl Reader<'_> {
             if normals.is_none() {
                 smooth_normals(&mut vertices, &indices);
             }
-            let (material, maps) = primitive
+            let (mut material, maps, surface, placements, through) = primitive
                 .get("material")
                 .and_then(Value::as_u64)
                 .and_then(|m| materials.get(m as usize).cloned())
@@ -479,12 +1006,113 @@ impl Reader<'_> {
                         roughness: 1.,
                         ..Material::default()
                     };
-                    (plain, Maps::default())
+                    (
+                        plain,
+                        Maps::default(),
+                        Surface::default(),
+                        Placements::default(),
+                        None,
+                    )
                 });
-            let geometry = Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
-            out.push((geometry, material, maps));
+            let mut geometry =
+                Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
+            // Its second coordinates, if a map reads them.
+            if placements.iter().any(|p| p.uv_set == 1)
+                && let Some(uvs) = attribute("TEXCOORD_1")
+                    .map(|i| self.floats(i, 2))
+                    .transpose()?
+                    .filter(|uv| uv.len() == count * 2)
+            {
+                geometry = geometry
+                    .with_second_uvs(uvs.as_chunks::<2>().0.to_vec())
+                    .map_err(|e| ModelError(e.into()))?;
+            }
+            // Its vertices' colours, red, green and blue, with alpha or not.
+            if let Some(index) = attribute("COLOR_0") {
+                let with_alpha = self.accessor_type(index) == Some("VEC4");
+                let components = if with_alpha { 4 } else { 3 };
+                let flat = self.floats(index, components)?;
+                if flat.len() == count * components {
+                    let colors: Vec<[f32; 4]> = flat
+                        .chunks_exact(components)
+                        .map(|c| [c[0], c[1], c[2], c.get(3).copied().unwrap_or(1.)])
+                        .collect();
+                    // See-through by its vertices alone, as by a texture.
+                    if material.color[3] >= 1.
+                        && colors.iter().any(|c| c[3] < 1.)
+                        && self.blended(primitive)
+                    {
+                        material.color[3] = BLENDED_BY_TEXTURE;
+                    }
+                    geometry = geometry
+                        .with_colors(colors)
+                        .map_err(|e| ModelError(e.into()))?;
+                }
+            }
+            // Skinned: each vertex's four joints and their weights.
+            if let (Some(joints), Some(weights)) = (attribute("JOINTS_0"), attribute("WEIGHTS_0")) {
+                let (joints, weights) = (self.floats(joints, 4)?, self.floats(weights, 4)?);
+                if joints.len() == count * 4 && weights.len() == count * 4 {
+                    let joints = joints
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|j| {
+                            std::array::from_fn(|i| j[i].clamp(0., f32::from(u16::MAX)) as u16)
+                        })
+                        .collect();
+                    let weights = weights.as_chunks::<4>().0.to_vec();
+                    geometry = geometry
+                        .with_skin(joints, weights)
+                        .map_err(|e| ModelError(e.into()))?;
+                }
+            }
+            // Its morph targets, all or none: one that can't be read leaves
+            // the mesh as it is.
+            let targets: Option<Vec<MorphTarget>> = list(primitive, "targets")
+                .iter()
+                .map(|target| self.morph_target(target, count))
+                .collect();
+            if let Some(targets) = targets.filter(|t| !t.is_empty()) {
+                geometry = geometry
+                    .with_morph_targets(targets)
+                    .map_err(|e| ModelError(e.into()))?;
+            }
+            out.push((geometry, material, maps, surface, placements, through));
         }
         Ok(out)
+    }
+    /// Accessor `index`'s element type (`VEC3`), if it says.
+    fn accessor_type(&self, index: usize) -> Option<&str> {
+        list(self.doc, "accessors")
+            .get(index)?
+            .get("type")?
+            .as_str()
+    }
+    /// Whether `primitive`'s material blends.
+    fn blended(&self, primitive: &Value) -> bool {
+        primitive
+            .get("material")
+            .and_then(Value::as_u64)
+            .and_then(|m| list(self.doc, "materials").get(m as usize))
+            .and_then(|m| m.get("alphaMode"))
+            .and_then(Value::as_str)
+            == Some("BLEND")
+    }
+    /// A primitive's morph target for its `count` vertices, or `None` if it
+    /// can't be read.
+    fn morph_target(&self, target: &Value, count: usize) -> Option<MorphTarget> {
+        let read = |name: &str| -> Option<Vec<[f32; 3]>> {
+            let Some(index) = target.get(name).and_then(Value::as_u64) else {
+                return Some(Vec::new());
+            };
+            let flat = self.floats(index as usize, 3).ok()?;
+            (flat.len() == count * 3).then(|| flat.as_chunks::<3>().0.to_vec())
+        };
+        let (mut positions, normals) = (read("POSITION")?, read("NORMAL")?);
+        // A target moving normals alone moves no vertex.
+        positions.resize(count, [0.; 3]);
+        Some(MorphTarget::new(positions).with_normals(normals))
     }
     /// Accessor `index`'s view, its bytes from its start, its element's
     /// stride and size, and its count and component type.
@@ -492,9 +1120,6 @@ impl Reader<'_> {
         let Some(accessor) = list(self.doc, "accessors").get(index) else {
             return error(format!("no accessor {index}"));
         };
-        if accessor.get("sparse").is_some() {
-            return error("sparse accessors are not read yet");
-        }
         let count = accessor.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
         let kind = accessor
             .get("componentType")
@@ -512,7 +1137,11 @@ impl Reader<'_> {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let Some(view_index) = accessor.get("bufferView").and_then(Value::as_u64) else {
-            // No view: all zeros.
+            // No view: all zeros (a file can claim any count: the sizes it
+            // has the bytes for, sparse ones the most compact, stay small).
+            if count > MAX_ZEROS {
+                return error(format!("accessor {index} holds too many zeros"));
+            }
             return Ok(Accessor {
                 bytes: &[],
                 stride: element,
@@ -552,36 +1181,99 @@ impl Reader<'_> {
             normalized,
         })
     }
+    /// Accessor `index`'s sparse part, if it has one.
+    fn sparse(&self, index: usize, components: usize) -> Result<Option<Sparse<'_>>, ModelError> {
+        let accessor = &list(self.doc, "accessors")[index];
+        let Some(sparse) = accessor.get("sparse") else {
+            return Ok(None);
+        };
+        let number = |key: &str| accessor.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let total = number("count") as usize;
+        let count = sparse.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
+        if count > total {
+            return error(format!("accessor {index} replaces more than it holds"));
+        }
+        let (Some(indices), Some(values)) = (sparse.get("indices"), sparse.get("values")) else {
+            return error(format!("accessor {index}'s sparse part is incomplete"));
+        };
+        let kind = indices
+            .get("componentType")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let size = match kind {
+            5121 => 1,
+            5123 => 2,
+            5125 => 4,
+            _ => return error(format!("accessor {index}'s sparse indices of type {kind}")),
+        };
+        let at = self.section(index, indices, count * size)?;
+        let mut slots = Vec::with_capacity(count);
+        for b in at.chunks_exact(size) {
+            let slot = match kind {
+                5121 => usize::from(b[0]),
+                5123 => usize::from(u16::from_le_bytes([b[0], b[1]])),
+                _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize,
+            };
+            if slot >= total {
+                return error(format!("accessor {index}'s sparse index {slot} is past it"));
+            }
+            slots.push(slot);
+        }
+        let element = component_size(number("componentType")) * components;
+        let values = self.section(index, values, count * element)?;
+        Ok(Some(Sparse { slots, values }))
+    }
+    /// `length` bytes at `part`'s `bufferView` and `byteOffset`.
+    fn section(&self, index: usize, part: &Value, length: usize) -> Result<&[u8], ModelError> {
+        let number = |v: &Value, key: &str| v.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let past = || {
+            ModelError(format!(
+                "accessor {index}'s sparse part runs past its buffer"
+            ))
+        };
+        let view = usize::try_from(number(part, "bufferView")).map_err(|_| past())?;
+        let view = list(self.doc, "bufferViews").get(view).ok_or_else(past)?;
+        let buffer = self
+            .buffers
+            .get(number(view, "buffer") as usize)
+            .ok_or_else(past)?;
+        let view_start = number(view, "byteOffset");
+        let view_end = view_start
+            .checked_add(number(view, "byteLength"))
+            .ok_or_else(past)?;
+        let start = view_start
+            .checked_add(number(part, "byteOffset"))
+            .ok_or_else(past)?;
+        let end = start.checked_add(length as u64).ok_or_else(past)?;
+        if end > view_end || view_end > buffer.len() as u64 {
+            return Err(past());
+        }
+        Ok(&buffer[start as usize..end as usize])
+    }
     /// Accessor `index`'s `components` numbers an element, as floats.
     fn floats(&self, index: usize, components: usize) -> Result<Vec<f32>, ModelError> {
         let a = self.view(index, components)?;
         let mut out = Vec::with_capacity(a.count * components);
+        let size = component_size(a.kind);
         if a.bytes.is_empty() {
             out.resize(a.count * components, 0.);
-            return Ok(out);
+        } else {
+            for i in 0..a.count {
+                for c in 0..components {
+                    let at = i * a.stride + c * size;
+                    out.push(float(&a.bytes[at..at + size], a.kind, a.normalized));
+                }
+            }
         }
-        let size = match a.kind {
-            5120 | 5121 => 1,
-            5122 | 5123 => 2,
-            _ => 4,
-        };
-        for i in 0..a.count {
-            for c in 0..components {
-                let at = i * a.stride + c * size;
-                let b = &a.bytes[at..at + size];
-                let v = match (a.kind, a.normalized) {
-                    (5126, _) => f32::from_le_bytes(b.try_into().unwrap()),
-                    (5121, true) => f32::from(b[0]) / 255.,
-                    (5121, false) => f32::from(b[0]),
-                    (5120, true) => (f32::from(b[0] as i8) / 127.).max(-1.),
-                    (5120, false) => f32::from(b[0] as i8),
-                    (5123, true) => f32::from(u16::from_le_bytes([b[0], b[1]])) / 65535.,
-                    (5123, false) => f32::from(u16::from_le_bytes([b[0], b[1]])),
-                    (5122, true) => (f32::from(i16::from_le_bytes([b[0], b[1]])) / 32767.).max(-1.),
-                    (5122, false) => f32::from(i16::from_le_bytes([b[0], b[1]])),
-                    _ => u32::from_le_bytes(b.try_into().unwrap()) as f32,
-                };
-                out.push(if v.is_finite() { v } else { 0. });
+        if let Some(sparse) = self.sparse(index, components)? {
+            let values = sparse.values.chunks_exact(size * components);
+            for (&slot, element) in sparse.slots.iter().zip(values) {
+                for (out, b) in out[slot * components..]
+                    .iter_mut()
+                    .zip(element.chunks_exact(size))
+                {
+                    *out = float(b, a.kind, a.normalized);
+                }
             }
         }
         Ok(out)
@@ -589,21 +1281,60 @@ impl Reader<'_> {
     /// Accessor `index` as indices (unsigned bytes, shorts or ints).
     fn indices(&self, index: usize) -> Result<Vec<u32>, ModelError> {
         let a = self.view(index, 1)?;
-        if a.bytes.is_empty() {
-            return Ok(vec![0; a.count]);
+        let read = |b: &[u8]| match a.kind {
+            5121 => Ok(u32::from(b[0])),
+            5123 => Ok(u32::from(u16::from_le_bytes([b[0], b[1]]))),
+            5125 => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            kind => error(format!("indices of component type {kind}")),
+        };
+        let mut out = if a.bytes.is_empty() {
+            vec![0; a.count]
+        } else {
+            (0..a.count)
+                .map(|i| read(&a.bytes[i * a.stride..]))
+                .collect::<Result<Vec<u32>, ModelError>>()?
+        };
+        if let Some(sparse) = self.sparse(index, 1)? {
+            let values = sparse.values.chunks_exact(component_size(a.kind));
+            for (&slot, b) in sparse.slots.iter().zip(values) {
+                out[slot] = read(b)?;
+            }
         }
-        (0..a.count)
-            .map(|i| {
-                let b = &a.bytes[i * a.stride..];
-                match a.kind {
-                    5121 => Ok(u32::from(b[0])),
-                    5123 => Ok(u32::from(u16::from_le_bytes([b[0], b[1]]))),
-                    5125 => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
-                    kind => error(format!("indices of component type {kind}")),
-                }
-            })
-            .collect()
+        Ok(out)
     }
+}
+/// What a sparse accessor replaces: which elements, and their new values,
+/// packed.
+struct Sparse<'a> {
+    slots: Vec<usize>,
+    values: &'a [u8],
+}
+/// Elements an accessor with no buffer view of its own may hold: more than
+/// any mesh or clip, far less than memory.
+const MAX_ZEROS: usize = 1 << 26;
+/// Bytes a component of glTF's type `kind` takes.
+fn component_size(kind: u64) -> usize {
+    match kind {
+        5120 | 5121 => 1,
+        5122 | 5123 => 2,
+        _ => 4,
+    }
+}
+/// The component at `b`, of glTF's type `kind`, as a float.
+fn float(b: &[u8], kind: u64, normalized: bool) -> f32 {
+    let v = match (kind, normalized) {
+        (5126, _) => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+        (5121, true) => f32::from(b[0]) / 255.,
+        (5121, false) => f32::from(b[0]),
+        (5120, true) => (f32::from(b[0] as i8) / 127.).max(-1.),
+        (5120, false) => f32::from(b[0] as i8),
+        (5123, true) => f32::from(u16::from_le_bytes([b[0], b[1]])) / 65535.,
+        (5123, false) => f32::from(u16::from_le_bytes([b[0], b[1]])),
+        (5122, true) => (f32::from(i16::from_le_bytes([b[0], b[1]])) / 32767.).max(-1.),
+        (5122, false) => f32::from(i16::from_le_bytes([b[0], b[1]])),
+        _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32,
+    };
+    if v.is_finite() { v } else { 0. }
 }
 struct Accessor<'a> {
     bytes: &'a [u8],
@@ -871,6 +1602,705 @@ mod tests {
         });
         let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
         assert!(model.nodes[0].meshes[0].2[0].is_none());
+    }
+
+    #[test]
+    fn a_clip_moves_its_node_when_posed() {
+        // The square's node slid from 0 to 2 along x over a second.
+        let (doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        let at = bin.len();
+        let times: [f32; 2] = [0., 1.];
+        let places: [f32; 6] = [0., 0., 0., 2., 0., 0.];
+        bin.extend(bytemuck::cast_slice(&times));
+        bin.extend(bytemuck::cast_slice(&places));
+        let mut doc = doc;
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 8 }));
+        views.push(json!({ "buffer": 0, "byteOffset": at + 8, "byteLength": 24 }));
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        accessors
+            .push(json!({ "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR" }));
+        accessors
+            .push(json!({ "bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3" }));
+        doc["animations"] = json!([{
+            "name": "slide",
+            "samplers": [{ "input": 2, "output": 3 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }],
+        }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let clip = model.clip("slide").expect("the clip");
+        assert_eq!((clip.duration(), model.clips().len()), (1., 1));
+        let world = World::new();
+        let placed = world.place_model(&model);
+        let node = placed.nodes[0].unwrap();
+        placed.pose(&world, clip, 0.5);
+        assert_eq!(
+            world.object(node).unwrap().transform.position,
+            vec3(1., 0., 0.)
+        );
+        let revision = world.revision();
+        placed.pose(&world, clip, 0.5);
+        assert_eq!(
+            world.revision(),
+            revision,
+            "posed the same: nothing to draw"
+        );
+        placed.pose(&world, clip, 7.);
+        assert_eq!(
+            world.object(node).unwrap().transform.position,
+            vec3(2., 0., 0.)
+        );
+    }
+
+    #[test]
+    fn a_skinned_mesh_is_placed_by_its_joints() {
+        // The square's every vertex bound wholly to its skin's second joint,
+        // 5 along x: the mesh shows there, whatever its own node's place.
+        let (doc, mut bin) = square(
+            json!([
+                { "mesh": 0, "skin": 0, "translation": [0.0, 9.0, 0.0], "children": [1, 2] },
+                {},
+                { "translation": [5.0, 0.0, 0.0] },
+            ]),
+            |_| {},
+        );
+        let at = bin.len();
+        bin.extend([1_u8, 0, 0, 0].repeat(4));
+        bin.extend(bytemuck::cast_slice(&[[1_f32, 0., 0., 0.]; 4]));
+        let mut doc = doc;
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 16 }));
+        views.push(json!({ "buffer": 0, "byteOffset": at + 16, "byteLength": 64 }));
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        accessors
+            .push(json!({ "bufferView": 2, "componentType": 5121, "count": 4, "type": "VEC4" }));
+        accessors
+            .push(json!({ "bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC4" }));
+        let attributes = &mut doc["meshes"][0]["primitives"][0]["attributes"];
+        attributes["JOINTS_0"] = json!(2);
+        attributes["WEIGHTS_0"] = json!(3);
+        // Its joints moved with the node: placed by the node's 9 up too.
+        doc["skins"] = json!([{ "joints": [1, 2] }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        world.set_camera(crate::Camera::looking_at([5., 9., 3.], [5., 9., 0.]));
+        let hit = world
+            .pick((50., 50.), (100., 100.))
+            .expect("the square, at its joint");
+        assert!(
+            (hit.point - vec3(5., 9., 0.)).length() < 1e-3,
+            "{:?}",
+            hit.point
+        );
+        // The joint moved back: the mesh with it.
+        world.set_transform(placed.nodes[2].unwrap(), Transform::default());
+        assert_eq!(world.pick((50., 50.), (100., 100.)), None);
+        // A skin naming a node that isn't one is an error.
+        let (doc, bin) = square(json!([{ "mesh": 0, "skin": 0 }]), |doc| {
+            doc["skins"] = json!([{ "joints": [4] }]);
+        });
+        assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_err());
+    }
+
+    #[test]
+    fn a_material_says_how_its_faces_show() {
+        let shown = |extra: Value| {
+            let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+                for (key, value) in extra.as_object().unwrap() {
+                    doc["materials"][0][key] = value.clone();
+                }
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].meshes[0].3
+        };
+        assert_eq!(shown(json!({})), Surface::default());
+        assert!(shown(json!({ "doubleSided": true })).double_sided);
+        assert_eq!(
+            shown(json!({ "alphaMode": "MASK" })).alpha_cutoff,
+            Some(0.5 / 0.5),
+            "glTF's default cutoff, its colour factor's alpha (0.5) taken out"
+        );
+        assert_eq!(
+            shown(json!({ "alphaMode": "MASK", "alphaCutoff": 0.25 })).alpha_cutoff,
+            Some(0.5)
+        );
+        assert_eq!(
+            shown(json!({ "alphaMode": "BLEND", "alphaCutoff": 0.25 })).alpha_cutoff,
+            None,
+            "a cutoff means nothing but with MASK"
+        );
+    }
+
+    #[test]
+    fn a_blended_material_with_alpha_in_its_texture_alone_is_translucent() {
+        let alpha = |blend: bool, textured: bool| {
+            let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+                let material = &mut doc["materials"][0];
+                material["pbrMetallicRoughness"]["baseColorFactor"] = json!([1.0, 1.0, 1.0, 1.0]);
+                material["alphaMode"] = json!(if blend { "BLEND" } else { "OPAQUE" });
+                if textured {
+                    material["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
+                    doc["textures"] = json!([{ "source": 0 }]);
+                    doc["images"] = json!([{ "uri": format!("data:image/png;base64,{RED_BLUE}") }]);
+                }
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].meshes[0].1.color[3]
+        };
+        assert!(alpha(true, true) < 1., "blended, by its texture");
+        assert_eq!(alpha(true, false), 1., "no alpha anywhere: opaque");
+        assert_eq!(
+            alpha(false, true),
+            1.,
+            "not blended: its texture's alpha unread"
+        );
+    }
+
+    #[test]
+    fn compressed_geometry_it_needs_is_an_error_not_an_empty_model() {
+        let (mut doc, bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        doc["extensionsRequired"] = json!(["KHR_draco_mesh_compression"]);
+        let error = Model::from_bytes(&glb_of(&doc, &bin)).unwrap_err();
+        assert!(
+            error.to_string().contains("KHR_draco_mesh_compression"),
+            "{error}"
+        );
+        // Used, not required: its plain data is there, and read.
+        doc["extensionsUsed"] = doc["extensionsRequired"].take();
+        doc["extensionsRequired"] = json!([]);
+        assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_ok());
+        // One changing only how it looks still loads.
+        doc["extensionsRequired"] = json!(["KHR_materials_sheen"]);
+        assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_ok());
+    }
+
+    /// `square`'s document and buffer with one morph target moving it 2
+    /// along x, bound to its primitive.
+    fn morphing_square(nodes: Value, extra: impl FnOnce(&mut Value)) -> (Value, Vec<u8>) {
+        let (mut doc, mut bin) = square(nodes, |_| {});
+        let at = bin.len();
+        bin.extend(bytemuck::cast_slice(&[[2_f32, 0., 0.]; 4]));
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        doc["bufferViews"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 48 }));
+        doc["accessors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC3" }));
+        doc["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 2 }]);
+        extra(&mut doc);
+        (doc, bin)
+    }
+
+    #[test]
+    fn a_morph_target_comes_with_its_weights() {
+        let picked_at = |doc: &Value, bin: &[u8]| {
+            let model = Model::from_bytes(&glb_of(doc, bin)).unwrap();
+            let world = World::new();
+            world.add_model(&model);
+            world.set_camera(crate::Camera::looking_at([2., 0., 3.], [2., 0., 0.]));
+            world.pick((50., 50.), (100., 100.)).is_some()
+        };
+        // At rest the square is about the origin, out of a view of x = 2.
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0 }]), |_| {});
+        assert!(!picked_at(&doc, &bin));
+        // The mesh's weights, and a node's in their place.
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0 }]), |doc| {
+            doc["meshes"][0]["weights"] = json!([1.0]);
+        });
+        assert!(picked_at(&doc, &bin));
+        let (doc, bin) = morphing_square(json!([{ "mesh": 0, "weights": [0.0] }]), |doc| {
+            doc["meshes"][0]["weights"] = json!([1.0]);
+        });
+        assert!(!picked_at(&doc, &bin));
+    }
+
+    #[test]
+    fn a_clip_moves_morph_weights() {
+        // Its one target's weight, from 0 to 1 over a second.
+        let (mut doc, mut bin) = morphing_square(json!([{ "mesh": 0 }]), |_| {});
+        let at = bin.len();
+        bin.extend(bytemuck::cast_slice(&[0_f32, 1., 0., 1.]));
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 8 }));
+        views.push(json!({ "buffer": 0, "byteOffset": at + 8, "byteLength": 8 }));
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        for view in [3, 4] {
+            accessors.push(
+                json!({ "bufferView": view, "componentType": 5126, "count": 2, "type": "SCALAR" }),
+            );
+        }
+        doc["animations"] = json!([{
+            "name": "grow",
+            "samplers": [{ "input": 3, "output": 4 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "weights" } }],
+        }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let clip = model.clip("grow").expect("the clip");
+        assert_eq!(clip.duration(), 1.);
+        let world = World::new();
+        let placed = world.place_model(&model);
+        world.set_camera(crate::Camera::looking_at([2., 0., 3.], [2., 0., 0.]));
+        placed.pose(&world, clip, 0.);
+        assert!(world.pick((50., 50.), (100., 100.)).is_none(), "at rest");
+        placed.pose(&world, clip, 1.);
+        assert!(world.pick((50., 50.), (100., 100.)).is_some(), "at full");
+        let revision = world.revision();
+        placed.pose(&world, clip, 1.);
+        assert_eq!(
+            world.revision(),
+            revision,
+            "posed the same: nothing to draw"
+        );
+    }
+
+    /// Bytes appended to `doc`'s buffer as a new buffer view: its index.
+    fn add_view(doc: &mut Value, bin: &mut Vec<u8>, bytes: &[u8]) -> usize {
+        let at = bin.len();
+        bin.extend(bytes);
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": bytes.len() }));
+        views.len() - 1
+    }
+
+    #[test]
+    fn a_maps_placement_is_read_from_its_texture_and_sampler() {
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["samplers"] = json!([{ "wrapS": 33071, "wrapT": 33648 }, { "wrapS": 10497 }]);
+            doc["textures"] = json!([{ "sampler": 0 }, { "sampler": 1 }, {}]);
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({
+                "index": 0,
+                "texCoord": 1,
+                "extensions": { "KHR_texture_transform": {
+                    "offset": [0.25, 0.5],
+                    "rotation": 1.5,
+                    "scale": [2.0, 3.0],
+                }},
+            });
+            // A transform's coordinates are those it says, over the map's.
+            doc["materials"][0]["normalTexture"] = json!({
+                "index": 2,
+                "texCoord": 1,
+                "extensions": { "KHR_texture_transform": { "texCoord": 0 } },
+            });
+            doc["materials"][0]["emissiveTexture"] = json!({ "index": 1 });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let [base, _, normal, emission, _] = model.nodes[0].meshes[0].4;
+        assert_eq!(
+            base,
+            MapPlacement::new()
+                .offset(0.25, 0.5)
+                .rotated(1.5)
+                .scaled(2., 3.)
+                .uv_set(1)
+                .wrap(Wrap::Clamp, Wrap::Mirror)
+        );
+        assert_eq!(normal, MapPlacement::new());
+        assert_eq!(emission, MapPlacement::new(), "a repeat is no placement");
+        let world = World::new();
+        let placed = world.place_model(&model);
+        let mesh = placed.meshes[0][0];
+        assert_eq!(
+            world.map_placement(mesh, crate::Map::BaseColour),
+            Some(base)
+        );
+        assert_eq!(world.map_placement(mesh, crate::Map::Emission), None);
+    }
+
+    #[test]
+    fn second_coordinates_are_read_for_a_map_that_uses_them() {
+        let with_second_uvs = |extra: fn(&mut Value)| {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+            let uvs = [[0_f32, 0.], [1., 0.], [1., 1.], [0., 1.]];
+            let view = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&uvs));
+            doc["accessors"].as_array_mut().unwrap().push(
+                json!({ "bufferView": view, "componentType": 5126, "count": 4, "type": "VEC2" }),
+            );
+            let accessor = doc["accessors"].as_array().unwrap().len() - 1;
+            doc["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_1"] = json!(accessor);
+            doc["textures"] = json!([{}]);
+            extra(&mut doc);
+            Model::from_bytes(&glb_of(&doc, &bin)).unwrap()
+        };
+        let model = with_second_uvs(|doc| {
+            doc["materials"][0]["occlusionTexture"] = json!({ "index": 0, "texCoord": 1 });
+        });
+        let uvs = model.nodes[0].meshes[0].0.second_uvs().unwrap();
+        assert_eq!(uvs[2], [1., 1.]);
+        // Unused, as a lightmap's often is, they're left out.
+        let model = with_second_uvs(|doc| {
+            doc["materials"][0]["occlusionTexture"] = json!({ "index": 0 });
+        });
+        assert!(model.nodes[0].meshes[0].0.second_uvs().is_none());
+    }
+
+    #[test]
+    fn vertex_colours_are_read_in_any_form_and_blend_by_their_alpha() {
+        // `bytes` of `kind` as `COLOR_0`, in a material of `extra`.
+        fn with_colors(
+            bytes: &[u8],
+            kind: u64,
+            shape: &str,
+            normalized: bool,
+            extra: fn(&mut Value),
+        ) -> Node {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), extra);
+            let view = add_view(&mut doc, &mut bin, bytes);
+            doc["accessors"].as_array_mut().unwrap().push(json!({
+                "bufferView": view, "componentType": kind, "count": 4, "type": shape, "normalized": normalized,
+            }));
+            let accessor = doc["accessors"].as_array().unwrap().len() - 1;
+            doc["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"] = json!(accessor);
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].clone()
+        }
+        // Bytes, normalized, without alpha: alpha 1.
+        let bytes = [255, 0, 51, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let node = with_colors(&bytes, 5121, "VEC3", true, |_| {});
+        assert_eq!(
+            node.meshes[0].0.colors().unwrap()[0],
+            [1., 0., 0.2, 1.],
+            "scaled, and opaque"
+        );
+        // Floats with alpha, in a blending material: drawn translucent.
+        let floats: [[f32; 4]; 4] = [[1., 0.5, 0.25, 0.5]; 4];
+        let blend = |doc: &mut Value| {
+            doc["materials"][0]["alphaMode"] = json!("BLEND");
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] =
+                json!([1.0, 1.0, 1.0, 1.0]);
+        };
+        let node = with_colors(bytemuck::cast_slice(&floats), 5126, "VEC4", false, blend);
+        let (geometry, material, ..) = &node.meshes[0];
+        assert_eq!(geometry.colors().unwrap()[1], [1., 0.5, 0.25, 0.5]);
+        assert!(material.color[3] < 1., "its vertices see through");
+        // Solid vertices in a blending material stay as they were.
+        let node = with_colors(
+            bytemuck::cast_slice(&[[1_f32; 4]; 4]),
+            5126,
+            "VEC4",
+            false,
+            blend,
+        );
+        assert_eq!(node.meshes[0].1.color[3], 1.);
+    }
+
+    #[test]
+    fn lights_and_cameras_come_on_their_nodes() {
+        use std::f32::consts::FRAC_1_SQRT_2;
+        let (doc, bin) = square(
+            json!([
+                { "mesh": 0, "children": [1, 2, 3] },
+                { "translation": [0.0, 0.0, 2.0], "extensions": { "KHR_lights_punctual": { "light": 0 } } },
+                { "rotation": [-FRAC_1_SQRT_2, 0.0, 0.0, FRAC_1_SQRT_2], "extensions": { "KHR_lights_punctual": { "light": 1 } } },
+                { "translation": [1.0, 2.0, 3.0], "camera": 0 },
+            ]),
+            |doc| {
+                doc["extensionsUsed"] = json!(["KHR_lights_punctual"]);
+                doc["extensions"] = json!({ "KHR_lights_punctual": { "lights": [
+                    { "type": "point", "color": [1.0, 0.5, 0.25], "intensity": 4.0, "range": 7.0 },
+                    { "type": "spot", "intensity": 2.0, "spot": { "innerConeAngle": 0.1, "outerConeAngle": 0.3 } },
+                ]}});
+                doc["cameras"] = json!([{ "type": "perspective", "perspective": { "yfov": 0.6, "znear": 0.2 } }]);
+            },
+        );
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        assert_eq!(placed.lights().len(), 2);
+        let shining = |world: &World| {
+            let mut out = Vec::new();
+            world
+                .inner()
+                .for_each_light(|light, spot| out.push((light, spot)));
+            out
+        };
+        let lights = shining(&world);
+        let crate::Light::Point {
+            position,
+            color,
+            intensity,
+            range,
+        } = lights[0].0
+        else {
+            panic!("a bulb: {:?}", lights[0]);
+        };
+        assert!(
+            (position - vec3(0., 0., 2.)).length() < 1e-5,
+            "{position:?}"
+        );
+        assert_eq!(
+            (color, intensity, range, lights[0].1),
+            ([1., 0.5, 0.25], 4., 7., None)
+        );
+        // The spot's node turned to look down: its cone points along −y.
+        let spot = lights[1].1.expect("a cone");
+        assert!(
+            (spot.direction - vec3(0., -1., 0.)).length() < 1e-4,
+            "{spot:?}"
+        );
+        assert_eq!((spot.inner, spot.outer), (0.1, 0.3));
+        // Moved with the model.
+        world.set_transform(placed.root, Transform::at([10., 0., 0.]));
+        let crate::Light::Point { position, .. } = shining(&world)[0].0 else {
+            panic!()
+        };
+        assert!(
+            (position - vec3(10., 0., 2.)).length() < 1e-4,
+            "{position:?}"
+        );
+        let cameras = placed.cameras(&world);
+        assert_eq!(cameras.len(), 1);
+        let camera = cameras[0];
+        assert!(
+            (camera.position - vec3(11., 2., 3.)).length() < 1e-4,
+            "{camera:?}"
+        );
+        assert!(
+            (camera.target - vec3(11., 2., 2.)).length() < 1e-4,
+            "{camera:?}"
+        );
+        assert_eq!(
+            (camera.fov, camera.near, camera.orthographic),
+            (0.6, 0.2, false)
+        );
+        // A light removed shines no more; a hidden node's, nothing.
+        world.remove_light(placed.lights()[1]);
+        assert_eq!(shining(&world).len(), 1);
+        world.update(placed.root, |root| root.visible = false);
+        assert!(shining(&world).is_empty());
+        assert!(placed.cameras(&world).is_empty());
+    }
+
+    #[test]
+    fn transmission_ior_and_volume_are_read_together() {
+        let read = |extensions: Value| {
+            let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+                doc["materials"][0]["extensions"] = extensions;
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            model.nodes[0].meshes[0].5
+        };
+        let glass = read(json!({
+            "KHR_materials_transmission": { "transmissionFactor": 0.75 },
+            "KHR_materials_ior": { "ior": 1.33 },
+            "KHR_materials_volume": {
+                "thicknessFactor": 0.2,
+                "attenuationColor": [0.5, 0.75, 1.0],
+                "attenuationDistance": 2.0,
+            },
+        }));
+        let expected = crate::Transmission::new(0.75)
+            .ior(1.33)
+            .volume(0.2, [0.5, 0.75, 1.], 2.);
+        assert_eq!(glass, Some(expected));
+        // Its factor defaults to nothing passing; an index alone is no glass.
+        assert_eq!(read(json!({ "KHR_materials_transmission": {} })), None);
+        assert_eq!(read(json!({ "KHR_materials_ior": { "ior": 1.4 } })), None);
+        // A model's meshes take theirs.
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["materials"][0]["extensions"] =
+                json!({ "KHR_materials_transmission": { "transmissionFactor": 1.0 } });
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        let mesh = placed.meshes[0][0];
+        assert_eq!(world.transmission(mesh), Some(crate::Transmission::new(1.)));
+    }
+
+    #[test]
+    fn transmission_and_thickness_textures_are_maps() {
+        let (doc, bin) = square(json!([{ "mesh": 0 }]), |doc| {
+            doc["materials"][0]["extensions"] = json!({
+                "KHR_materials_transmission": {
+                    "transmissionFactor": 1.0,
+                    "transmissionTexture": { "index": 0 },
+                },
+                "KHR_materials_volume": {
+                    "thicknessFactor": 0.5,
+                    "thicknessTexture": { "index": 0 },
+                },
+            });
+            doc["textures"] = json!([{ "source": 0 }]);
+            doc["images"] = json!([{ "uri": format!("data:image/png;base64,{RED_BLUE}") }]);
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let mesh = world.place_model(&model).meshes[0][0];
+        let id = |map| world.map(mesh, map).map(|t| t.id());
+        let through = id(crate::Map::Transmission);
+        assert!(through.is_some());
+        assert_eq!(
+            id(crate::Map::Thickness),
+            through,
+            "one image, decoded once"
+        );
+        assert_eq!(id(crate::Map::BaseColour), None);
+    }
+
+    #[test]
+    fn a_sparse_accessor_replaces_what_it_lists() {
+        // The square's positions, its corner 2 moved up to y = 3, by each
+        // size of sparse index.
+        let index_bytes: [(u64, Vec<u8>); 3] = [
+            (5121, vec![2]),
+            (5123, 2_u16.to_le_bytes().to_vec()),
+            (5125, 2_u32.to_le_bytes().to_vec()),
+        ];
+        for (kind, bytes) in index_bytes {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+            let indices = add_view(&mut doc, &mut bin, &bytes);
+            let values = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[0.5_f32, 3., 0.]));
+            doc["accessors"][0]["sparse"] = json!({
+                "count": 1,
+                "indices": { "bufferView": indices, "componentType": kind },
+                "values": { "bufferView": values },
+            });
+            let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+            let v = model.nodes[0].meshes[0].0.vertices();
+            assert_eq!(v[2].position, [0.5, 3., 0.], "index type {kind}");
+            assert_eq!(v[0].position, [-0.5, -0.5, 0.], "the rest as they were");
+        }
+    }
+
+    #[test]
+    fn a_sparse_accessor_with_no_view_is_zeros_but_for_what_it_lists() {
+        // As Blender exports a morph target: no base, three of the four
+        // corners moved 2 along x.
+        let (mut doc, mut bin) = square(json!([{ "mesh": 0, "weights": [1.0] }]), |_| {});
+        let indices = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[0_u16, 1, 3]));
+        let values = add_view(
+            &mut doc,
+            &mut bin,
+            bytemuck::cast_slice(&[[2_f32, 0., 0.]; 3]),
+        );
+        doc["accessors"].as_array_mut().unwrap().push(json!({
+            "componentType": 5126, "count": 4, "type": "VEC3",
+            "sparse": {
+                "count": 3,
+                "indices": { "bufferView": indices, "componentType": 5123 },
+                "values": { "bufferView": values },
+            },
+        }));
+        doc["meshes"][0]["primitives"][0]["targets"] = json!([{ "POSITION": 2 }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let geometry = &model.nodes[0].meshes[0].0;
+        let morphs = geometry.morphs().expect("its target");
+        let deltas = morphs.deltas();
+        assert_eq!(deltas[morphs.at(1, 0)], [2., 0., 0., 0.]);
+        assert_eq!(deltas[morphs.at(2, 0)], [0.; 4], "not listed: unmoved");
+    }
+
+    #[test]
+    fn a_clip_reads_a_sparse_output() {
+        // Three keys at x 0, then 4 and 8 by sparse values over zeros.
+        let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        let times = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[0_f32, 1., 2.]));
+        let indices = add_view(&mut doc, &mut bin, &[1, 2]);
+        let values = add_view(
+            &mut doc,
+            &mut bin,
+            bytemuck::cast_slice(&[4_f32, 0., 0., 8., 0., 0.]),
+        );
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        accessors.push(
+            json!({ "bufferView": times, "componentType": 5126, "count": 3, "type": "SCALAR" }),
+        );
+        accessors.push(json!({
+            "componentType": 5126, "count": 3, "type": "VEC3",
+            "sparse": {
+                "count": 2,
+                "indices": { "bufferView": indices, "componentType": 5121 },
+                "values": { "bufferView": values },
+            },
+        }));
+        doc["animations"] = json!([{
+            "name": "slide",
+            "samplers": [{ "input": 2, "output": 3 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }],
+        }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        placed.pose(&world, model.clip("slide").unwrap(), 2.);
+        assert_eq!(
+            world
+                .object(placed.nodes[0].unwrap())
+                .unwrap()
+                .transform
+                .position,
+            vec3(8., 0., 0.)
+        );
+    }
+
+    #[test]
+    fn sparse_indices_are_read_as_indices() {
+        // The triangles' last index replaced: the second triangle changes.
+        let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        let indices = add_view(&mut doc, &mut bin, &[5]);
+        let values = add_view(&mut doc, &mut bin, bytemuck::cast_slice(&[1_u16]));
+        doc["accessors"][1]["sparse"] = json!({
+            "count": 1,
+            "indices": { "bufferView": indices, "componentType": 5121 },
+            "values": { "bufferView": values },
+        });
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        assert_eq!(model.nodes[0].meshes[0].0.indices(), [0, 1, 2, 0, 2, 1]);
+    }
+
+    #[test]
+    fn broken_sparse_accessors_say_what_is_wrong() {
+        let broken = |sparse: Value| {
+            let (mut doc, mut bin) = square(json!([{ "mesh": 0 }]), |_| {});
+            let view = add_view(&mut doc, &mut bin, &[9; 12]);
+            let mut sparse = sparse;
+            for part in ["indices", "values"] {
+                if sparse.get(part).is_some() {
+                    sparse[part]["bufferView"] = json!(view);
+                }
+            }
+            doc["accessors"][0]["sparse"] = sparse;
+            Model::from_bytes(&glb_of(&doc, &bin))
+                .unwrap_err()
+                .to_string()
+        };
+        let indices = json!({ "componentType": 5121 });
+        let values = json!({});
+        // An index past the accessor: 9 of 4.
+        let past = broken(json!({ "count": 1, "indices": indices, "values": values }));
+        assert!(past.contains("past it"), "{past}");
+        // More than the view holds, and more than the accessor holds.
+        let long = broken(json!({ "count": 4, "indices": indices, "values": values }));
+        assert!(long.contains("past"), "{long}");
+        let more = broken(json!({ "count": 5, "indices": indices, "values": values }));
+        assert!(more.contains("more than it holds"), "{more}");
+        let missing = broken(json!({ "count": 1, "indices": indices }));
+        assert!(missing.contains("incomplete"), "{missing}");
+        let kind =
+            broken(json!({ "count": 1, "indices": { "componentType": 5126 }, "values": values }));
+        assert!(kind.contains("sparse indices"), "{kind}");
+        // A file can't ask for more zeros than memory.
+        let (mut doc, bin) = square(json!([{ "mesh": 0 }]), |_| {});
+        doc["accessors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "componentType": 5126, "count": 1_u64 << 40, "type": "VEC3" }));
+        doc["meshes"][0]["primitives"][0]["attributes"]["POSITION"] = json!(2);
+        let huge = Model::from_bytes(&glb_of(&doc, &bin))
+            .unwrap_err()
+            .to_string();
+        assert!(huge.contains("too many zeros"), "{huge}");
     }
 
     #[test]

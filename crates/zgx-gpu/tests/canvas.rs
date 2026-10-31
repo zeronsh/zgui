@@ -468,3 +468,151 @@ fn a_canvas_view_places_its_drawing_without_drawing_it_again() {
     // Under the drawing: the rectangle covers the dot at (25, 25).
     assert_eq!(rgb(&bytes, 200, 25, 25), [255, 0, 0]);
 }
+
+/// A filled area under a chart's line, its top chain jagged, in a gradient
+/// fading out: drawn as a quad, no raster made (rasterized where FXC compiles), and
+/// looks as its raster does, at both scales. So do a band between two lines, a triangle and a
+/// solid area; a shape turning back, and one whose edges cross, rasterize.
+#[test]
+fn filled_areas_draw_as_quads_and_look_as_their_raster_does() {
+    let polygon = |points: &[(f32, f32)]| {
+        let mut path = Path::builder();
+        path.move_to(points[0].0, points[0].1);
+        for &(x, y) in &points[1..] {
+            path.line_to(x, y);
+        }
+        path.close();
+        path.build().unwrap()
+    };
+    let stops = |colors: &[(f32, Color)]| -> Vec<GradientStop> {
+        colors
+            .iter()
+            .map(|&(offset, color)| GradientStop { offset, color })
+            .collect()
+    };
+    let linear = |from: f32, to: f32, colors: &[(f32, Color)]| {
+        Brush::linear(
+            Point { x: 0., y: from },
+            Point { x: 0., y: to },
+            stops(colors),
+        )
+        .unwrap()
+    };
+    let areas = |raster: bool, extra: Option<&[(f32, f32)]>| {
+        let mut canvas = Canvas::new();
+        canvas.fill(
+            Path::rectangle(Rect::new(0., 0., 200., 150.)),
+            Color(24, 26, 34, 255),
+        );
+        // A chart's area: 120 points across 180, down to its baseline.
+        let mut chart = vec![(10.25, 80.)];
+        chart.extend((0..120).map(|k| {
+            let t = k as f32;
+            (
+                10.25 + t * 180. / 119.,
+                40. + 14. * (t * 0.31).sin() + 7. * (t * 1.7).cos(),
+            )
+        }));
+        chart.push((190.25, 80.));
+        canvas.fill(
+            polygon(&chart),
+            linear(
+                20.,
+                80.,
+                &[
+                    (0., Color(58, 139, 255, 0x90)),
+                    (1., Color(58, 139, 255, 0)),
+                ],
+            ),
+        );
+        // A band between two lines, three stops.
+        canvas.fill(
+            polygon(&[
+                (10., 100.),
+                (60., 90.),
+                (120., 104.),
+                (190., 92.),
+                (190., 118.),
+                (120., 112.),
+                (60., 122.),
+                (10., 112.),
+            ]),
+            linear(
+                90.,
+                122.,
+                &[
+                    (0., Color(229, 83, 75, 255)),
+                    (0.5, Color(250, 200, 60, 200)),
+                    (1., Color(63, 185, 80, 120)),
+                ],
+            ),
+        );
+        // A triangle, solid and translucent, over them.
+        canvas.fill(
+            polygon(&[(30., 140.), (70., 70.), (110., 140.)]),
+            Color(255, 255, 255, 110),
+        );
+        if let Some(extra) = extra {
+            canvas.fill(polygon(extra), Color(255, 255, 255, 255));
+        }
+        if raster {
+            canvas.fill(Path::builder().build().unwrap(), Color(0, 0, 0, 255));
+        }
+        canvas
+    };
+    for scale in [1., 2.] {
+        let render = |raster: bool, extra: Option<&[(f32, f32)]>| {
+            let mut scene = Scene::new(210., 160.);
+            scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+            scene.append(
+                scene.root(),
+                NodeKind::Canvas(Arc::new(areas(raster, extra))),
+                Style {
+                    width: Some(200.),
+                    height: Some(150.),
+                    ..Default::default()
+                },
+            );
+            let mut gpu = GpuRenderer::new((210. * scale) as u32, (160. * scale) as u32).unwrap();
+            gpu.set_scale_factor(scale);
+            let report = scene.flush();
+            let stats = gpu.render(&scene, &report.damage).unwrap();
+            (stats, gpu.readback().unwrap())
+        };
+        let (quads, drawn) = render(false, None);
+        let (rasters, reference) = render(true, None);
+        // Where FXC compiles shaders, areas rasterize: it can't compile
+        // area.wgsl.
+        let on_gpu = GpuRenderer::new(8, 8).unwrap().areas_on_gpu();
+        assert!(on_gpu || cfg!(windows), "areas draw on the GPU off Windows");
+        let as_quads = if on_gpu { 0 } else { 1 };
+        assert_eq!(quads.canvas_rasterizations, as_quads, "drawn as quads");
+        assert_eq!(rasters.canvas_rasterizations, 1);
+        let back: &[(f32, f32)] = &[(10., 10.), (40., 20.), (20., 30.), (30., 5.)];
+        assert_eq!(
+            render(false, Some(back)).0.canvas_rasterizations,
+            1,
+            "turns back"
+        );
+        let crossed: &[(f32, f32)] = &[(10., 10.), (40., 30.), (40., 10.), (10., 30.)];
+        assert_eq!(
+            render(false, Some(crossed)).0.canvas_rasterizations,
+            1,
+            "crosses"
+        );
+        let (mut off, mut worst, mut covered) = (0, 0, 0);
+        for (a, b) in drawn.chunks(4).zip(reference.chunks(4)) {
+            let d = a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+            worst = worst.max(d);
+            covered += usize::from(b != [24, 26, 34, 255] && b != [0, 0, 0, 255]);
+            if d > 4 {
+                off += 1;
+            }
+        }
+        assert!(
+            off * 100 < covered * 3,
+            "scale {scale}: {off} of {covered} pixels differ (worst {worst})"
+        );
+        assert!(worst <= 80, "scale {scale}: worst {worst}");
+    }
+}

@@ -28,6 +28,10 @@ pub(crate) enum Kind {
     Io,
     /// A script raised it (`error(...)`, or a Rust function's error).
     Raised,
+    /// The system can't do it here (`ui.notify` without an app bundle).
+    Unsupported,
+    /// The person has not allowed it (`ui.notify`'s permission).
+    Denied,
 }
 impl Kind {
     pub(crate) fn name(self) -> &'static str {
@@ -38,6 +42,8 @@ impl Kind {
             Kind::Http => "http",
             Kind::Io => "io",
             Kind::Raised => "raised",
+            Kind::Unsupported => "unsupported",
+            Kind::Denied => "denied",
         }
     }
 }
@@ -145,7 +151,10 @@ impl UserData for UiError {
 
 /// Text an API takes from a script (a toast's title and body): a string,
 /// a number, or an error's message, so `body = err` shows what failed.
+/// The component library's (`components`).
+#[cfg(feature = "components")]
 pub(crate) struct Text(pub(crate) String);
+#[cfg(feature = "components")]
 impl mlua::FromLua for Text {
     fn from_lua(value: mlua::Value, lua: &Lua) -> mlua::Result<Self> {
         match &value {

@@ -732,7 +732,7 @@ pub(crate) fn mount_style_with_intrinsic(
     interactive: bool,
     intrinsic: Option<Signal<(f32, f32)>>,
     layout_target: Option<Signal<Option<NodeId>>>,
-    object_fit: Option<Signal<crate::style::ObjectFit>>,
+    object_fit: Option<Signal<crate::style::ImagePlacement>>,
     theme: Option<std::rc::Rc<crate::theme::ThemeScope>>,
 ) -> Signal<Typography> {
     let mut base = base;
@@ -1273,7 +1273,12 @@ pub(crate) fn mount_style_with_intrinsic(
                 .untracked(|| ui.set_disabled(node, is_disabled));
         }
         if let Some(output) = &object_fit {
-            output.set(resolved.overflow().object_fit.unwrap_or_default());
+            output.set(crate::style::ImagePlacement {
+                fit: resolved.overflow().object_fit.unwrap_or_default(),
+                position: (resolved.rare().cold.as_ref())
+                    .and_then(|cold| cold.object_position)
+                    .unwrap_or((0.5, 0.5)),
+            });
         }
         // Only observe inherited typography when a field is actually inherited
         // (and from then on: a later run setting every field is rare).
@@ -1773,16 +1778,17 @@ fn apply_resolved(
     }
     let mut scene = ui.scene.borrow_mut();
     scene.set_style(node, style.clone());
-    if let Some(direction) = resolved.rare().direction {
-        scene.set_direction(node, Some(direction));
-    }
-    match resolved.rare().zoom {
-        Some(crate::style::ZoomStyle::By(zoom)) => {
-            scene.set_zoom(node, zoom);
-            crate::zoom::refresh_fixed(ui, &mut scene);
-        }
-        Some(crate::style::ZoomStyle::Fixed) => crate::zoom::set_fixed(ui, &mut scene, node, true),
-        None => {}
+    // Most styles have nothing rare: one test for them, not one a field.
+    let rare = resolved.rare_set();
+    if rare.is_some() || scene.has_special_nodes() {
+        // On what lays the children out: a scroll view's content.
+        apply_rare(
+            ui,
+            &mut scene,
+            node,
+            content_layout.unwrap_or(node),
+            resolved.rare(),
+        );
     }
     if let Some(content) = content_layout {
         let mut content_style = scene.style(content);
@@ -1908,19 +1914,69 @@ fn apply_resolved(
         scene.set_font(node, current.font.clone());
     }
     scene.set_kind(node, kind);
-    if let Some(uniforms) = resolved.rare().shader_uniforms {
-        scene.set_shader_uniforms(node, uniforms);
-    }
-    if let Some(shader) = &resolved.rare().layer_shader {
-        scene.set_layer_shader(node, shader.clone());
-    }
-    if let Some(uniforms) = resolved.rare().layer_uniforms {
-        scene.set_layer_uniforms(node, uniforms);
-    }
-    if let Some(mode) = resolved.rare().blend {
-        scene.set_blend(node, mode);
+    if let Some(rare) = rare {
+        let cold = rare.cold.as_deref();
+        if let Some(uniforms) = cold.and_then(|cold| cold.shader_uniforms.as_ref()) {
+            scene.set_shader_uniforms(node, *uniforms);
+        }
+        if let Some(shader) = &rare.layer_shader {
+            scene.set_layer_shader(node, shader.clone());
+        }
+        if let Some(uniforms) = cold.and_then(|cold| cold.layer_uniforms.as_ref()) {
+            scene.set_layer_uniforms(node, *uniforms);
+        }
+        if let Some(mode) = rare.blend {
+            scene.set_blend(node, mode);
+        }
     }
     style
+}
+/// What a style with rare properties sets as it's applied, or clears from
+/// `node` having lost them.
+#[inline(never)]
+fn apply_rare(
+    ui: &Ui,
+    scene: &mut crate::scene::Scene,
+    node: NodeId,
+    target: NodeId,
+    rare: &crate::style::RareStyles,
+) {
+    let cold = rare.cold.as_deref();
+    if cold.is_some() || scene.has_cold_styles(target) || scene.has_cold_styles(node) {
+        let template = cold.and_then(|cold| cold.grid_template.as_ref());
+        scene.set_grid_template(target, template);
+        scene.set_grid_place(node, cold.and_then(|cold| cold.grid_place.as_ref()));
+        scene.set_z(node, cold.and_then(|cold| cold.z).unwrap_or(0));
+        scene.set_display_contents(node, cold.is_some_and(|cold| cold.display_contents));
+        scene.set_sticky(node, cold.and_then(|cold| cold.sticky_top));
+        scene.set_size_calcs(node, cold.and_then(|cold| cold.size_calcs.as_ref()));
+        if scene.set_text_balance(node, cold.and_then(|cold| cold.text_balance)) {
+            // Lines moved in boxes that did not: what follows their geometry
+            // (links, icons) looks again.
+            ui.text_geometry_moved();
+        }
+        scene.set_text_shadows(node, cold.and_then(|cold| cold.text_shadows.clone()));
+        scene.set_image_rendering(
+            node,
+            cold.and_then(|cold| cold.image_rendering)
+                .unwrap_or_default(),
+        );
+        scene.set_outline_style(
+            node,
+            cold.and_then(|cold| cold.outline_style).unwrap_or_default(),
+        );
+    }
+    if let Some(direction) = rare.direction {
+        scene.set_direction(node, Some(direction));
+    }
+    match rare.zoom {
+        Some(crate::style::ZoomStyle::By(zoom)) => {
+            scene.set_zoom(node, zoom);
+            crate::zoom::refresh_fixed(ui, scene);
+        }
+        Some(crate::style::ZoomStyle::Fixed) => crate::zoom::set_fixed(ui, scene, node, true),
+        None => {}
+    }
 }
 
 #[cfg(test)]

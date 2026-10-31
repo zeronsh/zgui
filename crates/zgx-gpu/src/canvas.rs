@@ -68,6 +68,11 @@ impl CanvasCache {
         });
         self.bytes = self.entries.values().map(|e| e.bytes).sum();
     }
+    /// Forget the rasters of nodes `keep` says no to.
+    pub fn retain_nodes(&mut self, keep: impl Fn(NodeId) -> bool) {
+        self.entries.retain(|id, _| keep(*id));
+        self.bytes = self.entries.values().map(|e| e.bytes).sum();
+    }
     /// The image ids of the rasters it holds.
     pub fn image_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.entries.values().map(|e| e.id)
@@ -103,9 +108,6 @@ impl CanvasCache {
         height: f32,
         scale: f32,
     ) -> Result<Raster, GpuError> {
-        if style.shadows().len() > 32 {
-            return Err(GpuError("panel exceeds 32 shadows".into()));
-        }
         self.clock = self.clock.wrapping_add(1);
         if let Some(entry) = self.entries.get_mut(&node)
             && entry.decoration.as_ref() == Some(style)
@@ -296,8 +298,13 @@ impl HeadlessCanvases {
             }
             if item.effects.opacity >= 1.
                 && item.effects.edge_fade <= 0.
-                && let Some(quads) =
-                    crate::canvas_quads(canvas, (bounds.x, bounds.y), view, &mut self.points)
+                && let Some(quads) = crate::canvas_quads(
+                    canvas,
+                    (bounds.x, bounds.y),
+                    view,
+                    !cfg!(windows),
+                    &mut self.points,
+                )
             {
                 std::hint::black_box((quads, &self.points));
                 self.cache.forget(item.id);
@@ -482,7 +489,10 @@ pub fn rasterize_viewed(
                     || style.miter_limit < 1.
                     || !style.dash_offset.is_finite()
                     || style.dash.len() > 1024
-                    || style.dash.iter().any(|d| !d.is_finite() || *d <= 0.)
+                    // A dash may be 0 long (a dot, with round caps, as an
+                    // HTML canvas's `setLineDash` takes), not the pattern.
+                    || style.dash.iter().any(|d| !d.is_finite() || *d < 0.)
+                    || (!style.dash.is_empty() && style.dash.iter().sum::<f32>() <= 0.)
                 {
                     return Err(GpuError("invalid stroke style".into()));
                 }

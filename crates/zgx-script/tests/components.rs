@@ -5,7 +5,7 @@ mod common;
 
 use common::Harness;
 use zgx::{
-    input::{Key, Modifiers},
+    input::{InputEvent, Key, Modifiers, PointerButton},
     scene::NodeId,
     semantics::{Role, SemanticNode},
 };
@@ -164,6 +164,49 @@ fn menu_items_check_and_show_shortcuts_and_nodes_say_their_state() {
 }
 
 #[test]
+fn a_custom_menu_item_says_it_is_checkable_and_follows_its_state() {
+    let mut h = Harness::inline(
+        r#"
+        local wrap = ui.state("wrap", false)
+        return ui.column {
+            ui.div { id = "wrap", role = "menuitemcheckbox", label = "Word wrap", checked = wrap,
+                on_click = ui.toggle(wrap), w = 80, h = 20 },
+            ui.div { id = "mono", role = "menuitemradio", label = "Mono", checked = true, w = 80, h = 20 },
+            ui.div { id = "plain", role = "menuitem", label = "Plain", w = 80, h = 20 },
+        }
+        "#,
+    );
+    let (wrap, mono) = (node(&mut h, "wrap"), node(&mut h, "mono"));
+    assert_eq!(
+        (wrap.role, wrap.checked, wrap.radio),
+        (Role::MenuItem, Some(false), false)
+    );
+    assert_eq!(
+        (mono.role, mono.checked, mono.radio),
+        (Role::MenuItem, Some(true), true)
+    );
+    assert_eq!(
+        zgx_script::driver::semantic_role_name(&wrap),
+        "menuitemcheckbox"
+    );
+    assert_eq!(
+        zgx_script::driver::semantic_role_name(&mono),
+        "menuitemradio"
+    );
+    let plain = node(&mut h, "plain");
+    assert_eq!(zgx_script::driver::semantic_role_name(&plain), "menuitem");
+    let id = with_role(&mut h, Role::MenuItem)[0];
+    click_node(&mut h, id);
+    assert_eq!(node(&mut h, "wrap").checked, Some(true));
+}
+
+#[test]
+#[should_panic(expected = "role `menuitemradio` says whether it is checked")]
+fn a_checkable_menu_role_needs_its_state() {
+    Harness::inline(r#"return ui.div { role = "menuitemradio", label = "Mono" }"#);
+}
+
+#[test]
 fn a_menus_button_opens_it() {
     let mut h = Harness::inline(
         r#"local open = ui.state("open", false)
@@ -280,6 +323,435 @@ fn a_select_chooses_values_from_its_menu_and_by_typing() {
     h.key(Key::Enter);
     h.frames(2);
     assert_eq!(h.text("chosen"), "2");
+}
+
+#[test]
+fn what_a_control_with_a_popup_is_given_lands_on_the_control() {
+    let mut h = Harness::inline(
+        r#"local v = ui.state("v", "a")
+        local q = ui.state("q", "")
+        local d = ui.state("d", nil :: string?)
+        local options = { "a", "b" }
+        local items = ui.state("items", options)
+        return ui.column { w = 500,
+            ui.select { id = "fills", label = "A", value = v, options = options },
+            ui.select { id = "sized", label = "B", value = v, options = options, w = 300 },
+            ui.combobox { id = "field", label = "C", text = q, items = items, w = 240 },
+            ui.date_picker { id = "date", label = "D", value = d, w = 200 },
+            ui.row { h = 60, items = "center",
+                ui.select { id = "fits", label = "E", value = v, options = options },
+                ui.date_picker { id = "fits-date", label = "F", value = d },
+            },
+            ui.text { id = "typed", "{q}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    assert_eq!(
+        h.bounds("fills").width,
+        500.,
+        "fills a column, as a field does"
+    );
+    assert_eq!(h.bounds("sized").width, 300.);
+    assert_eq!(h.bounds("field").width, 240.);
+    assert_eq!(h.bounds("date").width, 200.);
+    assert_eq!(h.bounds("fits").height, 39., "centred, not stretched");
+    assert!(h.bounds("fits").y > h.bounds("date").y + h.bounds("date").height);
+    assert!(
+        h.bounds("fits").width < 200.,
+        "a row leaves it its own width"
+    );
+    assert!(h.bounds("fits-date").x >= h.bounds("fits").width);
+
+    // The trigger is all of that box: nothing beside it to click, its menu
+    // as wide as it.
+    for id in ["fills", "sized", "field", "date"] {
+        let held = h.bounds(id);
+        let filled = with_role(&mut h, Role::ComboBox)
+            .into_iter()
+            .chain(with_role(&mut h, Role::Button))
+            .any(|n| h.ui.scene.borrow().bounds(n) == held);
+        assert!(filled, "{id}");
+    }
+    h.click("sized");
+    h.frames(2);
+    assert!(
+        with_role(&mut h, Role::MenuItem)
+            .iter()
+            .any(|n| h.ui.scene.borrow().bounds(*n).width >= 280.),
+        "open, under the whole trigger"
+    );
+    h.key(Key::Escape);
+    h.frames(2);
+    h.type_text("field", "x");
+    assert_eq!(h.text("typed"), "x");
+}
+
+#[test]
+fn a_tabs_panel_fills_the_tabs() {
+    let mut h = Harness::inline(
+        r#"local items = ui.state("items", { { id = "a", label = "A" } })
+        local chosen = ui.state("chosen", "a")
+        return ui.column { w = 500, h = 400,
+            ui.tabs { label = "Files", items = items, value = chosen, grow = 1,
+                panel = function(id)
+                    return ui.column { id = "panel", grow = 1,
+                        ui.textarea { id = "editor", label = "Editor", value = ui.state("t", ""), grow = 1, w_full = true },
+                    }
+                end,
+            },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let (panel, editor) = (h.bounds("panel"), h.bounds("editor"));
+    assert_eq!(panel.width, 500.);
+    assert!(panel.height > 200., "{panel:?}");
+    assert_eq!((editor.width, editor.height), (panel.width, panel.height));
+}
+
+const KEPT_TABS: &str = r##"
+local items = ui.state("items", {
+    { id = "a", label = "A", closable = true },
+    { id = "b", label = "B", closable = true },
+})
+local chosen = ui.state("chosen", "a")
+local builds = ui.state("builds", 0)
+local notes = { a = ui.state("note_a", "alpha"), b = ui.state("note_b", "bravo") }
+ui.command { id = "a", title = "a", run = function() chosen:set("a") end }
+ui.command { id = "b", title = "b", run = function() chosen:set("b") end }
+ui.command { id = "close", title = "c", run = function()
+    chosen:set("b")
+    items:set({ { id = "b", label = "B", closable = true } })
+end }
+return ui.column { h = 280,
+    ui.tabs { label = "t", grow = 1, KEEP items = items, value = chosen,
+        panel = function(id: string): Node
+            builds:add(1)
+            return ui.column { id = `panel-{id}`, grow = 1,
+                ui.textarea { id = `note-{id}`, label = id, grow = 1, w_full = true, value = notes[id] },
+            }
+        end,
+    },
+    ui.text { id = "builds", "{builds}" },
+    ui.text { id = "note", "{note_a}" },
+}"##;
+
+#[test]
+fn kept_tabs_keep_their_panels_at_rest_until_they_close() {
+    let mut h = Harness::inline(&KEPT_TABS.replace("KEEP", "keep = true,"));
+    assert_eq!(h.error(), None);
+    h.frame();
+    h.type_text("note-a", "!");
+    assert_eq!(h.text("note"), "alpha!");
+    let caret = h.ui.focused_editor().expect("focused").selection();
+
+    assert!(h.host.run_command("b"));
+    h.frame();
+    assert_eq!(h.text("builds"), "2");
+    assert!(
+        h.ui.focused_editor().is_none(),
+        "focus leaves a hidden panel, so keys can't reach it"
+    );
+    let panel = h.find("panel-a").expect("kept, mounted");
+    assert!(
+        !h.ui.scene.borrow().layout_visible(panel),
+        "and takes no layout"
+    );
+
+    assert!(h.host.run_command("a"));
+    h.frame();
+    assert_eq!(h.text("builds"), "2", "chosen again, it isn't rebuilt");
+    let note = h.find("note-a").expect("its editor");
+    assert_eq!(
+        h.ui.editor(note).unwrap().selection(),
+        caret,
+        "its caret too"
+    );
+    h.click("note-a");
+    h.keys("cmd+z");
+    h.frame();
+    assert_eq!(h.text("note"), "alpha", "its undo survived");
+
+    assert!(h.host.run_command("close"));
+    h.frame();
+    assert!(
+        h.find("panel-a").is_none(),
+        "closing its tab drops the panel"
+    );
+}
+
+#[test]
+fn tabs_rebuild_their_panels_unless_they_keep_them() {
+    let mut h = Harness::inline(&KEPT_TABS.replace("KEEP", ""));
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(h.host.run_command("b"));
+    h.frame();
+    assert!(h.host.run_command("a"));
+    h.frame();
+    assert_eq!(h.text("builds"), "3");
+}
+
+#[test]
+fn a_list_row_taller_than_its_height_is_a_layout_warning() {
+    let warned = |height: u32| {
+        let h = Harness::inline(&format!(
+            r#"return ui.list {{ id = "list", w = 200, h = 200, count = 20, height = {height},
+                row = function(i) return ui.button {{ h = 40, "Row" }} end }}"#
+        ));
+        assert_eq!(h.error(), None);
+        h.ui.prepare_frame();
+        zgx::inspect::layout_warnings(&h.ui)
+            .iter()
+            .filter(|w| w.message.contains("runs over the next row"))
+            .count()
+    };
+    assert!(warned(28) > 0);
+    assert_eq!(warned(40), 0);
+}
+
+#[test]
+fn a_comboboxs_items_may_be_a_plain_list() {
+    let mut h = Harness::inline(
+        r#"local text = ui.state("text", "")
+        return ui.combobox { id = "city", label = "City", text = text, items = { "Paris", "Porto" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.type_text("city", "P");
+    assert_eq!(with_role(&mut h, Role::ListBoxOption).len(), 2);
+}
+
+#[test]
+fn a_textarea_scrolls_to_a_line_and_says_which_is_on_top() {
+    let mut h = Harness::inline(
+        r#"local lines = {}
+        for i = 1, 200 do lines[i] = `line {i}` end
+        local text = ui.state("text", table.concat(lines, "\n"))
+        local top = ui.state("top", 0)
+        local box = ui.ref()
+        local function go(line: number, align: string?)
+            local el = box:peek()
+            if el then ui.editor.scroll_to_line(el, line, { align = align } :: any) end
+        end
+        ui.command { id = "start", title = "s", run = function() go(100, "start") end }
+        ui.command { id = "center", title = "c", run = function() go(100, "center") end }
+        ui.command { id = "end", title = "e", run = function() go(100, "end") end }
+        ui.command { id = "near", title = "n", run = function() go(1) end }
+        ui.command { id = "past", title = "p", run = function() go(9999, "start") end }
+        return ui.column {
+            ui.textarea { id = "note", ref = box, label = "Note", h = 230, w = 300, value = text,
+                on_top_line = function(line) top:set(line) end },
+            ui.text { id = "top", "{top}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let top = |h: &mut Harness, command: &str| {
+        assert!(h.host.run_command(command));
+        h.frames(3);
+        h.text("top").parse::<usize>().expect("a line")
+    };
+    h.frames(2);
+    assert_eq!(h.text("top"), "1");
+    let note = h.find("note").expect("the editor");
+    let caret = h.ui.editor(note).unwrap().selection();
+    let start = top(&mut h, "start");
+    assert_eq!(start, 100, "at the top");
+    let center = top(&mut h, "center");
+    assert!(center < 100, "above it now: {center}");
+    let end = top(&mut h, "end");
+    assert!(end < center, "further up: {end}");
+    assert_eq!(top(&mut h, "near"), 1);
+    assert!(top(&mut h, "past") > 190, "past the end, the end");
+    assert_eq!(
+        h.ui.editor(note).unwrap().selection(),
+        caret,
+        "the caret stays"
+    );
+}
+
+#[test]
+fn a_fields_undo_and_text_position_answer_a_script() {
+    let mut h = Harness::inline(
+        r#"local note = ui.state("note", "hello world")
+        local said = ui.state("said", "")
+        local box = ui.ref()
+        local function report(what: string)
+            local el = box:peek()
+            said:set(`{what} undo={ui.editor.can_undo(el)} redo={ui.editor.can_redo(el)}`)
+        end
+        ui.command { id = "undo", title = "u", run = function() report(tostring(ui.editor.undo(box:peek()))) end }
+        ui.command { id = "redo", title = "r", run = function() report(tostring(ui.editor.redo(box:peek()))) end }
+        ui.command { id = "at", title = "a", run = function()
+            local el = box:peek()
+            said:set(tostring(ui.editor.offset_at(el, el.x + 2, el.y + 12)))
+        end }
+        return ui.column {
+            ui.textarea { id = "note", ref = box, label = "Note", w = 300, h = 80, value = note },
+            ui.div { id = "plain", ref = ui.ref(), w = 10, h = 10 },
+            ui.text { id = "said", "{said}" },
+            ui.text { id = "shown", "{note}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    assert!(h.host.run_command("undo"));
+    assert_eq!(h.text("said"), "false undo=false redo=false");
+    h.type_text("note", "!");
+    assert_eq!(h.text("shown"), "hello world!");
+    assert!(h.host.run_command("undo"));
+    assert_eq!(h.text("said"), "true undo=false redo=true");
+    assert_eq!(h.text("shown"), "hello world", "its state follows");
+    assert!(h.host.run_command("redo"));
+    assert_eq!(h.text("said"), "true undo=true redo=false");
+    assert_eq!(h.text("shown"), "hello world!");
+    assert!(h.host.run_command("at"));
+    assert_eq!(h.text("said"), "0", "the line's start");
+}
+
+#[test]
+fn a_tab_moved_to_another_strip_is_in_its_states() {
+    let mut h = Harness::inline(
+        r#"local left = ui.state("left", { { id = "a", label = "Alpha", closable = true }, { id = "b", label = "Beta" } })
+        local right = ui.state("right", { { id = "c", label = "Gamma" } })
+        local left_chosen = ui.state("left_chosen", "a")
+        local right_chosen = ui.state("right_chosen", "c")
+        local moved = ui.state("moved", "")
+        local function strip(name: string, items: any, chosen: any): Node
+            return ui.tabs { id = name, label = name, w = 300, h = 200, items = items, value = chosen,
+                reorderable = true, group = "panes",
+                on_move = function(id: string, to: string) moved:set(`{id} to {to}`) end,
+                panel = function(id: string): Node return ui.text { id } end }
+        end
+        local function names(list: any)
+            local out = {}
+            for _, t in list do table.insert(out, t.id) end
+            return table.concat(out, ",")
+        end
+        return ui.column {
+            ui.row { strip("Left", left, left_chosen), strip("Right", right, right_chosen) },
+            ui.text { id = "left", function() return names(left:get()) end },
+            ui.text { id = "right", function() return names(right:get()) end },
+            ui.text { id = "chosen", function() return right_chosen:get() end },
+            ui.text { id = "moved", "{moved}" },
+            ui.text { id = "closable", function()
+                local last = right:get()[#right:get()]
+                return tostring(last.closable) .. " " .. last.label
+            end },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let tab = with_role(&mut h, Role::Tab)[0];
+    let from = h.ui.scene.borrow().bounds(tab);
+    let to = h.bounds("Right");
+    let start = (from.x + from.width / 2., from.y + from.height / 2.);
+    let end = (to.x + to.width / 2., to.y + to.height / 2.);
+    h.ui.dispatch(InputEvent::PointerDown {
+        x: start.0,
+        y: start.1,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerMove {
+        x: start.0 + 20.,
+        y: start.1,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x: end.0, y: end.1 });
+    h.frames(1);
+    h.ui.dispatch(InputEvent::PointerUp {
+        x: end.0,
+        y: end.1,
+        button: PointerButton::Primary,
+    });
+    h.frames(2);
+    assert_eq!(h.text("left"), "b");
+    assert_eq!(h.text("right"), "c,a");
+    assert_eq!(h.text("chosen"), "a");
+    assert_eq!(h.text("moved"), "a to Right");
+    assert_eq!(h.text("closable"), "true Alpha");
+}
+
+/// A tab torn off, through Luau: it leaves the strip's state and the app is
+/// told its id and where, to open it in a window of its own.
+#[test]
+fn a_torn_off_tab_leaves_its_state_and_tells_where() {
+    let mut h = Harness::inline(
+        r#"local docs = ui.state("docs", { { id = "a", label = "Alpha" }, { id = "b", label = "Beta" } })
+        local chosen = ui.state("chosen", "a")
+        local torn = ui.state("torn", "")
+        local function names(list: any)
+            local out = {}
+            for _, t in list do table.insert(out, t.id) end
+            return table.concat(out, ",")
+        end
+        return ui.column {
+            ui.tabs { id = "docs", label = "Docs", w = 300, h = 120, items = docs, value = chosen,
+                reorderable = true,
+                on_tear_off = function(id: string, e)
+                    torn:set(`{id} {math.floor(e.grab_x)}`)
+                    return id ~= "b"
+                end,
+                panel = function(id: string): Node return ui.text { id } end },
+            ui.text { id = "left", function() return names(docs:get()) end },
+            ui.text { id = "torn", "{torn}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let tab = with_role(&mut h, Role::Tab)[0];
+    let b = h.ui.scene.borrow().bounds(tab);
+    let (x, y) = (b.x + 10., b.y + b.height / 2.);
+    h.ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x, y: y + 160. });
+    assert!(h.ui.input.drag_state().is_some(), "torn off, it drags");
+    // Released outside every window (as a host says).
+    h.ui.input.end_drag_elsewhere(&h.ui.scene, false, true);
+    h.frames(2);
+    assert_eq!(h.text("left"), "b");
+    assert_eq!(h.text("torn"), "a 10");
+    // `false` keeps it: told, it stays.
+    let tab = with_role(&mut h, Role::Tab)[0];
+    let b = h.ui.scene.borrow().bounds(tab);
+    let (x, y) = (b.x + 10., b.y + b.height / 2.);
+    h.ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x, y: y + 160. });
+    h.ui.input.end_drag_elsewhere(&h.ui.scene, false, true);
+    h.frames(2);
+    assert_eq!(h.text("left"), "b");
+    assert_eq!(h.text("torn"), "b 10");
+}
+
+#[test]
+fn a_double_click_is_heard_once_by_the_innermost_node() {
+    let mut h = Harness::inline(
+        r#"local outer = ui.state("outer", 0)
+        local inner = ui.state("inner", 0)
+        local clicks = ui.state("clicks", 0)
+        return ui.column {
+            ui.column { id = "outer", w = 200, h = 100,
+                on_double_click = function() outer:add(1) end,
+                ui.div { id = "inner", w = 50, h = 50,
+                    on_click = function() clicks:add(1) end,
+                    on_double_click = function() inner:add(1) end },
+            },
+            ui.text { id = "said", function() return `{outer:get()} {inner:get()} {clicks:get()}` end },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.click("inner");
+    assert_eq!(h.text("said"), "0 0 1", "one click is no double");
+    h.ui.input
+        .set_double_click_time(std::time::Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    h.double_click("inner");
+    assert_eq!(
+        h.text("said"),
+        "0 1 3",
+        "both clicks, then the double, the inner's"
+    );
 }
 
 #[test]
@@ -545,6 +1017,54 @@ fn a_data_grid_sorts_edits_into_its_rows_and_writes_its_columns() {
         },
     );
     assert_eq!(h.text("width"), "96");
+    assert_eq!(h.error(), None);
+}
+
+/// A date and a time follow a function as a select does: a change goes to
+/// `on_change`, and what shows stays the function's until the app changes it.
+#[test]
+fn a_date_picker_and_a_time_field_are_controlled_by_a_function() {
+    let mut h = Harness::inline(
+        r#"local due = ui.state("due", "2026-03-10")
+        local asked = ui.state("asked", "none")
+        return ui.column {
+            ui.date_picker {
+                label = "Due",
+                value = function() return due:get() end,
+                on_change = function(date: string?) asked:set(date or "cleared") end,
+            },
+            ui.time_field {
+                label = "Start",
+                value = function() return "09:30" end,
+                on_change = function(time: string?) asked:set(time or "cleared") end,
+            },
+            ui.text { id = "asked", function() return asked:get() end },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    let trigger = with_role(&mut h, Role::Button)[0];
+    assert_eq!(
+        h.ui.semantics.borrow().get(trigger).unwrap().label,
+        "Due: 2026-03-10"
+    );
+    h.ui.input.focus(&h.ui.scene, Some(trigger));
+    h.key(Key::ArrowDown);
+    h.frames(1);
+    h.key(Key::ArrowRight);
+    h.key(Key::Enter);
+    h.frames(1);
+    assert_eq!(h.text("asked"), "2026-03-11");
+    assert_eq!(
+        h.ui.semantics.borrow().get(trigger).unwrap().label,
+        "Due: 2026-03-10",
+        "the function still says so"
+    );
+    let segments = with_role(&mut h, Role::SpinButton);
+    h.ui.input.focus(&h.ui.scene, Some(segments[1]));
+    h.key(Key::ArrowUp);
+    h.frames(1);
+    assert_eq!(h.text("asked"), "09:31");
     assert_eq!(h.error(), None);
 }
 

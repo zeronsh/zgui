@@ -6,6 +6,8 @@
 //! `ZGX_AUDIT_JSON=1` prints each report, a line of JSON.
 #[path = "../examples/support/gallery_view.rs"]
 mod gallery_view;
+#[path = "../../zgx-script/examples/support/inbox_server.rs"]
+mod inbox_server;
 
 use zgx::widgets::Ui;
 use zgx_desktop::accessibility::audit::{Report, audit};
@@ -100,6 +102,32 @@ fn a_reorderable_list_is_usable_by_a_reader() {
     assert_eq!(app.error(), None);
     let mut app = app;
     check("reorderable each", audit(&mut app.ui));
+}
+
+/// The inbox with its mail served: its list, folders (reorderable) and
+/// search, then its settings open over them (a modal route).
+#[test]
+fn the_inbox_is_usable_by_a_reader() {
+    let server = inbox_server::InboxServer::new();
+    let path = format!("{EXAMPLES}/inbox/app.luau");
+    let serving = server.clone();
+    let mut app = app(move |runtime| {
+        let host = ScriptHost::new(runtime, &path);
+        serving.serve(&host, std::time::Duration::from_millis(1));
+        host
+    });
+    assert!(
+        app.wait_until(|app| app.find("message-1").is_some() && app.find("folder-Inbox").is_some())
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    app.frames(2);
+    assert_eq!(app.error(), None);
+    check("inbox", audit(&mut app.ui));
+    app.click("open-settings");
+    assert!(app.wait_until(|app| app.shown("close-settings")));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    app.frames(2);
+    check("inbox settings", audit(&mut app.ui));
 }
 
 #[test]

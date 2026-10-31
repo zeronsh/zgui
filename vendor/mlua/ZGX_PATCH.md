@@ -117,3 +117,19 @@ in its `src/luau/compat.rs`).
 The library's own tests run (`cargo test --features luau --lib`) with
 `static_assertions` as a dev-dependency, which the published package
 leaves out.
+
+## Luau's pages, apart from the program's heap (zgx-mlua 0.12.6)
+
+Luau asks the allocator for 16 KB pages of small objects and frees a page
+only when its last object goes, so a heap that was once large leaves pages
+free between the ones still in use. In a general allocator these free pages
+stay in memory: mimalloc holds them in 512 KB runs it returns only whole.
+`src/memory.rs` keeps blocks of exactly that size in a pool of mapped 2 MB
+chunks instead, and `release_free_pages` hands each free slot back to the OS
+(macOS: `MADV_FREE_REUSABLE`, which `footprint` stops counting; Linux:
+`MADV_DONTNEED`). zgx-script calls it as a host goes idle.
+
+The pool is off until `pool_pages(true)`, which applies to VMs made after it:
+a VM stays with what it started on. zgx turns it on with its `mimalloc`
+feature. The system allocators give free pages back by themselves
+(`malloc_zone_pressure_relief`, `malloc_trim`).

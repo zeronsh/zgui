@@ -98,6 +98,52 @@ A plugin sees nothing of the app's own `ui.state`. What it reads and changes, th
 - **Actions.** `host.action("complete", …)` is a Rust handler that scripts call with `ui.action("complete", id)` (as a handler) or `ui.invoke`. `host.expose_action("complete", None)` lets plugins call it too. The example exposes completing a task but not adding one or clearing what is done: those stay the app's.
 - **Everything else** (fetching, the clipboard, files, windows, web views, terminals) takes its own capability; see the table in [scripting.md](scripting.md#plugins).
 
+## Plugins in a Luau app: zgx.json
+
+An app run with `zgx run` has no Rust of its own. Its `zgx.json` sets both sides instead: what the app exposes, and what each plugin is allowed. `zgx test` and `zgx audit` load the same plugins.
+
+```json
+{
+  "expose": {
+    "shared": { "tasks": "read", "focus": "write" },
+    "actions": ["complete"],
+    "hooks": { "#tasks": "override" }
+  },
+  "plugins": {
+    "focus": {
+      "path": "plugins/focus",
+      "allow": ["shared:tasks", "shared:focus", "action:complete", "override:#tasks"]
+    }
+  }
+}
+```
+
+- **`expose`** is the app's whole plugin surface, kept in one place.
+  - `shared` maps each `ui.shared` key to `"read"` or `"write"`.
+  - `actions` names what plugins may call.
+  - `hooks` maps a target, or an `@app/…` module, to `"override"` when a plugin may replace or filter it. Adding before and after is open, so `"open"` changes nothing. `"*": "override"` offers every target.
+- **`plugins`** names each plugin's folder (its `init.luau`) or file, and its `allow` list:
+  - `shared:<key>`, `action:<name>` and `override:<target>` for what `expose` offers;
+  - `fetch`, `clipboard`, `files`, `folders`, `terminals`, `web` and `windows` for the sandbox. `folders` is `ui.open_folder`, and the host can refuse it to every script (`ScriptHost::refuse_folders`).
+- **A grant beyond what's exposed is an error as the app loads**, naming the plugin and the grant: ``plugin `focus` is allowed `action:complete`, which the app doesn't expose (add "complete" to expose.actions)``. So is an unknown grant or a missing path.
+- **The app's script defines its actions** with `ui.actions`. Plugins call them as they call a Rust host's: `ui.invoke("complete", id)`, or `ui.action("complete", id)` as a handler. The app calls them the same way. A plugin can't define actions.
+
+  ```lua
+  local tasks = ui.shared("tasks", {})
+  ui.actions {
+      complete = function(id)
+          tasks:update(function(list)
+              for _, task in list do
+                  if task.id == id then
+                      task.done = true
+                  end
+              end
+          end)
+      end,
+  }
+  ```
+- **The app's `ui.shared` default is what shows.** Plugins load before the app, and a default a plugin gives (`ui.shared("tasks", {})`) gives way to the app's own. A Rust host's `host.shared` value still comes first.
+
 ## Packages
 
 Modules several apps share go in a package, a folder outside the app: `ScriptHost::package("kit", dir)` or zgx.json's `"packages": { "kit": "../plugins_kit" }`. The app requires them as `@kit/…`, and a `.luaurc` alias into the folder lets `zgx check` follow them. Packages are read only, run as the app's code, and are bundled with it. Plugins reach none, except through an app module they were trusted to replace.

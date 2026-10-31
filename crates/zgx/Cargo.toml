@@ -48,6 +48,11 @@ default = ["cjk-thai-words"]
 # 2.25 MB of a release binary, paged in only when used. Off, those scripts
 # select by Unicode's word boundaries (UAX #29): a character at a time.
 cjk-thai-words = ["dep:icu_segmenter", "dep:icu_provider", "dep:icu_collections", "dep:zerotrie", "dep:zerovec"]
+# `hyphens = "auto"` / `Styled::hyphens`: words break at their hyphenation
+# points, from the dictionaries a renderer with the same feature has
+# (zgx-gpu's: typst's `hypher`, about 1.2 MB for its 48 languages). Without
+# it, Luau refuses `"auto"` and Rust's `hyphens(true)` breaks as before.
+hyphens = []
 # Localized messages' plural rules and numbers from ICU4X (`zgx::i18n`);
 # without it, plurals follow English and numbers show as Rust writes them.
 i18n = ["dep:icu_plurals", "dep:icu_decimal", "dep:icu_locale_core", "dep:fixed_decimal"]

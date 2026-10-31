@@ -229,6 +229,7 @@ export type NumberToken =
 	| "$motion.duration.normal"
 	| "$motion.duration.slow"
 	| "$selection.radius"
+	| "$mark.radius"
 export type FontToken = "$font.sans"
 	| "$font.mono"
 export type ShadowToken = "$shadow.sm"
@@ -323,6 +324,7 @@ export type TokenName =
 	| "selection.radius"
 	| "find.match"
 	| "find.current"
+	| "mark.radius"
 
 -- "#rgb", "#rrggbb", "#rrggbbaa", "rgb(…)", "rgba(…)", "hsl(…)", a few
 -- names, 0xrrggbb, or a colour token ("$text.secondary"; `ColorToken`
@@ -398,6 +400,9 @@ export type Tokens = {
 	info: string,
 	input: {
 		bg: string,
+	},
+	mark: {
+		radius: string,
 	},
 	menu: {
 		bg: string,
@@ -481,7 +486,10 @@ export type HighlightSpan = {
 -- A number, or a number token: a standard one (`"$radius.md"`, see
 -- `NumberToken`) or an app's (`"$terminal.inset"`), hence any string.
 export type Num = number | string
--- Points, or a string: "50%", "auto" (margins), "12px", "$space.3".
+-- Points, or a string: "50%", "auto" (margins), "12px", "$space.3". `w`, `h`
+-- and their limits also take "calc(100% - 24px)", "min(…)", "max(…)" and
+-- "clamp(…)"; `w`, `min_w` and `max_w` "min-content", "max-content",
+-- "fit-content" and "fit-content(…)".
 export type Length = number | string
 -- Two numbers, `{ a, b }`, or one for both.
 export type Pair = number | { number }
@@ -493,6 +501,9 @@ export type ShadowSpec = { x: number?, y: number?, blur: number?, spread: number
 -- Or a shadow token (`"$shadow.md"`, an app's own too).
 export type Shadow = string | ShadowSpec | { ShadowSpec } | false
 -- Stops are colors (evenly spaced) or `{ offset, color }` pairs.
+-- A radial gradient: two or three colours from the centre to the edge, or with
+-- `center` (fractions of the box) and `radius` (1 reaches the farthest corner).
+export type RadialGradient = { any } | { center: { number }?, radius: number?, stops: { any } }
 export type Gradient = { read [number]: Color | { Color } } | { angle: number?, stops: { read [number]: Color | { Color } } }
 
 export type Direction = "row" | "row_reverse" | "column" | "column_reverse"
@@ -643,6 +654,33 @@ export type Readable<T> = { read get: (self: never) -> T }
 -- Engine objects.
 
 -- What `ui` element functions return; children and arguments of others.
+-- A file or folder in a `Folder`: `path` from its root, as `read` takes it;
+-- `modified` in milliseconds since 1970.
+export type FolderEntry = {
+	read name: string,
+	read path: string,
+	read kind: "file" | "folder",
+	read size: number,
+	read modified: number,
+	-- With `list`'s `files`, a file's `File`.
+	read file: File?,
+}
+-- A folder the user picked (`ui.open_folder`). Paths are relative to it, with
+-- `/` between their parts; `..`, absolute paths and links leading out of it
+-- are refused (`kind` "denied"), and a handle can be kept in state.
+declare extern type Folder with
+	name: string
+	-- With `files`, each file's entry has its `file` too.
+	function list(self, path: string?, options: { recursive: boolean?, limit: number?, files: boolean? }?): Promise<{ FolderEntry }>
+	-- A file inside it as a `File` (an absolute `path`), which `ui.image`,
+	-- `ui.read_file` and `drag_export` take as they do a dialog's.
+	function file(self, path: string): Promise<File>
+	function read(self, path: string): Promise<string>
+	-- The file replaced whole, its folders made.
+	function write(self, path: string, text: string): Promise<nil>
+	-- Kept past the run no more: a later `ui.remembered_folder` is nil.
+	function forget(self): ()
+end
 declare extern type Node with
 end
 -- `ui.t(key, args)`: a localized message. Accepted wherever text is
@@ -703,7 +741,7 @@ declare extern type UiError with
 	-- rejected), "network" (no answer came), "cancelled", "http" (a fetch
 	-- with `raise = true` answered outside 2xx), "io" (a file, the
 	-- clipboard).
-	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io"
+	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io" | "unsupported" | "denied"
 	-- "http": the response's status.
 	status: number?
 	-- "http": the response's body, its JSON decoded, else its text.
@@ -727,6 +765,14 @@ export type FetchOptions = {
 	headers: { [string]: string }?,
 	-- Text, or data sent as JSON (with its content type).
 	body: unknown?,
+	-- A file sent as the body, read off the window's thread, its type the
+	-- file's (a POST unless `method` says).
+	file: File?,
+	-- A form's fields sent as `multipart/form-data`: text, or a `File`.
+	multipart: { [string]: string | number | boolean | File }?,
+	-- The body going out: `sent` of `total` bytes, as the transport writes
+	-- it (or all of it at the answer, from one that does not say).
+	on_progress: ((sent: number, total: number) -> ())?,
 	-- The body's text as it arrives (a reply streaming), in whole
 	-- characters; the response's `body` is then empty unless it failed.
 	on_chunk: ((text: string) -> ())?,
@@ -754,7 +800,9 @@ export type Response = {
 
 -- A file the user picked (`ui.open_files`, `ui.save_file`): the only
 -- files a script reads or writes.
-export type File = { path: string, name: string }
+-- A file a dialog, a drop or the system gives (the web's `File`): `size` in
+-- bytes, `type` its media type by its extension ("image/png"; "" unknown).
+export type File = { path: string, name: string, size: number, type: string }
 export type FilePickerOptions = {
 	title: string?,
 	-- Where the dialog opens.
@@ -764,6 +812,13 @@ export type FilePickerOptions = {
 	-- `{ { "Images", { "png", "jpg" } } }`: extensions without the dot.
 	filters: { { any } }?,
 	multiple: boolean?,
+}
+-- `ui.open_folder`'s: a dialog's, and `remember`, a key the host keeps the
+-- folder under past the run (`ui.remembered_folder`).
+export type FolderPickerOptions = {
+	title: string?,
+	directory: string?,
+	remember: string?,
 }
 
 -- A value to come (`ui.call`, `ui.fetch`, the file functions), of type
@@ -824,7 +879,8 @@ export type Router = {
 	-- Whether the route is `name` now (tracked).
 	is: (name: RouteName) -> boolean,
 	-- What each route shows: a node or a function of its params; the mouse's
-	-- back and forward buttons over it go back and forward.
+	-- back and forward buttons over it, and a trackpad's swipe between pages,
+	-- go back and forward.
 	view: (cases: RouteCases, props: ContainerProps?) -> Node,
 }
 export type FormSpec = {
@@ -920,6 +976,58 @@ export type Paged<T> = {
 	more: () -> (),
 	-- Load again from the first page, a load still out cancelled.
 	reload: () -> (),
+}
+
+-- How a socket opens again after its connection ends (`ui.socket`'s
+-- `reconnect`): `min` ms after the first, `factor` times longer each
+-- attempt after, at most `max`, give or take `jitter` of it (0 to 1), for
+-- at most `attempts`.
+export type SocketReconnect = {
+	min: number?,
+	max: number?,
+	factor: number?,
+	jitter: number?,
+	attempts: number?,
+}
+
+export type SocketOptions = {
+	-- The subprotocols to ask for.
+	protocols: { string }?,
+	-- true (the default: 500 ms, doubling, at most 30 s, give or take
+	-- 20%, without end), false, or the wait's shape.
+	reconnect: (boolean | SocketReconnect)?,
+	-- Text messages decoded as JSON before `on_message`.
+	json: boolean?,
+	-- The most bytes queued unsent: past it, `send` refuses (16 MB).
+	max_buffered: number?,
+	-- Each message: text (or, `json`, what it decodes to), or a binary
+	-- message's bytes as a string, `binary` true.
+	on_message: ((message: any, binary: boolean) -> ())?,
+	on_open: (() -> ())?,
+	-- The connection ended, with its error if it failed.
+	on_close: ((error: UiError?) -> ())?,
+}
+
+-- A connection kept open (`ui.socket`).
+export type Socket = {
+	status: State<"connecting" | "open" | "reconnecting" | "closed">,
+	-- Attempts since it was last open (0 while open).
+	attempt: State<number>,
+	-- The wait before the next attempt, in ms (0 unless reconnecting).
+	retry_in: State<number>,
+	-- Bytes sent but not yet taken by the connection.
+	buffered: State<number>,
+	-- Why it last ended or failed (tracked), or nil.
+	error: UiError?,
+	-- Queue a message: a string as text, any other value as JSON. False if
+	-- it is closed for good or `max_buffered` would be passed.
+	send: (message: any) -> boolean,
+	-- Queue a binary message: the string's bytes.
+	send_bytes: (bytes: string) -> boolean,
+	-- Close it; only `reconnect()` opens it again.
+	close: () -> (),
+	-- Open it again now, a wait under way cut short.
+	reconnect: () -> (),
 }
 
 -- A mounted node a script reaches: through `on_mount`, `on_resize`, a ref
@@ -1062,6 +1170,16 @@ export type StrokeOptions = {
 	draw: Pair?,
 }
 -- What a canvas's `draw(c, w, h)` paints with.
+export type CanvasTextOptions = {
+	size: number?,
+	color: Color?,
+	weight: number?,
+	italic: boolean?,
+	tabular: boolean?,
+	font: string?,
+	align: ("start" | "center" | "end")?,
+	baseline: ("top" | "middle" | "bottom")?,
+}
 declare extern type Canvas with
 	function rect(self, x: number, y: number, w: number, h: number, paint: Paint, radius: number?): ()
 	function circle(self, cx: number, cy: number, r: number, paint: Paint): ()
@@ -1071,6 +1189,10 @@ declare extern type Canvas with
 	-- Clips what follows to the path, until `restore`.
 	function clip(self, path: Path): ()
 	function restore(self): ()
+	-- A line of text at (x, y), over the shapes whatever their order.
+	function text(self, text: string, x: number, y: number, opts: CanvasTextOptions?): ()
+	-- Its width and height, for placing what goes around it.
+	function measure_text(self, text: string, opts: CanvasTextOptions?): (number, number)
 end
 
 -- `ui.web(opts)`: a web page's controller. Its fields are tracked, so a
@@ -1195,7 +1317,19 @@ export type TermOptions = {
 	-- A shell-integrated command finished.
 	on_command: ((exit_code: number?, duration_ms: number) -> ...unknown)?,
 	on_notify: ((title: string, body: string) -> ...unknown)?,
+	-- A program asks to read the clipboard (OSC 52): answer with
+	-- `request:allow()` (it gets the clipboard's text) or `request:deny()`,
+	-- now or after asking the user; a request let go is denied. Without
+	-- this, the platform terminal answers (Ghostty asks; zgx's denies).
+	on_clipboard_read: ((request: ClipboardReadRequest) -> ...unknown)?,
 	[number]: never,
+}
+
+-- A program's request to read the clipboard (`on_clipboard_read`). It
+-- answers once.
+export type ClipboardReadRequest = {
+	allow: (self: ClipboardReadRequest) -> (),
+	deny: (self: ClipboardReadRequest) -> (),
 }
 
 -- `ui.command(opts)`: an app command, shown as a menu item; its key
@@ -1224,20 +1358,49 @@ export type CommandOptions = {
 -- settings window), open while `open` is true; closing it sets `open` false.
 -- Its node is its content. It shares the app's state.
 export type WindowOptions = {
-	id: string,
+	read id: string,
 	-- Defaults to the id.
-	title: string?,
+	read title: string?,
 	-- Points; 480 by 360 by default.
-	width: number?,
-	height: number?,
-	open: State<boolean>,
+	read width: number?,
+	read height: number?,
+	read open: State<boolean>,
 	-- Its frame saved under this name as it moves and resizes, and reopened
 	-- where it was left (macOS).
-	frame_autosave: string?,
+	read frame_autosave: string?,
 	-- AppKit's window tabs (macOS): as the user's setting says, always, or
 	-- never (a window with tabs of its own).
-	tabbing: ("automatic" | "preferred" | "disallowed")?,
-	[number]: Node,
+	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	-- Where it opens: its top-left this far up and left of the pointer, as
+	-- `on_drag_outside`'s `{ e.grab_x, e.grab_y }` (a tab torn off stays
+	-- under the grab).
+	read under_pointer: { number }?,
+	-- False, or a state that is: made hidden, laid out and drawn meanwhile,
+	-- and shown whole as it turns true (on Wayland drawn as it shows).
+	read visible: (boolean | State<boolean>)?,
+	read [number]: Node | ((win: OwnWindow) -> Node),
+}
+
+-- A window's own state, as its content reads it: whether it is the active
+-- window, whether it shows, and its size in points. `ui.window.active` and the
+-- rest are the app's main window's.
+export type OwnWindow = {
+	read active: State<boolean>,
+	read shown: State<boolean>,
+	read size: State<{ width: number, height: number }>,
+}
+
+-- What `ui.windows`' `build` gives an item's window: `ui.window`'s options
+-- without `id` and `open`.
+export type ItemWindow = {
+	read title: string?,
+	read width: number?,
+	read height: number?,
+	read frame_autosave: string?,
+	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	read under_pointer: { number }?,
+	read visible: (boolean | State<boolean>)?,
+	read [number]: Node,
 }
 
 -- A rect in points, from the window's top left.
@@ -1253,12 +1416,28 @@ export type WindowRect = { x: number, y: number, width: number, height: number }
 -- browser's page zoom (1 at 100%; Cmd/Ctrl +, - and 0 change it, and
 -- setting it zooms the window, within 0.25 to 5); `zoomable` false turns
 -- the keys off.
-export type WindowApi = ((opts: WindowOptions) -> ()) & {
-	titlebar_area: State<WindowRect?>,
-	controls: State<WindowRect?>,
-	zoom: State<number>,
-	zoomable: State<boolean>,
-}
+-- An extern type: a function and a table can't intersect, so that would be
+-- `never`, and `ui`, holding one, would stop reporting its unknown members.
+declare extern type WindowApi with
+	titlebar_area: State<WindowRect?>
+	controls: State<WindowRect?>
+	zoom: State<number>
+	zoomable: State<boolean>
+	-- Whether the app's window shows: false while zgx.json's `"visible":
+	-- false` keeps it hidden (laid out and drawn meanwhile); setting it true
+	-- shows the window whole, at once.
+	visible: State<boolean>
+	-- Whether the window is the active one (keys go to it), and whether it
+	-- shows (not hidden, minimized or covered): what arrives while either
+	-- is false is worth a notification or a badge.
+	active: State<boolean>
+	shown: State<boolean>
+	-- The window's size in points, read-only and followed: for decisions
+	-- layout can't make (a sidebar collapsing to icons below a width).
+	-- Sizes themselves are layout's: percentages, `grow`, `max_w`.
+	size: State<{ width: number, height: number }>
+	function __call(self, opts: WindowOptions): ()
+end
 
 ---------------------------------------------------------------------------
 -- Properties.
@@ -1363,6 +1542,9 @@ export type PinchEvent = {
 	cmd: boolean,
 	scale: number,
 }
+-- A step back or forward the platform's gesture for it takes: a trackpad's
+-- swipe between pages (macOS).
+export type NavigateEvent = { direction: "back" | "forward" }
 -- What a drag carries to other apps (`drag_export`): text, a link, files
 -- (absolute paths).
 export type DragExport = { text: string?, url: string?, files: { string }? }
@@ -1434,8 +1616,26 @@ export type Styles = {
 	self: Align?,
 	content: AlignContent?,
 	grid: boolean?,
-	cols: number?,
-	rows: number?,
+	-- "contents": its children lay out in its place, as its parent's own
+	-- (CSS `display: contents`); on `ui.each`, its rows are the grid's cells.
+	display: "contents"?,
+	-- A grid's tracks: a number of equal ones, or a list as CSS's
+	-- `grid-template-columns` writes it: "220 1fr auto",
+	-- "repeat(auto-fill, minmax(240, 1fr))". A bare number is points.
+	cols: (number | string)?,
+	rows: (number | string)?,
+	-- Named areas, a string a row (`grid-template-areas`): { "head head",
+	-- "side main" }; items place themselves with `area`.
+	areas: ({ string } | string)?,
+	-- How items without a place fill the grid (`grid-auto-flow`): "row",
+	-- "column", "dense", "column dense".
+	flow: string?,
+	-- An item's area by name (`grid-area`).
+	area: string?,
+	-- An item's lines (`grid-column`, `grid-row`): "side / main",
+	-- "2 / span 3", a number.
+	grid_column: (string | number)?,
+	grid_row: (string | number)?,
 	col_start: number?,
 	row_start: number?,
 	col_span: number?,
@@ -1445,11 +1645,17 @@ export type Styles = {
 	overflow: Overflow?,
 	overflow_x: Overflow?,
 	overflow_y: Overflow?,
+	-- Painted and hit over its siblings with a lower `z`, under those with
+	-- a higher; 0, as written. Among its siblings only, unlike CSS's
+	-- `z-index`; focus and the accessibility tree keep document order.
+	z: number?,
+	sticky_top: number?,
 	hidden: boolean?,
 	invisible: boolean?,
 	-- Paint.
 	bg: Color?,
 	gradient: Gradient?,
+	radial: RadialGradient?,
 	color: Color?,
 	bg_image: string?,
 	bg_fit: Fit?,
@@ -1464,12 +1670,23 @@ export type Styles = {
 	border_color: Color?,
 	border_over: boolean?,
 	border_dash: Pair?,
+	-- "dotted": round dots as wide as the border, evenly round the box
+	-- (CSS's `border-style`); dashes are `border_dash`.
+	border_style: ("solid" | "dotted")?,
 	-- An outline around the box (CSS's): its width, colour, and how far
 	-- outside it starts (negative: over the box's edge, an inset ring).
 	outline: Num?,
 	outline_color: Color?,
 	outline_offset: Num?,
+	-- How the outline is drawn (CSS's `outline-style`): dotted, or dashed
+	-- `{ length, gap }` (`outline_dash`).
+	outline_style: ("solid" | "dotted")?,
+	outline_dash: Pair?,
 	shadow: Shadow?,
+	-- Under a text's glyphs, as CSS `text-shadow`: `{ x, y, blur, color }`, or
+	-- a list, the first on top. Inherited by the text inside; `blur` is a
+	-- Gaussian's sigma in points. It paints past the text's box.
+	text_shadow: Shadow?,
 	-- Shadows inside the box (CSS's inset): a ring as wide on each side as
 	-- the offset pushes it, plus the spread; drawn sharp (no blur).
 	inset_shadow: Shadow?,
@@ -1477,6 +1694,9 @@ export type Styles = {
 	brightness: number?,
 	contrast: number?,
 	saturate: number?,
+	hue_rotate: number?,
+	sepia: number?,
+	invert: number?,
 	-- Mixes the node with what lies beneath it (CSS `mix-blend-mode`).
 	blend: BlendMode?,
 	blur: number?,
@@ -1500,8 +1720,20 @@ export type Styles = {
 	-- `rounded` and an animated clip inset, a soft oval that opens.
 	clip_feather: number?,
 	layer: boolean?,
+	-- Where an image lies in its box, as fractions of the room to spare:
+	-- { 0.5, 0 } keeps a portrait's top under fit = "cover".
+	object_position: { number }?,
 	fit: Fit?,
+	-- How an image (or a background image) is sampled drawn larger or
+	-- smaller (CSS's `image-rendering`): "pixelated", the nearest pixel, its
+	-- edges hard (pixel art, a QR code); "auto", smooth.
+	image_rendering: ("auto" | "pixelated")?,
 	tint: Color?,
+	-- When its file decodes (HTML's `decoding`): "auto", where a picture up
+	-- to 256 by 256 decodes as it is first drawn and a larger one off the
+	-- main thread, showing a frame later; "sync" waits for it, any size;
+	-- "async" never waits.
+	decode: ("auto" | "sync" | "async")?,
 	-- An image drawn dithered as Zeron dithers wallpapers, in dots this many
 	-- points square: each lit to its colour's full value or dimmed to 8% by a
 	-- 4x4 Bayer threshold, on the GPU as it draws (it follows the image as it
@@ -1521,13 +1753,14 @@ export type Styles = {
 	italic: boolean?,
 	align: TextAlign?,
 	font: Font?,
-	wrap: boolean?,
+	wrap: (boolean | "balance")?,
 	truncate: boolean?,
 	lines: number?,
 	line_height: Num?,
 	letter_spacing: Num?,
 	-- Tabular figures: every digit the same width.
 	tabular: boolean?,
+	font_features: string?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: boolean?,
@@ -1608,8 +1841,14 @@ export type StyleProps = {
 	self: Reactive<Align>?,
 	content: Reactive<AlignContent>?,
 	grid: Reactive<boolean>?,
-	cols: Reactive<number>?,
-	rows: Reactive<number>?,
+	display: Reactive<string>?,
+	cols: Reactive<number | string>?,
+	rows: Reactive<number | string>?,
+	areas: Reactive<{ string } | string>?,
+	flow: Reactive<string>?,
+	area: Reactive<string>?,
+	grid_column: Reactive<string | number>?,
+	grid_row: Reactive<string | number>?,
 	col_start: Reactive<number>?,
 	row_start: Reactive<number>?,
 	col_span: Reactive<number>?,
@@ -1619,11 +1858,16 @@ export type StyleProps = {
 	overflow: Reactive<Overflow>?,
 	overflow_x: Reactive<Overflow>?,
 	overflow_y: Reactive<Overflow>?,
+	z: Reactive<number>?,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Reactive<number>?,
 	hidden: Reactive<boolean>?,
 	invisible: Reactive<boolean>?,
 	-- Paint.
 	bg: Reactive<Color>?,
 	gradient: Reactive<Gradient>?,
+	radial: Reactive<RadialGradient>?,
 	color: Reactive<Color>?,
 	bg_image: Reactive<string>?,
 	bg_fit: Reactive<Fit>?,
@@ -1639,15 +1883,22 @@ export type StyleProps = {
 	border_over: Reactive<boolean>?,
 	-- A function may return nil: a solid border.
 	border_dash: Reactive<Pair?>?,
+	border_style: ("solid" | "dotted")?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
+	outline_style: ("solid" | "dotted")?,
+	outline_dash: Reactive<Pair?>?,
 	shadow: Reactive<Shadow>?,
+	text_shadow: Reactive<Shadow>?,
 	inset_shadow: Reactive<Shadow>?,
 	opacity: Reactive<Num>?,
 	brightness: Reactive<number>?,
 	contrast: Reactive<number>?,
 	saturate: Reactive<number>?,
+	hue_rotate: Reactive<number>?,
+	sepia: Reactive<number>?,
+	invert: Reactive<number>?,
 	blend: Reactive<BlendMode>?,
 	blur: Reactive<number>?,
 	backdrop_blur: Reactive<Num>?,
@@ -1661,8 +1912,11 @@ export type StyleProps = {
 	clip_inset: Reactive<Sides>?,
 	clip_feather: Reactive<number>?,
 	layer: Reactive<boolean>?,
+	object_position: Reactive<{ number }>?,
 	fit: Reactive<Fit>?,
+	image_rendering: ("auto" | "pixelated")?,
 	tint: Reactive<Color>?,
+	decode: ("auto" | "sync" | "async")?,
 	dither: number?,
 	characters: number?,
 	cursor: Reactive<Cursor>?,
@@ -1673,13 +1927,16 @@ export type StyleProps = {
 	italic: Reactive<boolean>?,
 	align: Reactive<TextAlign>?,
 	font: Reactive<Font>?,
-	wrap: Reactive<boolean>?,
+	wrap: Reactive<boolean | "balance">?,
 	truncate: Reactive<boolean>?,
 	lines: Reactive<number>?,
 	line_height: Reactive<Num>?,
 	letter_spacing: Reactive<Num>?,
 	-- Tabular figures: every digit the same width.
 	tabular: Reactive<boolean>?,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Reactive<string>?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Reactive<boolean>?,
@@ -1734,6 +1991,8 @@ export type AriaRole =
 	| "alert"
 	| "menu"
 	| "menuitem"
+	| "menuitemcheckbox"
+	| "menuitemradio"
 export type NodeProps = {
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -1788,6 +2047,11 @@ export type NodeProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: ("target" | "shown")?,
 	window_drag: boolean?,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -1803,6 +2067,7 @@ export type NodeProps = {
 	-- tokens; a state or function follows.
 	selection_color: Reactive<Color>?,
 	selected_text_color: Reactive<Color>?,
+	selection_radius: Reactive<number>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -1849,6 +2114,17 @@ export type NodeProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: (((e: AuxClickEvent) -> ...unknown) | Action)?,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: (((e: NavigateEvent) -> ...unknown) | Action)?,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: ((files: { File }, e: PointerEvent) -> ...unknown)?,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: ((over: boolean) -> ...unknown)?,
 	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
 	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
 	-- Return true to consume the key.
@@ -1976,8 +2252,14 @@ export type Props = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -1987,11 +2269,16 @@ export type Props = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -2007,15 +2294,22 @@ export type Props = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -2029,8 +2323,11 @@ export type Props = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -2048,6 +2345,9 @@ export type Props = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -2119,6 +2419,11 @@ export type Props = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -2134,6 +2439,7 @@ export type Props = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2180,6 +2486,17 @@ export type Props = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -2295,8 +2612,14 @@ export type Props_justify = Reactive<Justify>?
 export type Props_self = Reactive<Align>?
 export type Props_content = Reactive<AlignContent>?
 export type Props_grid = Reactive<boolean>?
-export type Props_cols = Reactive<number>?
-export type Props_rows = Reactive<number>?
+export type Props_display = Reactive<string>?
+export type Props_cols = Reactive<number | string>?
+export type Props_rows = Reactive<number | string>?
+export type Props_areas = Reactive<{ string } | string>?
+export type Props_flow = Reactive<string>?
+export type Props_area = Reactive<string>?
+export type Props_grid_column = Reactive<string | number>?
+export type Props_grid_row = Reactive<string | number>?
 export type Props_col_start = Reactive<number>?
 export type Props_row_start = Reactive<number>?
 export type Props_col_span = Reactive<number>?
@@ -2306,10 +2629,13 @@ export type Props_row_span_full = Reactive<boolean>?
 export type Props_overflow = Reactive<Overflow>?
 export type Props_overflow_x = Reactive<Overflow>?
 export type Props_overflow_y = Reactive<Overflow>?
+export type Props_z = Reactive<number>?
+export type Props_sticky_top = Reactive<number>?
 export type Props_hidden = Reactive<boolean>?
 export type Props_invisible = Reactive<boolean>?
 export type Props_bg = Reactive<Color>?
 export type Props_gradient = Reactive<Gradient>?
+export type Props_radial = Reactive<RadialGradient>?
 export type Props_color = Reactive<Color>?
 export type Props_bg_image = Reactive<string>?
 export type Props_bg_fit = Reactive<Fit>?
@@ -2324,15 +2650,22 @@ export type Props_border_sides = Reactive<Sides>?
 export type Props_border_color = Reactive<Color>?
 export type Props_border_over = Reactive<boolean>?
 export type Props_border_dash = Reactive<Pair?>?
+export type Props_border_style = ("solid" | "dotted")?
 export type Props_outline = Reactive<Num>?
 export type Props_outline_color = Reactive<Color>?
 export type Props_outline_offset = Reactive<Num>?
+export type Props_outline_style = ("solid" | "dotted")?
+export type Props_outline_dash = Reactive<Pair?>?
 export type Props_shadow = Reactive<Shadow>?
+export type Props_text_shadow = Reactive<Shadow>?
 export type Props_inset_shadow = Reactive<Shadow>?
 export type Props_opacity = Reactive<Num>?
 export type Props_brightness = Reactive<number>?
 export type Props_contrast = Reactive<number>?
 export type Props_saturate = Reactive<number>?
+export type Props_hue_rotate = Reactive<number>?
+export type Props_sepia = Reactive<number>?
+export type Props_invert = Reactive<number>?
 export type Props_blend = Reactive<BlendMode>?
 export type Props_blur = Reactive<number>?
 export type Props_backdrop_blur = Reactive<Num>?
@@ -2346,8 +2679,11 @@ export type Props_zoom_fixed = Reactive<boolean>?
 export type Props_clip_inset = Reactive<Sides>?
 export type Props_clip_feather = Reactive<number>?
 export type Props_layer = Reactive<boolean>?
+export type Props_object_position = Reactive<{ number }>?
 export type Props_fit = Reactive<Fit>?
+export type Props_image_rendering = ("auto" | "pixelated")?
 export type Props_tint = Reactive<Color>?
+export type Props_decode = ("auto" | "sync" | "async")?
 export type Props_dither = number?
 export type Props_characters = number?
 export type Props_cursor = Reactive<Cursor>?
@@ -2357,12 +2693,13 @@ export type Props_bold = Reactive<boolean>?
 export type Props_italic = Reactive<boolean>?
 export type Props_align = Reactive<TextAlign>?
 export type Props_font = Reactive<Font>?
-export type Props_wrap = Reactive<boolean>?
+export type Props_wrap = Reactive<boolean | "balance">?
 export type Props_truncate = Reactive<boolean>?
 export type Props_lines = Reactive<number>?
 export type Props_line_height = Reactive<Num>?
 export type Props_letter_spacing = Reactive<Num>?
 export type Props_tabular = Reactive<boolean>?
+export type Props_font_features = Reactive<string>?
 export type Props_underline = Reactive<boolean>?
 export type Props_underline_offset = Reactive<Num>?
 export type Props_x = Reactive<number>?
@@ -2396,12 +2733,14 @@ export type Props_error = (string | Readable<string?> | (() -> string?))?
 export type Props_aria_hidden = boolean?
 export type Props_focus_group = ("vertical" | "horizontal" | "both")?
 export type Props_pointer_events = (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?
+export type Props_hit = ("target" | "shown")?
 export type Props_window_drag = boolean?
 export type Props_hook = (string | boolean)?
 export type Props_private = boolean?
 export type Props_selectable = boolean?
 export type Props_selection_color = Reactive<Color>?
 export type Props_selected_text_color = Reactive<Color>?
+export type Props_selection_radius = Reactive<number>?
 export type Props_tooltip = (string | Node)?
 export type Props_tooltip_placement = Placement?
 export type Props_tooltip_interactive = boolean?
@@ -2425,6 +2764,10 @@ export type Props_on_click = (ClickHandler | Handler | Action)?
 export type Props_on_press = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_release = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_aux_click = (((e: AuxClickEvent) -> ...unknown) | Action)?
+export type Props_on_double_click = (((e: PointerEvent) -> ...unknown) | Action)?
+export type Props_on_navigate = (((e: NavigateEvent) -> ...unknown) | Action)?
+export type Props_on_file_drop = ((files: { File }, e: PointerEvent) -> ...unknown)?
+export type Props_on_file_hover = ((over: boolean) -> ...unknown)?
 export type Props_on_hover = (((inside: boolean) -> ...unknown) | Action)?
 export type Props_on_pointer_move = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_key = (((e: KeyEvent) -> ...boolean?) | Action)?
@@ -2509,8 +2852,14 @@ export type ContainerProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -2520,11 +2869,16 @@ export type ContainerProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -2540,15 +2894,22 @@ export type ContainerProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -2562,8 +2923,11 @@ export type ContainerProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -2581,6 +2945,9 @@ export type ContainerProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -2652,6 +3019,11 @@ export type ContainerProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -2667,6 +3039,7 @@ export type ContainerProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2713,6 +3086,17 @@ export type ContainerProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -2840,8 +3224,14 @@ export type ScrollProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -2851,11 +3241,16 @@ export type ScrollProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -2871,15 +3266,22 @@ export type ScrollProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -2893,8 +3295,11 @@ export type ScrollProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -2912,6 +3317,9 @@ export type ScrollProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -2983,6 +3391,11 @@ export type ScrollProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -2998,6 +3411,7 @@ export type ScrollProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3044,6 +3458,17 @@ export type ScrollProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3121,6 +3546,10 @@ export type ScrollProps = {
 	-- An interactive scrollbar over the trailing edge (none by default).
 	scrollbar: boolean?,
 	follow: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 }
 -- `ui.text { "Count: {count}", text_size = 18 }`: the text first.
 export type TextProps = {
@@ -3178,8 +3607,14 @@ export type TextProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -3189,11 +3624,16 @@ export type TextProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -3209,15 +3649,22 @@ export type TextProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -3231,8 +3678,11 @@ export type TextProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -3250,6 +3700,9 @@ export type TextProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -3321,6 +3774,11 @@ export type TextProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -3336,6 +3794,7 @@ export type TextProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3382,6 +3841,17 @@ export type TextProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3508,8 +3978,14 @@ export type MarkdownViewProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -3519,11 +3995,16 @@ export type MarkdownViewProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -3539,15 +4020,22 @@ export type MarkdownViewProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -3561,8 +4049,11 @@ export type MarkdownViewProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -3580,6 +4071,9 @@ export type MarkdownViewProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -3651,6 +4145,11 @@ export type MarkdownViewProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -3666,6 +4165,7 @@ export type MarkdownViewProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3712,6 +4212,17 @@ export type MarkdownViewProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -3787,18 +4298,26 @@ export type MarkdownViewProps = {
 export type SpanProps = {
 	-- The text first.
 	[number]: Text,
-	color: Color?,
-	bg: Color?,
-	text_size: number?,
-	weight: number?,
-	bold: boolean?,
-	italic: boolean?,
-	underline: boolean?,
+	-- These follow a state or a function: a change builds the paragraph
+	-- again, keeping its node and any selection in it.
+	color: Reactive<Color>?,
+	bg: Reactive<Color>?,
+	text_size: Reactive<number>?,
+	weight: Reactive<number>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	underline: Reactive<boolean>?,
+	strike: Reactive<boolean>?,
+	-- As `ui.text`'s: "mono", "sans", "serif" or a family's name.
+	font: Reactive<string>?,
 	-- How far below the baseline the underline sits (CSS's
 	-- `text-underline-offset`).
 	underline_offset: number?,
-	strike: boolean?,
-	font: "mono"?,
+	-- How the underline is drawn, its colour and its thickness; any of them
+	-- underlines the span. `"wavy"` marks a mistake or a diagnostic.
+	underline_style: ("solid" | "double" | "dotted" | "dashed" | "wavy")?,
+	underline_color: Color?,
+	underline_thickness: number?,
 	-- A link (`on_click`) under the pointer: underlined, recoloured. With
 	-- it, the link isn't underlined at rest unless `underline` says so.
 	hover: { underline: boolean?, color: Color? }?,
@@ -3886,8 +4405,14 @@ export type RichProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -3897,11 +4422,16 @@ export type RichProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -3917,15 +4447,22 @@ export type RichProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -3939,8 +4476,11 @@ export type RichProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -3958,6 +4498,9 @@ export type RichProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -4029,6 +4572,11 @@ export type RichProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -4044,6 +4592,7 @@ export type RichProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4090,6 +4639,17 @@ export type RichProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4210,8 +4770,14 @@ export type ImageProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -4221,11 +4787,16 @@ export type ImageProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -4241,15 +4812,22 @@ export type ImageProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -4263,8 +4841,11 @@ export type ImageProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -4282,6 +4863,9 @@ export type ImageProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -4353,6 +4937,11 @@ export type ImageProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -4368,6 +4957,7 @@ export type ImageProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4414,6 +5004,17 @@ export type ImageProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4544,8 +5145,14 @@ export type SvgProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -4555,11 +5162,16 @@ export type SvgProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -4575,15 +5187,22 @@ export type SvgProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -4597,8 +5216,11 @@ export type SvgProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -4616,6 +5238,9 @@ export type SvgProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -4687,6 +5312,11 @@ export type SvgProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -4702,6 +5332,7 @@ export type SvgProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4748,6 +5379,17 @@ export type SvgProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -4875,6 +5517,9 @@ export type ModelProps = {
 	-- Scaled to this many units across (its largest side), centred on its
 	-- position; nil: as the file has it.
 	fit: number?,
+	-- The animation it plays, round and round: a clip's name, or its place
+	-- in the file (from 1).
+	animation: (string | number)?,
 	-- As a group's: it hears its meshes'.
 	on_click: ((hit: Hit3D) -> ())?,
 	on_hover: ((over: boolean) -> ())?,
@@ -4902,6 +5547,18 @@ export type Orbit3D = {
 	auto_rotate: Reactive<number>?,
 	-- Whether scrolling and pinching move it in and out (default true).
 	zoom: boolean?,
+	-- Whether dragging with the secondary or middle button, or with Shift,
+	-- moves what it looks at (default true).
+	pan: boolean?,
+}
+export type Environment3D = {
+	-- "studio" (built in, the default) or a Radiance .hdr file
+	-- (equirectangular), from the script's directory.
+	src: string?,
+	-- How bright its light is (default 1).
+	intensity: Reactive<number>?,
+	-- Degrees it is turned about the vertical.
+	rotation: Reactive<number>?,
 }
 export type Scene3DProps = {
 	-- Size and position.
@@ -4958,8 +5615,14 @@ export type Scene3DProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -4969,11 +5632,16 @@ export type Scene3DProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -4989,15 +5657,22 @@ export type Scene3DProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -5011,8 +5686,11 @@ export type Scene3DProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -5030,6 +5708,9 @@ export type Scene3DProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -5101,6 +5782,11 @@ export type Scene3DProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -5116,6 +5802,7 @@ export type Scene3DProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5162,6 +5849,17 @@ export type Scene3DProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5227,13 +5925,27 @@ export type Scene3DProps = {
 	-- Its accessible name.
 	label: string?,
 	camera: Camera3D?,
-	-- Dragging turns the camera about its target, scrolling and pinching
-	-- move it in and out.
+	-- Dragging turns the camera about its target (coasting on after a flick
+	-- unless reduced motion is on), right-dragging or Shift-dragging pans,
+	-- scrolling and pinching move it in and out; focused, the arrow keys
+	-- turn it (pan with Shift), + and - zoom, Home puts it back.
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
 	-- The sun (the first directional light) casts shadows from opaque meshes.
 	shadows: boolean?,
+	-- The light all around (image-based): reflected by every lit surface,
+	-- sharp in polished metal, blurred in rough. Unsaid, a scene showing a
+	-- ui.model has the studio, others none.
+	environment: ("studio" | "none" | string | Environment3D)?,
+	-- How lit colours map to the display: "neutral" (the default; colours
+	-- read true), "aces" (filmic contrast) or "linear" (clamped).
+	tone_mapping: ("neutral" | "aces" | "linear")?,
+	-- Stops of exposure: each doubles the light (default 0).
+	exposure: Reactive<number>?,
+	-- Smooth edges, 4 samples a pixel (default true); false draws them hard
+	-- for less GPU work and memory.
+	antialias: boolean?,
 	[number]: Object3D,
 }
 export type CanvasProps = {
@@ -5291,8 +6003,14 @@ export type CanvasProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -5302,11 +6020,16 @@ export type CanvasProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -5322,15 +6045,22 @@ export type CanvasProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -5344,8 +6074,11 @@ export type CanvasProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -5363,6 +6096,9 @@ export type CanvasProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -5434,6 +6170,11 @@ export type CanvasProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -5449,6 +6190,7 @@ export type CanvasProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5495,6 +6237,17 @@ export type CanvasProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5647,8 +6400,14 @@ export type CheckboxProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -5658,11 +6417,16 @@ export type CheckboxProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -5678,15 +6442,22 @@ export type CheckboxProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -5700,8 +6471,11 @@ export type CheckboxProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -5719,6 +6493,9 @@ export type CheckboxProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -5790,6 +6567,11 @@ export type CheckboxProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -5805,6 +6587,7 @@ export type CheckboxProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5851,6 +6634,17 @@ export type CheckboxProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -5981,8 +6775,14 @@ export type InputProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -5992,11 +6792,16 @@ export type InputProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -6012,15 +6817,22 @@ export type InputProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -6034,8 +6846,11 @@ export type InputProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -6053,6 +6868,9 @@ export type InputProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -6124,6 +6942,11 @@ export type InputProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -6139,6 +6962,7 @@ export type InputProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6185,6 +7009,17 @@ export type InputProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6285,7 +7120,37 @@ export type InputProps = {
 	-- checker marks misspelled words with a dotted line, and its context
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
 	-- password field. A state or function follows it (a setting).
+	-- Hears a person's paste before it goes in, from a key, a menu or a
+	-- middle click (HTML's `paste` event): `text` is the clipboard's, nil
+	-- where it holds no text (an image: `ui.clipboard.read_image`), and
+	-- `files` those copied in a file manager, readable as `ui.open_files`'s
+	-- are (a copied file may also put its name in `text`). Returning true
+	-- takes the paste, so nothing goes in: a composer making a picture, a
+	-- file or a long text an attachment. `el:replace_selection` doesn't
+	-- call it.
+	on_paste: ((e: { text: string?, files: { File } }) -> boolean?)?,
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Correct a misspelled word as it ends, and expand the person's text
+	-- replacements ("omw" to "On my way!"), as the system's own fields do
+	-- where the person has them on (macOS). Undo puts back what was typed.
+	-- Not in a password field.
+	autocorrect: boolean?,
+	-- Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’,
+	-- — for --), where the person has the system's smart quotes and dashes
+	-- on (macOS). Undo puts back what was typed. Off for code and data.
+	smart_punctuation: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
+	-- Selectable and focusable, the person's edits refused (HTML's
+	-- `readonly`): a log, a generated file. `value` still sets the text.
+	read_only: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- The `id` of the suggestion it is on (HTML's `aria-activedescendant`),
+	-- nil for none: focus stays here, moving through a list of them with
+	-- its keys (a mention's, in a popover `at_caret`), and assistive
+	-- technology hears the one it is on.
+	active_descendant: (string | Readable<string?> | (() -> string?))?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 	-- Several lines only: a line's styles, asked for the lines in view and
@@ -6294,13 +7159,18 @@ export type InputProps = {
 	-- color }` (bytes counted from 1, as `string.find` gives them; `color`
 	-- a colour or `"$token"`, or left out) with `weight`, `italic`,
 	-- `strike` and `bg` by name (`HighlightSpan`), and what the line leaves
-	-- the next (a block comment or string running on: any number of the
-	-- highlighter's). It must depend on nothing but its arguments.
-	highlight: ((line: string, state: number) -> ({ HighlightSpan }?, number?))?,
+	-- the next (a block comment or string running on: any value, a
+	-- number, a string, a table; the same string or number is the same
+	-- state, a table the same one only as itself). It must depend on
+	-- nothing but its arguments.
+	highlight: ((line: string, state: any) -> ({ HighlightSpan }?, any))?,
 	-- Several lines only: ranges of the whole text marked behind it (a
 	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
 	-- from 1; only those in view are drawn.
 	decorations: (State<any> | (() -> { { any } }))?,
+	-- Ranges underlined: `{ { from = 1, to = 5, style = "wavy" } }`, a
+	-- spelling mistake's or a diagnostic's.
+	underlines: (State<any> | (() -> { { any } }))?,
 	-- Several lines only: a search's matches marked behind the text, found
 	-- by the editor where the text is held; `current` (from 1) stronger.
 	find: {
@@ -6320,6 +7190,9 @@ export type InputProps = {
 	-- column in characters) and the selection's anchor and focus in bytes
 	-- from 0 (as `selection_bytes`).
 	on_caret: ((line: number, column: number, anchor: number, focus: number) -> ())?,
+	-- The first line in view, from 1, whenever it changes: an outline following
+	-- the text.
+	on_top_line: ((line: number) -> ())?,
 }
 -- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
 -- stretch of the bar sweeping across.
@@ -6378,8 +7251,14 @@ export type ProgressProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -6389,11 +7268,16 @@ export type ProgressProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -6409,15 +7293,22 @@ export type ProgressProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -6431,8 +7322,11 @@ export type ProgressProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -6450,6 +7344,9 @@ export type ProgressProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -6521,6 +7418,11 @@ export type ProgressProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -6536,6 +7438,7 @@ export type ProgressProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6582,6 +7485,17 @@ export type ProgressProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -6645,7 +7559,7 @@ export type ProgressProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<number> | State<number?>,
+	value: State<number> | State<number?> | number | (() -> number?),
 	label: Label?,
 }
 export type SliderProps = {
@@ -6703,8 +7617,14 @@ export type SliderProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -6714,11 +7634,16 @@ export type SliderProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -6734,15 +7659,22 @@ export type SliderProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -6756,8 +7688,11 @@ export type SliderProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -6775,6 +7710,9 @@ export type SliderProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -6846,6 +7784,11 @@ export type SliderProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -6861,6 +7804,7 @@ export type SliderProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6907,6 +7851,17 @@ export type SliderProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7043,8 +7998,14 @@ export type SegmentedProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -7054,11 +8015,16 @@ export type SegmentedProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -7074,15 +8040,22 @@ export type SegmentedProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -7096,8 +8069,11 @@ export type SegmentedProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -7115,6 +8091,9 @@ export type SegmentedProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -7186,6 +8165,11 @@ export type SegmentedProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -7201,6 +8185,7 @@ export type SegmentedProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -7247,6 +8232,17 @@ export type SegmentedProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7379,8 +8375,14 @@ export type StepperProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -7390,11 +8392,16 @@ export type StepperProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -7410,15 +8417,22 @@ export type StepperProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -7432,8 +8446,11 @@ export type StepperProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -7451,6 +8468,9 @@ export type StepperProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -7522,6 +8542,11 @@ export type StepperProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -7537,6 +8562,7 @@ export type StepperProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -7583,6 +8609,17 @@ export type StepperProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -7716,8 +8753,14 @@ export type DisclosureProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -7727,11 +8770,16 @@ export type DisclosureProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -7747,15 +8795,22 @@ export type DisclosureProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -7769,8 +8824,11 @@ export type DisclosureProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -7788,6 +8846,9 @@ export type DisclosureProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -7859,6 +8920,11 @@ export type DisclosureProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -7874,6 +8940,7 @@ export type DisclosureProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -7920,6 +8987,17 @@ export type DisclosureProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8050,8 +9128,14 @@ export type AccordionProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -8061,11 +9145,16 @@ export type AccordionProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -8081,15 +9170,22 @@ export type AccordionProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -8103,8 +9199,11 @@ export type AccordionProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -8122,6 +9221,9 @@ export type AccordionProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -8193,6 +9295,11 @@ export type AccordionProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -8208,6 +9315,7 @@ export type AccordionProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -8254,6 +9362,17 @@ export type AccordionProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8374,8 +9493,14 @@ export type SectionProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -8385,11 +9510,16 @@ export type SectionProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -8405,15 +9535,22 @@ export type SectionProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -8427,8 +9564,11 @@ export type SectionProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -8446,6 +9586,9 @@ export type SectionProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -8515,6 +9658,11 @@ export type SectionProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -8530,6 +9678,7 @@ export type SectionProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -8576,6 +9725,17 @@ export type SectionProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -8705,8 +9865,14 @@ export type SeparatorProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -8716,11 +9882,16 @@ export type SeparatorProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -8736,15 +9907,22 @@ export type SeparatorProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -8758,8 +9936,11 @@ export type SeparatorProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -8777,6 +9958,9 @@ export type SeparatorProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -8848,6 +10032,11 @@ export type SeparatorProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -8863,6 +10052,7 @@ export type SeparatorProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -8909,6 +10099,17 @@ export type SeparatorProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9035,8 +10236,14 @@ export type TabsProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -9046,11 +10253,16 @@ export type TabsProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -9066,15 +10278,22 @@ export type TabsProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -9088,8 +10307,11 @@ export type TabsProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -9107,6 +10329,9 @@ export type TabsProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -9178,6 +10403,11 @@ export type TabsProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -9193,6 +10423,7 @@ export type TabsProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -9239,6 +10470,17 @@ export type TabsProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9309,6 +10551,20 @@ export type TabsProps = {
 	-- The chosen tab's panel, built as it is chosen.
 	panel: (id: string) -> Node,
 	reorderable: boolean?,
+	-- A panel stays mounted once chosen, hidden, until its tab closes: an
+	-- editor keeps its undo, caret and scroll.
+	keep: boolean?,
+	-- Reorderable tabs of one group move between them: a tab dragged over
+	-- another's strip or panel goes there.
+	group: string?,
+	-- A tab of this strip went to another: its id, and that strip's `label`.
+	on_move: ((id: string, to: string) -> ())?,
+	-- Reorderable tabs tear off: one dragged off the strip drops on a strip
+	-- of its group in any window, or, released outside every window, this
+	-- is told its id and where (`x`, `y`, `grab_x`, `grab_y`, as
+	-- `on_drag_outside`), to open it in a window of its own: it leaves
+	-- `items`, unless this returns false (a tab that stays home).
+	on_tear_off: ((id: string, e: { x: number, y: number, grab_x: number, grab_y: number }) -> boolean?)?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
 	label: Label?,
@@ -9373,8 +10629,14 @@ export type TreeProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -9384,11 +10646,16 @@ export type TreeProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -9404,15 +10671,22 @@ export type TreeProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -9426,8 +10700,11 @@ export type TreeProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -9445,6 +10722,9 @@ export type TreeProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -9516,6 +10796,11 @@ export type TreeProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -9531,6 +10816,7 @@ export type TreeProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -9577,6 +10863,17 @@ export type TreeProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -9722,7 +11019,13 @@ export type DataGridProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -9732,11 +11035,16 @@ export type DataGridProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -9752,15 +11060,22 @@ export type DataGridProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -9774,8 +11089,11 @@ export type DataGridProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -9793,6 +11111,9 @@ export type DataGridProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -9864,6 +11185,11 @@ export type DataGridProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -9879,6 +11205,7 @@ export type DataGridProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -9925,6 +11252,17 @@ export type DataGridProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10065,8 +11403,14 @@ export type CalendarProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -10076,11 +11420,16 @@ export type CalendarProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -10096,15 +11445,22 @@ export type CalendarProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -10118,8 +11474,11 @@ export type CalendarProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -10137,6 +11496,9 @@ export type CalendarProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -10208,6 +11570,11 @@ export type CalendarProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -10223,6 +11590,7 @@ export type CalendarProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -10269,6 +11637,17 @@ export type CalendarProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10333,7 +11712,8 @@ export type CalendarProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	-- The date, `"2026-10-23"`, both ways; nil: none chosen.
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	-- The first and last days that can be chosen.
 	min: string?,
 	max: string?,
@@ -10401,8 +11781,14 @@ export type DatePickerProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -10412,11 +11798,16 @@ export type DatePickerProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -10432,15 +11823,22 @@ export type DatePickerProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -10454,8 +11852,11 @@ export type DatePickerProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -10473,6 +11874,9 @@ export type DatePickerProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -10544,6 +11948,11 @@ export type DatePickerProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -10559,6 +11968,7 @@ export type DatePickerProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -10605,6 +12015,17 @@ export type DatePickerProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -10668,7 +12089,8 @@ export type DatePickerProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	min: string?,
 	max: string?,
 	first_weekday: number?,
@@ -10735,8 +12157,14 @@ export type TimeFieldProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -10746,11 +12174,16 @@ export type TimeFieldProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -10766,15 +12199,22 @@ export type TimeFieldProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -10788,8 +12228,11 @@ export type TimeFieldProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -10807,6 +12250,9 @@ export type TimeFieldProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -10878,6 +12324,11 @@ export type TimeFieldProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -10893,6 +12344,7 @@ export type TimeFieldProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -10939,6 +12391,17 @@ export type TimeFieldProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11003,7 +12466,8 @@ export type TimeFieldProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	-- The time, `"09:30"` (24-hour), both ways.
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	-- Hours 1 to 12 and an AM/PM segment.
 	hour12: boolean?,
 	-- What Up and Down step the minutes by.
@@ -11068,8 +12532,14 @@ export type ComboboxProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -11079,11 +12549,16 @@ export type ComboboxProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -11099,15 +12574,22 @@ export type ComboboxProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -11121,8 +12603,11 @@ export type ComboboxProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -11140,6 +12625,9 @@ export type ComboboxProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -11211,6 +12699,11 @@ export type ComboboxProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -11226,6 +12719,7 @@ export type ComboboxProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -11272,6 +12766,17 @@ export type ComboboxProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11339,7 +12844,7 @@ export type ComboboxProps = {
 	text: State<string>,
 	-- The app's options for the text now: a computed filtering, or a state
 	-- an async fetch fills.
-	items: State<{ ComboItem }> | State<{ any }>,
+	items: { ComboItem } | { any } | State<{ ComboItem }> | State<{ any }>,
 	-- The chosen option's value, written as one is chosen.
 	value: State<any>?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
@@ -11410,8 +12915,14 @@ export type CommandPaletteProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -11421,11 +12932,16 @@ export type CommandPaletteProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -11441,15 +12957,22 @@ export type CommandPaletteProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -11463,8 +12986,11 @@ export type CommandPaletteProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -11482,6 +13008,9 @@ export type CommandPaletteProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -11553,6 +13082,11 @@ export type CommandPaletteProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -11568,6 +13102,7 @@ export type CommandPaletteProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -11614,6 +13149,17 @@ export type CommandPaletteProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -11740,8 +13286,14 @@ export type SelectProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -11751,11 +13303,16 @@ export type SelectProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -11771,15 +13328,22 @@ export type SelectProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -11793,8 +13357,11 @@ export type SelectProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -11812,6 +13379,9 @@ export type SelectProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -11883,6 +13453,11 @@ export type SelectProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -11898,6 +13473,7 @@ export type SelectProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -11944,6 +13520,17 @@ export type SelectProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12077,8 +13664,14 @@ export type SplitProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -12088,11 +13681,16 @@ export type SplitProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -12108,15 +13706,22 @@ export type SplitProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -12130,8 +13735,11 @@ export type SplitProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -12149,6 +13757,9 @@ export type SplitProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -12220,6 +13831,11 @@ export type SplitProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -12235,6 +13851,7 @@ export type SplitProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -12281,6 +13898,17 @@ export type SplitProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12354,7 +13982,7 @@ export type SplitProps = {
 	label: Label?,
 	-- The first pane's size in points, both ways: the divider writes it as
 	-- it drags (a `ui.persist` keeps it across launches).
-	size: State<number>,
+	size: State<number>?,
 	-- One pane over the other, instead of side by side.
 	vertical: boolean?,
 	-- `size` is the second pane's (an inspector at the right), and the
@@ -12422,8 +14050,14 @@ export type ListProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -12433,11 +14067,13 @@ export type ListProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -12453,15 +14089,22 @@ export type ListProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -12475,8 +14118,11 @@ export type ListProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -12494,6 +14140,9 @@ export type ListProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -12565,6 +14214,11 @@ export type ListProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -12580,6 +14234,7 @@ export type ListProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -12626,6 +14281,17 @@ export type ListProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -12729,6 +14395,10 @@ export type ListProps = {
 	-- With `measured` or `heights`: resting at the end, it stays there as
 	-- rows are added and measured (a chat); scrolled up, it stays put.
 	follow: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 	-- Each row's own height instead, in order: a list, a state holding one
 	-- (a host's shared value costs the script nothing), or a function
 	-- returning one (tracked). The row count is its length.
@@ -12749,6 +14419,15 @@ export type ListProps = {
 	-- Watched without running the script while it scrolls short of it.
 	on_end: (() -> ())?,
 	end_distance: number?,
+	-- Called as its start comes within `start_distance` points (200 unless
+	-- set) of the top of the view, once each time and again once its rows
+	-- have changed: an earlier page. Rows added above keep the rows in view
+	-- where they are (a measured list's, by key).
+	on_start: (() -> ())?,
+	start_distance: number?,
+	-- Kept saying whether it rests at its end (within a few points): a
+	-- "jump to the latest" button shows while it does not.
+	at_end: State<boolean>?,
 }
 -- Where a modal's panel sits in the window: lined up with its start,
 -- centre or end across (`x`) and down (`y`), `inset` points from the edges
@@ -12813,8 +14492,14 @@ export type LayerProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -12824,11 +14509,16 @@ export type LayerProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -12844,15 +14534,22 @@ export type LayerProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -12866,8 +14563,11 @@ export type LayerProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -12885,6 +14585,9 @@ export type LayerProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -12956,6 +14659,11 @@ export type LayerProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -12971,6 +14679,7 @@ export type LayerProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -13017,6 +14726,17 @@ export type LayerProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13143,8 +14863,14 @@ export type ModalProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -13154,11 +14880,16 @@ export type ModalProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -13174,15 +14905,22 @@ export type ModalProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -13196,8 +14934,11 @@ export type ModalProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -13215,6 +14956,9 @@ export type ModalProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -13286,6 +15030,11 @@ export type ModalProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -13301,6 +15050,7 @@ export type ModalProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -13347,6 +15097,17 @@ export type ModalProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13491,8 +15252,14 @@ export type PopoverProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -13502,11 +15269,16 @@ export type PopoverProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -13522,15 +15294,22 @@ export type PopoverProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -13544,8 +15323,11 @@ export type PopoverProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -13563,6 +15345,9 @@ export type PopoverProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -13634,6 +15419,11 @@ export type PopoverProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -13649,6 +15439,7 @@ export type PopoverProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -13695,6 +15486,17 @@ export type PopoverProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -13785,6 +15587,11 @@ export type PopoverProps = {
 	match_anchor_width: boolean?,
 	-- A popover only: false keeps it open on a click outside.
 	dismiss_on_backdrop: boolean?,
+	-- A popover only: at the caret of the input in its `anchor`, following
+	-- it (typing, a new line, scrolling, an input method's composition),
+	-- and taking no focus: keys go on to the input, which drives it (a
+	-- mention's suggestions). It closes as `open` says.
+	at_caret: boolean?,
 }
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it
@@ -13844,8 +15651,14 @@ export type MenuItemProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -13855,11 +15668,16 @@ export type MenuItemProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -13875,15 +15693,22 @@ export type MenuItemProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -13897,8 +15722,11 @@ export type MenuItemProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -13916,6 +15744,9 @@ export type MenuItemProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -13983,6 +15814,11 @@ export type MenuItemProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -13998,6 +15834,7 @@ export type MenuItemProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -14044,6 +15881,17 @@ export type MenuItemProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14173,8 +16021,14 @@ export type SubmenuProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -14184,11 +16038,16 @@ export type SubmenuProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -14204,15 +16063,22 @@ export type SubmenuProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -14226,8 +16092,11 @@ export type SubmenuProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -14245,6 +16114,9 @@ export type SubmenuProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -14316,6 +16188,11 @@ export type SubmenuProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -14331,6 +16208,7 @@ export type SubmenuProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -14377,6 +16255,17 @@ export type SubmenuProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14509,8 +16398,14 @@ export type WebViewProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -14520,11 +16415,16 @@ export type WebViewProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -14540,15 +16440,22 @@ export type WebViewProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -14562,8 +16469,11 @@ export type WebViewProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -14581,6 +16491,9 @@ export type WebViewProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -14652,6 +16565,11 @@ export type WebViewProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -14667,6 +16585,7 @@ export type WebViewProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -14713,6 +16632,14 @@ export type WebViewProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -14856,8 +16783,14 @@ export type TerminalProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -14867,11 +16800,16 @@ export type TerminalProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -14887,15 +16825,22 @@ export type TerminalProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -14909,8 +16854,11 @@ export type TerminalProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -14928,6 +16876,9 @@ export type TerminalProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -14999,6 +16950,11 @@ export type TerminalProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -15014,6 +16970,7 @@ export type TerminalProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -15060,6 +17017,17 @@ export type TerminalProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15181,8 +17149,14 @@ export type SlotProps = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -15192,11 +17166,16 @@ export type SlotProps = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -15212,15 +17191,22 @@ export type SlotProps = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -15234,8 +17220,11 @@ export type SlotProps = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -15253,6 +17242,9 @@ export type SlotProps = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -15324,6 +17316,11 @@ export type SlotProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -15339,6 +17336,7 @@ export type SlotProps = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -15385,6 +17383,17 @@ export type SlotProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15550,8 +17559,14 @@ export type EachOptions = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -15561,11 +17576,16 @@ export type EachOptions = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -15581,15 +17601,22 @@ export type EachOptions = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -15603,8 +17630,11 @@ export type EachOptions = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -15622,6 +17652,9 @@ export type EachOptions = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -15693,6 +17726,11 @@ export type EachOptions = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -15708,6 +17746,7 @@ export type EachOptions = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -15754,6 +17793,17 @@ export type EachOptions = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -15890,8 +17940,14 @@ export type PresenceOptions = {
 	self: Props_self,
 	content: Props_content,
 	grid: Props_grid,
+	display: Props_display,
 	cols: Props_cols,
 	rows: Props_rows,
+	areas: Props_areas,
+	flow: Props_flow,
+	area: Props_area,
+	grid_column: Props_grid_column,
+	grid_row: Props_grid_row,
 	col_start: Props_col_start,
 	row_start: Props_row_start,
 	col_span: Props_col_span,
@@ -15901,11 +17957,16 @@ export type PresenceOptions = {
 	overflow: Props_overflow,
 	overflow_x: Props_overflow_x,
 	overflow_y: Props_overflow_y,
+	z: Props_z,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Props_sticky_top,
 	hidden: Props_hidden,
 	invisible: Props_invisible,
 	-- Paint.
 	bg: Props_bg,
 	gradient: Props_gradient,
+	radial: Props_radial,
 	color: Props_color,
 	bg_image: Props_bg_image,
 	bg_fit: Props_bg_fit,
@@ -15921,15 +17982,22 @@ export type PresenceOptions = {
 	border_over: Props_border_over,
 	-- A function may return nil: a solid border.
 	border_dash: Props_border_dash,
+	border_style: Props_border_style,
 	outline: Props_outline,
 	outline_color: Props_outline_color,
 	outline_offset: Props_outline_offset,
+	outline_style: Props_outline_style,
+	outline_dash: Props_outline_dash,
 	shadow: Props_shadow,
+	text_shadow: Props_text_shadow,
 	inset_shadow: Props_inset_shadow,
 	opacity: Props_opacity,
 	brightness: Props_brightness,
 	contrast: Props_contrast,
 	saturate: Props_saturate,
+	hue_rotate: Props_hue_rotate,
+	sepia: Props_sepia,
+	invert: Props_invert,
 	blend: Props_blend,
 	blur: Props_blur,
 	backdrop_blur: Props_backdrop_blur,
@@ -15943,8 +18011,11 @@ export type PresenceOptions = {
 	clip_inset: Props_clip_inset,
 	clip_feather: Props_clip_feather,
 	layer: Props_layer,
+	object_position: Props_object_position,
 	fit: Props_fit,
+	image_rendering: Props_image_rendering,
 	tint: Props_tint,
+	decode: Props_decode,
 	dither: Props_dither,
 	characters: Props_characters,
 	cursor: Props_cursor,
@@ -15962,6 +18033,9 @@ export type PresenceOptions = {
 	letter_spacing: Props_letter_spacing,
 	-- Tabular figures: every digit the same width.
 	tabular: Props_tabular,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Props_font_features,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Props_underline,
@@ -16033,6 +18107,11 @@ export type PresenceOptions = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: Props_hit,
 	window_drag: Props_window_drag,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -16048,6 +18127,7 @@ export type PresenceOptions = {
 	-- tokens; a state or function follows.
 	selection_color: Props_selection_color,
 	selected_text_color: Props_selected_text_color,
+	selection_radius: Props_selection_radius,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -16094,6 +18174,17 @@ export type PresenceOptions = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: Props_on_aux_click,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: Props_on_double_click,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: Props_on_navigate,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: Props_on_file_drop,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: Props_on_file_hover,
 	on_hover: Props_on_hover,
 	on_pointer_move: Props_on_pointer_move,
 	-- Return true to consume the key.
@@ -16275,6 +18366,16 @@ declare ui: {
 	-- elsewhere); a lone modifier ("cmd") as itself, "⌘" or "Ctrl".
 	shortcut_text: (keys: string) -> string,
 	window: WindowApi,
+	-- Where an element shows in the window, in the window's points (a
+	-- pointer's `x` and `y`), through every zoom and transform around it;
+	-- nil if it is not laid out. Its `x`, `y`, `width`, `height` are as laid
+	-- out.
+	-- A window an item of `list`: opened as the item appears, closed as it
+	-- goes, built once by `build(item)`. A person closing one calls
+	-- `on_close(item)`, for the app to let the item go. `key` names an item
+	-- (its `id` field by default).
+	windows: (list: State<{ any }>, build: (item: any, win: OwnWindow) -> ItemWindow, options: { key: ((item: any) -> string | number)?, on_close: ((item: any) -> ())? }?) -> (),
+	window_rect: (el: Element) -> { x: number, y: number, width: number, height: number }?,
 	checkbox: (props: CheckboxProps) -> Node,
 	input: (props: InputProps) -> Node,
 	textarea: (props: InputProps) -> Node,
@@ -16321,7 +18422,7 @@ declare ui: {
 	-- from its uses, which misfires). A row whose item changes is built
 	-- again; a `build` taking a third parameter gets the row's item as
 	-- state instead, kept current, and its row updates in place.
-	each: (list: State<{ any }>, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node,
+	each: (list: State<{ any }> | { any }, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node,
 	-- What `build` makes of the value, entering and exiting as it changes;
 	-- nil shows nothing. The value is `any`, as `each`'s item is.
 	presence: (value: string | Readable<unknown> | (() -> unknown), build: (value: any) -> Node, opts: PresenceOptions?) -> Node,
@@ -16423,6 +18524,11 @@ declare ui: {
 	-- click, a toast's Undo): it may await, its tasks are cancelled as what
 	-- made it goes, and what it raises uncaught is reported once.
 	async: <A...>(f: (A...) -> ()) -> (A...) -> (),
+	-- Actions the app's script defines, called as a Rust host's are
+	-- (`ui.invoke(name, arg)`, `ui.action(name, arg)`), by the app and by
+	-- the plugins it exposes them to (zgx.json's `expose.actions`). A plugin
+	-- defines none.
+	actions: (actions: { [string]: (arg: any) -> () }) -> (),
 	-- Where the app is, as React Router keeps it: named routes with
 	-- `:params`, history, the platform's back and forward input, and deep
 	-- links by `scheme`.
@@ -16451,9 +18557,33 @@ declare ui: {
 	-- read-only (as `ui.computed`'s: a write is an error), its timer begun
 	-- again on each change, gone with its owner.
 	debounced: <T>(state: State<T>, ms: number) -> State<T>,
+	-- A connection kept open to `url` (a WebSocket) through the host's
+	-- connector, as `useWebSocket`: messages to `on_message`, `send` queued
+	-- while it is not open and sent in order once it is, opened again after
+	-- a growing wait when it ends. `url` may be a function: a state it
+	-- reads changing opens it again. Closed with its owner; a plugin needs
+	-- the host's grant.
+	socket: (url: string | () -> string, opts: SocketOptions?) -> Socket,
+	-- A promise settled after `ms`, to await in a task (a retry's wait).
+	sleep: (ms: number) -> Promise<nil>,
 	-- A form's fields, checked as they are typed, and its submit with its
 	-- pending and failure states; controls bind with `field`.
 	form: (spec: FormSpec) -> Form,
+	-- A field's undo, and the byte under a point: for an app's own undo stack
+	-- across panes, and a drop where the pointer is. Each takes the field's
+	-- element (a ref's, `on_mount`'s); for other elements, false or nil.
+	editor: {
+		-- As ⌘Z and ⌘⇧Z: whether there was a step.
+		undo: (el: Element) -> boolean,
+		redo: (el: Element) -> boolean,
+		can_undo: (el: Element) -> boolean,
+		can_redo: (el: Element) -> boolean,
+		-- The byte, from 0, a click at `x`, `y` (the window's points, as a drop's)
+		-- would put the caret at.
+		offset_at: (el: Element, x: number, y: number) -> number?,
+		-- A textarea's line, from 1, at that place in its view; its caret stays.
+		scroll_to_line: (el: Element, line: number, options: { align: ("start" | "center" | "end" | "nearest")? }?) -> boolean,
+	},
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
 	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,
@@ -16472,6 +18602,23 @@ declare ui: {
 	open_files: (opts: FilePickerOptions?) -> Promise<{ File }>,
 	-- Where the user chooses to save: a promise of a `File`, or nil.
 	save_file: (opts: FilePickerOptions?) -> Promise<File?>,
+	-- A folder the user picks: a promise of its handle, or nil if they cancel.
+	-- Only this makes a `Folder`, and it reaches nothing outside what was picked.
+	-- `remember` asks the host to keep it past the run under that key.
+	open_folder: (opts: FolderPickerOptions?) -> Promise<Folder?>,
+	-- The folder kept under `key` (`ui.open_folder { remember }`) on an
+	-- earlier run, if it still resolves (moved, on macOS): a promise of its
+	-- handle, or nil.
+	remembered_folder: (key: string) -> Promise<Folder?>,
+	-- A system notification (Notification Center, a toast, the desktop's
+	-- server), the app's: a promise settled once the system has it, or
+	-- with why not (`kind` "unsupported": no bundle, no server; "denied":
+	-- turned off). One with the same `tag` replaces it.
+	-- `on_click`: the person clicked it, the app brought forward.
+	notify: (opts: { title: string, body: string?, tag: string?, on_click: (() -> ())? }) -> Promise<nil>,
+	-- A count on the app's icon (the Dock's, the taskbar's, a dock's);
+	-- 0 or nil takes it off. Whether the system shows one.
+	badge: (count: number | string | nil) -> boolean,
 	-- A file the user picked, read as text off the main thread: a promise.
 	read_file: (file: File | string) -> Promise<string>,
 	-- Write `text` to a file the user picked (beside it, then over it).

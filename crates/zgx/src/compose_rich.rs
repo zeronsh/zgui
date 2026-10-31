@@ -72,6 +72,8 @@ pub struct TextSpan {
     pub(crate) styles: Styles,
     pub(crate) background: Option<Color>,
     pub(crate) underline: Option<crate::rich_text::Decoration>,
+    /// The underline's colour as given, if a token: resolved as it mounts.
+    pub(crate) underline_color: Option<crate::theme::Themed<Color>>,
     pub(crate) strikethrough: Option<crate::rich_text::Decoration>,
     pub(crate) padding: [f32; 2],
     pub(crate) radius: f32,
@@ -96,6 +98,7 @@ pub fn text_span(text: impl Into<Arc<str>>) -> TextSpan {
         styles: Styles::new(),
         background: None,
         underline: None,
+        underline_color: None,
         strikethrough: None,
         padding: [0.; 2],
         radius: 0.,
@@ -171,6 +174,11 @@ impl TextSpan {
     /// Underline the span.
     pub fn underline(mut self, decoration: crate::rich_text::Decoration) -> Self {
         self.underline = Some(decoration);
+        self
+    }
+    /// The underline's colour, or a colour token, rather than the text's.
+    pub fn underline_color(mut self, color: impl Into<crate::theme::Themed<Color>>) -> Self {
+        self.underline_color = Some(color.into());
         self
     }
     /// Strike the span through.
@@ -282,6 +290,11 @@ impl RichTextView {
     /// Let the pointer select the paragraph's text (see `View::selectable`).
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.view = self.view.selectable(selectable);
+        self
+    }
+    /// The corner radius of the highlight (see `View::selection_radius`).
+    pub fn selection_radius(mut self, radius: f32) -> Self {
+        self.view = self.view.selection_radius(radius);
         self
     }
     /// The highlight behind selected text (see `View::selection_color`).
@@ -440,10 +453,15 @@ pub(crate) fn mount_links(
             geometry = if data.links.is_empty() {
                 Vec::new()
             } else {
-                let layout = ui
-                    .scene
-                    .borrow()
-                    .shape_rich_text(&data.rich, Some(bounds.width));
+                // At the width its lines wrap at, where they show
+                // (balanced). A change of balance moves `engine`.
+                let scene = ui.scene.borrow();
+                let (wrap, inset) = scene.text_wrap(paragraph, bounds.width);
+                let layout = crate::text_layout::Inset::around(
+                    scene.shape_rich_text(&data.rich, Some(wrap)),
+                    inset,
+                );
+                drop(scene);
                 data.links
                     .iter()
                     .map(|link| {
@@ -738,7 +756,12 @@ pub(crate) fn mount_icons(
         let key = (data.rich.clone(), bounds.width.to_bits(), engine);
         if geometry_key.as_ref() != Some(&key) {
             let scene = ui.scene.borrow();
-            let layout = scene.shape_rich_text(&data.rich, Some(bounds.width));
+            // As links' (above).
+            let (wrap, inset) = scene.text_wrap(paragraph, bounds.width);
+            let layout = crate::text_layout::Inset::around(
+                scene.shape_rich_text(&data.rich, Some(wrap)),
+                inset,
+            );
             rects = data
                 .icons
                 .iter()

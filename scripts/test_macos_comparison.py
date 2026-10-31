@@ -27,6 +27,23 @@ class PowermetricsTests(unittest.TestCase):
         self.assertIn(f'-n {comparison.SAMPLED}', command)
 
 
+class StillDesktopTests(unittest.TestCase):
+    def server(self, percent):
+        before = {7: ('WindowServer', 100.), 8: ('other', 1.)}
+        after = {7: ('WindowServer', 100. + percent / 20), 8: ('other', 9.)}
+        return patch.object(comparison.preflight, 'cpu_times', side_effect=[before, after])
+
+    def test_an_idle_window_server_passes(self):
+        with self.server(0.3), patch.object(comparison.preflight.time, 'sleep'):
+            self.assertEqual(comparison.preflight.desktop_still(), 0.3)
+
+    def test_a_desktop_that_draws_stops_the_run(self):
+        with self.server(14.5), patch.object(comparison.preflight.time, 'sleep'), \
+                patch.object(comparison.preflight.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
+            with self.assertRaisesRegex(SystemExit, r'14\.5%.*Wallspace'):
+                comparison.preflight.desktop_still()
+
+
 class ReadinessTests(unittest.TestCase):
     def test_launch_waits_for_readiness_and_keeps_requested_lifetime(self):
         process = Mock(pid=42)

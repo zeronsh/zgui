@@ -10,7 +10,9 @@ on:
       - "!**/*.md"
       # Markdown compiled as doctests.
       - "README.md"
+      - "docs/3d.md"
       - "docs/composition.md"
+      - "docs/i18n.md"
       - "docs/styling.md"
       - "docs/window-controls.md"
   pull_request:
@@ -22,7 +24,9 @@ on:
       - "!**/*.md"
       # Markdown compiled as doctests.
       - "README.md"
+      - "docs/3d.md"
       - "docs/composition.md"
+      - "docs/i18n.md"
       - "docs/styling.md"
       - "docs/window-controls.md"
 # A newer push to a PR supersedes its running check. On main every run
@@ -43,9 +47,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Room on the disk: this job's target/ reaches about 40 GB, more than
+      # some runners have left after their image (two runs died of a full
+      # disk on Oct 31). The image's toolchains it never runs (Android, .NET,
+      # Haskell, Swift, CodeQL, PowerShell: about 28 GB) go while it builds.
+      - run: |
+          df -h /
+          sudo nohup rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/share/powershell > /dev/null 2>&1 &
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # A fork changed without a version fails here, on its own pull request,
+      # not at the release. A second or two: no build.
+      - run: python3 scripts/check_forks.py --offline-ok
       # Ubuntu mirrors are sometimes very slow; reuse last month's .debs.
       - id: apt-key
         run: echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
@@ -87,7 +101,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
           args: --check .
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features zgx-desktop/webkitgtk --locked -- -D warnings
       # Feature gating stays honest: the crates build without their defaults,
       # on the oldest Rust they claim (`rust-version`): a check this job
       # makes anyway, so the minimum costs only the toolchain's download.
@@ -96,6 +110,9 @@ jobs:
           msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
           rustup toolchain install "$msrv" --profile minimal --no-self-update
           cargo "+$msrv" check -p zgx-components -p zgx-desktop -p zgx-script --no-default-features --locked
+      # Lints too: code only a default feature uses (the component
+      # library's) is left out with it, not left unused.
+      - run: cargo clippy -p zgx-script --no-default-features --all-targets --locked -- -D warnings
       # zgx-script's best-practice lint over every example script.
       - name: Script lint
         run: cargo run -q -p zgx-script --bin zgx --locked -- lint crates/zgx-script/examples crates/zgx-desktop/examples
@@ -112,11 +129,15 @@ jobs:
       # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
       # and macOS jobs test without it).
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
-      # Each `ui` module a script makes as it names it (`lazy.rs`) sets
-      # exactly the names it is made for, under every zgx-script feature,
-      # each of which may add modules (scene3d, i18n, …). Quoted, as the
-      # lines below are.
-      - run: "cargo test -p zgx-script --all-features --test ui --locked -- lazy_ui::"
+      # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
+      - run: cargo test -p zgx-terminal --locked
+      # zgx-script's tests with all its features, as an app built by zgx-run
+      # has them (scene3d, i18n, gltf, inspect): ICU's plural rules change
+      # what the i18n lint finds, and each feature may add lazy `ui`
+      # modules (`lazy_ui::` checks each against what its maker sets).
+      - run: cargo test -p zgx-script --all-features --locked
+      # zgx audit over the Luau examples (zgx-run's own tests need sockets).
+      - run: cargo test -p zgx-run --test audit --locked
       # Devtools tracing (zgx's `trace`, off by default; zgx-script's
       # `inspect` turns it on): what it keeps stays bounded. Quoted, as the
       # line below is.
@@ -127,6 +148,7 @@ jobs:
       # whole workflow would fail to load.
       - run: "cargo test -p zgx --no-default-features --lib --test editor --test text --locked -- words:: chinese_japanese_or_thai"
       - run: cargo test --workspace --doc --locked
+      - run: cargo test -p zgx-3d --features gltf --doc --locked
       # The API docs build without a warning (a broken link, a name collision).
       - run: cargo doc --workspace --no-deps --locked
         env:
@@ -154,6 +176,19 @@ jobs:
         run: |
           set -o pipefail
           cargo test -p zgx-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgx-vulkan-tests.log"
+      # Its pixel tests pass without drawing where there's no GPU: here they
+      # must have one (lavapipe).
+      - name: 3D rendering
+        if: ${{ !cancelled() }}
+        env:
+          XDG_RUNTIME_DIR: /tmp
+          ZGX_REQUIRE_GPU: "1"
+        run: cargo test -p zgx-3d --features gltf --locked
+      # The test binaries built above aren't run again: their room goes to
+      # the probes' fixtures, about 13 GB of examples.
+      - name: Room for the fixtures
+        if: ${{ !cancelled() }}
+        run: find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete
       - name: Build native fixtures
         id: native-fixtures
         if: ${{ !cancelled() }}
@@ -161,7 +196,11 @@ jobs:
         # already compiled every one, as a test).
         run: |
           fixtures=$(python3 scripts/linux_smokes.py --fixtures)
-          cargo build -p zgx-desktop $fixtures --locked
+          # `terminal` for terminal_pane, the engine-drawn terminal's probe.
+          cargo build -p zgx-desktop --features terminal $fixtures --locked
+          # Web views: the webkitgtk feature's probes (`web-view*`).
+          cargo build -p zgx-desktop --example web_view_probe --example web_view_schemes --features webkitgtk --locked
+          cargo build -p zgx-run --locked
           cargo test -p zgx-desktop --lib --no-run --locked
       # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each
       # owns its display or compositor, so they run side by side, eight at
@@ -171,6 +210,22 @@ jobs:
         if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
         timeout-minutes: 15
         run: python3 scripts/linux_smokes.py --jobs 8
+      # The tall menu's protocol trace, green or not (#1199): the order that
+      # closed it as it opened is counted in its result.
+      - name: Keep the Wayland popups trace
+        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayland-popups-trace
+          retention-days: 3
+          if-no-files-found: ignore
+          path: |
+            /tmp/zgx-wayland-popups/sway-tall.trace
+            /tmp/zgx-wayland-popups/result.json
+      # What the job left free, beside the start's: a full disk loses the log.
+      - if: always()
+        run: df -h /
       - name: Preserve Vulkan and native window evidence
         if: failure()
         continue-on-error: true
@@ -309,8 +364,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload --all-targets --locked
+      # Text in every script, shaped in the system's own fonts.
+      - run: cargo test -p zgx-gpu --test text_scripts --test editor_selection --locked
+      # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
+      - run: cargo test -p zgx-terminal --locked
       # The soak (an app used for a while holds what it did), on Metal.
       - run: cargo test -p zgx-script --test soak --locked
+      - run: cargo test -p zgx-run --test audit --locked
       # The watchdog's budgets and memory limits, whose timing is each OS's.
       - run: cargo test -p zgx-script --test state --locked -- script::runaway script::a_script_short_of_its_budget script::garbage_from_builtins script::copies_of_state script::a_script_keeping_nodes
       - run: cargo test --workspace --doc --locked
@@ -376,9 +436,14 @@ jobs:
       # notifications) and its bundled script paths (caught a Windows
       # separator bug), in one run.
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-script --lib --test components --test bundle --locked
+      # Text in every script, shaped in the system's own fonts.
+      - run: cargo test -p zgx-gpu --test text_scripts --test editor_selection --locked
+      # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
+      - run: cargo test -p zgx-terminal --locked
       # The swap chain's alpha (opaque windows aren't blended by DWM, #513)
       # and the event loop's wake by an event handle (#478): Windows only.
       - run: cargo test -p zgx-desktop --test opaque_swap_chain --test proxy_wake --test early_context --locked
+      - run: cargo test -p winit --lib --locked occlusion_area
       # The watchdog's budgets and memory limits, whose timing is each OS's.
       - run: cargo test -p zgx-script --test state --locked -- script::runaway script::a_script_short_of_its_budget script::garbage_from_builtins script::copies_of_state script::a_script_keeping_nodes
       # The vendored accesskit_windows' tests of zgx's patches (UIA's
@@ -388,6 +453,12 @@ jobs:
       # what it can of the build above.
       - run: cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target --locked -- heading cell_name find_text
       # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
-      # D3D shader compiler alone gets wrong (coarse derivatives, #38), and
-      # the device on DXGI's first low-power adapter (`adapter`, #217).
-      - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --locked
+      # D3D shader compiler alone gets wrong (coarse derivatives, #38), the
+      # device on DXGI's first low-power adapter (`adapter`, #217), every
+      # shader module compiled by FXC optimizing as a release build does
+      # (`every_shader`), and canvas strokes drawn: FXC once overflowed its
+      # stack on the polyline module, which crashed apps on first draw. With
+      # an empty folder for the shader cache, every shader compiles.
+      - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --test every_shader --test canvas --test box_model --locked
+        env:
+          LOCALAPPDATA: ${{ runner.temp }}\zgx-cold

@@ -30,6 +30,8 @@ SMOKES = [
     ("window-controls", "timeout 30s {bin}/window_controls --smoke-test", True),
     ("standard-menu-items", "timeout 30s {bin}/standard_menu_items --smoke-test", True),
     ("form", "python3 scripts/form_smoke.py {bin}/form", True),
+    ("terminal", "python3 scripts/terminal_smoke.py {bin}/terminal_pane --output {out}", True),
+    ("terminal-orca", "python3 scripts/terminal_smoke.py {bin}/terminal_pane --orca --output {out}", True),
     ("checkbox", "python3 scripts/checkbox_smoke.py {bin}/checkbox --output {out}", True),
     ("slider", "python3 scripts/slider_smoke.py {bin}/slider --output {out}", True),
     ("progress", "python3 scripts/progress_smoke.py {bin}/progress --output {out}", True),
@@ -43,6 +45,7 @@ SMOKES = [
     ("menus", "python3 scripts/menus_smoke.py {bin}/menus --output {out}", True),
     ("submenus", "python3 scripts/submenus_smoke.py {bin}/submenus --output {out}", True),
     ("hidden-updates", "python3 scripts/hidden_updates_smoke.py {bin}/hidden_updates --output {out}", True),
+    ("hidden-window", "python3 scripts/hidden_window_x11_smoke.py {bin}/hidden_window --output {out}", True),
     ("paint-media", "python3 scripts/paint_media_smoke.py --binaries {bin} --output {out}", True),
     ("cursors", "python3 scripts/cursors_smoke.py {bin}/cursors --output {out}", True),
     ("wayland-cursors", "python3 scripts/wayland_cursors_smoke.py {bin}/cursors --output {out}", False),
@@ -54,6 +57,7 @@ SMOKES = [
     ("native-menus-wayland", "python3 scripts/native_menu_smoke.py {bin}/dynamic_menus --wayland --output {out}", False),
     ("native-services", "python3 scripts/native_services_smoke.py {bin}/platform_services --native-prompts --output {out}", False),
     ("file-drop", "python3 scripts/file_drop_smoke.py {bin}/drag_drop --output {out}", False),
+    ("file-drop-scaled", "python3 scripts/file_drop_smoke.py {bin}/drag_drop --output {out} --scale 1.5", False),
     ("file-drop-wayland", "python3 scripts/wayland_file_drop_smoke.py {bin}/drag_drop --output {out}", False),
     ("variable-virtual-list", "python3 scripts/variable_virtual_list_smoke.py {bin}/variable_virtual_list --output {out}", False),
     ("measured-virtual-list", "python3 scripts/measured_virtual_list_smoke.py {bin}/measured_virtual_list --output {out}", False),
@@ -76,6 +80,16 @@ SMOKES = [
     ("wayland-drag-out", "python3 scripts/wayland_drag_out_smoke.py {bin} --output {out}", False),
     ("zenity-dialog", "python3 scripts/zenity_dialog_smoke.py {bin}/platform_services --output {out}", False),
     ("portal-dialog", "python3 scripts/portal_dialog_smoke.py {bin}/platform_services --output {out}", False),
+    ("web-view-schemes", "timeout 60s {bin}/web_view_schemes --fixture", True),
+    ("web-view", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --output {out}", False),
+    ("web-view-slow-replies", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --slow-replies --output {out}", False),
+    ("web-view-ime-slow-replies", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --ime --slow-replies --output {out}", False),
+    ("web-view-wayland", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --output {out}", False),
+    ("web-view-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --ime --output {out}", False),
+    ("web-view-transparent", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --transparent --output {out}", False),
+    ("web-view-orca", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --orca --output {out}", False),
+    ("web-view-media", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --media --output {out}", False),
+    ("web-view-wayland-ime", "python3 scripts/web_view_smoke.py {bin}/web_view_probe --wayland --ime --output {out}", False),
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("caret-blink", "python3 scripts/caret_blink_smoke.py {bin}/primary_selection --output {out}", False),
     ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),
@@ -104,6 +118,9 @@ SMOKES = [
     ("find-in-page", "python3 scripts/find_in_page_smoke.py {bin}/selectable_text --output {out}", False),
     ("zoom", "python3 scripts/zoom_smoke.py {bin}/zoom_probe --output {out}", False),
     ("luau-views", "python3 scripts/luau_views_smoke.py {bin}/luau_probe --output {out}", False),
+    ("covered-window", "python3 scripts/covered_window_smoke.py {bin}/../zgx-run --output {out}", False),
+    ("inspect-memory", "python3 scripts/inspect_memory_smoke.py {bin}/../zgx-run --output {out}", False),
+    ("window-state", "python3 scripts/window_state_smoke.py {bin}/../zgx-run --output {out}", False),
     ("editor-autoscroll", "python3 scripts/editor_autoscroll_smoke.py {bin}/editor_autoscroll --output {out}", False),
     ("transparency", "python3 scripts/transparency_smoke.py {bin}/transparency --output {out}", False),
     ("wayland-transparency", "python3 scripts/wayland_transparency_smoke.py {bin}/transparency --output {out}", False),
@@ -113,6 +130,7 @@ SMOKES = [
     ("ime-password", "python3 scripts/native_ime_smoke.py {bin}/native_ime --password --output {out}", False),
     ("wayland-ime", "python3 scripts/wayland_ime_smoke.py {bin}/native_ime --output {out}", False),
     ("wayland-input-modes", "python3 scripts/wayland_ime_smoke.py {bin}/native_ime --input-modes --output {out}", False),
+    ("wayland-ime-burst", "python3 scripts/wayland_ime_smoke.py {bin}/native_ime --burst --output {out}", False),
     ("wayland-external-ime", "python3 scripts/wayland_external_ime_smoke.py {bin}/external_ime --output {out}", False),
     ("wayland-readonly-ime", "python3 scripts/wayland_external_ime_smoke.py {bin}/external_ime --read-only-test --output {out}", False),
     ("held-keys", "python3 scripts/held_keys_smoke.py {bin}/held_keys --output {out}", False),
@@ -146,12 +164,18 @@ FIXTURES = ("windows", "drag_probe", "zoom_probe", "tab_windows", "submenus", "g
             "canvas", "svg_transform", "animated_image")
 
 
+# Fixtures that need a feature of zgx-desktop's, which CI builds with it.
+FEATURED = {"web_view_probe": "webkitgtk", "web_view_schemes": "webkitgtk"}
+
+
 def fixtures():
     """Every zgx-desktop example a probe runs: what CI builds for them, as
     `cargo build` flags. Each must be an example."""
     names = set(FIXTURES)
     for _, command, _ in SMOKES:
         names.update(re.findall(r"\{bin\}/([a-z_0-9]+)", command))
+    # Built with their features in a step of their own (ci.yml).
+    names -= set(FEATURED)
     examples = pathlib.Path(__file__).resolve().parent.parent / "crates/zgx-desktop/examples"
     missing = [name for name in names if not (examples / f"{name}.rs").exists() and not (examples / name).is_dir()]
     if missing:
@@ -166,6 +190,7 @@ COST = {
     "effects": 21, "native-ime": 19, "large-document": 15, "external-ime": 12, "readonly-ime": 12,
     "wayland-ime": 8,
     "wayland-input-modes": 8,
+    "wayland-ime-burst": 8,
     "native-menus": 12, "native-menus-wayland": 12,
     "wayland-input": 13,
     "clipboard-shutdown": 3, "host-suspend": 3, "exit-closes-windows": 3,

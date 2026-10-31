@@ -24,8 +24,10 @@
 //!
 //! The `ui` and `anime` libraries are documented in `docs/scripting.md`.
 #![warn(missing_docs)]
+mod actions;
 mod anim;
 mod anime;
+pub mod app_config;
 pub mod app_types;
 mod bundle;
 mod calls;
@@ -45,6 +47,7 @@ mod file_events;
 #[cfg(target_os = "linux")]
 #[path = "file_events_linux.rs"]
 mod file_events;
+mod folder;
 mod form;
 mod handlers;
 mod hook_targets;
@@ -69,10 +72,13 @@ mod persist;
 mod reorder;
 mod router;
 mod routes;
+pub mod scaffold;
 #[cfg(feature = "scene3d")]
 mod scene3d;
+mod socket;
 mod sorted;
 mod term;
+pub mod test_runner;
 pub mod testing;
 mod theme;
 mod timers;
@@ -87,6 +93,12 @@ pub use calls::{Body, Request, Response};
 pub use command::Command;
 pub use design::DesignLint;
 pub use persist::app_data_dir;
+pub use socket::{Message, Socket, SocketRequest};
+pub use windows::WindowState;
+/// A window's size as `ui.window.size` and `win.size` hold it.
+pub fn window_size_value(width: f32, height: f32) -> Value {
+    windows::size(width, height)
+}
 pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted, values_converted};
 pub use windows::Window;
 
@@ -787,6 +799,9 @@ pub enum Capability {
     /// `ui.open_files`, `ui.save_file` and reading and writing what the
     /// user picks in them.
     Files,
+    /// `ui.open_folder`: a folder the user picks, with everything inside
+    /// it to list, read and write.
+    Folders,
     /// `ui.term`: terminal sessions, to read and to type into.
     Terminals,
     /// `ui.web` and `ui.webview`: web pages.
@@ -942,6 +957,24 @@ struct Loaded {
     lowering: Rc<lower::Lowering>,
 }
 
+/// The framework's issues a host heard (`ScriptHost::issues`), and who
+/// hears them by kind (`ScriptHost::on_issue`).
+#[derive(Default)]
+struct IssueLog {
+    last: std::collections::VecDeque<(zgx::issues::IssueKind, String)>,
+    hooks: Vec<IssueHook>,
+}
+type IssueHook = Rc<dyn Fn(zgx::issues::IssueKind, &str)>;
+impl IssueLog {
+    /// Keep `issue`; the hooks to tell, outside the borrow.
+    fn hear(&mut self, kind: zgx::issues::IssueKind, issue: &str) -> Vec<IssueHook> {
+        if self.last.len() == 16 {
+            self.last.pop_front();
+        }
+        self.last.push_back((kind, issue.to_string()));
+        self.hooks.clone()
+    }
+}
 type ErrorHooks = Rc<RefCell<Vec<Rc<dyn Fn(&str)>>>>;
 struct Inner {
     runtime: Runtime,
@@ -951,6 +984,8 @@ struct Inner {
     async_actions: calls::AsyncActions,
     /// The transport `ui.fetch` and remote images use (`fetcher`).
     fetcher: calls::SharedFetcher,
+    /// The transport `ui.socket` connects through (`socket_connector`).
+    connector: socket::SharedConnector,
     /// What each plugin may do beyond its sandbox (`grant`), by name.
     grants: RefCell<HashMap<String, Vec<Capability>>>,
     /// The plugins the app manages (`set_plugins`).
@@ -967,12 +1002,19 @@ struct Inner {
     platform: io::SharedPlatform,
     /// The files the user picked in this host's dialogs.
     picked: io::Picked,
+    /// What scripts may have of folders, and the ones kept past a run.
+    folders: Rc<folder::Access>,
     /// `ui.args` and `ui.on_open` (`ScriptHost::args`, `open`).
     opens: Rc<opens::Opens>,
     /// Whether errors show over the interface (`error_banner`).
     show_errors: bool,
     /// What hears each script error (`on_error`), and what follows them.
     error_hooks: ErrorHooks,
+    /// The framework's last issues, with their kinds (`ScriptHost::issues`),
+    /// and who hears each (`ScriptHost::on_issue`).
+    issues: Rc<RefCell<IssueLog>>,
+    /// Tells `error_hooks` of what the framework reports (`zgx::issues`).
+    _issues: zgx::issues::IssueListener,
     error_watch: RefCell<Option<Box<dyn std::any::Any>>>,
     plugin_dir: Option<PathBuf>,
     plugins: Vec<Script>,
@@ -985,8 +1027,12 @@ struct Inner {
     /// Keeps `ui.window.titlebar_area` and `controls` as the window's
     /// (`window_chrome`).
     chrome: RefCell<Option<zgx::reactive::Effect>>,
+    window_size: RefCell<Option<zgx::reactive::Effect>>,
     /// Keeps the window's zoom and `ui.window.zoom` the same (`window_zoom`).
     zoom: RefCell<Option<zgx::reactive::Effect>>,
+    visible: RefCell<Option<zgx::reactive::Effect>>,
+    /// What publishes the window's state (`window_state`).
+    window_state: RefCell<Vec<zgx::reactive::Effect>>,
     elements: Rc<element::Elements>,
     engine: Rc<anime::Engine>,
     assets: Rc<lower::Assets>,
@@ -1036,6 +1082,8 @@ struct Inner {
     lint: Signal<Option<String>>,
     /// The theme file error shown, if any (cleared when the file reads).
     theme_error: RefCell<Option<String>>,
+    /// Collects the VMs' garbage as the host goes idle (`zgx::idle`).
+    idle: RefCell<Option<zgx::idle::IdleTrim>>,
 }
 
 /// A wake-up for one waiting task: `notify` before or during the wait ends it.
@@ -1105,12 +1153,16 @@ impl ScriptHost {
             w.design = mode;
             w.design_forced = true;
         }
+        let error_hooks = ErrorHooks::default();
+        let issues: Rc<RefCell<IssueLog>> = Rc::default();
+        let persist = persist::Persist::new(runtime, warnings.clone());
         let host = Self(Rc::new(Inner {
             runtime: runtime.clone(),
             app,
             files: Files::Disk,
             async_actions: Rc::default(),
             fetcher: Rc::default(),
+            connector: Rc::default(),
             grants: RefCell::default(),
             managed: RefCell::default(),
             exposed_actions: Rc::default(),
@@ -1120,9 +1172,21 @@ impl ScriptHost {
             rewatch: RefCell::default(),
             platform: Rc::default(),
             picked: Rc::default(),
+            folders: Rc::new(folder::Access::new(persist.clone())),
             opens: Rc::default(),
             show_errors: cfg!(debug_assertions),
-            error_hooks: Rc::default(),
+            error_hooks: error_hooks.clone(),
+            issues: issues.clone(),
+            _issues: zgx::issues::on_issue_kind(runtime, move |kind, issue| {
+                let hooks: Vec<_> = error_hooks.borrow().clone();
+                for hook in hooks {
+                    hook(issue);
+                }
+                let heard = issues.borrow_mut().hear(kind, issue);
+                for hook in heard {
+                    hook(kind, issue);
+                }
+            }),
             error_watch: RefCell::default(),
             plugin_dir: None,
             packages: Vec::new(),
@@ -1144,7 +1208,10 @@ impl ScriptHost {
             locales: Rc::default(),
             shared: Rc::new(Store::new(runtime)),
             chrome: RefCell::default(),
+            window_size: RefCell::default(),
             zoom: RefCell::default(),
+            visible: RefCell::default(),
+            window_state: RefCell::default(),
             actions: Actions::default(),
             functions: Functions::default(),
             current: RefCell::default(),
@@ -1157,7 +1224,7 @@ impl ScriptHost {
             webs: Rc::default(),
             commands: Rc::new(command::Commands::new(runtime)),
             windows: Rc::new(windows::Windows::new(runtime)),
-            persist: persist::Persist::new(runtime, warnings.clone()),
+            persist,
             timers: Rc::default(),
             warnings,
             locate: Rc::new(Cell::new(diagnostics_requested())),
@@ -1173,10 +1240,12 @@ impl ScriptHost {
             type_errors: runtime.signal(None),
             lint: runtime.signal(None),
             theme_error: RefCell::default(),
+            idle: RefCell::default(),
         }));
         host.0
             .assets
             .connect(host.0.timers.clone(), host.0.fetcher.clone());
+        host.trim_when_idle();
         host
     }
     /// The scripts compiled into the app (`include_bundle!`), starting at
@@ -1219,6 +1288,17 @@ impl ScriptHost {
     pub fn error_banner(self, show: bool) -> Self {
         self.configure(|inner| inner.show_errors = show)
     }
+    /// Calls `hook` with each issue the framework reports (`zgx::issues`),
+    /// with its kind: an error, or the renderer going on with less (a layer
+    /// coarser, an image softer), which `on_error` hears too, untagged.
+    pub fn on_issue(&self, hook: impl Fn(zgx::issues::IssueKind, &str) + 'static) {
+        self.0.issues.borrow_mut().hooks.push(Rc::new(hook));
+    }
+    /// The framework's last issues (at most 16), oldest first, with their
+    /// kinds: what `zgx inspect errors` lists.
+    pub fn issues(&self) -> Vec<(zgx::issues::IssueKind, String)> {
+        self.0.issues.borrow().last.iter().cloned().collect()
+    }
     /// Call `hook` with each script error (a failed load, an error in a
     /// handler): for an app's log or crash reports.
     pub fn on_error(&self, hook: impl Fn(&str) + 'static) {
@@ -1241,7 +1321,20 @@ impl ScriptHost {
         let mut inner = Rc::try_unwrap(self.0)
             .unwrap_or_else(|_| panic!("configure a ScriptHost before cloning it"));
         f(&mut inner);
-        Self(Rc::new(inner))
+        let host = Self(Rc::new(inner));
+        // The host is a new `Rc`: what goes idle with it follows it.
+        host.trim_when_idle();
+        host
+    }
+    /// Gives back what it can as its host goes idle (`zgx::idle`).
+    fn trim_when_idle(&self) {
+        let weak = Rc::downgrade(&self.0);
+        let trim = zgx::idle::on_idle(&self.0.runtime, move || {
+            if let Some(inner) = weak.upgrade() {
+                trim_idle(&inner);
+            }
+        });
+        *self.0.idle.borrow_mut() = Some(trim);
     }
     /// Loads every `.luau` file in `dir` as a plugin.
     pub fn plugins(self, dir: impl Into<PathBuf>) -> Self {
@@ -1283,8 +1376,9 @@ impl ScriptHost {
     /// How many bytes of decoded images and SVGs that no node shows the
     /// host keeps, the most recently shown first, so a reload or a page
     /// shown again is instant (48 MiB by default). What a mounted node
-    /// shows is always kept; the rest go as nodes showing pictures unmount.
-    /// The host's own images (`ScriptHost::image`) are not counted.
+    /// shows is always kept; the rest go as nodes showing pictures unmount,
+    /// and all of them once the window goes idle (`zgx::idle`). The host's
+    /// own images (`ScriptHost::image`) are not counted.
     pub fn image_cache(self, bytes: usize) -> Self {
         self.0.assets.set_budget(bytes);
         self
@@ -1402,6 +1496,35 @@ impl ScriptHost {
             Box::pin(fetch(request, body))
         }));
     }
+    /// The transport for `ui.socket`: a connection the script keeps open
+    /// (a WebSocket). `connect` opens `request`'s connection and runs it
+    /// until it ends (`Ok`) or fails (`Err`, its message the script's
+    /// error): it tells the `Socket` once it is open, hands it each message
+    /// that arrives, and sends what `Socket::next` gives until that answers
+    /// `None` (the script closed it), then closes. The script opens it
+    /// again after a wait, as its `reconnect` says. Without one,
+    /// `ui.socket` stays closed, its error saying so.
+    pub fn socket_connector<F, Fut>(&self, connect: F)
+    where
+        F: Fn(SocketRequest, Socket) -> Fut + 'static,
+        Fut: std::future::Future<Output = Result<(), String>> + 'static,
+    {
+        *self.0.connector.borrow_mut() = Some(Rc::new(move |request, socket| -> socket::Connect {
+            Box::pin(connect(request, socket))
+        }));
+    }
+    /// Refuse `ui.open_folder` to every script, the app's own too: an app
+    /// that must not touch folders, whatever its scripts ask.
+    pub fn refuse_folders(self) -> Self {
+        self.0.folders.refused.set(true);
+        self
+    }
+    /// Keep no folder past a run: `ui.open_folder { remember }` picks as
+    /// without it, and `ui.remembered_folder` is always nil.
+    pub fn refuse_remembered_folders(self) -> Self {
+        self.0.folders.forgetful.set(true);
+        self
+    }
     /// Let plugin `plugin` (its file name, `stats.luau`, or `plugin`'s
     /// name) do `capability`. Plugins get none unless granted; the
     /// application's scripts have every one.
@@ -1511,6 +1634,47 @@ impl ScriptHost {
         });
         *self.0.chrome.borrow_mut() = Some(effect);
     }
+    /// Publish whether `ui`'s window is the active one and whether it
+    /// shows (`Ui::observe_window_active`, `Ui::observe_shown`), as
+    /// `ui.window.active` and `ui.window.shown`: an app tells someone of
+    /// what arrives while they are away (a system notification, a badge).
+    pub fn window_state(&self, ui: &zgx::widgets::Ui) {
+        self.0.window_state.borrow_mut().clear();
+        for (key, source) in [
+            (windows::ACTIVE, ui.observe_window_active()),
+            (windows::SHOWN, ui.observe_shown()),
+        ] {
+            let state = self
+                .0
+                .shared
+                .state(key, Value::Bool(source.with_untracked(|now| *now)));
+            let effect = self.0.runtime.effect(move || {
+                let now = Value::Bool(source.get());
+                if state.with_untracked(|was| *was != now) {
+                    state.set(now);
+                }
+            });
+            self.0.window_state.borrow_mut().push(effect);
+        }
+    }
+    /// Keep `ui.window.size` as the window's size in points: pass its
+    /// `WindowContext::viewport`. For what layout can't say (a sidebar
+    /// collapsing below a width); sizes themselves are layout's.
+    pub fn window_size(&self, viewport: Signal<(f32, f32)>) {
+        let (width, height) = viewport.with_untracked(|size| *size);
+        let state = self
+            .0
+            .shared
+            .state(windows::SIZE, windows::size(width, height));
+        let effect = self.0.runtime.effect(move || {
+            let (width, height) = viewport.get();
+            let now = windows::size(width, height);
+            if state.with_untracked(|was| *was != now) {
+                state.set(now);
+            }
+        });
+        *self.0.window_size.borrow_mut() = Some(effect);
+    }
     /// Keep `ui.window.zoom` and `ui.window.zoomable` as window `ui` has
     /// them, and its zoom as a script sets them: the zoom's keys and menu
     /// items show in the state, and a script's `zoom:set(1.5)` zooms the
@@ -1550,6 +1714,24 @@ impl ScriptHost {
         });
         *self.0.zoom.borrow_mut() = Some(effect);
     }
+    /// Keep `ui.window.visible` as the app's window shows, `visible` at
+    /// first (as it opened), and `show` it as a script sets it: an app that
+    /// opens its window hidden (`WindowOptions::visible`) shows it with
+    /// `ui.window.visible:set(true)`, drawn whole as it appears.
+    pub fn window_visible(&self, visible: bool, show: impl Fn(bool) + 'static) {
+        let state = self.0.shared.state(windows::VISIBLE, Value::Bool(visible));
+        if state.with_untracked(|was| *was != Value::Bool(visible)) {
+            state.set(Value::Bool(visible));
+        }
+        let shown = std::cell::Cell::new(visible);
+        let effect = self.0.runtime.effect_now(move || {
+            let wanted = state.get().truthy();
+            if shown.replace(wanted) != wanted {
+                show(wanted);
+            }
+        });
+        *self.0.visible.borrow_mut() = Some(effect);
+    }
     /// The app commands scripts declare (`ui.command`), in declaration
     /// order, as of the last successful load: show them as menu items.
     pub fn commands(&self) -> Signal<Vec<Command>> {
@@ -1574,7 +1756,7 @@ impl ScriptHost {
         let host = self.0.clone();
         let generation = self.0.generation.clone();
         let id = id.to_owned();
-        switch(
+        let content = switch(
             move || generation.get(),
             move |_, _| {
                 let current = host.current.borrow().clone();
@@ -1586,11 +1768,36 @@ impl ScriptHost {
                     _ => div(),
                 }
             },
-        )
+        );
+        // As the app's own window does: across it fills, as a block fills its
+        // parent; down, it takes what it holds, and `h_full` asks for the rest.
+        overlay()
+            .w_full()
+            .h_full()
+            .child(content.items_stretch().w_full().h_full())
     }
     /// Run the command `id` (a menu item was chosen); whether one ran.
     pub fn run_command(&self, id: &str) -> bool {
         self.0.commands.run(id)
+    }
+    /// Every route the app's routers declare (`ui.router { routes }`), as
+    /// `(name, path)` by name: where an agent or `zgx audit` can go
+    /// ([`open_route`](Self::open_route)).
+    pub fn routes(&self) -> Vec<(String, String)> {
+        let current = self.0.current.borrow().clone();
+        current
+            .and_then(|current| current._vms.first().map(|vm| router::routes(&vm.lua)))
+            .unwrap_or_default()
+    }
+    /// Open `path` (`"/thread/42"`) in the app's router with a route
+    /// matching it, as following a link would; whether one did.
+    pub fn open_route(&self, path: &str) -> bool {
+        let current = self.0.current.borrow().clone();
+        let Some(vm) = current.as_ref().and_then(|current| current._vms.first()) else {
+            return false;
+        };
+        vm.guard(vm.budget, || router::open(&vm.lua, path))
+            .unwrap_or(false)
     }
     /// The warnings scripts have caused (a duration that reads as seconds,
     /// a saved value that is not JSON), each once, oldest first. They also
@@ -1616,6 +1823,21 @@ impl ScriptHost {
     pub fn script_calls(&self) -> u64 {
         self.0.warnings.calls.get()
     }
+    /// Collects the loaded scripts' garbage now, a full cycle in each VM.
+    /// The host does it as its window goes idle (`zgx::idle`): Luau's
+    /// collector runs only as scripts allocate and counts only its heap, so
+    /// a node a script let go of (a small userdata holding a large node)
+    /// would otherwise stay until the scripts next ran a while.
+    pub fn collect_garbage(&self) {
+        collect_garbage(&self.0);
+    }
+    /// Bytes the loaded scripts' VMs hold now, garbage included (for tests:
+    /// what a collection frees).
+    #[doc(hidden)]
+    pub fn script_heap(&self) -> usize {
+        let loaded = self.0.current.borrow().clone();
+        loaded.map_or(0, |l| l._vms.iter().map(|vm| vm.lua.used_memory()).sum())
+    }
     /// Bytes the loaded scripts' VMs hold after a full collection (each is
     /// capped at `Limits::memory` or `Limits::plugin_memory`): what a test reads over many updates to
     /// check that nothing keeps what it no longer needs.
@@ -1625,11 +1847,21 @@ impl ScriptHost {
             l._vms
                 .iter()
                 .map(|vm| {
-                    let _ = vm.lua.gc_collect();
+                    collect_fully(&vm.lua);
                     vm.lua.used_memory()
                 })
                 .sum()
         })
+    }
+    /// The scripts' lines of a memory report: each VM's heap as it stands
+    /// (no collection), and the pictures they show and keep.
+    pub fn memory(&self, report: &mut zgx::memory::Report) {
+        if let Some(loaded) = self.0.current.borrow().clone() {
+            for vm in &loaded._vms {
+                report.add("luau", vm.name.clone(), None, Some(vm.lua.used_memory()));
+            }
+        }
+        self.0.assets.memory(report);
     }
     /// How many converted values the loaded scripts' VMs keep (each with
     /// its table, until nothing else holds the value): with
@@ -1892,18 +2124,34 @@ impl ScriptHost {
     pub fn reload(&self) -> Result<(), String> {
         self.0.commands.begin();
         self.0.windows.begin();
+        let reports = self.0.error.version();
         let loaded = self.load();
         // After loading: the files it required are watched too.
         *self.0.stamps.borrow_mut() = self.stamps();
         match loaded {
-            Ok(loaded) => {
-                let broken = (!loaded.broken.is_empty()).then(|| loaded.broken.join("\n"));
-                if let Some(broken) = &broken {
-                    eprintln!("{broken}");
+            Ok(mut loaded) => {
+                // What the load reported as it ran (a task's error, a
+                // dialog that can't open) stays shown: its success doesn't
+                // clear it.
+                if self.0.error.version() != reports
+                    && let Some(reported) = self.0.error.with_untracked(Clone::clone)
+                    && !loaded.broken.contains(&reported)
+                {
+                    loaded.broken.push(reported);
                 }
                 *self.0.current.borrow_mut() = Some(Rc::new(loaded));
                 self.0.commands.publish();
-                self.0.windows.publish();
+                let mut problems = self
+                    .0
+                    .current
+                    .borrow()
+                    .as_ref()
+                    .map_or_else(Vec::new, |l| l.broken.clone());
+                problems.extend(self.0.windows.publish());
+                let broken = (!problems.is_empty()).then(|| problems.join("\n"));
+                if let Some(broken) = &broken {
+                    eprintln!("{broken}");
+                }
                 // What the system asked to open before a script could take it.
                 self.0.opens.deliver_waiting(&self.0.picked);
                 self.0.runtime.batch(|| {
@@ -1939,7 +2187,20 @@ impl ScriptHost {
         if self.stamps() == *self.0.stamps.borrow() && !assets {
             return themes;
         }
-        let _ = self.reload();
+        // What a reload mounts can panic, and `watch` calls this: a panic
+        // shows as a script error does, and the next save is still heard.
+        if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reload()))
+        {
+            *self.0.stamps.borrow_mut() = self.stamps();
+            let message = panic
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a panic".into());
+            self.0
+                .error
+                .set(Some(format!("The reload panicked: {message}")));
+        }
         true
     }
     /// Read again the theme files that changed; whether any did. An error
@@ -2073,6 +2334,13 @@ impl ScriptHost {
                 current.map_or_else(div, |loaded| {
                     let mut view =
                         lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys();
+                    // With a catalog, the windows' text is in its locale's
+                    // language (Han takes its fonts).
+                    if host.locales.handle().is_some() {
+                        let locales = host.locales.clone();
+                        let (runtime, platform) = (host.runtime.clone(), host.platform.clone());
+                        view = view.on_mount(move |_| locales.follow_language(&runtime, platform));
+                    }
                     // With a catalog, the script runs the way its locale
                     // does, unless its root says which way (`dir`).
                     if host.locales.handle().is_some() && !loaded.root.sets_direction() {
@@ -2146,7 +2414,12 @@ impl ScriptHost {
                 dismiss_types.clone(),
                 dismiss_lint.clone(),
             );
-            let root = overlay().w_full().h_full().child(app.w_full().h_full());
+            // The script's root fills across, as a block fills its parent;
+            // down, it takes what it holds, and `h_full` asks for the rest.
+            let root = overlay()
+                .w_full()
+                .h_full()
+                .child(app.items_stretch().w_full().h_full());
             // `ui.toast`'s, while one shows: nothing otherwise.
             #[cfg(feature = "components")]
             let root = root.child_when(
@@ -2563,6 +2836,7 @@ impl ScriptHost {
         // The handle `Lua::new` returns collects all garbage when it drops,
         // a full pass over everything the script just built; a clone does
         // not, and the VM frees all it holds when the last one goes.
+        mlua::pool_pages(zgx::idle::heap_returns_whole_runs());
         let lua = Lua::new().clone();
         let limits = self.0.limits;
         let memory = if plugin {
@@ -2575,6 +2849,8 @@ impl ScriptHost {
         let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
         let interrupt = interrupt::install(&lua, deadline.clone(), memory);
         let watch = interrupt.watch();
+        #[cfg(test)]
+        tests::count_closing(&lua);
         let vm = Rc::new(Vm {
             name: name.clone(),
             lua: lua.clone(),
@@ -2610,6 +2886,8 @@ impl ScriptHost {
             retained: RefCell::default(),
             mounted: RefCell::default(),
             actions: self.0.actions.clone(),
+            platform: self.0.platform.clone(),
+            picked: self.0.picked.clone(),
             functions: self.0.functions.clone(),
             persist: self.0.persist.clone(),
             warnings: self.0.warnings.clone(),
@@ -2648,36 +2926,54 @@ impl ScriptHost {
         });
         i18n::install(&lazy, self.0.locales.clone(), self.0.files);
         let (windows, shared) = (self.0.windows.clone(), self.0.shared.clone());
-        lazy.ui(&["window"], move |lua, ui| {
+        lazy.ui(&["window", "window_rect", "windows"], move |lua, ui| {
             windows::install(lua, ui, windows, &shared)
         });
         let may = |capability: Capability| grants.allows(&capability);
         let fetch = may(Capability::Fetch).then(|| self.0.fetcher.clone());
         let actions = self.0.async_actions.clone();
+        let upload_files = may(Capability::Files);
         lazy.ui(
             &["call", "fetch", "resource", "task", "try"],
-            move |lua, ui| calls::install(lua, ui, actions, fetch),
+            move |lua, ui| calls::install(lua, ui, actions, fetch, upload_files),
         );
         lazy.ui(&["paged", "debounced"], paged::install);
+        let connector = may(Capability::Fetch).then(|| self.0.connector.clone());
+        lazy.ui(&["socket", "sleep"], move |lua, ui| {
+            socket::install(lua, ui, connector)
+        });
         let (platform, picked) = (self.0.platform.clone(), self.0.picked.clone());
         let (clipboard, files_allowed) = (may(Capability::Clipboard), may(Capability::Files));
+        let (folders, access) = (may(Capability::Folders), self.0.folders.clone());
         lazy.ui(
             &[
+                "badge",
                 "clipboard",
+                "notify",
                 "open_files",
+                "open_folder",
                 "read_file",
+                "remembered_folder",
                 "save_file",
                 "write_file",
             ],
-            move |lua, ui| io::install(lua, ui, platform, picked, clipboard, files_allowed),
+            move |lua, ui| {
+                folder::install(lua, ui, platform.clone(), folders, access)?;
+                io::install(lua, ui, platform, picked, clipboard, files_allowed)
+            },
         );
         let (dir, packages) = (script.dir(), self.packages(plugin));
         lazy.ui(&["prefers", "theme", "tokens"], move |lua, ui| {
             theme::install(lua, ui, dir, packages)
         });
         lazy.ui(&["form"], form::install);
+        lazy.ui(&["editor"], element::install_editor);
         lazy.ui(&["router"], router::install);
         lazy.ui(&["async", "optimistic"], handlers::install);
+        let app_actions = self.0.actions.clone();
+        lazy.ui(&["actions"], move |lua, ui| {
+            actions::install(lua, ui, app_actions, !plugin)
+        });
         lazy.ui(&["contribute", "filter", "override"], node::install_plugins);
         // `ui.selector(text)`: a plugin's target by role or name
         // (`'role:button "Save"'`), the text itself at run time; its type
@@ -2797,9 +3093,87 @@ async fn wake(
     .await
 }
 
+/// Everything `inner`'s loaded VMs can free, freed: two full collections in
+/// each, as one leaves what a userdata's finalizer held (a node's or an
+/// element's, and the closures and values only they reached) for the next.
+fn collect_garbage(inner: &Inner) {
+    let loaded = inner.current.borrow().clone();
+    for vm in loaded.iter().flat_map(|loaded| loaded._vms.iter()) {
+        collect_fully(&vm.lua);
+    }
+}
+/// Full collections until one frees nothing more: a collection finalizes
+/// the garbage's userdata, and what only they held goes in the next.
+fn collect_fully(lua: &mlua::Lua) {
+    let mut held = lua.used_memory();
+    for _ in 0..4 {
+        let _ = lua.gc_collect();
+        let now = lua.used_memory();
+        if now >= held {
+            break;
+        }
+        held = now;
+    }
+}
+/// What the host gives back as it goes idle: its scripts' garbage, then the
+/// pictures no node shows (the image cache keeps up to its budget of them
+/// while the app is in use, so a page shown again is instant).
+fn trim_idle(inner: &Inner) {
+    collect_garbage(inner);
+    mlua::release_free_pages();
+    inner.assets.trim();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// Scripts' states closed on this thread.
+        static CLOSED: Cell<usize> = const { Cell::new(0) };
+    }
+    /// Held in a state's registry: dropped only as the state closes.
+    struct Closing;
+    impl Drop for Closing {
+        fn drop(&mut self) {
+            CLOSED.set(CLOSED.get() + 1);
+        }
+    }
+    pub(super) fn count_closing(lua: &Lua) {
+        let closing = lua.create_any_userdata(Closing).unwrap();
+        lua.set_named_registry_value("closing", closing).unwrap();
+    }
+
+    /// A clip, a timeline, a draggable and a scroll link live in the script's
+    /// state: a strong handle in any of them would keep the state alive
+    /// after its reload, and everything in it (the app's whole heap, each
+    /// reload).
+    #[test]
+    fn a_reload_closes_the_state_it_replaces() {
+        const SCRIPT: &str = r##"
+            local clip = anime.animate("#t", { x = 100, duration = 1000, loop = true })
+            local timeline = anime.createTimeline({ defaults = { duration = 100 } })
+            timeline:add("#t", { x = 100 }):add("#k", { x = 50 })
+            local draggable = anime.createDraggable("#k", { container = "#scroller",
+                onSettle = function() end })
+            local linked = anime.animate("#t", { opacity = { 0, 1 }, duration = 100,
+                autoplay = anime.onScroll({ container = "#scroller", sync = true }) })
+            return ui.column {
+                on_click = function() return clip, timeline, draggable, linked end,
+                ui.scroll { id = "scroller", w = 100, h = 200,
+                    ui.column { h = 1500, ui.div { id = "t", w = 50, h = 50 },
+                        ui.div { id = "k", w = 20, h = 20 } } },
+            }"##;
+        let h = testing::TestApp::new(|runtime| ScriptHost::inline(runtime, "app", SCRIPT));
+        assert_eq!(h.host.error().get(), None);
+        h.frames(3);
+        let closed = CLOSED.get();
+        for reloads in 1..=5 {
+            h.host.reload().unwrap();
+            h.frames(3);
+            assert_eq!(CLOSED.get(), closed + reloads, "after {reloads} reloads");
+        }
+    }
 
     /// The CPU reading lasts through the exact one-millisecond boundary;
     /// a reversed timestamp is still fresh, as with saturating subtraction.

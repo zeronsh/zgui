@@ -516,3 +516,30 @@ fn a_line_taller_than_its_field_keeps_its_misspelling_marks() {
     assert_eq!(marks.len(), 1, "teh is marked");
     assert!(marks[0].y + marks[0].height <= field.y + field.height - 10. + 0.01);
 }
+
+/// An editor hearing pastes may take one with no text in it (an image), so
+/// its menu's Paste stays enabled, and goes through the hook.
+#[test]
+fn an_editor_hearing_pastes_keeps_paste_enabled_on_an_empty_clipboard() {
+    let mut ui = Ui::new(400., 200.);
+    let value = ui.signal(String::new());
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let told = heard.clone();
+    let field = text_input("Name", value.clone()).on_paste(move |text| {
+        told.borrow_mut().push(text.map(str::to_owned));
+        text.is_none()
+    });
+    let (view, clipboard) = mount(&mut ui, field);
+    let bounds = ui.scene.borrow().bounds(view.find("field").unwrap());
+    let inside = (bounds.x + 4., bounds.y + bounds.height / 2.);
+    context_click(&mut ui, inside.0, inside.1);
+    assert!(enabled(&ui, &view, "editor-paste"));
+    choose(&mut ui, &view, "editor-paste");
+    assert_eq!(*heard.borrow(), [None]);
+    assert_eq!(value.get(), "");
+    *clipboard.0.borrow_mut() = Some("typed".into());
+    context_click(&mut ui, inside.0, inside.1);
+    choose(&mut ui, &view, "editor-paste");
+    assert_eq!(*heard.borrow(), [None, Some("typed".to_owned())]);
+    assert_eq!(value.get(), "typed", "not taken, it goes in");
+}

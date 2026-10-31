@@ -13,15 +13,23 @@
 //! on macOS), it is recorded here with Direct3D 11; the glyph atlas, the
 //! window's swap chain (dxgi_present.rs) and readbacks are Direct3D 11's.
 //!
-//! Only what the Windows suite's scenes draw is here: quads, text and clip
-//! regions, kept frames, scroll copies and catch-up. A frame needing more
-//! fails, naming what it lacks: there is no Direct3D 12 to fall back to.
+//! Only what the Windows suite's scenes draw is here, isolated layers,
+//! images and polylines: quads, text and clip regions, kept frames, scroll
+//! copies and catch-up, layers drawn into textures of their own and
+//! composited, images (gradients' ramps, canvases and SVGs among them) the
+//! CPU wrote, and canvases' polyline strokes and filled areas. A frame
+//! needing more fails, naming what it lacks: there is no Direct3D 12 to
+//! fall back to.
 //!
-//! The shaders are draw.wgsl and copy_offset.wgsl, translated by naga to
-//! HLSL (draw.hlsl, copy_offset.hlsl) and compiled ahead by FXC, as wgpu's
-//! Direct3D 12 backend compiles them, to the DXBC in `dxbc/`:
-//! `translated_hlsl_matches` keeps all of them current
-//! (`ZGX_BLESS=1 cargo test -p zgx-gpu --features d3d11 --lib translated_hlsl`).
+//! The shaders are draw.wgsl, copy_offset.wgsl and polyline.wgsl (after
+//! draw.wgsl, as `crate::polyline_source` joins them, without areas: FXC
+//! can't compile their shader, so canvases holding one rasterize here),
+//! translated by naga to HLSL (draw.hlsl, copy_offset.hlsl, polyline.hlsl)
+//! and compiled ahead by FXC, as wgpu's Direct3D 12 backend compiles them, to
+//! the DXBC in `dxbc/`:
+//! `translated_hlsl_matches` keeps all of them current. FXC runs on Windows
+//! alone: `python scripts/d3d11_shaders.py` there writes them again and
+//! prints their hashes.
 use crate::{GpuError, Scissor, ScrollCopy, Shading};
 use std::cell::Cell;
 use windows::{
@@ -63,12 +71,16 @@ const BASIC_VS: &[u8] = include_bytes!("dxbc/draw_vs_basic.dxbc");
 const BASIC_FS: &[u8] = include_bytes!("dxbc/draw_fs_basic.dxbc");
 const COPY_VS: &[u8] = include_bytes!("dxbc/copy_offset_vs.dxbc");
 const COPY_FS: &[u8] = include_bytes!("dxbc/copy_offset_fs.dxbc");
+const POLYLINE_VS: &[u8] = include_bytes!("dxbc/polyline_vs.dxbc");
+const POLYLINE_FS: &[u8] = include_bytes!("dxbc/polyline_fs_polyline.dxbc");
 
 /// Registers the HLSL is written with (`translate`): the sampled texture
 /// (the atlas, or the shown buffer for copies) in t0, the clip regions in
 /// t1, the viewport in b0, the sampler in s0.
 const TEXTURE: u32 = 0;
 const REGIONS: u32 = 1;
+/// Polyline strokes' and filled areas' points (polyline.wgsl's `points`).
+const POINTS: u32 = 2;
 
 fn failed(what: &str) -> impl Fn(windows::core::Error) -> GpuError + '_ {
     move |error| GpuError(format!("Direct3D 11 {what}: {error}"))
@@ -82,6 +94,7 @@ enum Bound {
     Basic,
     Opaque,
     Copy,
+    Polyline,
 }
 
 struct Pipeline {
@@ -91,15 +104,37 @@ struct Pipeline {
     blend: ID3D11BlendState,
 }
 
+/// A clamped sampler of `filter`, or none if Direct3D makes none.
+fn sampler_state(device: &ID3D11Device, filter: D3D11_FILTER) -> Option<ID3D11SamplerState> {
+    let desc = D3D11_SAMPLER_DESC {
+        Filter: filter,
+        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+        MipLODBias: 0.,
+        MaxAnisotropy: 1,
+        ComparisonFunc: D3D11_COMPARISON_NEVER,
+        BorderColor: [0.; 4],
+        MinLOD: 0.,
+        MaxLOD: 32.,
+    };
+    let mut state = None;
+    // SAFETY: A plain sampler description.
+    unsafe { device.CreateSamplerState(&desc, Some(&mut state)) }.ok()?;
+    state
+}
 /// The device, its immediate context and every pipeline: shared by the
 /// renderers of a `GpuContext`, as its wgpu device is.
 pub(crate) struct Device {
     pub(crate) device: ID3D11Device,
     pub(crate) context: ID3D11DeviceContext,
     /// By `Bound`, in its order.
-    pipelines: [Pipeline; 5],
+    pipelines: [Pipeline; 6],
     rasterizer: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
+    /// Pixelated images' sampler, the nearest texel's, made with the first
+    /// (`Frame::nearest`; `None`: Direct3D made none).
+    nearest: std::cell::OnceCell<Option<ID3D11SamplerState>>,
     /// Bound where a frame has no clip regions: one zeroed `Region`.
     no_regions: ID3D11ShaderResourceView,
     /// The query `wait_idle` ends and waits for.
@@ -223,6 +258,12 @@ impl Device {
                 layout: layout(&copies, COPY_VS)?,
                 blend: replace.clone(),
             },
+            Pipeline {
+                vertex: vertex(POLYLINE_VS)?,
+                pixel: pixel(POLYLINE_FS)?,
+                layout: layout(&quads, POLYLINE_VS)?,
+                blend: over.clone(),
+            },
         ];
         // As wgpu's quad pipelines: no culling, depth clipped, scissored.
         let rasterizer = {
@@ -245,25 +286,8 @@ impl Device {
             state.ok_or_else(|| GpuError("Direct3D 11 made no rasterizer state".into()))?
         };
         // Linear and clamped, as `GpuRenderer::texture_bind`'s.
-        let sampler = {
-            let desc = D3D11_SAMPLER_DESC {
-                Filter: D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT,
-                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-                MipLODBias: 0.,
-                MaxAnisotropy: 1,
-                ComparisonFunc: D3D11_COMPARISON_NEVER,
-                BorderColor: [0.; 4],
-                MinLOD: 0.,
-                MaxLOD: 32.,
-            };
-            let mut state = None;
-            // SAFETY: A plain sampler description.
-            unsafe { device.CreateSamplerState(&desc, Some(&mut state)) }
-                .map_err(failed("sampler"))?;
-            state.ok_or_else(|| GpuError("Direct3D 11 made no sampler".into()))?
-        };
+        let sampler = sampler_state(&device, D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT)
+            .ok_or_else(|| GpuError("Direct3D 11 made no sampler".into()))?;
         let no_regions = raw_buffer(
             &device,
             size_of::<crate::Region>(),
@@ -278,6 +302,7 @@ impl Device {
             pipelines,
             rasterizer,
             sampler,
+            nearest: std::cell::OnceCell::new(),
             no_regions,
             idle,
         })
@@ -496,12 +521,16 @@ impl Device {
             context.VSSetConstantBuffers(0, Some(&[Some(state.viewport.clone())]));
             context.PSSetConstantBuffers(0, Some(&[Some(state.viewport.clone())]));
             context.PSSetShaderResources(REGIONS, Some(&[Some(regions.clone())]));
+            if let Some((_, points, _)) = &state.points {
+                context.PSSetShaderResources(POINTS, Some(&[Some(points.clone())]));
+            }
             context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
         }
         Frame {
             device: self,
             current: None,
             scissor: None,
+            nearest: false,
         }
     }
 }
@@ -677,6 +706,8 @@ pub(crate) struct State {
     pub(crate) ring: Ring,
     /// The frame's clip regions, the buffer's size.
     regions: Option<(ID3D11Buffer, ID3D11ShaderResourceView, usize)>,
+    /// The frame's polyline points, the buffer's size.
+    points: Option<(ID3D11Buffer, ID3D11ShaderResourceView, usize)>,
     /// What `regions` holds: most frames clip with the last one's, and
     /// write nothing.
     last_regions: Vec<u8>,
@@ -690,6 +721,13 @@ pub(crate) struct State {
     /// through.
     pub(crate) target: Option<Surface>,
     pub(crate) spare: Option<Surface>,
+    /// Isolated layers' contents (`crate::GpuRenderer::paint_layer`), each
+    /// under the shell's texture standing for it.
+    pub(crate) layers: rustc_hash::FxHashMap<wgpu::Texture, Surface>,
+    /// Images' texels (`crate::GpuRenderer::upload_image`: pictures,
+    /// gradients' ramps, canvases, SVGs), each under the shell's texture
+    /// standing for it.
+    pub(crate) textures: rustc_hash::FxHashMap<wgpu::Texture, Surface>,
 }
 
 impl State {
@@ -713,11 +751,52 @@ impl State {
             device,
             ring: Ring::default(),
             regions: None,
+            points: None,
             last_regions: Vec::new(),
             atlas: None,
             target: None,
             spare: None,
+            layers: Default::default(),
+            textures: Default::default(),
         })
+    }
+
+    /// The frame's polyline points (`[f32; 2]`s as bytes), read by its
+    /// `Shading::Polyline` batches.
+    pub(crate) fn set_points(&mut self, points: &[u8]) -> Result<(), GpuError> {
+        if points.is_empty() {
+            return Ok(());
+        }
+        let fits = self
+            .points
+            .as_ref()
+            .is_some_and(|(_, _, capacity)| *capacity >= points.len());
+        if !fits {
+            let capacity = points.len().next_power_of_two().max(4096);
+            let (buffer, view) = raw_buffer(&self.device.device, capacity, None)?;
+            self.points = Some((buffer, view, capacity));
+        }
+        let (buffer, _, _) = self.points.as_ref().expect("made above");
+        let area = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: points.len() as u32,
+            bottom: 1,
+            back: 1,
+        };
+        // SAFETY: `points.len()` bytes into a buffer at least as large.
+        unsafe {
+            self.device.context.UpdateSubresource(
+                buffer,
+                0,
+                Some(&area),
+                points.as_ptr().cast(),
+                0,
+                0,
+            )
+        };
+        Ok(())
     }
 
     /// The frame's viewport and clip regions (`crate::Region`s as bytes).
@@ -993,6 +1072,8 @@ pub(crate) struct Frame<'a> {
     /// The scissor last set: setting it again costs the driver as much as
     /// a change (most batches share their region's).
     scissor: Option<Scissor>,
+    /// Sampling the nearest texel (`nearest`), not the linear sampler.
+    nearest: bool,
 }
 
 impl Frame<'_> {
@@ -1013,6 +1094,31 @@ impl Frame<'_> {
     }
     /// The texture fragments sample: the atlas, or for catch-up copies the
     /// shown buffer (whose size the copy's vertex stage reads).
+    /// Sample the nearest texel from here (a pixelated image's), or blend as
+    /// every other draw does.
+    pub(crate) fn nearest(&mut self, on: bool) {
+        if self.nearest == on {
+            return;
+        }
+        let device = self.device;
+        let sampler = match on {
+            true => device
+                .nearest
+                .get_or_init(|| sampler_state(&device.device, D3D11_FILTER_MIN_MAG_MIP_POINT))
+                .as_ref(),
+            false => Some(&device.sampler),
+        };
+        let Some(sampler) = sampler else {
+            return;
+        };
+        self.nearest = on;
+        // SAFETY: The device's own sampler, in the slot both modules read.
+        unsafe {
+            device
+                .context
+                .PSSetSamplers(0, Some(&[Some(sampler.clone())]));
+        }
+    }
     pub(crate) fn texture(&mut self, view: &ID3D11ShaderResourceView) {
         // SAFETY: A live view, in the register both modules read it from.
         unsafe {
@@ -1048,6 +1154,7 @@ impl Frame<'_> {
             (_, true) => Bound::FullClear,
             (Shading::Basic, false) => Bound::Basic,
             (Shading::Opaque, false) => Bound::Opaque,
+            (Shading::Polyline, false) => Bound::Polyline,
             // The proof draws nothing else (`GpuRenderer::d3d11_lacks`).
             (_, false) => Bound::Full,
         };
@@ -1075,8 +1182,17 @@ impl Frame<'_> {
     /// presenting flushes it. Then `Ring::submitted`.
     pub(crate) fn end(self) {
         // SAFETY: Unbinds the target, which a resize or readback may next
-        // release or copy.
-        unsafe { self.device.context.OMSetRenderTargets(None, None) };
+        // release or copy, and the texture sampled, which may be a layer
+        // the next frame draws into.
+        unsafe {
+            self.device.context.OMSetRenderTargets(None, None);
+            self.device
+                .context
+                .PSSetShaderResources(TEXTURE, Some(&[None]));
+            self.device
+                .context
+                .VSSetShaderResources(TEXTURE, Some(&[None]));
+        }
     }
 }
 
@@ -1111,6 +1227,7 @@ fn translate(source: &str, copies: bool) -> Result<(String, Vec<(String, String)
         binding_map.insert(binding(0, 2), target(0));
         binding_map.insert(binding(1, 0), target(0));
         binding_map.insert(binding(1, 1), target(REGIONS));
+        binding_map.insert(binding(2, 0), target(POINTS));
     }
     let mut sampler_buffer_binding_map = hlsl::SamplerIndexBufferBindingMap::new();
     sampler_buffer_binding_map.insert(hlsl::SamplerIndexBufferKey { group: 0 }, target(15));
@@ -1241,6 +1358,15 @@ mod tests {
                 true,
                 "copy_offset",
                 &[("vs", "vs_5_0", COPY_VS), ("fs", "ps_5_0", COPY_FS)][..],
+            ),
+            (
+                crate::polyline_source(false).as_str(),
+                false,
+                "polyline",
+                &[
+                    ("vs", "vs_5_0", POLYLINE_VS),
+                    ("fs_polyline", "ps_5_0", POLYLINE_FS),
+                ][..],
             ),
         ] {
             let (hlsl, names) = translate(wgsl, copies).unwrap();

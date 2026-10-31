@@ -1,8 +1,155 @@
 use std::alloc::{self, Layout};
 use std::os::raw::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) static ALLOCATOR: ffi::lua_Alloc = allocator;
+
+// zgx patch: Luau's 16 KB pages come from a pool of their own. In the
+// program's heap a free page sits in a run of the allocator's, kept whole
+// while one neighbour lives; here each slot goes back to the OS on its own
+// (`release_free_pages`), so a heap that was once large stops costing memory.
+#[cfg(all(feature = "luau", any(target_os = "macos", target_os = "linux")))]
+mod pages {
+    use std::ptr;
+    use std::sync::Mutex;
+
+    /// What Luau asks for a page of small objects (`kSmallPageSize`).
+    pub(super) const SIZE: usize = 16 * 1024 - 24;
+    const SLOT: usize = 16 * 1024;
+    const CHUNK: usize = 2 << 20;
+
+    /// The VM tag `footprint` shows these under (mimalloc's is 240).
+    #[cfg(target_os = "macos")]
+    const FD: i32 = 241 << 24;
+    #[cfg(target_os = "linux")]
+    const FD: i32 = -1;
+
+    #[derive(Default)]
+    struct Pool {
+        /// Free, in memory: used first.
+        ready: Vec<usize>,
+        /// Free and given back to the OS.
+        released: Vec<usize>,
+    }
+    static POOL: Mutex<Pool> = Mutex::new(Pool { ready: Vec::new(), released: Vec::new() });
+
+    fn pool() -> std::sync::MutexGuard<'static, Pool> {
+        POOL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A free slot, or null if the system has no memory for a new chunk.
+    pub(super) unsafe fn take() -> *mut u8 {
+        let mut pool = pool();
+        if let Some(slot) = pool.ready.pop() {
+            return slot as *mut u8;
+        }
+        if let Some(slot) = pool.released.pop() {
+            // macOS counts a reusable page again only when told.
+            #[cfg(target_os = "macos")]
+            libc::madvise(slot as *mut _, SLOT, libc::MADV_FREE_REUSE);
+            return slot as *mut u8;
+        }
+        let chunk = libc::mmap(
+            ptr::null_mut(),
+            CHUNK,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANON,
+            FD,
+            0,
+        );
+        if chunk == libc::MAP_FAILED {
+            return ptr::null_mut();
+        }
+        let chunk = chunk as usize;
+        pool.ready.extend((1..CHUNK / SLOT).rev().map(|i| chunk + i * SLOT));
+        chunk as *mut u8
+    }
+
+    pub(super) unsafe fn give(slot: *mut u8) {
+        pool().ready.push(slot as usize);
+    }
+
+    pub(super) fn release() {
+        let mut pool = pool();
+        let Pool { ready, released } = &mut *pool;
+        // Neighbouring slots go in one call.
+        ready.sort_unstable();
+        let mut slots = ready.iter().copied().peekable();
+        while let Some(start) = slots.next() {
+            let mut end = start + SLOT;
+            while slots.next_if_eq(&end).is_some() {
+                end += SLOT;
+            }
+            #[cfg(target_os = "macos")]
+            let advice = libc::MADV_FREE_REUSABLE;
+            #[cfg(target_os = "linux")]
+            let advice = libc::MADV_DONTNEED;
+            unsafe { libc::madvise(start as *mut _, end - start, advice) };
+        }
+        released.append(ready);
+    }
+
+    pub(super) fn free() -> (usize, usize) {
+        let pool = pool();
+        (pool.ready.len(), pool.released.len())
+    }
+}
+
+#[cfg(not(all(feature = "luau", any(target_os = "macos", target_os = "linux"))))]
+mod pages {
+    pub(super) const SIZE: usize = usize::MAX;
+    pub(super) unsafe fn take() -> *mut u8 {
+        std::ptr::null_mut()
+    }
+    pub(super) unsafe fn give(_: *mut u8) {}
+    pub(super) fn release() {}
+    pub(super) fn free() -> (usize, usize) {
+        (0, 0)
+    }
+}
+
+static POOL_PAGES: AtomicBool = AtomicBool::new(false);
+
+/// zgx patch: whether VMs made from now on keep Luau's pages in the pool:
+/// for a program whose allocator returns memory only in runs larger than
+/// a page, as mimalloc does. Off, a VM allocates as any other.
+pub fn pool_pages(on: bool) {
+    POOL_PAGES.store(on, Ordering::Relaxed);
+}
+
+/// zgx patch: gives the memory of free Luau pages back to the OS, for every
+/// VM of the process. For when the program goes idle: the next pages cost a
+/// system call each.
+pub fn release_free_pages() {
+    pages::release();
+}
+
+/// zgx patch: free Luau pages, still in memory and given back to the OS.
+#[doc(hidden)]
+pub fn free_pages() -> (usize, usize) {
+    pages::free()
+}
+
+unsafe fn allocate(pooled: bool, size: usize, layout: Layout) -> *mut c_void {
+    let block = if pooled && size == pages::SIZE {
+        pages::take()
+    } else {
+        alloc::alloc(layout)
+    };
+    if block.is_null() {
+        alloc::handle_alloc_error(layout);
+    }
+    block as *mut c_void
+}
+
+unsafe fn release(pooled: bool, block: *mut c_void, size: usize) {
+    if pooled && size == pages::SIZE {
+        pages::give(block as *mut u8);
+    } else {
+        alloc::dealloc(block as *mut u8, Layout::from_size_align_unchecked(size, ffi::SYS_MIN_ALIGN));
+    }
+}
 
 #[repr(C)]
 #[derive(Default)]
@@ -25,6 +172,9 @@ pub(crate) struct MemoryState {
     // so an allocation under both is one comparison, as with the limit
     // alone (see `allocator`).
     check_at: isize,
+    // zgx patch: this VM's pages come from the pool (`pool_pages`, when it
+    // was made: a block is released as it was allocated).
+    pooled: bool,
 }
 
 /// zgx patch: what an allocation past a VM's alarm threshold calls (see
@@ -62,6 +212,14 @@ pub unsafe fn set_memory_alarm(state: *mut ffi::lua_State, at: usize, alarm: Opt
 }
 
 impl MemoryState {
+    // zgx patch: what a new VM starts with, its pages pooled or not.
+    pub(crate) fn new() -> Self {
+        Self {
+            pooled: POOL_PAGES.load(Ordering::Relaxed),
+            ..Self::default()
+        }
+    }
+
     #[cfg(feature = "luau")]
     #[inline]
     pub(crate) unsafe fn get(state: *mut ffi::lua_State) -> *mut Self {
@@ -157,8 +315,7 @@ unsafe extern "C" fn allocator(
     if nsize == 0 {
         // Free memory
         if !ptr.is_null() {
-            let layout = Layout::from_size_align_unchecked(osize, ffi::SYS_MIN_ALIGN);
-            alloc::dealloc(ptr as *mut u8, layout);
+            release(mem_state.pooled, ptr, osize);
             mem_state.used_memory -= osize as isize;
         }
         return ptr::null_mut();
@@ -203,10 +360,18 @@ unsafe extern "C" fn allocator(
             Ok(layout) => layout,
             Err(_) => return ptr::null_mut(),
         };
-        let new_ptr = alloc::alloc(new_layout) as *mut c_void;
-        if new_ptr.is_null() {
-            alloc::handle_alloc_error(new_layout);
-        }
+        return allocate(mem_state.pooled, nsize, new_layout);
+    }
+
+    // A pooled block moves by hand: it is no block of the program's heap.
+    if mem_state.pooled && (osize == pages::SIZE || nsize == pages::SIZE) {
+        let new_layout = match Layout::from_size_align(nsize, ffi::SYS_MIN_ALIGN) {
+            Ok(layout) => layout,
+            Err(_) => return ptr::null_mut(),
+        };
+        let new_ptr = allocate(true, nsize, new_layout);
+        ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, osize.min(nsize));
+        release(true, ptr, osize);
         return new_ptr;
     }
 

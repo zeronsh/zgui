@@ -79,6 +79,14 @@ pub(crate) struct ModelSpec {
     src: String,
     /// Scaled to this many units across (its largest side), centred.
     fit: Option<f32>,
+    /// The clip it plays, round and round: by name, or by its place (from
+    /// 1, as Luau counts).
+    animation: Option<ClipChoice>,
+}
+#[cfg_attr(not(feature = "gltf"), allow(dead_code))]
+pub(crate) enum ClipChoice {
+    Name(String),
+    Index(usize),
 }
 /// An object of a scene (`ui.mesh`, `ui.light`, `ui.group`).
 pub(crate) struct ObjectSpec {
@@ -98,6 +106,7 @@ pub(crate) struct OrbitSpec {
     /// Degrees a second it turns on its own.
     auto_rotate: Option<Num>,
     zoom: bool,
+    pan: bool,
 }
 /// What `ui.scene3d` shows (`Kind::Scene3d`).
 pub(crate) struct Scene3dSpec {
@@ -109,7 +118,31 @@ pub(crate) struct Scene3dSpec {
     background: Option<ColorSpec>,
     /// The sun casts shadows (`World::set_shadows`).
     shadows: bool,
+    /// The light around it (`World::set_environment`); `None` unsaid.
+    environment: Option<EnvironmentSpec>,
+    /// How its light maps to the display (`World::set_tone_mapping`).
+    tone_mapping: zgx_3d::ToneMapping,
+    /// Stops of exposure (`World::set_exposure`).
+    exposure: Option<Num>,
+    /// Multisampled edges (`World::set_samples`: 4, or 1 without).
+    antialias: bool,
     objects: Vec<Rc<ObjectSpec>>,
+}
+/// Where a scene's environment comes from.
+pub(crate) enum EnvironmentSource {
+    None,
+    /// `zgx_3d::Environment::studio`, built in.
+    Studio,
+    /// A Radiance `.hdr` file, from the script's directory.
+    File(String),
+}
+/// `environment = "studio" | "none" | "file.hdr" | { src, intensity,
+/// rotation }`.
+pub(crate) struct EnvironmentSpec {
+    source: EnvironmentSource,
+    intensity: Option<Num>,
+    /// Degrees about the vertical.
+    rotation: Option<Num>,
 }
 
 /// A script's mistake, said: made in one place, out of the way of what
@@ -417,7 +450,29 @@ fn model(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         }
     }
     .filter(|fit| fit.is_finite() && *fit > 0.);
-    placed(lua, &table, Shape::Model(ModelSpec { src, fit }))
+    let animation = match table.get::<mlua::Value>("animation")? {
+        mlua::Value::Nil => None,
+        mlua::Value::String(name) => Some(ClipChoice::Name(name.to_str()?.to_owned())),
+        mlua::Value::Integer(n) if n >= 1 => Some(ClipChoice::Index(n as usize - 1)),
+        mlua::Value::Number(n) if n >= 1. && n.fract() == 0. => {
+            Some(ClipChoice::Index(n as usize - 1))
+        }
+        other => {
+            return Err(wrong(format_args!(
+                "ui.model `animation` is a clip's name or its place from 1, not {}",
+                other.type_name()
+            )));
+        }
+    };
+    placed(
+        lua,
+        &table,
+        Shape::Model(ModelSpec {
+            src,
+            fit,
+            animation,
+        }),
+    )
 }
 
 /// `ui.scene3d { camera, orbit, background, label, …objects, …box props }`.
@@ -436,14 +491,16 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         mlua::Value::Boolean(true) => Some(OrbitSpec {
             auto_rotate: None,
             zoom: true,
+            pan: true,
         }),
         mlua::Value::Table(orbit) => Some(OrbitSpec {
             auto_rotate: opt_num(&orbit, "auto_rotate")?,
             zoom: orbit.get::<Option<bool>>("zoom")?.unwrap_or(true),
+            pan: orbit.get::<Option<bool>>("pan")?.unwrap_or(true),
         }),
         other => {
             return Err(wrong(format_args!(
-                "ui.scene3d `orbit` must be true or {{ auto_rotate, zoom }}, not {}",
+                "ui.scene3d `orbit` must be true or {{ auto_rotate, zoom, pan }}, not {}",
                 other.type_name()
             )));
         }
@@ -467,6 +524,28 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
                 )));
             }
         },
+        environment: environment(&table)?,
+        tone_mapping: match table.get::<Option<String>>("tone_mapping")?.as_deref() {
+            None | Some("neutral") => zgx_3d::ToneMapping::Neutral,
+            Some("aces") => zgx_3d::ToneMapping::Aces,
+            Some("linear") => zgx_3d::ToneMapping::Linear,
+            Some(other) => {
+                return Err(wrong(format_args!(
+                    "ui.scene3d `tone_mapping` is \"neutral\", \"aces\" or \"linear\", not \"{other}\""
+                )));
+            }
+        },
+        exposure: opt_num(&table, "exposure")?,
+        antialias: match table.get::<mlua::Value>("antialias")? {
+            mlua::Value::Nil => true,
+            mlua::Value::Boolean(on) => on,
+            other => {
+                return Err(wrong(format_args!(
+                    "ui.scene3d `antialias` is true or false, not {}",
+                    other.type_name()
+                )));
+            }
+        },
         objects: objects(&table, "ui.scene3d")?,
     };
     // Its box's own properties: the table's named keys alone but
@@ -477,7 +556,14 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
         if let mlua::Value::String(name) = &key
             && !matches!(
                 &*name.as_bytes(),
-                b"camera" | b"orbit" | b"background" | b"shadows"
+                b"camera"
+                    | b"orbit"
+                    | b"background"
+                    | b"shadows"
+                    | b"environment"
+                    | b"tone_mapping"
+                    | b"exposure"
+                    | b"antialias"
             )
         {
             props.set(key, value)?;
@@ -491,6 +577,38 @@ fn scene3d(lua: &Lua, table: Table) -> mlua::Result<mlua::AnyUserData> {
             Some(&props),
         )?,
     )
+}
+
+/// A scene's `environment`, if it says one.
+fn environment(table: &Table) -> mlua::Result<Option<EnvironmentSpec>> {
+    let source = |name: String| match name.as_str() {
+        "studio" => EnvironmentSource::Studio,
+        "none" => EnvironmentSource::None,
+        _ => EnvironmentSource::File(name),
+    };
+    Ok(match table.get::<mlua::Value>("environment")? {
+        mlua::Value::Nil => None,
+        mlua::Value::String(name) => Some(EnvironmentSpec {
+            source: source(name.to_str()?.to_owned()),
+            intensity: None,
+            rotation: None,
+        }),
+        mlua::Value::Table(environment) => Some(EnvironmentSpec {
+            source: source(
+                environment
+                    .get::<Option<String>>("src")?
+                    .unwrap_or_else(|| "studio".into()),
+            ),
+            intensity: opt_num(&environment, "intensity")?,
+            rotation: opt_num(&environment, "rotation")?,
+        }),
+        other => {
+            return Err(wrong(format_args!(
+                "ui.scene3d `environment` is \"studio\", \"none\", a .hdr file or {{ src, intensity, rotation }}, not {}",
+                other.type_name()
+            )));
+        }
+    })
 }
 
 /// A number as it is now, read where it changes.
@@ -719,6 +837,8 @@ pub(crate) fn lower(
     let world = World::new();
     let theme = cx.theme();
     world.set_shadows(spec.shadows);
+    world.set_tone_mapping(spec.tone_mapping);
+    world.set_samples(if spec.antialias { 4 } else { 1 });
     let mut adding = Adding {
         world: &world,
         vm,
@@ -730,6 +850,12 @@ pub(crate) fn lower(
         add(&mut adding, object, None, cx);
     }
     let handled = adding.handled;
+    light_around(&world, spec, vm, assets, cx);
+    if let Some(exposure) = &spec.exposure {
+        let exposure = Live::of(exposure, cx);
+        let (world, vm) = (world.clone(), vm.clone());
+        follow(cx, Box::new(move || world.set_exposure(exposure.get(&vm))));
+    }
     // The background, and the camera (orbiting, if asked: dragged, scrolled
     // and turning on its own).
     if let Some(background) = &spec.background {
@@ -770,6 +896,24 @@ pub(crate) fn lower(
         });
         (state, orbit_spec)
     });
+    // Orbiting, the script's target moves the orbit's as it changes (a pan
+    // stays until it does); else the camera reads it.
+    let target = match (&orbit, target) {
+        (Some((state, _)), Some(target)) => {
+            let (state, vm) = (state.clone(), vm.clone());
+            follow(
+                cx,
+                Box::new(move || {
+                    let at = target.get(&vm);
+                    if vm.runtime.untracked(|| state.get().target) != at {
+                        state.update(|o| o.target = at);
+                    }
+                }),
+            );
+            None
+        }
+        (_, target) => target,
+    };
     {
         let (world, vm) = (world.clone(), vm.clone());
         let orbit_state = orbit.as_ref().map(|(state, _)| state.clone());
@@ -782,11 +926,7 @@ pub(crate) fn lower(
                 }
                 match &orbit_state {
                     Some(orbit) => {
-                        let mut orbit = orbit.get();
-                        if let Some(target) = &target {
-                            orbit.target = target.get(&vm);
-                        }
-                        camera = orbit.camera(camera);
+                        camera = orbit.get().camera(camera);
                     }
                     None => {
                         let (at, looking) = place(&position, &target, &vm);
@@ -806,7 +946,18 @@ pub(crate) fn lower(
         cx.tasks().spawn(async move {
             let mut last = frames.next().await.time;
             loop {
-                let degrees = vm.runtime.untracked(|| rate.get(&vm));
+                // Turning on its own is motion the reader asked to keep
+                // from: still while reduced motion is on.
+                let reduced = vm.runtime.untracked(|| {
+                    zgx::theme::Themes::of(&vm.runtime)
+                        .system_preferences()
+                        .reduced_motion
+                });
+                let degrees = if reduced {
+                    0.
+                } else {
+                    vm.runtime.untracked(|| rate.get(&vm))
+                };
                 if degrees == 0. {
                     // Not turning: look again in a while, no frame asked.
                     zgx::timer::sleep(std::time::Duration::from_millis(250)).await;
@@ -824,30 +975,66 @@ pub(crate) fn lower(
     cx.retain(world.clone());
     let mut view = gpu_view(spec.label.clone(), world.view());
     if let Some((orbit, spec)) = orbit {
-        let dragging = Rc::new(std::cell::Cell::new(None::<(f32, f32)>));
-        let zoom = spec.zoom;
-        view = view.on_event(move |event| {
-            use zgx::input::InputEvent;
+        // Its controls (zgx_3d::OrbitControls): dragged, panned, zoomed,
+        // keyed when focused, coasting after a flick unless reduced motion
+        // is on. Coasting steps a frame at a time in Rust, and only while
+        // it coasts: a still scene asks for no frame.
+        let mut start = zgx_3d::OrbitControls::new(vm.runtime.untracked(|| orbit.get()));
+        start.zoom = spec.zoom;
+        start.pan = spec.pan;
+        let controls = Rc::new(std::cell::RefCell::new(start));
+        {
+            let (controls, runtime) = (controls.clone(), vm.runtime.clone());
+            follow(
+                cx,
+                Box::new(move || {
+                    let reduced = zgx::theme::Themes::of(&runtime)
+                        .system_preferences()
+                        .reduced_motion;
+                    controls.borrow_mut().inertia = !reduced;
+                }),
+            );
+        }
+        let (flicked, mut heard) = zgx::task::latest::<()>();
+        {
+            let (controls, orbit, frames) = (controls.clone(), orbit.clone(), cx.frames());
+            cx.tasks().spawn(async move {
+                while heard.recv().await.is_some() {
+                    let mut last = frames.next().await.time;
+                    loop {
+                        let frame = frames.next().await;
+                        let seconds = frame.time.saturating_duration_since(last).as_secs_f32();
+                        last = frame.time;
+                        let mut controls = controls.borrow_mut();
+                        if !controls.coast(seconds) {
+                            break;
+                        }
+                        orbit.set(controls.orbit);
+                    }
+                }
+            });
+        }
+        view = view.focusable(true).on_event(move |event| {
             if event.phase == zgx::input::EventPhase::Capture {
                 return;
             }
-            match event.event {
-                InputEvent::PointerDown { x, y, .. } => dragging.set(Some((x, y))),
-                InputEvent::PointerMove { x, y } => {
-                    if let Some((from_x, from_y)) = dragging.get() {
-                        dragging.set(Some((x, y)));
-                        orbit.update(|o| o.drag(x - from_x, y - from_y));
-                    }
-                }
-                InputEvent::PointerUp { .. } | InputEvent::PointerCancel => dragging.set(None),
-                InputEvent::Scroll { delta_y, .. } if zoom => {
-                    orbit.update(|o| o.zoom((delta_y * 0.004).exp()));
-                    event.prevent_default();
-                }
-                InputEvent::Pinch { delta, .. } if zoom => {
-                    orbit.update(|o| o.zoom(1. + delta));
-                }
-                _ => {}
+            let modifiers = match &event.event {
+                zgx::input::InputEvent::KeyDown { modifiers, .. } => *modifiers,
+                _ => event.pointer_modifiers(),
+            };
+            let mut controls = controls.borrow_mut();
+            // Where it is now, as the camera's effect last set it (a target
+            // the script moves included).
+            controls.orbit = orbit.with_untracked(|o| *o);
+            let answer = controls.handle(&event.event, modifiers, std::time::Instant::now());
+            if answer.moved {
+                orbit.set(controls.orbit);
+            }
+            if answer.taken {
+                event.prevent_default();
+            }
+            if answer.coasting {
+                flicked.send(());
             }
         });
     }
@@ -886,8 +1073,10 @@ fn picking(
             // What is at window point `x`, `y`, in the box.
             let pick = |x: f32, y: f32| {
                 let scene = handle.borrow().as_ref()?.scene()?;
-                let bounds = scene.borrow().bounds(event.current_target);
-                world.pick((x - bounds.x, y - bounds.y), (bounds.width, bounds.height))
+                let scene = scene.borrow();
+                let bounds = scene.bounds(event.current_target);
+                let at = scene.local_point(event.current_target, x, y);
+                world.pick(at, (bounds.width, bounds.height))
             };
             let hover = |now: Option<(ObjectId, Rc<ObjectSpec>)>| {
                 let before = over.replace(now.clone());
@@ -1098,6 +1287,134 @@ fn add(adding: &mut Adding, spec: &Rc<ObjectSpec>, parent: Option<ObjectId>, cx:
     }
 }
 
+/// Whether any of `objects` (or in their groups) is a model.
+fn shows_a_model(objects: &[Rc<ObjectSpec>]) -> bool {
+    objects.iter().any(|object| match &object.shape {
+        Shape::Model(_) => true,
+        Shape::Group(children) => shows_a_model(children),
+        _ => false,
+    })
+}
+
+/// Environments read from files so far, by path, with when the file was
+/// changed (as models are).
+type EnvironmentCache = std::collections::HashMap<
+    std::path::PathBuf,
+    (Option<std::time::SystemTime>, zgx_3d::Environment),
+>;
+thread_local! {
+    static ENVIRONMENTS: std::cell::RefCell<EnvironmentCache> = Default::default();
+}
+/// Environments kept read at most: past it, the cache starts again.
+const ENVIRONMENTS_KEPT: usize = 8;
+
+/// `spec`'s environment on `world`: the studio, or a `.hdr` file, made off
+/// the main thread (decoding and prefiltering) and set once made, its
+/// intensity and rotation followed. Unsaid, a scene showing a model gets
+/// the studio, others none.
+fn light_around(
+    world: &World,
+    spec: &Scene3dSpec,
+    vm: &Rc<Vm>,
+    assets: &Rc<crate::lower::Assets>,
+    cx: &mut Context,
+) {
+    let studio = EnvironmentSpec {
+        source: EnvironmentSource::Studio,
+        intensity: None,
+        rotation: None,
+    };
+    let environment = match &spec.environment {
+        Some(environment) => environment,
+        None if shows_a_model(&spec.objects) => &studio,
+        None => return,
+    };
+    let made: Signal<Option<zgx_3d::Environment>> = cx.state(None);
+    match &environment.source {
+        EnvironmentSource::None => return,
+        EnvironmentSource::Studio => {
+            let (tell, mut heard) = zgx::task::latest::<zgx_3d::Environment>();
+            std::thread::spawn(move || tell.send(zgx_3d::Environment::studio()));
+            let made = made.clone();
+            cx.tasks().spawn(async move {
+                if let Some(environment) = heard.recv().await {
+                    made.set(Some(environment));
+                }
+            });
+        }
+        EnvironmentSource::File(src) => {
+            let report = {
+                let (vm, src) = (Rc::downgrade(vm), src.clone());
+                move |error: String| {
+                    if let Some(vm) = vm.upgrade() {
+                        vm.report(mlua::Error::runtime(format!(
+                            "ui.scene3d environment {src}: {error}"
+                        )));
+                    }
+                }
+            };
+            let path = match crate::lower::resolve_path(vm, src) {
+                Ok(path) => path,
+                Err(error) => return report(error.to_string()),
+            };
+            let changed = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let kept = ENVIRONMENTS.with(|kept| {
+                kept.borrow()
+                    .get(&path)
+                    .filter(|(at, _)| changed.is_some() && *at == changed)
+                    .map(|(_, environment)| environment.clone())
+            });
+            if let Some(environment) = kept {
+                made.set(Some(environment));
+            } else {
+                let bytes = match assets.read(src, &path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => return report(error.to_string()),
+                };
+                let (tell, mut heard) = zgx::task::latest::<Result<zgx_3d::Environment, String>>();
+                std::thread::spawn(move || {
+                    tell.send(zgx_3d::Environment::decode_hdr(&bytes).map_err(str::to_owned));
+                });
+                let made = made.clone();
+                cx.tasks().spawn(async move {
+                    match heard.recv().await {
+                        Some(Ok(environment)) => {
+                            ENVIRONMENTS.with(|kept| {
+                                let mut kept = kept.borrow_mut();
+                                if kept.len() >= ENVIRONMENTS_KEPT {
+                                    kept.clear();
+                                }
+                                kept.insert(path, (changed, environment.clone()));
+                            });
+                            made.set(Some(environment));
+                        }
+                        Some(Err(error)) => report(error),
+                        None => {}
+                    }
+                });
+            }
+        }
+    }
+    let intensity = environment.intensity.as_ref().map(|n| Live::of(n, cx));
+    let rotation = environment.rotation.as_ref().map(|n| Live::of(n, cx));
+    let (world, vm) = (world.clone(), vm.clone());
+    follow(
+        cx,
+        Box::new(move || {
+            let Some(environment) = made.get() else {
+                return;
+            };
+            let intensity = intensity.as_ref().map_or(1., |n| n.get(&vm));
+            let degrees = rotation.as_ref().map_or(0., |n| n.get(&vm));
+            world.set_environment(Some(
+                environment
+                    .intensity(intensity)
+                    .rotated(degrees.to_radians()),
+            ));
+        }),
+    );
+}
+
 /// Models read so far, by path, with when the file was changed: a reload
 /// (or another scene showing it) takes it from here unless it changed.
 #[cfg(feature = "gltf")]
@@ -1140,8 +1457,25 @@ fn load_model(
             .filter(|(at, _)| changed.is_some() && *at == changed)
             .map(|(_, model)| model.clone())
     });
+    let clip = spec.animation.as_ref().map(|choice| match choice {
+        ClipChoice::Name(name) => (Some(name.clone()), usize::MAX),
+        ClipChoice::Index(index) => (None, *index),
+    });
+    let (frames, report) = (cx.frames(), {
+        let (vm, src) = (Rc::downgrade(vm), spec.src.clone());
+        move |error: String| {
+            if let Some(vm) = vm.upgrade() {
+                vm.report(mlua::Error::runtime(format!("ui.model {src}: {error}")));
+            }
+        }
+    });
     if let Some(model) = kept {
-        place_model(world, group, &model, fit);
+        let placed = place_model(world, group, &model, fit);
+        if let Some(clip) = clip {
+            let world = world.clone();
+            cx.tasks()
+                .spawn(play(world, placed, model, clip, frames, report));
+        }
         return;
     }
     let bytes = match assets.read(&spec.src, &path) {
@@ -1168,7 +1502,7 @@ fn load_model(
         });
         tell.send(read.map_err(|e| e.to_string()));
     });
-    let (world, vm, src) = (world.clone(), Rc::downgrade(vm), spec.src.clone());
+    let world = world.clone();
     cx.tasks().spawn(async move {
         let Some(read) = heard.recv().await else {
             return;
@@ -1182,21 +1516,64 @@ fn load_model(
                     }
                     models.insert(path, (changed, model.clone()));
                 });
-                place_model(&world, group, &model, fit);
-            }
-            Err(error) => {
-                if let Some(vm) = vm.upgrade() {
-                    vm.report(mlua::Error::runtime(format!("ui.model {src}: {error}")));
+                let placed = place_model(&world, group, &model, fit);
+                if let Some(clip) = clip {
+                    play(world, placed, model, clip, frames, report).await;
                 }
             }
+            Err(error) => report(error),
         }
     });
+}
+/// Play `model`'s clip `choice` (a name, or else an index) on `placed`,
+/// round and round, a pose a frame: in Rust, no script per frame.
+#[cfg(feature = "gltf")]
+async fn play(
+    world: World,
+    placed: zgx_3d::Placed,
+    model: zgx_3d::Model,
+    (name, index): (Option<String>, usize),
+    frames: zgx::frame::FrameClock,
+    report: impl Fn(String),
+) {
+    let clip = match &name {
+        Some(name) => model.clip(name),
+        None => model.clips().get(index),
+    };
+    let Some(clip) = clip else {
+        let names: Vec<String> = model
+            .clips()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| c.name().map_or_else(|| format!("{}", i + 1), str::to_owned))
+            .collect();
+        let asked = name.unwrap_or_else(|| format!("{}", index + 1));
+        report(if names.is_empty() {
+            format!("no animation {asked}: it has none")
+        } else {
+            format!("no animation {asked}: it has {}", names.join(", "))
+        });
+        return;
+    };
+    let duration = clip.duration().max(1e-3);
+    let start = frames.next().await.time;
+    loop {
+        let frame = frames.next().await;
+        let seconds = frame.time.saturating_duration_since(start).as_secs_f32();
+        placed.pose(&world, clip, seconds % duration);
+    }
 }
 /// `model` added under `group`: scaled to `fit` across and centred, if
 /// asked, else as it is.
 #[cfg(feature = "gltf")]
-fn place_model(world: &World, group: ObjectId, model: &zgx_3d::Model, fit: Option<f32>) {
-    let root = world.add_model(model);
+fn place_model(
+    world: &World,
+    group: ObjectId,
+    model: &zgx_3d::Model,
+    fit: Option<f32>,
+) -> zgx_3d::Placed {
+    let placed = world.place_model(model);
+    let root = placed.root;
     let mut transform = Transform::default();
     if let (Some(fit), Some((low, high))) = (fit, model.bounds()) {
         let size = high - low;
@@ -1208,4 +1585,5 @@ fn place_model(world: &World, group: ObjectId, model: &zgx_3d::Model, fit: Optio
         object.parent = Some(group);
         object.transform = transform;
     });
+    placed
 }

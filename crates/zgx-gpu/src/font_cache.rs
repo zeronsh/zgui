@@ -19,12 +19,37 @@ use std::{
 };
 
 /// Bump when fontdb or cosmic-text change what they read from a font file.
-const FORMAT: &[u8] = b"zgx system fonts 2\n";
+/// 3: macOS's PingFang, outside the font directories, is loaded too.
+const FORMAT: &[u8] = b"zgx system fonts 3\n";
 
 pub(crate) fn system_fonts() -> FontSystem {
     let mut fonts = cached_system_fonts();
     platform_families(&mut fonts);
+    #[cfg(feature = "hyphens")]
+    fonts.set_hyphenator(Some(std::sync::Arc::new(hyphenation_points)));
     fonts
+}
+
+/// Where `word` may break with a hyphen, in `locale`'s language (English
+/// for one hypher has no patterns for): byte offsets inside it.
+#[cfg(feature = "hyphens")]
+fn hyphenation_points(word: &str, locale: &str) -> Vec<usize> {
+    let code = locale.as_bytes();
+    let lang = (code.len() >= 2)
+        .then(|| {
+            hypher::Lang::from_iso([code[0].to_ascii_lowercase(), code[1].to_ascii_lowercase()])
+        })
+        .flatten()
+        .unwrap_or(hypher::Lang::English);
+    let mut at = 0;
+    let mut points = Vec::new();
+    for syllable in hypher::hyphenate(word, lang) {
+        at += syllable.len();
+        if at < word.len() {
+            points.push(at);
+        }
+    }
+    points
 }
 
 /// The system's own faces for the generic families. cosmic-text names
@@ -54,6 +79,61 @@ fn platform_families(fonts: &mut FontSystem) {
         }
         if let Some(serif) = serif {
             db.set_serif_family(serif);
+        }
+    }
+    // Nor does macOS have Noto Sans Mono. With no face of its own,
+    // monospaced text searched every fixed-width face for each word it
+    // shaped anew (a terminal's every line), to settle on Menlo for Latin
+    // text. Menlo, on every Mac, is now the family's face; characters it
+    // lacks fall back to other faces as on Windows and Linux.
+    #[cfg(target_os = "macos")]
+    {
+        let db = fonts.db_mut();
+        if db
+            .faces()
+            .any(|face| face.families.iter().any(|(family, _)| family == "Menlo"))
+        {
+            db.set_monospace_family("Menlo");
+        }
+    }
+    // cosmic-text's monospace is Noto Sans Mono, which few Linux systems
+    // install: monospaced text then took any fixed-width face, and on one
+    // with DejaVu that was DejaVu Sans Mono Oblique, slanting every code
+    // block. A family with an upright face is taken instead, a common one
+    // first.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let db = fonts.db_mut();
+        let upright = |name: &str| {
+            db.faces().any(|face| {
+                face.style == Style::Normal
+                    && face.families.iter().any(|(family, _)| family == name)
+            })
+        };
+        if !upright(db.family_name(&fontdb::Family::Monospace)) {
+            let common = [
+                "DejaVu Sans Mono",
+                "Liberation Mono",
+                "Ubuntu Mono",
+                "Cascadia Mono",
+                "Source Code Pro",
+                "Hack",
+                "Fira Mono",
+                "Noto Mono",
+            ];
+            let mono = common
+                .into_iter()
+                .find(|name| upright(name))
+                .map(str::to_owned)
+                .or_else(|| {
+                    db.faces()
+                        .find(|face| face.monospaced && face.style == Style::Normal)
+                        .and_then(|face| face.families.first())
+                        .map(|(family, _)| family.clone())
+                });
+            if let Some(mono) = mono {
+                db.set_monospace_family(mono);
+            }
         }
     }
     // The desktop's interface face, as GTK and Qt apps take it, where the

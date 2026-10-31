@@ -229,6 +229,7 @@ export type NumberToken =
 	| "$motion.duration.normal"
 	| "$motion.duration.slow"
 	| "$selection.radius"
+	| "$mark.radius"
 export type FontToken = "$font.sans"
 	| "$font.mono"
 export type ShadowToken = "$shadow.sm"
@@ -323,6 +324,7 @@ export type TokenName =
 	| "selection.radius"
 	| "find.match"
 	| "find.current"
+	| "mark.radius"
 
 -- "#rgb", "#rrggbb", "#rrggbbaa", "rgb(…)", "rgba(…)", "hsl(…)", a few
 -- names, 0xrrggbb, or a colour token ("$text.secondary"; `ColorToken`
@@ -398,6 +400,9 @@ export type Tokens = {
 	info: string,
 	input: {
 		bg: string,
+	},
+	mark: {
+		radius: string,
 	},
 	menu: {
 		bg: string,
@@ -481,7 +486,10 @@ export type HighlightSpan = {
 -- A number, or a number token: a standard one (`"$radius.md"`, see
 -- `NumberToken`) or an app's (`"$terminal.inset"`), hence any string.
 export type Num = number | string
--- Points, or a string: "50%", "auto" (margins), "12px", "$space.3".
+-- Points, or a string: "50%", "auto" (margins), "12px", "$space.3". `w`, `h`
+-- and their limits also take "calc(100% - 24px)", "min(…)", "max(…)" and
+-- "clamp(…)"; `w`, `min_w` and `max_w` "min-content", "max-content",
+-- "fit-content" and "fit-content(…)".
 export type Length = number | string
 -- Two numbers, `{ a, b }`, or one for both.
 export type Pair = number | { number }
@@ -493,6 +501,9 @@ export type ShadowSpec = { x: number?, y: number?, blur: number?, spread: number
 -- Or a shadow token (`"$shadow.md"`, an app's own too).
 export type Shadow = string | ShadowSpec | { ShadowSpec } | false
 -- Stops are colors (evenly spaced) or `{ offset, color }` pairs.
+-- A radial gradient: two or three colours from the centre to the edge, or with
+-- `center` (fractions of the box) and `radius` (1 reaches the farthest corner).
+export type RadialGradient = { any } | { center: { number }?, radius: number?, stops: { any } }
 export type Gradient = { read [number]: Color | { Color } } | { angle: number?, stops: { read [number]: Color | { Color } } }
 
 export type Direction = "row" | "row_reverse" | "column" | "column_reverse"
@@ -643,6 +654,33 @@ export type Readable<T> = { read get: (self: never) -> T }
 -- Engine objects.
 
 -- What `ui` element functions return; children and arguments of others.
+-- A file or folder in a `Folder`: `path` from its root, as `read` takes it;
+-- `modified` in milliseconds since 1970.
+export type FolderEntry = {
+	read name: string,
+	read path: string,
+	read kind: "file" | "folder",
+	read size: number,
+	read modified: number,
+	-- With `list`'s `files`, a file's `File`.
+	read file: File?,
+}
+-- A folder the user picked (`ui.open_folder`). Paths are relative to it, with
+-- `/` between their parts; `..`, absolute paths and links leading out of it
+-- are refused (`kind` "denied"), and a handle can be kept in state.
+declare extern type Folder with
+	name: string
+	-- With `files`, each file's entry has its `file` too.
+	function list(self, path: string?, options: { recursive: boolean?, limit: number?, files: boolean? }?): Promise<{ FolderEntry }>
+	-- A file inside it as a `File` (an absolute `path`), which `ui.image`,
+	-- `ui.read_file` and `drag_export` take as they do a dialog's.
+	function file(self, path: string): Promise<File>
+	function read(self, path: string): Promise<string>
+	-- The file replaced whole, its folders made.
+	function write(self, path: string, text: string): Promise<nil>
+	-- Kept past the run no more: a later `ui.remembered_folder` is nil.
+	function forget(self): ()
+end
 declare extern type Node with
 end
 -- `ui.t(key, args)`: a localized message. Accepted wherever text is
@@ -703,7 +741,7 @@ declare extern type UiError with
 	-- rejected), "network" (no answer came), "cancelled", "http" (a fetch
 	-- with `raise = true` answered outside 2xx), "io" (a file, the
 	-- clipboard).
-	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io"
+	kind: "raised" | "action" | "network" | "cancelled" | "http" | "io" | "unsupported" | "denied"
 	-- "http": the response's status.
 	status: number?
 	-- "http": the response's body, its JSON decoded, else its text.
@@ -727,6 +765,14 @@ export type FetchOptions = {
 	headers: { [string]: string }?,
 	-- Text, or data sent as JSON (with its content type).
 	body: unknown?,
+	-- A file sent as the body, read off the window's thread, its type the
+	-- file's (a POST unless `method` says).
+	file: File?,
+	-- A form's fields sent as `multipart/form-data`: text, or a `File`.
+	multipart: { [string]: string | number | boolean | File }?,
+	-- The body going out: `sent` of `total` bytes, as the transport writes
+	-- it (or all of it at the answer, from one that does not say).
+	on_progress: ((sent: number, total: number) -> ())?,
 	-- The body's text as it arrives (a reply streaming), in whole
 	-- characters; the response's `body` is then empty unless it failed.
 	on_chunk: ((text: string) -> ())?,
@@ -754,7 +800,9 @@ export type Response = {
 
 -- A file the user picked (`ui.open_files`, `ui.save_file`): the only
 -- files a script reads or writes.
-export type File = { path: string, name: string }
+-- A file a dialog, a drop or the system gives (the web's `File`): `size` in
+-- bytes, `type` its media type by its extension ("image/png"; "" unknown).
+export type File = { path: string, name: string, size: number, type: string }
 export type FilePickerOptions = {
 	title: string?,
 	-- Where the dialog opens.
@@ -764,6 +812,13 @@ export type FilePickerOptions = {
 	-- `{ { "Images", { "png", "jpg" } } }`: extensions without the dot.
 	filters: { { any } }?,
 	multiple: boolean?,
+}
+-- `ui.open_folder`'s: a dialog's, and `remember`, a key the host keeps the
+-- folder under past the run (`ui.remembered_folder`).
+export type FolderPickerOptions = {
+	title: string?,
+	directory: string?,
+	remember: string?,
 }
 
 -- A value to come (`ui.call`, `ui.fetch`, the file functions), of type
@@ -824,7 +879,8 @@ export type Router = {
 	-- Whether the route is `name` now (tracked).
 	is: (name: RouteName) -> boolean,
 	-- What each route shows: a node or a function of its params; the mouse's
-	-- back and forward buttons over it go back and forward.
+	-- back and forward buttons over it, and a trackpad's swipe between pages,
+	-- go back and forward.
 	view: (cases: RouteCases, props: ContainerProps?) -> Node,
 }
 export type FormSpec = {
@@ -920,6 +976,58 @@ export type Paged<T> = {
 	more: () -> (),
 	-- Load again from the first page, a load still out cancelled.
 	reload: () -> (),
+}
+
+-- How a socket opens again after its connection ends (`ui.socket`'s
+-- `reconnect`): `min` ms after the first, `factor` times longer each
+-- attempt after, at most `max`, give or take `jitter` of it (0 to 1), for
+-- at most `attempts`.
+export type SocketReconnect = {
+	min: number?,
+	max: number?,
+	factor: number?,
+	jitter: number?,
+	attempts: number?,
+}
+
+export type SocketOptions = {
+	-- The subprotocols to ask for.
+	protocols: { string }?,
+	-- true (the default: 500 ms, doubling, at most 30 s, give or take
+	-- 20%, without end), false, or the wait's shape.
+	reconnect: (boolean | SocketReconnect)?,
+	-- Text messages decoded as JSON before `on_message`.
+	json: boolean?,
+	-- The most bytes queued unsent: past it, `send` refuses (16 MB).
+	max_buffered: number?,
+	-- Each message: text (or, `json`, what it decodes to), or a binary
+	-- message's bytes as a string, `binary` true.
+	on_message: ((message: any, binary: boolean) -> ())?,
+	on_open: (() -> ())?,
+	-- The connection ended, with its error if it failed.
+	on_close: ((error: UiError?) -> ())?,
+}
+
+-- A connection kept open (`ui.socket`).
+export type Socket = {
+	status: State<"connecting" | "open" | "reconnecting" | "closed">,
+	-- Attempts since it was last open (0 while open).
+	attempt: State<number>,
+	-- The wait before the next attempt, in ms (0 unless reconnecting).
+	retry_in: State<number>,
+	-- Bytes sent but not yet taken by the connection.
+	buffered: State<number>,
+	-- Why it last ended or failed (tracked), or nil.
+	error: UiError?,
+	-- Queue a message: a string as text, any other value as JSON. False if
+	-- it is closed for good or `max_buffered` would be passed.
+	send: (message: any) -> boolean,
+	-- Queue a binary message: the string's bytes.
+	send_bytes: (bytes: string) -> boolean,
+	-- Close it; only `reconnect()` opens it again.
+	close: () -> (),
+	-- Open it again now, a wait under way cut short.
+	reconnect: () -> (),
 }
 
 -- A mounted node a script reaches: through `on_mount`, `on_resize`, a ref
@@ -1055,6 +1163,16 @@ export type MarkdownBlock =
 
 export type StrokeOptions = Merge<LineOptions, { draw: Pair? }>
 -- What a canvas's `draw(c, w, h)` paints with.
+export type CanvasTextOptions = {
+	size: number?,
+	color: Color?,
+	weight: number?,
+	italic: boolean?,
+	tabular: boolean?,
+	font: string?,
+	align: ("start" | "center" | "end")?,
+	baseline: ("top" | "middle" | "bottom")?,
+}
 declare extern type Canvas with
 	function rect(self, x: number, y: number, w: number, h: number, paint: Paint, radius: number?): ()
 	function circle(self, cx: number, cy: number, r: number, paint: Paint): ()
@@ -1064,6 +1182,10 @@ declare extern type Canvas with
 	-- Clips what follows to the path, until `restore`.
 	function clip(self, path: Path): ()
 	function restore(self): ()
+	-- A line of text at (x, y), over the shapes whatever their order.
+	function text(self, text: string, x: number, y: number, opts: CanvasTextOptions?): ()
+	-- Its width and height, for placing what goes around it.
+	function measure_text(self, text: string, opts: CanvasTextOptions?): (number, number)
 end
 
 -- `ui.web(opts)`: a web page's controller. Its fields are tracked, so a
@@ -1188,7 +1310,19 @@ export type TermOptions = {
 	-- A shell-integrated command finished.
 	on_command: ((exit_code: number?, duration_ms: number) -> ...unknown)?,
 	on_notify: ((title: string, body: string) -> ...unknown)?,
+	-- A program asks to read the clipboard (OSC 52): answer with
+	-- `request:allow()` (it gets the clipboard's text) or `request:deny()`,
+	-- now or after asking the user; a request let go is denied. Without
+	-- this, the platform terminal answers (Ghostty asks; zgx's denies).
+	on_clipboard_read: ((request: ClipboardReadRequest) -> ...unknown)?,
 	[number]: never,
+}
+
+-- A program's request to read the clipboard (`on_clipboard_read`). It
+-- answers once.
+export type ClipboardReadRequest = {
+	allow: (self: ClipboardReadRequest) -> (),
+	deny: (self: ClipboardReadRequest) -> (),
 }
 
 -- `ui.command(opts)`: an app command, shown as a menu item; its key
@@ -1217,20 +1351,49 @@ export type CommandOptions = {
 -- settings window), open while `open` is true; closing it sets `open` false.
 -- Its node is its content. It shares the app's state.
 export type WindowOptions = {
-	id: string,
+	read id: string,
 	-- Defaults to the id.
-	title: string?,
+	read title: string?,
 	-- Points; 480 by 360 by default.
-	width: number?,
-	height: number?,
-	open: State<boolean>,
+	read width: number?,
+	read height: number?,
+	read open: State<boolean>,
 	-- Its frame saved under this name as it moves and resizes, and reopened
 	-- where it was left (macOS).
-	frame_autosave: string?,
+	read frame_autosave: string?,
 	-- AppKit's window tabs (macOS): as the user's setting says, always, or
 	-- never (a window with tabs of its own).
-	tabbing: ("automatic" | "preferred" | "disallowed")?,
-	[number]: Node,
+	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	-- Where it opens: its top-left this far up and left of the pointer, as
+	-- `on_drag_outside`'s `{ e.grab_x, e.grab_y }` (a tab torn off stays
+	-- under the grab).
+	read under_pointer: { number }?,
+	-- False, or a state that is: made hidden, laid out and drawn meanwhile,
+	-- and shown whole as it turns true (on Wayland drawn as it shows).
+	read visible: (boolean | State<boolean>)?,
+	read [number]: Node | ((win: OwnWindow) -> Node),
+}
+
+-- A window's own state, as its content reads it: whether it is the active
+-- window, whether it shows, and its size in points. `ui.window.active` and the
+-- rest are the app's main window's.
+export type OwnWindow = {
+	read active: State<boolean>,
+	read shown: State<boolean>,
+	read size: State<{ width: number, height: number }>,
+}
+
+-- What `ui.windows`' `build` gives an item's window: `ui.window`'s options
+-- without `id` and `open`.
+export type ItemWindow = {
+	read title: string?,
+	read width: number?,
+	read height: number?,
+	read frame_autosave: string?,
+	read tabbing: ("automatic" | "preferred" | "disallowed")?,
+	read under_pointer: { number }?,
+	read visible: (boolean | State<boolean>)?,
+	read [number]: Node,
 }
 
 -- A rect in points, from the window's top left.
@@ -1246,12 +1409,28 @@ export type WindowRect = { x: number, y: number, width: number, height: number }
 -- browser's page zoom (1 at 100%; Cmd/Ctrl +, - and 0 change it, and
 -- setting it zooms the window, within 0.25 to 5); `zoomable` false turns
 -- the keys off.
-export type WindowApi = ((opts: WindowOptions) -> ()) & {
-	titlebar_area: State<WindowRect?>,
-	controls: State<WindowRect?>,
-	zoom: State<number>,
-	zoomable: State<boolean>,
-}
+-- An extern type: a function and a table can't intersect, so that would be
+-- `never`, and `ui`, holding one, would stop reporting its unknown members.
+declare extern type WindowApi with
+	titlebar_area: State<WindowRect?>
+	controls: State<WindowRect?>
+	zoom: State<number>
+	zoomable: State<boolean>
+	-- Whether the app's window shows: false while zgx.json's `"visible":
+	-- false` keeps it hidden (laid out and drawn meanwhile); setting it true
+	-- shows the window whole, at once.
+	visible: State<boolean>
+	-- Whether the window is the active one (keys go to it), and whether it
+	-- shows (not hidden, minimized or covered): what arrives while either
+	-- is false is worth a notification or a badge.
+	active: State<boolean>
+	shown: State<boolean>
+	-- The window's size in points, read-only and followed: for decisions
+	-- layout can't make (a sidebar collapsing to icons below a width).
+	-- Sizes themselves are layout's: percentages, `grow`, `max_w`.
+	size: State<{ width: number, height: number }>
+	function __call(self, opts: WindowOptions): ()
+end
 
 ---------------------------------------------------------------------------
 -- Properties.
@@ -1319,6 +1498,9 @@ export type AuxClickEvent = Merge<PointerEvent, { button: "middle" | number }>
 -- A trackpad pinch: the fingers' spread changed by `scale` (0.05: 5%
 -- larger, zoom in; negative, out), at the pointer.
 export type PinchEvent = Merge<PointerEvent, { scale: number }>
+-- A step back or forward the platform's gesture for it takes: a trackpad's
+-- swipe between pages (macOS).
+export type NavigateEvent = { direction: "back" | "forward" }
 -- What a drag carries to other apps (`drag_export`): text, a link, files
 -- (absolute paths).
 export type DragExport = { text: string?, url: string?, files: { string }? }
@@ -1390,8 +1572,26 @@ export type Styles = {
 	self: Align?,
 	content: AlignContent?,
 	grid: boolean?,
-	cols: number?,
-	rows: number?,
+	-- "contents": its children lay out in its place, as its parent's own
+	-- (CSS `display: contents`); on `ui.each`, its rows are the grid's cells.
+	display: "contents"?,
+	-- A grid's tracks: a number of equal ones, or a list as CSS's
+	-- `grid-template-columns` writes it: "220 1fr auto",
+	-- "repeat(auto-fill, minmax(240, 1fr))". A bare number is points.
+	cols: (number | string)?,
+	rows: (number | string)?,
+	-- Named areas, a string a row (`grid-template-areas`): { "head head",
+	-- "side main" }; items place themselves with `area`.
+	areas: ({ string } | string)?,
+	-- How items without a place fill the grid (`grid-auto-flow`): "row",
+	-- "column", "dense", "column dense".
+	flow: string?,
+	-- An item's area by name (`grid-area`).
+	area: string?,
+	-- An item's lines (`grid-column`, `grid-row`): "side / main",
+	-- "2 / span 3", a number.
+	grid_column: (string | number)?,
+	grid_row: (string | number)?,
 	col_start: number?,
 	row_start: number?,
 	col_span: number?,
@@ -1401,11 +1601,17 @@ export type Styles = {
 	overflow: Overflow?,
 	overflow_x: Overflow?,
 	overflow_y: Overflow?,
+	-- Painted and hit over its siblings with a lower `z`, under those with
+	-- a higher; 0, as written. Among its siblings only, unlike CSS's
+	-- `z-index`; focus and the accessibility tree keep document order.
+	z: number?,
+	sticky_top: number?,
 	hidden: boolean?,
 	invisible: boolean?,
 	-- Paint.
 	bg: Color?,
 	gradient: Gradient?,
+	radial: RadialGradient?,
 	color: Color?,
 	bg_image: string?,
 	bg_fit: Fit?,
@@ -1420,12 +1626,23 @@ export type Styles = {
 	border_color: Color?,
 	border_over: boolean?,
 	border_dash: Pair?,
+	-- "dotted": round dots as wide as the border, evenly round the box
+	-- (CSS's `border-style`); dashes are `border_dash`.
+	border_style: ("solid" | "dotted")?,
 	-- An outline around the box (CSS's): its width, colour, and how far
 	-- outside it starts (negative: over the box's edge, an inset ring).
 	outline: Num?,
 	outline_color: Color?,
 	outline_offset: Num?,
+	-- How the outline is drawn (CSS's `outline-style`): dotted, or dashed
+	-- `{ length, gap }` (`outline_dash`).
+	outline_style: ("solid" | "dotted")?,
+	outline_dash: Pair?,
 	shadow: Shadow?,
+	-- Under a text's glyphs, as CSS `text-shadow`: `{ x, y, blur, color }`, or
+	-- a list, the first on top. Inherited by the text inside; `blur` is a
+	-- Gaussian's sigma in points. It paints past the text's box.
+	text_shadow: Shadow?,
 	-- Shadows inside the box (CSS's inset): a ring as wide on each side as
 	-- the offset pushes it, plus the spread; drawn sharp (no blur).
 	inset_shadow: Shadow?,
@@ -1433,6 +1650,9 @@ export type Styles = {
 	brightness: number?,
 	contrast: number?,
 	saturate: number?,
+	hue_rotate: number?,
+	sepia: number?,
+	invert: number?,
 	-- Mixes the node with what lies beneath it (CSS `mix-blend-mode`).
 	blend: BlendMode?,
 	blur: number?,
@@ -1456,8 +1676,20 @@ export type Styles = {
 	-- `rounded` and an animated clip inset, a soft oval that opens.
 	clip_feather: number?,
 	layer: boolean?,
+	-- Where an image lies in its box, as fractions of the room to spare:
+	-- { 0.5, 0 } keeps a portrait's top under fit = "cover".
+	object_position: { number }?,
 	fit: Fit?,
+	-- How an image (or a background image) is sampled drawn larger or
+	-- smaller (CSS's `image-rendering`): "pixelated", the nearest pixel, its
+	-- edges hard (pixel art, a QR code); "auto", smooth.
+	image_rendering: ("auto" | "pixelated")?,
 	tint: Color?,
+	-- When its file decodes (HTML's `decoding`): "auto", where a picture up
+	-- to 256 by 256 decodes as it is first drawn and a larger one off the
+	-- main thread, showing a frame later; "sync" waits for it, any size;
+	-- "async" never waits.
+	decode: ("auto" | "sync" | "async")?,
 	-- An image drawn dithered as Zeron dithers wallpapers, in dots this many
 	-- points square: each lit to its colour's full value or dimmed to 8% by a
 	-- 4x4 Bayer threshold, on the GPU as it draws (it follows the image as it
@@ -1477,13 +1709,14 @@ export type Styles = {
 	italic: boolean?,
 	align: TextAlign?,
 	font: Font?,
-	wrap: boolean?,
+	wrap: (boolean | "balance")?,
 	truncate: boolean?,
 	lines: number?,
 	line_height: Num?,
 	letter_spacing: Num?,
 	-- Tabular figures: every digit the same width.
 	tabular: boolean?,
+	font_features: string?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: boolean?,
@@ -1564,8 +1797,14 @@ export type StyleProps = {
 	self: Reactive<Align>?,
 	content: Reactive<AlignContent>?,
 	grid: Reactive<boolean>?,
-	cols: Reactive<number>?,
-	rows: Reactive<number>?,
+	display: Reactive<string>?,
+	cols: Reactive<number | string>?,
+	rows: Reactive<number | string>?,
+	areas: Reactive<{ string } | string>?,
+	flow: Reactive<string>?,
+	area: Reactive<string>?,
+	grid_column: Reactive<string | number>?,
+	grid_row: Reactive<string | number>?,
 	col_start: Reactive<number>?,
 	row_start: Reactive<number>?,
 	col_span: Reactive<number>?,
@@ -1575,11 +1814,16 @@ export type StyleProps = {
 	overflow: Reactive<Overflow>?,
 	overflow_x: Reactive<Overflow>?,
 	overflow_y: Reactive<Overflow>?,
+	z: Reactive<number>?,
+	-- Inside a scroll view, hold this far below its top as it scrolls past,
+	-- inside the parent (CSS's `position: sticky` with `top`).
+	sticky_top: Reactive<number>?,
 	hidden: Reactive<boolean>?,
 	invisible: Reactive<boolean>?,
 	-- Paint.
 	bg: Reactive<Color>?,
 	gradient: Reactive<Gradient>?,
+	radial: Reactive<RadialGradient>?,
 	color: Reactive<Color>?,
 	bg_image: Reactive<string>?,
 	bg_fit: Reactive<Fit>?,
@@ -1595,15 +1839,22 @@ export type StyleProps = {
 	border_over: Reactive<boolean>?,
 	-- A function may return nil: a solid border.
 	border_dash: Reactive<Pair?>?,
+	border_style: ("solid" | "dotted")?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
+	outline_style: ("solid" | "dotted")?,
+	outline_dash: Reactive<Pair?>?,
 	shadow: Reactive<Shadow>?,
+	text_shadow: Reactive<Shadow>?,
 	inset_shadow: Reactive<Shadow>?,
 	opacity: Reactive<Num>?,
 	brightness: Reactive<number>?,
 	contrast: Reactive<number>?,
 	saturate: Reactive<number>?,
+	hue_rotate: Reactive<number>?,
+	sepia: Reactive<number>?,
+	invert: Reactive<number>?,
 	blend: Reactive<BlendMode>?,
 	blur: Reactive<number>?,
 	backdrop_blur: Reactive<Num>?,
@@ -1617,8 +1868,11 @@ export type StyleProps = {
 	clip_inset: Reactive<Sides>?,
 	clip_feather: Reactive<number>?,
 	layer: Reactive<boolean>?,
+	object_position: Reactive<{ number }>?,
 	fit: Reactive<Fit>?,
+	image_rendering: ("auto" | "pixelated")?,
 	tint: Reactive<Color>?,
+	decode: ("auto" | "sync" | "async")?,
 	dither: number?,
 	characters: number?,
 	cursor: Reactive<Cursor>?,
@@ -1629,13 +1883,16 @@ export type StyleProps = {
 	italic: Reactive<boolean>?,
 	align: Reactive<TextAlign>?,
 	font: Reactive<Font>?,
-	wrap: Reactive<boolean>?,
+	wrap: Reactive<boolean | "balance">?,
 	truncate: Reactive<boolean>?,
 	lines: Reactive<number>?,
 	line_height: Reactive<Num>?,
 	letter_spacing: Reactive<Num>?,
 	-- Tabular figures: every digit the same width.
 	tabular: Reactive<boolean>?,
+	-- OpenType features (CSS's `font-feature-settings`): "ss01 cv02=3 liga=0",
+	-- a tag on, or `tag=value` (0 off). Replaces `tabular`: give "tnum" here too.
+	font_features: Reactive<string>?,
 	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
 	-- below the baseline the line sits.
 	underline: Reactive<boolean>?,
@@ -1690,6 +1947,8 @@ export type AriaRole =
 	| "alert"
 	| "menu"
 	| "menuitem"
+	| "menuitemcheckbox"
+	| "menuitemradio"
 export type NodeProps = {
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -1744,6 +2003,11 @@ export type NodeProps = {
 	-- is under the node (presses, hover, the wheel, drops, a native view);
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
+	-- it holds take clicks and hover where they're going, not where they
+	-- show. "shown" (the default) hits where it shows.
+	hit: ("target" | "shown")?,
 	window_drag: boolean?,
 	-- A hook plugins target (`ui.contribute { target = "hook:name" }`):
 	-- a stable point the app declares. `false` keeps every plugin off the
@@ -1759,6 +2023,7 @@ export type NodeProps = {
 	-- tokens; a state or function follows.
 	selection_color: Reactive<Color>?,
 	selected_text_color: Reactive<Color>?,
+	selection_radius: Reactive<number>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -1805,6 +2070,17 @@ export type NodeProps = {
 	-- The middle (or another extra) button pressed and released on it: a
 	-- browser tab closes on it, a link opens in the background.
 	on_aux_click: (((e: AuxClickEvent) -> ...unknown) | Action)?,
+	-- The primary button clicked twice on one spot, as the DOM's `dblclick`.
+	on_double_click: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Back or forward on the platform's gesture over it (a trackpad's swipe
+	-- between pages, where nothing under the fingers scrolls that way).
+	on_navigate: (((e: NavigateEvent) -> ...unknown) | Action)?,
+	-- Files dropped on it from outside the window (Finder, Explorer): the
+	-- innermost node with one takes them.
+	on_file_drop: ((files: { File }, e: PointerEvent) -> ...unknown)?,
+	-- Files dragged from outside the window come over it (true), then
+	-- leave, are dropped or the drag ends (false).
+	on_file_hover: ((over: boolean) -> ...unknown)?,
 	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
 	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
 	-- Return true to consume the key.
@@ -1897,6 +2173,10 @@ export type ScrollProps = Merge<ContainerProps, {
 	-- An interactive scrollbar over the trailing edge (none by default).
 	scrollbar: boolean?,
 	follow: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 }>
 -- `ui.text { "Count: {count}", text_size = 18 }`: the text first.
 export type TextProps = Merge<Props, {
@@ -1923,18 +2203,26 @@ export type MarkdownViewProps = Merge<Props, {
 export type SpanProps = {
 	-- The text first.
 	[number]: Text,
-	color: Color?,
-	bg: Color?,
-	text_size: number?,
-	weight: number?,
-	bold: boolean?,
-	italic: boolean?,
-	underline: boolean?,
+	-- These follow a state or a function: a change builds the paragraph
+	-- again, keeping its node and any selection in it.
+	color: Reactive<Color>?,
+	bg: Reactive<Color>?,
+	text_size: Reactive<number>?,
+	weight: Reactive<number>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	underline: Reactive<boolean>?,
+	strike: Reactive<boolean>?,
+	-- As `ui.text`'s: "mono", "sans", "serif" or a family's name.
+	font: Reactive<string>?,
 	-- How far below the baseline the underline sits (CSS's
 	-- `text-underline-offset`).
 	underline_offset: number?,
-	strike: boolean?,
-	font: "mono"?,
+	-- How the underline is drawn, its colour and its thickness; any of them
+	-- underlines the span. `"wavy"` marks a mistake or a diagnostic.
+	underline_style: ("solid" | "double" | "dotted" | "dashed" | "wavy")?,
+	underline_color: Color?,
+	underline_thickness: number?,
 	-- A link (`on_click`) under the pointer: underlined, recoloured. With
 	-- it, the link isn't underlined at rest unless `underline` says so.
 	hover: { underline: boolean?, color: Color? }?,
@@ -2046,6 +2334,9 @@ export type ModelProps = {
 	-- Scaled to this many units across (its largest side), centred on its
 	-- position; nil: as the file has it.
 	fit: number?,
+	-- The animation it plays, round and round: a clip's name, or its place
+	-- in the file (from 1).
+	animation: (string | number)?,
 	-- As a group's: it hears its meshes'.
 	on_click: ((hit: Hit3D) -> ())?,
 	on_hover: ((over: boolean) -> ())?,
@@ -2073,18 +2364,44 @@ export type Orbit3D = {
 	auto_rotate: Reactive<number>?,
 	-- Whether scrolling and pinching move it in and out (default true).
 	zoom: boolean?,
+	-- Whether dragging with the secondary or middle button, or with Shift,
+	-- moves what it looks at (default true).
+	pan: boolean?,
+}
+export type Environment3D = {
+	-- "studio" (built in, the default) or a Radiance .hdr file
+	-- (equirectangular), from the script's directory.
+	src: string?,
+	-- How bright its light is (default 1).
+	intensity: Reactive<number>?,
+	-- Degrees it is turned about the vertical.
+	rotation: Reactive<number>?,
 }
 export type Scene3DProps = Merge<Props, {
 	-- Its accessible name.
 	label: string?,
 	camera: Camera3D?,
-	-- Dragging turns the camera about its target, scrolling and pinching
-	-- move it in and out.
+	-- Dragging turns the camera about its target (coasting on after a flick
+	-- unless reduced motion is on), right-dragging or Shift-dragging pans,
+	-- scrolling and pinching move it in and out; focused, the arrow keys
+	-- turn it (pan with Shift), + and - zoom, Home puts it back.
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
 	-- The sun (the first directional light) casts shadows from opaque meshes.
 	shadows: boolean?,
+	-- The light all around (image-based): reflected by every lit surface,
+	-- sharp in polished metal, blurred in rough. Unsaid, a scene showing a
+	-- ui.model has the studio, others none.
+	environment: ("studio" | "none" | string | Environment3D)?,
+	-- How lit colours map to the display: "neutral" (the default; colours
+	-- read true), "aces" (filmic contrast) or "linear" (clamped).
+	tone_mapping: ("neutral" | "aces" | "linear")?,
+	-- Stops of exposure: each doubles the light (default 0).
+	exposure: Reactive<number>?,
+	-- Smooth edges, 4 samples a pixel (default true); false draws them hard
+	-- for less GPU work and memory.
+	antialias: boolean?,
 	[number]: Object3D,
 }>
 export type CanvasProps = Merge<Props, {
@@ -2173,7 +2490,37 @@ export type InputProps = Merge<Props, {
 	-- checker marks misspelled words with a dotted line, and its context
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
 	-- password field. A state or function follows it (a setting).
+	-- Hears a person's paste before it goes in, from a key, a menu or a
+	-- middle click (HTML's `paste` event): `text` is the clipboard's, nil
+	-- where it holds no text (an image: `ui.clipboard.read_image`), and
+	-- `files` those copied in a file manager, readable as `ui.open_files`'s
+	-- are (a copied file may also put its name in `text`). Returning true
+	-- takes the paste, so nothing goes in: a composer making a picture, a
+	-- file or a long text an attachment. `el:replace_selection` doesn't
+	-- call it.
+	on_paste: ((e: { text: string?, files: { File } }) -> boolean?)?,
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Correct a misspelled word as it ends, and expand the person's text
+	-- replacements ("omw" to "On my way!"), as the system's own fields do
+	-- where the person has them on (macOS). Undo puts back what was typed.
+	-- Not in a password field.
+	autocorrect: boolean?,
+	-- Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’,
+	-- — for --), where the person has the system's smart quotes and dashes
+	-- on (macOS). Undo puts back what was typed. Off for code and data.
+	smart_punctuation: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
+	-- Selectable and focusable, the person's edits refused (HTML's
+	-- `readonly`): a log, a generated file. `value` still sets the text.
+	read_only: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- The `id` of the suggestion it is on (HTML's `aria-activedescendant`),
+	-- nil for none: focus stays here, moving through a list of them with
+	-- its keys (a mention's, in a popover `at_caret`), and assistive
+	-- technology hears the one it is on.
+	active_descendant: (string | Readable<string?> | (() -> string?))?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 	-- Several lines only: a line's styles, asked for the lines in view and
@@ -2182,13 +2529,18 @@ export type InputProps = Merge<Props, {
 	-- color }` (bytes counted from 1, as `string.find` gives them; `color`
 	-- a colour or `"$token"`, or left out) with `weight`, `italic`,
 	-- `strike` and `bg` by name (`HighlightSpan`), and what the line leaves
-	-- the next (a block comment or string running on: any number of the
-	-- highlighter's). It must depend on nothing but its arguments.
-	highlight: ((line: string, state: number) -> ({ HighlightSpan }?, number?))?,
+	-- the next (a block comment or string running on: any value, a
+	-- number, a string, a table; the same string or number is the same
+	-- state, a table the same one only as itself). It must depend on
+	-- nothing but its arguments.
+	highlight: ((line: string, state: any) -> ({ HighlightSpan }?, any))?,
 	-- Several lines only: ranges of the whole text marked behind it (a
 	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
 	-- from 1; only those in view are drawn.
 	decorations: (State<any> | (() -> { { any } }))?,
+	-- Ranges underlined: `{ { from = 1, to = 5, style = "wavy" } }`, a
+	-- spelling mistake's or a diagnostic's.
+	underlines: (State<any> | (() -> { { any } }))?,
 	-- Several lines only: a search's matches marked behind the text, found
 	-- by the editor where the text is held; `current` (from 1) stronger.
 	find: {
@@ -2208,10 +2560,13 @@ export type InputProps = Merge<Props, {
 	-- column in characters) and the selection's anchor and focus in bytes
 	-- from 0 (as `selection_bytes`).
 	on_caret: ((line: number, column: number, anchor: number, focus: number) -> ())?,
+	-- The first line in view, from 1, whenever it changes: an outline following
+	-- the text.
+	on_top_line: ((line: number) -> ())?,
 }>
 -- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
 -- stretch of the bar sweeping across.
-export type ProgressProps = Merge<Props, { value: State<number> | State<number?>, label: Label? }>
+export type ProgressProps = Merge<Props, { value: State<number> | State<number?> | number | (() -> number?), label: Label? }>
 export type SliderProps = Merge<Props, {
 	-- Required unless `field` gives it. A state, both ways; or, controlled
 	-- as React's are, a function it shows, a change going to `on_change`.
@@ -2288,6 +2643,20 @@ export type TabsProps = Merge<Props, {
 	-- The chosen tab's panel, built as it is chosen.
 	panel: (id: string) -> Node,
 	reorderable: boolean?,
+	-- A panel stays mounted once chosen, hidden, until its tab closes: an
+	-- editor keeps its undo, caret and scroll.
+	keep: boolean?,
+	-- Reorderable tabs of one group move between them: a tab dragged over
+	-- another's strip or panel goes there.
+	group: string?,
+	-- A tab of this strip went to another: its id, and that strip's `label`.
+	on_move: ((id: string, to: string) -> ())?,
+	-- Reorderable tabs tear off: one dragged off the strip drops on a strip
+	-- of its group in any window, or, released outside every window, this
+	-- is told its id and where (`x`, `y`, `grab_x`, `grab_y`, as
+	-- `on_drag_outside`), to open it in a window of its own: it leaves
+	-- `items`, unless this returns false (a tab that stays home).
+	on_tear_off: ((id: string, e: { x: number, y: number, grab_x: number, grab_y: number }) -> boolean?)?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
 	label: Label?,
@@ -2351,7 +2720,8 @@ export type DataGridProps = Merge<Props, {
 -- year); Enter or Space chooses.
 export type CalendarProps = Merge<Props, {
 	-- The date, `"2026-10-23"`, both ways; nil: none chosen.
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	-- The first and last days that can be chosen.
 	min: string?,
 	max: string?,
@@ -2365,7 +2735,8 @@ export type CalendarProps = Merge<Props, {
 -- A button showing a date that opens a calendar to choose it; chosen, the
 -- calendar closes. Down opens it too.
 export type DatePickerProps = Merge<Props, {
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	min: string?,
 	max: string?,
 	first_weekday: number?,
@@ -2379,7 +2750,8 @@ export type DatePickerProps = Merge<Props, {
 -- clears one (and the value is nil until each has one).
 export type TimeFieldProps = Merge<Props, {
 	-- The time, `"09:30"` (24-hour), both ways.
-	value: State<string?> | State<any>,
+	value: State<string?> | State<any> | (() -> string?),
+	on_change: ((value: string?) -> ())?,
 	-- Hours 1 to 12 and an AM/PM segment.
 	hour12: boolean?,
 	-- What Up and Down step the minutes by.
@@ -2395,7 +2767,7 @@ export type ComboboxProps = Merge<Props, {
 	text: State<string>,
 	-- The app's options for the text now: a computed filtering, or a state
 	-- an async fetch fills.
-	items: State<{ ComboItem }> | State<{ any }>,
+	items: { ComboItem } | { any } | State<{ ComboItem }> | State<{ any }>,
 	-- The chosen option's value, written as one is chosen.
 	value: State<any>?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
@@ -2440,7 +2812,7 @@ export type SelectProps = Merge<Props, {
 export type SplitProps = Merge<ContainerProps, {
 	-- The first pane's size in points, both ways: the divider writes it as
 	-- it drags (a `ui.persist` keeps it across launches).
-	size: State<number>,
+	size: State<number>?,
 	-- One pane over the other, instead of side by side.
 	vertical: boolean?,
 	-- `size` is the second pane's (an inspector at the right), and the
@@ -2494,6 +2866,10 @@ export type ListProps = Merge<Props, {
 	-- With `measured` or `heights`: resting at the end, it stays there as
 	-- rows are added and measured (a chat); scrolled up, it stays put.
 	follow: boolean?,
+	-- "contain": a wheel or trackpad gesture over it stays with it at its
+	-- edges (CSS's overscroll-behavior), the scroll views around it never
+	-- moving; "auto" (the default) hands what it can't scroll on to them.
+	overscroll: ("auto" | "contain")?,
 	-- Each row's own height instead, in order: a list, a state holding one
 	-- (a host's shared value costs the script nothing), or a function
 	-- returning one (tracked). The row count is its length.
@@ -2514,6 +2890,15 @@ export type ListProps = Merge<Props, {
 	-- Watched without running the script while it scrolls short of it.
 	on_end: (() -> ())?,
 	end_distance: number?,
+	-- Called as its start comes within `start_distance` points (200 unless
+	-- set) of the top of the view, once each time and again once its rows
+	-- have changed: an earlier page. Rows added above keep the rows in view
+	-- where they are (a measured list's, by key).
+	on_start: (() -> ())?,
+	start_distance: number?,
+	-- Kept saying whether it rests at its end (within a few points): a
+	-- "jump to the latest" button shows while it does not.
+	at_end: State<boolean>?,
 }>
 -- Where a modal's panel sits in the window: lined up with its start,
 -- centre or end across (`x`) and down (`y`), `inset` points from the edges
@@ -2571,6 +2956,11 @@ export type PopoverProps = Merge<ContainerProps, {
 	match_anchor_width: boolean?,
 	-- A popover only: false keeps it open on a click outside.
 	dismiss_on_backdrop: boolean?,
+	-- A popover only: at the caret of the input in its `anchor`, following
+	-- it (typing, a new line, scrolling, an input method's composition),
+	-- and taking no focus: keys go on to the input, which drives it (a
+	-- mention's suggestions). It closes as `open` says.
+	at_caret: boolean?,
 }>
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it
@@ -2802,6 +3192,16 @@ declare ui: {
 	-- elsewhere); a lone modifier ("cmd") as itself, "⌘" or "Ctrl".
 	shortcut_text: (keys: string) -> string,
 	window: WindowApi,
+	-- Where an element shows in the window, in the window's points (a
+	-- pointer's `x` and `y`), through every zoom and transform around it;
+	-- nil if it is not laid out. Its `x`, `y`, `width`, `height` are as laid
+	-- out.
+	-- A window an item of `list`: opened as the item appears, closed as it
+	-- goes, built once by `build(item)`. A person closing one calls
+	-- `on_close(item)`, for the app to let the item go. `key` names an item
+	-- (its `id` field by default).
+	windows: (list: State<{ any }>, build: (item: any, win: OwnWindow) -> ItemWindow, options: { key: ((item: any) -> string | number)?, on_close: ((item: any) -> ())? }?) -> (),
+	window_rect: (el: Element) -> { x: number, y: number, width: number, height: number }?,
 	checkbox: (props: CheckboxProps) -> Node,
 	input: (props: InputProps) -> Node,
 	textarea: (props: InputProps) -> Node,
@@ -2848,7 +3248,7 @@ declare ui: {
 	-- from its uses, which misfires). A row whose item changes is built
 	-- again; a `build` taking a third parameter gets the row's item as
 	-- state instead, kept current, and its row updates in place.
-	each: (list: State<{ any }>, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node,
+	each: (list: State<{ any }> | { any }, build: (item: any, index: number, row: State<any>) -> Node, opts: EachOptions?) -> Node,
 	-- What `build` makes of the value, entering and exiting as it changes;
 	-- nil shows nothing. The value is `any`, as `each`'s item is.
 	presence: (value: string | Readable<unknown> | (() -> unknown), build: (value: any) -> Node, opts: PresenceOptions?) -> Node,
@@ -2950,6 +3350,11 @@ declare ui: {
 	-- click, a toast's Undo): it may await, its tasks are cancelled as what
 	-- made it goes, and what it raises uncaught is reported once.
 	async: <A...>(f: (A...) -> ()) -> (A...) -> (),
+	-- Actions the app's script defines, called as a Rust host's are
+	-- (`ui.invoke(name, arg)`, `ui.action(name, arg)`), by the app and by
+	-- the plugins it exposes them to (zgx.json's `expose.actions`). A plugin
+	-- defines none.
+	actions: (actions: { [string]: (arg: any) -> () }) -> (),
 	-- Where the app is, as React Router keeps it: named routes with
 	-- `:params`, history, the platform's back and forward input, and deep
 	-- links by `scheme`.
@@ -2978,9 +3383,33 @@ declare ui: {
 	-- read-only (as `ui.computed`'s: a write is an error), its timer begun
 	-- again on each change, gone with its owner.
 	debounced: <T>(state: State<T>, ms: number) -> State<T>,
+	-- A connection kept open to `url` (a WebSocket) through the host's
+	-- connector, as `useWebSocket`: messages to `on_message`, `send` queued
+	-- while it is not open and sent in order once it is, opened again after
+	-- a growing wait when it ends. `url` may be a function: a state it
+	-- reads changing opens it again. Closed with its owner; a plugin needs
+	-- the host's grant.
+	socket: (url: string | () -> string, opts: SocketOptions?) -> Socket,
+	-- A promise settled after `ms`, to await in a task (a retry's wait).
+	sleep: (ms: number) -> Promise<nil>,
 	-- A form's fields, checked as they are typed, and its submit with its
 	-- pending and failure states; controls bind with `field`.
 	form: (spec: FormSpec) -> Form,
+	-- A field's undo, and the byte under a point: for an app's own undo stack
+	-- across panes, and a drop where the pointer is. Each takes the field's
+	-- element (a ref's, `on_mount`'s); for other elements, false or nil.
+	editor: {
+		-- As ⌘Z and ⌘⇧Z: whether there was a step.
+		undo: (el: Element) -> boolean,
+		redo: (el: Element) -> boolean,
+		can_undo: (el: Element) -> boolean,
+		can_redo: (el: Element) -> boolean,
+		-- The byte, from 0, a click at `x`, `y` (the window's points, as a drop's)
+		-- would put the caret at.
+		offset_at: (el: Element, x: number, y: number) -> number?,
+		-- A textarea's line, from 1, at that place in its view; its caret stays.
+		scroll_to_line: (el: Element, line: number, options: { align: ("start" | "center" | "end" | "nearest")? }?) -> boolean,
+	},
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
 	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,
@@ -2999,6 +3428,23 @@ declare ui: {
 	open_files: (opts: FilePickerOptions?) -> Promise<{ File }>,
 	-- Where the user chooses to save: a promise of a `File`, or nil.
 	save_file: (opts: FilePickerOptions?) -> Promise<File?>,
+	-- A folder the user picks: a promise of its handle, or nil if they cancel.
+	-- Only this makes a `Folder`, and it reaches nothing outside what was picked.
+	-- `remember` asks the host to keep it past the run under that key.
+	open_folder: (opts: FolderPickerOptions?) -> Promise<Folder?>,
+	-- The folder kept under `key` (`ui.open_folder { remember }`) on an
+	-- earlier run, if it still resolves (moved, on macOS): a promise of its
+	-- handle, or nil.
+	remembered_folder: (key: string) -> Promise<Folder?>,
+	-- A system notification (Notification Center, a toast, the desktop's
+	-- server), the app's: a promise settled once the system has it, or
+	-- with why not (`kind` "unsupported": no bundle, no server; "denied":
+	-- turned off). One with the same `tag` replaces it.
+	-- `on_click`: the person clicked it, the app brought forward.
+	notify: (opts: { title: string, body: string?, tag: string?, on_click: (() -> ())? }) -> Promise<nil>,
+	-- A count on the app's icon (the Dock's, the taskbar's, a dock's);
+	-- 0 or nil takes it off. Whether the system shows one.
+	badge: (count: number | string | nil) -> boolean,
 	-- A file the user picked, read as text off the main thread: a promise.
 	read_file: (file: File | string) -> Promise<string>,
 	-- Write `text` to a file the user picked (beside it, then over it).

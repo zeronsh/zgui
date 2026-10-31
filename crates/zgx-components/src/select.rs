@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 use zgx::{
-    compose::{View, button, component, keyed, menu, menu_item, row, text, text_signal},
+    compose::{View, button, column, component, keyed, menu, menu_item, text, text_signal},
     input::{EventPhase, InputEvent, Key},
     reactive::Signal,
     semantics::Role,
@@ -132,6 +132,7 @@ fn build(label: String, value: Signal<String>, options: Options, placeholder: St
             .accessible_label_or(label.clone(), followed.as_ref())
             .value_when(value_text)
             .expanded_when(move || expanded.get())
+            .w_full()
             .min_w(120.)
             .gap(8.)
             .justify_between()
@@ -237,7 +238,9 @@ fn build(label: String, value: Signal<String>, options: Options, placeholder: St
                 ));
             }
         }
-        row().child(list)
+        // What the select is given (its `id`, its size) lands on this box,
+        // which the trigger fills: on the menu it would reach the panel.
+        column().child(list)
     })
 }
 

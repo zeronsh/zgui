@@ -116,4 +116,44 @@ fn a_missing_image_names_the_line_that_asked_for_it() {
         ],
     );
     assert!(error.contains("components/card.luau:2: "), "{error}");
+    // Not a line of tools' files or declarations, which may name the
+    // same text (and sort first).
+    let error = error_of(
+        "types",
+        &[
+            (".tool/notes.luau", "-- see \"gone.png\"\n"),
+            ("a/extra.d.luau", "-- see \"gone.png\"\n"),
+            (
+                "app.luau",
+                "return ui.image { src = \"gone.png\", w = 40, h = 40 }\n",
+            ),
+        ],
+    );
+    assert!(error.contains("app.luau:1: "), "{error}");
+}
+
+/// An empty `src` is no picture yet, as the web's: an image, a
+/// background or an SVG shows nothing and is no error, and a missing file
+/// is still one once `src` names it.
+#[test]
+fn an_empty_image_src_shows_nothing_and_is_no_error() {
+    let mut h = Harness::inline(
+        r#"
+local src = ui.state("src", "")
+return ui.column {
+	ui.image { src = src, id = "picture", w = 40, h = 40 },
+	ui.div { bg_image = src, id = "backdrop", w = 40, h = 40 },
+	ui.svg { src = src, id = "icon", w = 20, h = 20 },
+}
+"#,
+    );
+    h.frame();
+    assert!(h.find("picture").is_some(), "its node keeps its place");
+    assert_eq!(h.error(), None);
+    h.0.host
+        .set_state("src", zgx_script::Value::Str("no/such/picture.png".into()))
+        .unwrap();
+    h.frame();
+    let error = h.error().expect("a missing file is still reported");
+    assert!(error.contains("picture.png"), "{error}");
 }

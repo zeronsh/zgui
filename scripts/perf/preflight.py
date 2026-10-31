@@ -14,6 +14,8 @@ quiet too: it would sit over the windows measured. `dialogs()` only reads
 them; nothing here clicks one (a scripted answer to a privacy prompt once
 wedged macOS's privacy service): the person at the Mac dismisses it.
 `wait_until_quiet()` checks again until it is, logging what it found.
+`desktop_still()` stops a run whose desktop draws by itself (a live
+wallpaper): the agent app hidden, the window server should be about idle.
 `state()` records what changes a desktop's own cost between days: displays
 (count, resolution, refresh), a live-wallpaper app, power mode, macOS
 build and uptime.
@@ -38,6 +40,10 @@ BUSY_ONLY = {'mds_stores': 20.0, 'mds': 20.0, 'mdworker_shared': 20.0}
 # the desktop-alone baseline every run measures).
 EXEMPT = ['WindowServer', 'kernel_task', 'zgx-macsample', 'zgx-framepace']
 RESIDENTS = ['Wallspace', 'Wallpaper Engine', 'Plash']
+# The window server's share of a core on a still desktop: 0.0-0.7 in the
+# suites of 2026-10-26 to 10-30. One on 2026-10-30 had Wallspace drawing
+# behind its windows: 14.5%, and every WindowServer and GPU row of it void.
+STILL_DESKTOP = 2.0
 # Where system dialogs come from: privacy prompts, crash reports, keychain.
 DIALOGS = ['UserNotificationCenter', 'CoreServicesUIAgent', 'Problem Reporter', 'universalAccessAuthWarn', 'SecurityAgent']
 
@@ -145,6 +151,22 @@ def wait_until_quiet(log=print, threshold=75.0, patience=1800, ignore=(), dialog
         if time.monotonic() - started > patience:
             raise SystemExit('preflight: the machine stayed busy; not measuring')
         time.sleep(10)
+
+
+def desktop_still(seconds=5.0, limit=STILL_DESKTOP):
+    """The window server's share of a core, once the agent app is hidden;
+    stops at `limit`: what draws by itself is in every number after this,
+    and only a person can decide to stop it."""
+    before = cpu_times()
+    time.sleep(seconds)
+    after = cpu_times()
+    server = sum((total - before[pid][1]) / seconds * 100 for pid, (name, total) in after.items()
+                 if name == 'WindowServer' and pid in before)
+    if server >= limit:
+        running = [name for name in RESIDENTS if subprocess.run(['pgrep', '-x', name], capture_output=True).returncode == 0]
+        raise SystemExit(f'preflight: the window server uses {server:.1f}% of a core on a still desktop (limit {limit:g}%); '
+                         f'live wallpaper: {", ".join(running) or "none found"}; not measuring')
+    return round(server, 1)
 
 
 def state():

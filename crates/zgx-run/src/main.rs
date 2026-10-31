@@ -17,10 +17,42 @@ script's directory it may require (require(\"@kit/button\")).
 
 --inspect serves devtools for agents: `zgx inspect help` drives the
 running app (its tree, states, clicks, typing, keys) over a socket only
-this user can reach.";
+this user can reach.
+
+--audit [--human] audits the app for assistive technology, headless (what
+`zgx audit` runs): its first screen, its commands, the first screen's
+buttons pressed and its routes, each from a fresh start. One line of JSON,
+or a table with --human; exit 1 with findings, 2 on an error.";
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--audit") {
+        args.remove(0);
+        let human = args.iter().any(|a| a == "--human");
+        args.retain(|a| a != "--human");
+        let [path] = args.as_slice() else {
+            eprintln!("{USAGE}");
+            return ExitCode::from(2);
+        };
+        return match zgx_run::audit::audit_app(std::path::Path::new(path)) {
+            Ok(audit) => {
+                if human {
+                    print!("{}", audit.to_human());
+                } else {
+                    println!("{}", audit.to_json());
+                }
+                if audit.findings.is_empty() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            Err(error) => {
+                eprintln!("zgx audit: {error}");
+                ExitCode::from(2)
+            }
+        };
+    }
     if args.first().is_some_and(|a| a == "--inspect") {
         args.remove(0);
         zgx_run::set_inspect(true);

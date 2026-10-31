@@ -158,7 +158,15 @@ impl Window {
     }
 
     #[inline]
-    pub fn pre_present_notify(&self) {}
+    pub fn pre_present_notify(&self) {
+        // zgx patch: a window drawing is the one worth checking (`occlusion`).
+        if self.window_state_lock().occlusion.due(std::time::Instant::now()) {
+            let hidden = super::occlusion::hidden(self.hwnd());
+            if self.window_state_lock().occlusion.checked(hidden) {
+                super::occlusion::settle_soon(self.hwnd());
+            }
+        }
+    }
 
     #[inline]
     pub fn outer_position(&self) -> Result<PhysicalPosition<i32>, NotSupportedError> {

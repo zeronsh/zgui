@@ -15,6 +15,9 @@ categories = ["gui"]
 default = ["svg", "png", "jpeg", "gif", "private-api", "cjk-thai-words"]
 # Words in Chinese, Japanese and Thai by dictionary (zgx's `cjk-thai-words`).
 cjk-thai-words = ["zgx/cjk-thai-words"]
+# Words break at their hyphenation points where text asks (zgx-gpu's
+# `hyphens`, about 1.2 MB).
+hyphens = ["zgx-gpu/hyphens"]
 svg = ["zgx-gpu/svg"]
 png = ["zgx-gpu/png"]
 jpeg = ["zgx-gpu/jpeg"]
@@ -32,6 +35,10 @@ private-api = []
 # Terminals (`zgx::terminal`) as Ghostty surfaces: builds Ghostty with Zig
 # 0.16 (see crates/zgx-ghostty-sys). macOS only for now.
 ghostty = ["dep:zgx-ghostty-sys", "zgx-ghostty-sys/link", "dep:libc"]
+# Terminals (`zgx::terminal`) drawn by zgx on every platform: a pseudoterminal
+# (openpty, ConPTY) and its screen (zgx-terminal, alacritty_terminal). With
+# `ghostty` on macOS too, Ghostty draws them there.
+terminal = ["dep:zgx-terminal"]
 # The terminal example's interface compiled into it (build.rs), as it ships.
 terminal-bundle = ["dep:zgx-script"]
 # Web views (`zgx::web_view`) on Windows as WebView2 pages, in a
@@ -39,6 +46,11 @@ terminal-bundle = ["dep:zgx-script"]
 # webview2.rs).
 # Needs the WebView2 runtime, which Windows 11 ships.
 webview2 = ["dep:webview2-com", "zgx-gpu/composition", "windows/Win32_Graphics_DirectComposition", "windows/Win32_Graphics_Gdi", "windows/Win32_System_Com", "windows/Win32_System_Com_StructuredStorage", "windows/Win32_System_Ole"]
+# Web views (`zgx::web_view`) on Linux as WebKitGTK pages drawn offscreen
+# and shown as images (src/native_host/webkitgtk.rs). WebKitGTK 4.1
+# (libwebkit2gtk-4.1-0) is opened at run time: building needs none of it,
+# and where it is missing pages are placeholders.
+webkitgtk = []
 # mimalloc as the program's allocator, in place of the system's: 1-10%
 # fewer cycles in zgx's headless scenes (text 7%, layout 6%, animation
 # 9%), for up to 3 MB more resident memory. A program has one allocator:
@@ -47,12 +59,13 @@ mimalloc = ["dep:mimalloc"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.6", default-features = false }
+zgx-terminal = { path = "../zgx-terminal", version = "0.1.6", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false }
 winit = "0.30.13"
 softbuffer = "0.4.8"
 fontdue = "0.9.3"
-cosmic-text = { package = "zgx-cosmic-text", version = "0.19.3", path = "../../vendor/cosmic-text" }
+cosmic-text = { package = "zgx-cosmic-text", version = "0.19.7", path = "../../vendor/cosmic-text" }
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 accesskit = "0.24.1"
 # The adapters' (through accesskit_winit), named for its `links` metadata:
@@ -92,7 +105,7 @@ x11-dl = "2.21"
 # The compositor clock (frame_source.rs) and window chrome (window_chrome.rs);
 # the version wgpu-hal uses.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", default-features = false, features = ["Wdk_System_SystemServices", "Win32_Globalization", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Com_StructuredStorage", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_WinRT", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_TextServices", "Win32_UI_WindowsAndMessaging", "UI_ViewManagement"] }
+windows = { version = "0.62", default-features = false, features = ["Wdk_System_SystemServices", "Win32_Globalization", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Com_StructuredStorage", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_WinRT", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_TextServices", "Win32_UI_WindowsAndMessaging", "UI_ViewManagement", "UI_Notifications", "Data_Xml_Dom", "Foundation"] }
 webview2-com = { version = "0.39", optional = true }
 # A drag handed to Windows (src/native_drag.rs) is a COM drop source.
 windows-core = "0.62"
@@ -102,8 +115,10 @@ zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false, fe
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.18.0", default-features = false }
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace", "NSControl", "NSScroller", "NSWorkspace", "NSAccessibility", "NSSpellChecker", "NSPanel", "NSBezierPath", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSFont", "NSAttributedString"] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services", "NSDictionary", "NSError", "NSURLRequest", "NSUUID", "NSKeyValueObserving", "NSValue", "NSData", "NSJSONSerialization", "NSGeometry", "objc2-core-foundation", "NSAttributedString", "NSRange", "NSURLResponse", "NSNotification", "NSOperation", "block2", "NSOrthography", "NSTextCheckingResult", "NSLocale"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace", "NSControl", "NSScroller", "NSWorkspace", "NSAccessibility", "NSSpellChecker", "NSPanel", "NSBezierPath", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSFont", "NSAttributedString", "NSDockTile"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services", "NSDictionary", "NSError", "NSURLRequest", "NSUUID", "NSKeyValueObserving", "NSValue", "NSData", "NSJSONSerialization", "NSGeometry", "objc2-core-foundation", "NSAttributedString", "NSRange", "NSURLResponse", "NSNotification", "NSOperation", "block2", "NSOrthography", "NSTextCheckingResult", "NSLocale", "NSBundle"] }
+# System notifications (src/notify.rs).
+objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification", "UNNotificationResponse"] }
 zgx-ghostty-sys = { path = "../zgx-ghostty-sys", version = "0.1.6", optional = true }
 libc = { version = "0.2", optional = true }
 # Native views over zgx (src/native_host): web pages, clipping masks, backdrops.
@@ -122,6 +137,14 @@ required-features = ["ghostty"]
 [[example]]
 name = "terminal"
 required-features = ["ghostty"]
+
+[[example]]
+name = "web_view_probe"
+required-features = ["webkitgtk"]
+
+[[example]]
+name = "terminal_pane"
+required-features = ["terminal"]
 
 [build-dependencies]
 # `terminal-bundle`: compiles the terminal example's scripts (build.rs).
@@ -162,3 +185,6 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 objc2-core-foundation = "0.3.2"
 objc2-core-video = "0.3.2"
+# swipe_probe: trackpad scrolls posted to its own queue.
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGGeometry"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-graphics"] }

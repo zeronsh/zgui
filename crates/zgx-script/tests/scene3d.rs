@@ -243,21 +243,53 @@ fn shadows_are_asked_for_with_true() {
     assert!(raised(r#"ui.scene3d { shadows = 1 }"#).contains("shadows"));
 }
 
-/// A `.glb` of a unit square facing +z, as glTF writes one.
+#[test]
+fn an_environment_is_named_given_or_turned_off() {
+    for environment in [
+        r#""studio""#,
+        r#""none""#,
+        r#"{ intensity = 1.5, rotation = 90 }"#,
+        r#"{ src = "studio", intensity = function() return 2 end }"#,
+    ] {
+        let mut h = Harness::inline(&format!(
+            r#"return ui.scene3d {{ id = "scene", w = 100, h = 100, environment = {environment},
+                ui.mesh {{ geometry = "sphere", material = {{ metallic = 1, roughness = 0.2 }} }} }}"#
+        ));
+        assert_eq!(h.error(), None, "{environment}");
+        h.frame();
+        assert!(frame_id(&mut h, "scene").is_some(), "{environment}");
+    }
+    assert!(raised(r#"ui.scene3d { environment = 3 }"#).contains("environment"));
+    // A file that isn't there is an error the script sees.
+    let h = Harness::inline(
+        r#"return ui.scene3d { id = "scene", w = 100, h = 100, environment = "no such sky.hdr",
+            ui.mesh { geometry = "box" } }"#,
+    );
+    h.frame();
+    let error = h.error().unwrap_or_default();
+    assert!(error.contains("no such sky.hdr"), "{error}");
+}
+
+/// A `.glb` of a unit square facing +z, as glTF writes one, with a clip
+/// ("slide") moving it from 0 to 4 along x over 4 seconds.
 #[cfg(feature = "gltf")]
 fn square_glb() -> Vec<u8> {
     let positions: [f32; 12] = [-0.5, -0.5, 0., 0.5, -0.5, 0., 0.5, 0.5, 0., -0.5, 0.5, 0.];
     let mut bin: Vec<u8> = positions.iter().flat_map(|v| v.to_le_bytes()).collect();
     bin.extend([0_u16, 1, 2, 0, 2, 3].iter().flat_map(|i| i.to_le_bytes()));
-    while !bin.len().is_multiple_of(4) {
-        bin.push(0);
-    }
+    let keys: [f32; 8] = [0., 4., 0., 0., 0., 4., 0., 0.];
+    bin.extend(keys.iter().flat_map(|v| v.to_le_bytes()));
     let mut json = format!(
         r#"{{"asset":{{"version":"2.0"}},"buffers":[{{"byteLength":{}}}],
-        "bufferViews":[{{"buffer":0,"byteLength":48}},{{"buffer":0,"byteOffset":48,"byteLength":12}}],
+        "bufferViews":[{{"buffer":0,"byteLength":48}},{{"buffer":0,"byteOffset":48,"byteLength":12}},
+            {{"buffer":0,"byteOffset":60,"byteLength":8}},{{"buffer":0,"byteOffset":68,"byteLength":24}}],
         "accessors":[{{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3"}},
-            {{"bufferView":1,"componentType":5123,"count":6,"type":"SCALAR"}}],
+            {{"bufferView":1,"componentType":5123,"count":6,"type":"SCALAR"}},
+            {{"bufferView":2,"componentType":5126,"count":2,"type":"SCALAR"}},
+            {{"bufferView":3,"componentType":5126,"count":2,"type":"VEC3"}}],
         "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"indices":1}}]}}],
+        "animations":[{{"name":"slide","samplers":[{{"input":2,"output":3}}],
+            "channels":[{{"sampler":0,"target":{{"node":0,"path":"translation"}}}}]}}],
         "nodes":[{{"mesh":0}}],"scenes":[{{"nodes":[0]}}]}}"#,
         bin.len()
     )
@@ -334,4 +366,128 @@ fn a_model_that_cannot_be_read_says_so() {
 #[test]
 fn a_model_without_the_gltf_feature_says_so() {
     assert!(raised(r#"ui.scene3d { ui.model { src = "a.glb" } }"#).contains("`gltf` feature"));
+}
+
+#[cfg(feature = "gltf")]
+#[test]
+fn a_model_plays_its_clip_frame_by_frame() {
+    // Sliding along x a unit a second; the camera 6 back sees x 1 at 40
+    // points right of the middle (its half width 2.49 at that distance).
+    let mut h = beside_a_model(
+        "play",
+        r#"
+local clicks = ui.state("clicks", 0)
+local at = ui.state("at", "none")
+return ui.column {
+    ui.text { id = "clicks", "{clicks}" },
+    ui.text { id = "at", "{at}" },
+    ui.scene3d {
+        id = "scene", w = 200, h = 200,
+        camera = { position = { 0, 0, 6 } },
+        ui.model {
+            src = "square.glb",
+            animation = "slide",
+            on_click = function(hit)
+                clicks:set(clicks:get() + 1)
+                at:set(string.format("%.1f", hit.x))
+            end,
+        },
+    },
+}
+"#,
+    );
+    let px = |x: f32| (100. + x / (6. * 22.5_f32.to_radians().tan()) * 100., 100.);
+    // Read, and where it starts (x 0.3 on it).
+    assert!(
+        h.wait_until(|h| {
+            h.frame();
+            press(h, "scene", px(0.3), 0.);
+            h.text("clicks") != "0"
+        }),
+        "never read"
+    );
+    // A second on: a unit along, past that point, onto x 1.3.
+    h.frames(60);
+    let clicked = h.text("clicks");
+    press(&mut h, "scene", px(0.3), 0.);
+    assert_eq!(h.text("clicks"), clicked, "it slid away");
+    press(&mut h, "scene", px(1.3), 0.);
+    assert_ne!(h.text("clicks"), clicked);
+    assert_eq!(h.text("at"), "1.3");
+}
+
+#[cfg(feature = "gltf")]
+#[test]
+fn a_clip_it_has_not_says_which_it_has() {
+    let mut h = beside_a_model(
+        "no-clip",
+        r#"return ui.scene3d { w = 100, h = 100, ui.model { src = "square.glb", animation = "walk" } }"#,
+    );
+    assert!(
+        h.wait_until(|h| {
+            h.frame();
+            h.error().is_some()
+        }),
+        "no error"
+    );
+    let error = h.error().unwrap();
+    assert!(error.contains("no animation walk: it has slide"), "{error}");
+    assert!(
+        raised(r#"ui.scene3d { ui.model { src = "a.glb", animation = 0 } }"#).contains("animation")
+    );
+}
+
+#[test]
+fn tone_mapping_and_exposure_are_checked() {
+    let mut h = Harness::inline(
+        r#"local stops = ui.state("stops", 0)
+        return ui.scene3d { id = "scene", w = 100, h = 100, tone_mapping = "aces", exposure = stops,
+            ui.mesh { geometry = "box" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(frame_id(&mut h, "scene").is_some());
+    assert!(raised(r#"ui.scene3d { tone_mapping = "reinhard" }"#).contains("tone_mapping"));
+    assert!(raised(r#"ui.scene3d { antialias = 4 }"#).contains("antialias"));
+    let mut h = Harness::inline(
+        r#"return ui.scene3d { id = "scene", w = 100, h = 100, antialias = false, ui.mesh { geometry = "box" } }"#,
+    );
+    assert_eq!(h.error(), None);
+    h.frame();
+    assert!(frame_id(&mut h, "scene").is_some());
+}
+
+#[test]
+fn an_orbit_turns_by_keyboard_focused_and_a_flick_coasts_to_a_stop() {
+    use zgx::input::{InputEvent, Key, Modifiers};
+    let mut h = Harness::inline(PICKED);
+    h.frames(3);
+    let still = frame_id(&mut h, "scene");
+    // A click on nothing focuses it and moves nothing.
+    press(&mut h, "scene", (5., 5.), 0.);
+    h.frames(3);
+    assert_eq!(frame_id(&mut h, "scene"), still, "a click turns nothing");
+    h.ui.dispatch(InputEvent::KeyDown {
+        key: Key::ArrowRight,
+        modifiers: Modifiers::default(),
+        repeat: false,
+    });
+    h.frames(2);
+    let turned = frame_id(&mut h, "scene");
+    assert_ne!(turned, still, "the arrow turned it");
+    // A flick: frames after it's let go, from Rust, then none (the press
+    // itself hovers the box: its handler runs then, not as it coasts).
+    press(&mut h, "scene", (100., 100.), 40.);
+    let calls = h.calls();
+    let mut frames = std::collections::HashSet::new();
+    for _ in 0..10 {
+        h.frame();
+        frames.insert(frame_id(&mut h, "scene"));
+    }
+    assert!(frames.len() > 5, "coasting: {} frames", frames.len());
+    assert_eq!(h.calls(), calls, "no script ran as it coasted");
+    h.frames(300);
+    let settled = frame_id(&mut h, "scene");
+    h.frames(10);
+    assert_eq!(frame_id(&mut h, "scene"), settled, "still once stopped");
 }

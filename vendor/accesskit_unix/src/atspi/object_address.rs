@@ -27,6 +27,15 @@ impl OwnedObjectAddress {
         }
     }
 
+    /// zgx patch: an object of another process (an embedded page's root):
+    /// its bus name is any, unique or well-known.
+    pub(crate) fn foreign(bus_name: &str, path: &str) -> Option<Self> {
+        Some(Self {
+            bus_name: bus_name.into(),
+            path: ObjectPath::try_from(path).ok()?.into(),
+        })
+    }
+
     pub(crate) fn null() -> Self {
         Self {
             bus_name: String::new(),

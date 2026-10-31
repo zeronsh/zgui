@@ -43,7 +43,7 @@ open, search and archive, the dashboard's feed tick, sort and filter,
 Sketch's drag, pan and zoom among 500 shapes, and the code editor's
 keystroke, scroll and find-all keystroke on 100,000 lines; CI's instruction
 gate counts each app as a scene, small and undrawn, run by `list_state_bench`
-(`APP` set) so that it links no binary of its own. Off, its phase boundaries cost nothing measurable: an A/B
+(`APP` set) so that it links no binary of its own. It counts 3D frames too, by zgx-3d's `world_bench`: a generated world drawn through wgpu's no-op backend, so the count holds zgx-3d and wgpu's validation, not a driver's. `3d-textured` is meshes with a map and nothing else, what a feature costs those not using it; `3d-mixed` has skinned, morphing, double-sided cut-out and placed ones among them. Neither has an environment, whose prefiltering takes two thirds of a cell and moves its count. zgx-3d is built apart from the other benches: one build would turn the no-op backend on in all of them. Off, its phase boundaries cost nothing measurable: an A/B
 of all scenes, five runs each, showed every scene within its spread. Time
 Profiler helpers and their use are in `scripts/perf/README.md`. The
 windowed comparison below stays the evidence for time, GPU and memory.
@@ -74,7 +74,7 @@ Its protocol (`run_macos_comparison.py --suite`) is shorter than the full one:
 | | Suite | Full |
 | --- | --- | --- |
 | a trial | 5 s warm-up, 10 s sampled | 5 s warm-up, 15 s sampled |
-| repeats | 3, alternating order; 1 more for a cell whose CPU or GPU power spreads over 10% of its median | 3 |
+| repeats | 6, alternating order, each round with the desktop alone; WindowServer shown less its round's desktop (it falls into per-launch levels); 1 more for a cell whose CPU or GPU power spreads over 10% of its median | 3 |
 | idle | heavy only, 6 launches sampled 20–30 s after launch, each round with the desktop alone; WindowServer shown less its round's desktop (it reads one of a few levels launch to launch, the desktop alone included) | every scene, 5 launches, 20–35 s |
 | frame pacing | 3 captures of 8 s per cell (of two, one bad capture moved a median: lab scroll on 2026-10-25 read 30.0 and 17.8 ms, and ten more captures of the same build 18.0) | 8 |
 | blank rows | vlist, scroll and jump: one 8 s capture of the window at 10 Hz per cell | none |
@@ -422,7 +422,28 @@ Zeron's windows for the run. `audit.json` records what the preflight found
 and the machine's state: displays (count, resolution, refresh), a live
 wallpaper, power mode, macOS build and uptime, beside the desktop-alone
 baseline each repeat measures. Those explain a shift between days in the
-desktop's own cost.
+desktop's own cost. With Zeron hidden, a window server above 2% of a core stops
+the run (`desktop_still`): a live wallpaper left drawing voids every
+WindowServer and GPU number, and only a person can decide to quit it.
+
+A looping animation would hold the floor for as long as it plays, at any
+rate (2 fps held it all, 2026-10-30). So a small declared loop (`anime.animate`
+with `loop = true` and a `frameRate`, on `opacity` or `shaderTime`) is drawn
+once into a sheet and played by Core Animation (`crates/zgx-gpu/src/loops.rs`):
+no frame is submitted while it plays. Measured on an M5 Max, 6 launches a
+cell, against the same round's desktop (window 42, 2026-10-30, the zeron-zgx
+gallery's statuses and App shell pages; app + WindowServer CPU, then MiB):
+
+| | 120 Hz | 60 Hz | footprint |
+|---|---|---|---|
+| drawn each tick | 8.35–8.43 | 8.76–8.93 | 291–346 |
+| baked | 6.46–6.57 | 7.06–7.26 | 131–170 |
+
+Lower in all 24 rounds, GPU level, frame gaps no worse (the render server's
+frame counter). The window server itself gains 0.6–0.7 points at 120 Hz and
+is level to slightly lower at 60 Hz. Loops still drawn: a drifting field with
+no short period, transform loops, and anything a layer over the frames
+couldn't show exactly.
 
 ## Validation environment
 

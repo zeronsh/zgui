@@ -82,6 +82,20 @@ impl FontData {
             )));
     }
 }
+/// A text's OpenType features (`FontStyle::features`), apart from `attrs`'
+/// path for the most text, which sets none.
+#[inline(never)]
+fn font_features(settings: &[([u8; 4], u32)]) -> cosmic_text::FontFeatures {
+    let mut features = cosmic_text::FontFeatures::new();
+    for (tag, value) in settings {
+        // zgx's hyphenation tag, which no font has: the shaper reads it.
+        if *tag == zgx::text_layout::FontFeatures::HYPHENS && *value != 0 {
+            cosmic_text::note_hyphens();
+        }
+        features.set(cosmic_text::FeatureTag::new(tag), *value);
+    }
+    features
+}
 pub(crate) fn attrs(font: &zgx::text_layout::FontStyle, size: f32) -> Attrs<'_> {
     use zgx::text_layout::FontFamily;
     let family = match &font.family {
@@ -90,10 +104,10 @@ pub(crate) fn attrs(font: &zgx::text_layout::FontStyle, size: f32) -> Attrs<'_> 
         FontFamily::Monospace => Family::Monospace,
         FontFamily::Named(name) => Family::Name(name),
     };
-    let mut features = cosmic_text::FontFeatures::new();
-    for (tag, value) in font.features.settings() {
-        features.set(cosmic_text::FeatureTag::new(tag), *value);
-    }
+    let features = match font.features.settings() {
+        [] => cosmic_text::FontFeatures::new(),
+        settings => font_features(settings),
+    };
     let attrs = Attrs::new()
         .font_features(features)
         .family(family)
@@ -155,16 +169,15 @@ fn fallback_spans<'a>(
     let faces: Vec<_> = families
         .iter()
         .map(|f| {
-            let id = fonts.db().query(&cosmic_text::fontdb::Query {
-                families: &[family(f)],
-                weight: cosmic_text::Weight(font.weight),
-                style: if font.italic {
+            let id = fonts.query_face(
+                family(f),
+                cosmic_text::Weight(font.weight),
+                if font.italic {
                     cosmic_text::Style::Italic
                 } else {
                     cosmic_text::Style::Normal
                 },
-                ..Default::default()
-            });
+            );
             id.and_then(|id| fonts.get_font(id, cosmic_text::Weight(font.weight)))
         })
         .collect();
@@ -416,6 +429,17 @@ impl ShapedText {
         let mut rectangles: Vec<Rect> = Vec::new();
         for run in self.buffer.layout_runs() {
             let offset = self.line_offsets[run.line_i];
+            // An empty line in the selection: its line break, a little wide.
+            if run.glyphs.is_empty() && offset >= start && offset < end {
+                let width = zgx::text_layout::empty_line_width(run.line_height);
+                let cursor = TextCursor {
+                    byte_index: offset,
+                    affinity: Affinity::After,
+                };
+                let x = ShapedText::caret(self, cursor).map_or(0., |caret| caret.x);
+                rectangles.push(Rect::new(x, run.line_top, width, run.line_height));
+                continue;
+            }
             let mut spans = Vec::new();
             for glyph in run.glyphs {
                 if glyph.metadata == usize::MAX {
@@ -830,6 +854,74 @@ impl CpuTextRaster {
 mod visual_line_tests {
     use super::*;
     use zgx::text_layout::{TextAffinity, TextLayout, TextPosition};
+
+    /// With hyphenation, words break inside at their points, a hyphen
+    /// (holding no text) ending the line; without, at their ends.
+    #[cfg(feature = "hyphens")]
+    #[test]
+    fn hyphenated_words_break_inside_with_a_hyphen() {
+        use zgx::text_layout::{FontFeatures, FontStyle};
+        let mut fonts = crate::font_cache::system_fonts();
+        let text = "Characteristically incomprehensible internationalization";
+        let plain = FontStyle::default();
+        let hyphenated = FontStyle {
+            features: FontFeatures::default().with_hyphens(true),
+            ..FontStyle::default()
+        };
+        let lines = |font: &FontStyle, fonts: &mut FontSystem| {
+            let shaped = ShapedText::with_font(fonts, text, 18., Some(140.), font);
+            let mut rows = Vec::new();
+            for run in shaped.buffer.layout_runs() {
+                let glyphs: Vec<_> = run.glyphs.iter().map(|g| (g.start, g.end)).collect();
+                rows.push(glyphs);
+            }
+            (rows, shaped)
+        };
+        let (plain_rows, _) = lines(&plain, &mut fonts);
+        let (rows, shaped) = lines(&hyphenated, &mut fonts);
+        let hyphen = |rows: &[Vec<(usize, usize)>]| {
+            (rows.iter()).any(|row| row.iter().any(|(start, end)| start == end))
+        };
+        assert!(!hyphen(&plain_rows), "no hyphens without: {plain_rows:?}");
+        // Some line ends with the hyphen: a glyph at the break, holding no
+        // text, inside a word.
+        let ends: Vec<usize> = rows
+            .iter()
+            .filter_map(|row| row.last().filter(|(start, end)| start == end).map(|g| g.0))
+            .collect();
+        assert!(!ends.is_empty(), "{rows:?}");
+        for at in ends {
+            let (before, after) = (text[..at].chars().last(), text[at..].chars().next());
+            assert!(before.is_some_and(char::is_alphabetic), "{at}");
+            assert!(after.is_some_and(char::is_alphabetic), "{at}");
+        }
+        // All the text is still there, and selects.
+        let selected: f32 = shaped
+            .selection(0..text.len())
+            .iter()
+            .map(|r| r.width)
+            .sum();
+        assert!(selected > 0.);
+        assert!(shaped.hit_test(0., 0.).is_some());
+    }
+
+    #[test]
+    fn a_selection_shows_an_empty_line_as_a_sliver() {
+        let mut fonts = FontSystem::new();
+        let layout = ShapedText::new(&mut fonts, "ab\n\ncd", 18., None);
+        let rows = layout.selection(0..6);
+        assert_eq!(rows.len(), 3);
+        let sliver = rows[1];
+        assert_eq!(
+            sliver.width,
+            zgx::text_layout::empty_line_width(sliver.height)
+        );
+        assert_eq!(sliver.y, rows[0].y + rows[0].height);
+        assert_eq!(layout.selection(0..2).len(), 1, "no line break selected");
+        assert_eq!(layout.selection(3..4), [sliver], "its break alone");
+        let last = ShapedText::new(&mut fonts, "ab\n", 18., None);
+        assert_eq!(last.selection(0..3).len(), 1, "the last line has no break");
+    }
 
     #[test]
     fn logical_visual_row_range_includes_mixed_bidi_clusters_beyond_physical_edges() {
@@ -2237,6 +2329,16 @@ pub struct RichDecoration {
     pub strike: bool,
 }
 impl RichDecoration {
+    /// How this line is drawn under `rich`; solid for a background.
+    pub fn line_style(&self, rich: &zgx::rich_text::RichText) -> zgx::rich_text::LineStyle {
+        let run = rich.runs().get(self.run);
+        let line = if self.strike {
+            run.and_then(|run| run.strikethrough)
+        } else {
+            run.and_then(|run| run.underline)
+        };
+        line.map(|line| line.line_style()).unwrap_or_default()
+    }
     /// This decoration's colour under `rich`, which has the same shape.
     pub fn color_in(&self, rich: &zgx::rich_text::RichText) -> zgx::scene::Color {
         let run = &rich.runs()[self.run];
@@ -2388,4 +2490,57 @@ pub fn rich_decorations_in<'a>(
         }
     }
     output
+}
+
+#[cfg(test)]
+mod monospace_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn cjk_in_monospaced_text_takes_finite_room() {
+        // macOS's monospaced fallback for CJK found GB18030Bitmap, a font
+        // without units per em, and laid it out infinitely wide.
+        let mut fonts = FontSystem::new();
+        let font = zgx::text_layout::FontStyle {
+            family: zgx::text_layout::FontFamily::Monospace,
+            ..Default::default()
+        };
+        for text in ["中文", "a中b", "表示 ok"] {
+            let (width, height) = ShapedText::with_font(&mut fonts, text, 13., None, &font).size();
+            assert!(width.is_finite() && width > 0., "{text:?}: {width}");
+            assert!(height.is_finite() && height > 0., "{text:?}: {height}");
+        }
+    }
+
+    /// Monospaced text is upright wherever the system has an upright
+    /// monospaced face (on Linux it took DejaVu Sans Mono Oblique).
+    #[test]
+    fn monospaced_text_takes_an_upright_face() {
+        let mut fonts = crate::font_cache::system_fonts();
+        if !fonts
+            .db()
+            .faces()
+            .any(|face| face.monospaced && face.style == cosmic_text::fontdb::Style::Normal)
+        {
+            return;
+        }
+        let font = zgx::text_layout::FontStyle {
+            family: zgx::text_layout::FontFamily::Monospace,
+            ..Default::default()
+        };
+        let shaped = ShapedText::with_font(&mut fonts, "abc", 13., None, &font);
+        let glyph = shaped
+            .buffer
+            .layout_runs()
+            .next()
+            .and_then(|run| run.glyphs.first().cloned())
+            .expect("a glyph");
+        let face = fonts.db().face(glyph.font_id).expect("its face");
+        assert_eq!(
+            face.style,
+            cosmic_text::fontdb::Style::Normal,
+            "{:?}",
+            face.post_script_name
+        );
+    }
 }

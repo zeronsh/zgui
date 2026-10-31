@@ -157,6 +157,8 @@ struct EditorHint {
     /// (`EditorHandle::set_caret_style`).
     caret: Cell<(Option<Color>, Option<f32>)>,
     select_on_focus: Cell<bool>,
+    /// A wheel over it stays with it at its edges (`View::overscroll_contain`).
+    contain: Cell<bool>,
     /// A password field: its text shows masked and never leaves it.
     secure: Cell<bool>,
     /// What kind of text it takes (`View::input_mode`).
@@ -173,8 +175,11 @@ struct EditorHint {
     /// focused or not (a search's match, chosen from its field).
     reveal: Cell<bool>,
     /// A place to scroll into view the next time it is drawn, its caret and
-    /// selection left as they are (find in page's match in a field).
-    reveal_at: Cell<Option<usize>>,
+    /// selection left as they are (find in page's match in a field), and
+    /// where in the view (`scroll_to_line`).
+    reveal_at: Cell<Option<(usize, crate::compose::RowAlign)>>,
+    /// The byte at a point (`EditorHandle::offset_at`).
+    point: std::cell::OnceCell<Rc<dyn Fn(f32, f32) -> usize>>,
     /// What a code editor adds (`CodeHint`), made when first used: an
     /// editor without it carries a pointer's room.
     code: std::cell::OnceCell<Box<CodeHint>>,
@@ -203,11 +208,125 @@ const THEMED_DANGER: u8 = 8;
 /// What a code editor adds to an editor's hint: its long text's lines,
 /// marks behind its selection, its current line, Tab's indent, and who is
 /// told where its caret is.
+/// What an underline's node shows: its width in quarter points, its colour
+/// and how it is drawn.
+type UnderlineDrawn = (u32, Color, crate::rich_text::LineStyle);
+/// A range of a text area's text underlined (`View::underlines`): a spelling
+/// mistake's or a diagnostic's wave.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditorUnderline {
+    /// Its UTF-8 byte range.
+    pub range: std::ops::Range<usize>,
+    /// Its colour.
+    pub color: Color,
+    /// How it is drawn.
+    pub line: crate::rich_text::LineStyle,
+}
+/// A row's underline, `width` points long, as what a canvas draws: shapes
+/// and lines, drawn without a raster.
+fn underline_canvas(
+    width: f32,
+    color: Color,
+    line: crate::rich_text::LineStyle,
+) -> crate::canvas::Canvas {
+    use crate::{
+        canvas::{Canvas, Path, Stroke},
+        rich_text::LineStyle,
+    };
+    let mut canvas = Canvas::new();
+    let rect = |canvas: &mut Canvas, x: f32, y: f32, width: f32, height: f32| {
+        canvas.fill(Path::rectangle(Rect::new(x, y, width, height)), color);
+    };
+    match line {
+        LineStyle::Double => {
+            rect(&mut canvas, 0., 0., width, 1.);
+            rect(&mut canvas, 0., 2., width, 1.);
+        }
+        LineStyle::Dotted => {
+            for k in 0..(width / 2.).ceil() as u32 {
+                if let Ok(dot) = Path::ellipse(Rect::new(k as f32 * 2., 0.5, 1.2, 1.2)) {
+                    canvas.fill(dot, color);
+                }
+            }
+        }
+        LineStyle::Dashed => {
+            for k in 0..(width / 5.).ceil() as u32 {
+                let x = k as f32 * 5.;
+                rect(&mut canvas, x, 1., 3f32.min(width - x), 1.);
+            }
+        }
+        LineStyle::Wavy => {
+            let mut wave = Path::builder();
+            wave.move_to(0., 1.5);
+            for k in 1..=(width / 1.5).ceil() as u32 {
+                let x = (k as f32 * 1.5).min(width);
+                wave.line_to(x, 1.5 + (x * std::f32::consts::TAU / 6.).sin());
+            }
+            if let Ok(wave) = wave.build() {
+                canvas.stroke(
+                    wave,
+                    color,
+                    Stroke {
+                        width: 1.,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        _ => rect(&mut canvas, 0., 1., width, 1.),
+    }
+    canvas
+}
+/// An editor's decorations (`shaped`, each shape's marks ending at one of
+/// `ends`) as marks on a node of their own, last in their layer, over the
+/// current line; made when the first shows.
+#[cold]
+#[inline(never)]
+fn show_decorations(
+    s: &mut crate::scene::Scene,
+    code: &CodeHint,
+    (width, height): (f32, f32),
+    (shaped, ends): (Vec<crate::scene::TextMark>, Vec<usize>),
+    radius: f32,
+) {
+    let Some(layer) = code.decoration_layer.get() else {
+        return;
+    };
+    let id = match code.decoration_text.get() {
+        Some(id) => id,
+        None => {
+            let kind = NodeKind::Text {
+                text: "".into(),
+                color: Color(0, 0, 0, 0),
+                font_size: 1.,
+            };
+            let id = s.append(layer, kind, Style::default());
+            code.decoration_text.set(Some(id));
+            id
+        }
+    };
+    if s.children(layer).last() != Some(&id) {
+        let mut order = s.children(layer).to_vec();
+        order.retain(|child| *child != id);
+        order.push(id);
+        s.reorder_children(layer, &order);
+    }
+    // Padded: flush takes its ink from its box, shaping nothing.
+    let mut style = fixed(width, height);
+    style.padding = 1.;
+    s.set_style(id, style);
+    s.set_text_mark_shapes(id, shaped, ends, radius);
+}
 #[derive(Default)]
 struct CodeHint {
     /// Ranges of the text marked with a colour behind them (a search's
     /// matches), by where they start.
     decorations: RefCell<Vec<(std::ops::Range<usize>, Color)>>,
+    /// Ranges of the text underlined, by where they start.
+    underlines: RefCell<Vec<EditorUnderline>>,
+    /// What draws them: a node a row of each, what each shows, and so
+    /// only what changed is made again.
+    underline_nodes: RefCell<Vec<(NodeId, UnderlineDrawn)>>,
     /// The colour behind the caret's row (a code editor's current line).
     current_line: Cell<Option<Color>>,
     /// What Tab inserts (a code editor's indent), instead of moving focus.
@@ -221,6 +340,9 @@ struct CodeHint {
     /// when the first shows.
     decoration_layer: Cell<Option<NodeId>>,
     decoration_nodes: RefCell<Vec<NodeId>>,
+    /// Carries the decorations as marks drawn as shapes, made when one
+    /// first shows.
+    decoration_text: Cell<Option<NodeId>>,
     /// Told where the caret is when it moves (`EditorHandle::on_caret`),
     /// and whether one listens (the slot is empty while it runs).
     on_caret: RefCell<Option<CaretListener>>,
@@ -228,6 +350,12 @@ struct CodeHint {
     /// Where it was last drawn, and last told.
     caret_drawn: Cell<Option<Caret>>,
     caret_told: Cell<Option<Caret>>,
+    /// Told the first line in view when it changes
+    /// (`EditorHandle::on_top_line`), as `on_caret`.
+    on_top_line: RefCell<Option<TopLineListener>>,
+    top_line_listened: Cell<bool>,
+    top_line_drawn: Cell<Option<usize>>,
+    top_line_told: Cell<Option<usize>>,
 }
 impl Drop for CodeHint {
     /// A long text's last layout and its line cache hold each other.
@@ -244,6 +372,7 @@ impl EditorHint {
             placeholder: RefCell::default(),
             caret: Cell::default(),
             select_on_focus: Cell::default(),
+            contain: Cell::default(),
             secure: Cell::default(),
             input_mode: Cell::default(),
             misspelled: RefCell::default(),
@@ -251,6 +380,7 @@ impl EditorHint {
             composition_layer: Cell::default(),
             reveal: Cell::default(),
             reveal_at: Cell::default(),
+            point: std::cell::OnceCell::new(),
             code: std::cell::OnceCell::default(),
             themed: Cell::default(),
             theme_watch: Cell::default(),
@@ -335,6 +465,8 @@ impl EditorHint {
             .is_some_and(|lines| lines.highlighted())
     }
 }
+/// What an editor tells its first line in view (`EditorHandle::on_top_line`).
+type TopLineListener = Box<dyn FnMut(usize)>;
 /// What an editor tells where its caret is (`EditorHandle::on_caret`).
 type CaretListener = Box<dyn FnMut(Caret)>;
 /// Where an editor's caret is (`EditorHandle::on_caret`): its line and
@@ -415,7 +547,9 @@ impl EditorHandle {
     /// Scroll byte `at` into view the next time it is drawn, its caret and
     /// selection left as they are.
     pub(crate) fn reveal_offset(&self, at: usize) {
-        self.hint.reveal_at.set(Some(at));
+        self.hint
+            .reveal_at
+            .set(Some((at, crate::compose::RowAlign::Nearest)));
         self.refresh();
     }
     /// Select from `anchor` to `focus` (UTF-8 byte offsets, clamped to the
@@ -520,6 +654,12 @@ impl EditorHandle {
     pub fn is_read_only(&self) -> bool {
         self.read_only.get()
     }
+    /// Keep a wheel gesture that starts over it at its edges, as CSS's
+    /// `overscroll-behavior: contain`: the scroll views around it don't
+    /// take what it can't scroll (`View::overscroll_contain`).
+    pub fn set_overscroll_contain(&self, contain: bool) {
+        self.hint.contain.set(contain);
+    }
     /// Change editing policy without moving focus or changing committed text/history.
     /// Entering read-only mode cancels an existing composition.
     pub fn set_read_only(&self, read_only: bool) {
@@ -596,6 +736,17 @@ impl EditorHandle {
         *code.decorations.borrow_mut() = ranges;
         self.refresh();
     }
+    /// Underline `ranges` of the text (a diagnostic's wave): only those in
+    /// view are drawn.
+    pub fn set_underlines(&self, mut ranges: Vec<EditorUnderline>) {
+        ranges.sort_by_key(|underline| underline.range.start);
+        let code = self.hint.code_made();
+        if *code.underlines.borrow() == ranges {
+            return;
+        }
+        *code.underlines.borrow_mut() = ranges;
+        self.refresh();
+    }
     /// Call `told` with where the caret is whenever it moves or the
     /// selection changes (a status bar's line and column), after the
     /// editor is drawn: it may change what it likes.
@@ -604,6 +755,22 @@ impl EditorHandle {
         *code.on_caret.borrow_mut() = Some(Box::new(told));
         code.caret_listened.set(true);
         code.caret_told.set(None);
+        self.refresh();
+    }
+    /// Call `told` with the first line in view, from 1, whenever it changes
+    /// (an outline following the text), after the editor is drawn.
+    pub fn on_top_line(&self, told: impl FnMut(usize) + 'static) {
+        let code = self.hint.code_made();
+        *code.on_top_line.borrow_mut() = Some(Box::new(told));
+        code.top_line_listened.set(true);
+        code.top_line_told.set(None);
+        self.refresh();
+    }
+    /// Scroll line `line` (from 0) to `align` of the view, its caret and
+    /// selection left as they are; past the last line, the end.
+    pub fn scroll_to_line(&self, line: usize, align: crate::compose::RowAlign) {
+        let at = self.editor.borrow().line_start(line);
+        self.hint.reveal_at.set(Some((at, align)));
         self.refresh();
     }
     /// A colour behind the caret's row (a code editor's current line).
@@ -741,6 +908,19 @@ impl EditorHandle {
         self.edited(changed, composing);
         changed
     }
+    /// `replace_text`, the caret staying where typing left it: the system's
+    /// substitution of what was typed (`View::autocorrect`).
+    pub(crate) fn substitute(&self, range: std::ops::Range<usize>, text: &str) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+        let changed = self
+            .editor
+            .borrow_mut()
+            .substitute(range, &normalize_text(text, self.multiline));
+        self.edited(changed, false);
+        changed
+    }
     /// After an edit (`composing`: a composition showed before it): the
     /// model told and the editor drawn again if its text changed, or drawn
     /// again alone if only its composition ended (the same text put in).
@@ -805,7 +985,41 @@ impl EditorHandle {
         self.hint.value.write(&self.editor);
         self.refresh();
     }
+    /// Undo its last step, as ⌘Z does; whether there was one to undo.
+    pub fn undo(&self) -> bool {
+        self.step(TextEditor::undo)
+    }
+    /// Redo the last step undone, as ⌘⇧Z does; whether there was one.
+    pub fn redo(&self) -> bool {
+        self.step(TextEditor::redo)
+    }
+    fn step(&self, step: fn(&mut TextEditor) -> bool) -> bool {
+        if self.is_read_only() || !step(&mut self.editor.borrow_mut()) {
+            return false;
+        }
+        self.preferred_x.set(None);
+        self.hint.value.write(&self.editor);
+        self.hint.reveal.set(true);
+        self.refresh();
+        true
+    }
+    /// The byte the text has at `x`, `y` (the window's points): where a
+    /// click there would put the caret.
+    pub fn offset_at(&self, x: f32, y: f32) -> Option<usize> {
+        self.hint.point.get().map(|point| point(x, y))
+    }
 }
+/// What `View::on_paste` gives an editor: handed what the person pasted
+/// (none where the clipboard holds no text: an image, say), true if it took
+/// the paste.
+pub(crate) type PasteHook = Rc<dyn Fn(Option<&str>) -> bool>;
+/// The layout and notification passes a frame takes to settle.
+const LAYOUT_PASSES: usize = 64;
+/// How much of a point a size may differ by and be the same (`resized`).
+const SIZE_NOISE: f32 = 1. / 1024.;
+/// The passes it takes once layout has failed to settle
+/// (`Ui::contain_layout_feedback`): each change is tried again, cheaply.
+const RETRY_LAYOUT_PASSES: usize = 16;
 /// Layout notifications repeatedly changed their own allocation without settling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutFeedbackError {
@@ -1076,6 +1290,8 @@ impl EditorDrag {
 }
 /// The host's picture of a region of what the window last showed.
 type Snapshotter = Rc<dyn Fn(Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>>>;
+type PopupSnapshotter =
+    Rc<dyn Fn(NodeId, Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>>>;
 /// The host's recorder and player of wheel input (`Ui::on_wheel_tape`).
 type WheelTaper = Rc<dyn Fn(WheelTape) -> Result<String, String>>;
 /// What devtools ask of the host's wheel input (`Ui::wheel_tape`): to record
@@ -1097,6 +1313,10 @@ pub(crate) struct UiStorage {
     mount_theme: RefCell<Option<Rc<ThemeScope>>>,
     text_geometry_revision: Signal<u64>,
     presented: Signal<bool>,
+    /// Whether the window is the active one, as a signal, made the first
+    /// time something observes it (`Ui::observe_window_active`): an app
+    /// that never does pays nothing. The selection keeps the flag itself.
+    window_active: RefCell<Option<Signal<bool>>>,
     /// Where popups may show (`Ui::set_popup_screens`).
     popup_screens: Signal<Vec<Rect>>,
     /// The sizes the platform cut popups to, by their roots
@@ -1116,6 +1336,7 @@ pub(crate) struct UiStorage {
     popup_soon_sent: Cell<bool>,
     /// The host's way to picture what the window last showed (`Ui::on_snapshot`).
     snapshotter: RefCell<Option<Snapshotter>>,
+    popup_snapshotter: RefCell<Option<PopupSnapshotter>>,
     /// The window's zoom (`zoom`), 1 at 100%.
     pub(crate) zoom: Cell<f64>,
     /// The app turned zoom off (`set_zoomable`).
@@ -1144,10 +1365,18 @@ pub(crate) struct UiStorage {
     /// A large subtree was removed since the last frame was prepared.
     removed: Cell<bool>,
     editors: RefCell<crate::scene::NodeMap<EditorHandle>>,
+    /// What takes a person's paste, for the few editors asked to (`View::on_paste`).
+    paste_hooks: RefCell<crate::scene::NodeMap<PasteHook>>,
     editor_layout: RefCell<Option<EditorLayoutEntry>>,
     editor_layout_revision: Cell<Option<u64>>,
     bounds_geometry_revision: Cell<Option<u64>>,
     preparing_frame: Cell<bool>,
+    /// A host keeps going past layout that doesn't settle
+    /// (`Ui::contain_layout_feedback`).
+    contains_layout: Cell<bool>,
+    /// Layout that didn't settle, held as it was: the scene's layout and
+    /// geometry revisions then (`Ui::hold_layout`).
+    unsettled: Cell<Option<(u64, u64)>>,
     /// Where focus falls once the frame settles, if nothing took it: the
     /// nearest focusable ancestor of a removed focused node (`Ui::remove`).
     refocus: Cell<Option<NodeId>>,
@@ -1212,6 +1441,8 @@ pub(crate) struct UiStorage {
     scrollbar_fades: RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>>,
     /// Input is being dispatched: what scrolls now, the user scrolled.
     dispatching: Cell<bool>,
+    /// A platform's wheel is being dispatched (`Ui::wheel_in_window`).
+    wheel_in_window: Cell<bool>,
     /// What hears every event the document gets (`Ui::on_document_event`):
     /// usually nothing.
     document_listeners: RefCell<Vec<(u64, DocumentListener)>>,
@@ -1370,6 +1601,7 @@ impl Ui {
             mount_theme: RefCell::new(None),
             text_geometry_revision: runtime.signal(0),
             presented: runtime.signal(true),
+            window_active: RefCell::default(),
             overlay_scrollbars: runtime.signal(false),
             caret_width: Rc::new(Cell::new(1.)),
             caret_blink: Rc::default(),
@@ -1387,6 +1619,7 @@ impl Ui {
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
             snapshotter: RefCell::new(None),
+            popup_snapshotter: RefCell::new(None),
             zoom: Cell::new(1.),
             zoom_off: Cell::new(false),
             zoom_host: RefCell::new(Vec::new()),
@@ -1403,10 +1636,13 @@ impl Ui {
             dying: RefCell::default(),
             removed: Cell::new(false),
             editors: RefCell::default(),
+            paste_hooks: RefCell::default(),
             editor_layout: RefCell::new(None),
             editor_layout_revision: Cell::new(None),
             bounds_geometry_revision: Cell::new(None),
             preparing_frame: Cell::new(false),
+            contains_layout: Cell::new(false),
+            unsettled: Cell::new(None),
             refocus: Cell::new(None),
             content_sizes: RefCell::default(),
             observed_sizes: RefCell::default(),
@@ -1431,6 +1667,7 @@ impl Ui {
             elastic: Default::default(),
             scrollbar_fades: RefCell::new(Vec::new()),
             dispatching: Cell::new(false),
+            wheel_in_window: Cell::new(false),
             document_listeners: RefCell::new(Vec::new()),
         });
         storage.input.set_semantics(&storage.semantics);
@@ -2453,11 +2690,48 @@ impl Ui {
     pub fn set_elastic_scrolling(&self, elastic: bool) {
         self.storage.elastic.borrow_mut().enabled = elastic;
     }
+    /// Take a trackpad's swipe between pages as navigation, as Safari does:
+    /// a gesture that starts across where nothing under it scrolls that way
+    /// (each scroll view at its edge), over a view that takes navigation
+    /// (`View::on_navigate`), stretches and scrolls nothing. The host hears
+    /// of it (`take_navigation_swipe`), has the platform track it, and
+    /// steps back or forward as it completes (`InputDispatcher::navigate`).
+    /// It reads elastic scrolling's gesture phases (`set_elastic_scrolling`).
+    /// The host turns it on (macOS's, with the system's "Swipe between
+    /// pages" set to two fingers); off (the default), nothing of it runs.
+    pub fn set_navigation_swipes(&self, swipes: bool) {
+        self.storage.elastic.borrow_mut().swipes = swipes;
+    }
+    /// Whether a trackpad gesture just became a swipe between pages
+    /// (`set_navigation_swipes`), once: the host has the platform track it.
+    pub fn take_navigation_swipe(&self) -> bool {
+        std::mem::take(&mut self.storage.elastic.borrow_mut().asked)
+    }
     pub(crate) fn elastic_state(&self) -> &RefCell<crate::elastic::State> {
         &self.storage.elastic
     }
     pub(crate) fn observe_presentation(&self) -> Signal<bool> {
         self.storage.presented.clone()
+    }
+    /// Whether the window shows (`Ui::set_presented`: not hidden, minimized
+    /// or covered), as it changes: an app tells someone of what arrives
+    /// while they can't see it.
+    pub fn observe_shown(&self) -> Signal<bool> {
+        self.storage.presented.clone()
+    }
+    /// Whether the window is the active one, its keys going to it
+    /// (`Ui::set_window_active`), as it changes.
+    pub fn observe_window_active(&self) -> Signal<bool> {
+        let active = !self.storage.selection.borrow().inactive;
+        self.storage
+            .window_active
+            .borrow_mut()
+            .get_or_insert_with(|| self.runtime.signal(active))
+            .clone()
+    }
+    /// The window's activity signal, if something observes it.
+    pub(crate) fn window_active_observed(&self) -> Option<Signal<bool>> {
+        self.storage.window_active.borrow().clone()
     }
     /// Whether the window can present now (`Ui::set_presented`), untracked:
     /// a hidden, minimized or covered window draws no frames.
@@ -2563,6 +2837,16 @@ impl Ui {
     ) {
         *self.storage.snapshotter.borrow_mut() = Some(Rc::new(take));
     }
+    /// How the host pictures a popup shown in a surface of its own: of
+    /// popup root `root`, `Rect` in the scene's points, as `on_snapshot`
+    /// does the window. `None` where it shows no such surface: the window's
+    /// picture has it then.
+    pub fn on_popup_snapshot(
+        &self,
+        take: impl Fn(NodeId, Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>> + 'static,
+    ) {
+        *self.storage.popup_snapshotter.borrow_mut() = Some(Rc::new(take));
+    }
     /// A picture of `node` as the window last showed it (a thumbnail of a
     /// pane, say): its box, at most `max_width` pixels wide. Native views
     /// in it (a page, a terminal) are the platform's to draw and show as
@@ -2583,6 +2867,21 @@ impl Ui {
         };
         if bounds.width <= 0. || bounds.height <= 0. {
             return None;
+        }
+        // In a popup past the window: what its own surface shows.
+        let root = {
+            let scene = self.scene.borrow();
+            scene
+                .popups()
+                .iter()
+                .copied()
+                .find(|root| scene.is_within(node, *root))
+        };
+        let popup = self.storage.popup_snapshotter.borrow().clone();
+        if let (Some(root), Some(popup)) = (root, popup)
+            && let Some(picture) = popup(root, bounds, max_width.max(1))
+        {
+            return Some(picture);
         }
         take(bounds, max_width.max(1))
     }
@@ -2719,6 +3018,42 @@ impl Ui {
         self.storage.bounds_geometry_revision.set(None);
         signal
     }
+    #[cold]
+    #[inline(never)]
+    fn take_paste_hooks(&self, ids: &[NodeId]) -> Vec<PasteHook> {
+        let mut hooks = self.storage.paste_hooks.borrow_mut();
+        ids.iter().filter_map(|id| hooks.remove(id)).collect()
+    }
+    /// `hook` hears pastes into editor `node` (only an editor: a hook goes
+    /// as its editor does).
+    pub(crate) fn set_paste_hook(&self, node: NodeId, hook: PasteHook) {
+        debug_assert!(self.is_editor(node), "on_paste is for editors");
+        if self.is_editor(node) {
+            self.storage.paste_hooks.borrow_mut().insert(node, hook);
+        }
+    }
+    /// Whether `node` has `View::on_paste`: it may want a paste with no
+    /// text in it.
+    pub(crate) fn takes_paste(&self, node: NodeId) -> bool {
+        self.storage.paste_hooks.borrow().contains_key(&node)
+    }
+    /// The person pasted into `editor` (a key, a menu, a middle click):
+    /// its `View::on_paste` hears first, and unless it takes the paste,
+    /// `text` goes in. A read-only editor takes none. Hosts call this with
+    /// no text where the clipboard holds something else (an image), and
+    /// nothing borrowed that the hook may use: it may read the clipboard.
+    pub fn paste_into(&self, editor: &EditorHandle, text: Option<&str>) {
+        if editor.is_read_only() {
+            return;
+        }
+        let hook = self.storage.paste_hooks.borrow().get(&editor.node).cloned();
+        if hook.is_some_and(|hook| hook(text)) {
+            return;
+        }
+        if let Some(text) = text {
+            editor.paste(text);
+        }
+    }
     /// Prepare allocated control geometry before rendering a frame or dispatching input.
     /// Native hosts call this automatically. Headless hosts should call it before `Scene::flush`.
     pub fn prepare_frame(&self) {
@@ -2729,7 +3064,8 @@ impl Ui {
     /// of hanging the UI thread. At most 64 layout/notification passes are allowed.
     /// Reentrant calls defer notifications to the active outer preparation.
     /// An error does not roll back application mutations; correct the dependency
-    /// and call again. Native window hosts propagate this error to `Application::run`.
+    /// and call again. Under [`contain_layout_feedback`](Self::contain_layout_feedback),
+    /// as in a window, this is reported and the frame goes on instead.
     pub fn try_prepare_frame(&self) -> Result<(), LayoutFeedbackError> {
         if self.storage.preparing_frame.get() {
             return Ok(());
@@ -2751,6 +3087,19 @@ impl Ui {
         crate::caret_blink::settle(self);
         Ok(())
     }
+    /// Go on past layout that doesn't settle, rather than return
+    /// [`LayoutFeedbackError`]: the layout stands as the last pass left it,
+    /// nothing hears its geometry until something else changes it (so the
+    /// feedback stops, and idle stays idle), and [`issues::on_issue`]
+    /// hears of it once, naming the nodes that still moved. Then a frame
+    /// tries again, with fewer passes, whenever the layout has changed.
+    /// Window hosts call this: a layout that doesn't converge never ends an
+    /// app.
+    ///
+    /// [`issues::on_issue`]: crate::issues::on_issue
+    pub fn contain_layout_feedback(&self) {
+        self.storage.contains_layout.set(true);
+    }
     fn prepare_frame_once(&self) -> Result<(), LayoutFeedbackError> {
         if self.storage.preparing_frame.replace(true) {
             return Ok(());
@@ -2764,7 +3113,18 @@ impl Ui {
         } else {
             self.reclaim(RECLAIM_BUDGET);
         }
-        for _ in 0..64 {
+        let held = self.storage.unsettled.get();
+        if let Some(held) = held
+            && self.layout_still_held(held)
+        {
+            return Ok(());
+        }
+        let passes = if held.is_some() {
+            RETRY_LAYOUT_PASSES
+        } else {
+            LAYOUT_PASSES
+        };
+        for _ in 0..passes {
             self.scene.borrow_mut().prepare_layout();
             self.input.validate_drag(&self.scene);
             let (layout_revision, geometry_revision) = {
@@ -2786,6 +3146,7 @@ impl Ui {
                         self.input.focus(&self.scene, Some(id));
                     }
                     self.sync_selection();
+                    self.storage.unsettled.set(None);
                     return Ok(());
                 }
                 continue;
@@ -2856,7 +3217,9 @@ impl Ui {
             // mount, dispose, translate, or reenter frame preparation.
             self.runtime.batch(|| {
                 for (node, signal, size) in sizes {
-                    if self.scene.borrow().contains(node) {
+                    if self.scene.borrow().contains(node)
+                        && signal.with_untracked(|told| resized(*told, size))
+                    {
                         signal.set(size);
                     }
                 }
@@ -2882,11 +3245,101 @@ impl Ui {
             // Internal geometry bindings are constrained by their viewport.
             // A second pass also prepares editors mounted by virtual rows.
         }
-        Err(LayoutFeedbackError { passes: 64 })
+        if self.storage.contains_layout.get() {
+            self.hold_layout(passes, held.is_some());
+            return Ok(());
+        }
+        Err(LayoutFeedbackError { passes })
+    }
+    /// Whether layout held unsettled (`hold_layout`) stands: laid out, as a
+    /// frame needs, it is as it was held.
+    #[cold]
+    fn layout_still_held(&self, held: (u64, u64)) -> bool {
+        self.scene.borrow_mut().prepare_layout();
+        self.input.validate_drag(&self.scene);
+        let scene = self.scene.borrow();
+        (scene.layout_revision(), scene.geometry_revision()) == held
+    }
+    /// Layout didn't settle in `passes`: keep what the last one left, and
+    /// let what hears geometry wait, which ends the feedback. Reported
+    /// unless this was already a retry of the same trouble.
+    #[cold]
+    #[inline(never)]
+    fn hold_layout(&self, passes: usize, retry: bool) {
+        self.scene.borrow_mut().prepare_layout();
+        self.input.validate_drag(&self.scene);
+        let moved = self.nodes_still_moving();
+        let held = {
+            let scene = self.scene.borrow();
+            (scene.layout_revision(), scene.geometry_revision())
+        };
+        self.storage.unsettled.set(Some(held));
+        self.sync_selection();
+        if retry {
+            return;
+        }
+        let error = LayoutFeedbackError { passes };
+        let what = if moved.is_empty() {
+            "layout callbacks kept asking for another pass".to_string()
+        } else {
+            let nodes: Vec<String> = moved.iter().map(|n| format!("@{}", n.number())).collect();
+            format!("still moving: {}", nodes.join(" "))
+        };
+        // The app goes on, and the cause can be the engine's (#1027): a
+        // developer's to see, not an end user's.
+        crate::issues::report_kind(
+            &self.runtime,
+            crate::issues::IssueKind::Degraded,
+            &format!("{error} ({what}); the layout stays as it is until something changes it"),
+        );
+    }
+    /// The nodes whose geometry differs from what was last told of it, at
+    /// most eight: those the last pass moved, and what reads them moved it.
+    fn nodes_still_moving(&self) -> Vec<NodeId> {
+        let scene = self.scene.borrow();
+        let sizes = {
+            let content = self.storage.content_sizes.borrow();
+            let own = self.storage.observed_sizes.borrow();
+            let content = content.iter().filter(|(node, signal)| {
+                scene.contains(**node)
+                    && signal.with_untracked(|told| {
+                        resized(*told, allocated_content_size(&scene, **node))
+                    })
+            });
+            let own = own.iter().filter(|(node, signal)| {
+                scene.contains(**node)
+                    && signal.with_untracked(|told| {
+                        let bounds = scene.layout_box(**node);
+                        resized(*told, (bounds.width, bounds.height))
+                    })
+            });
+            content
+                .chain(own)
+                .map(|(node, _)| *node)
+                .collect::<Vec<_>>()
+        };
+        let bounds = self.storage.observed_bounds.borrow();
+        let bounds = bounds.iter().filter(|(node, signal)| {
+            scene.contains(**node)
+                && signal.with_untracked(|bounds| *bounds != scene.world_bounds(**node))
+        });
+        let mut moved = sizes;
+        moved.extend(bounds.map(|(node, _)| *node));
+        moved.sort_by_key(|node| node.number());
+        moved.dedup();
+        moved.truncate(8);
+        moved
     }
     /// Recompute editor geometry after changing the font backend or display scale.
     pub(crate) fn observe_text_geometry_revision(&self) -> Signal<u64> {
         self.storage.text_geometry_revision.clone()
+    }
+    /// Text's lines moved in a box that did not (`Scene::set_text_balance`):
+    /// what follows text geometry (`observe_text_geometry_revision`) looks
+    /// again.
+    pub(crate) fn text_geometry_moved(&self) {
+        (self.storage.text_geometry_revision)
+            .update(|revision| *revision = revision.wrapping_add(1));
     }
     /// Lay out every editor's text again, after the font backend or display
     /// scale changed.
@@ -2915,6 +3368,19 @@ impl Ui {
     /// The editor whose root is `node`, if it is one.
     pub fn editor(&self, node: NodeId) -> Option<EditorHandle> {
         self.storage.editors.borrow().get(&node).cloned()
+    }
+    /// The editor whose root is `node` or inside it, if there is one.
+    pub fn editor_within(&self, node: NodeId) -> Option<EditorHandle> {
+        if let Some(editor) = self.editor(node) {
+            return Some(editor);
+        }
+        let scene = self.scene.borrow();
+        self.storage
+            .editors
+            .borrow()
+            .values()
+            .find(|editor| scene.contains(editor.node) && scene.is_within(editor.node, node))
+            .cloned()
     }
     /// What the last press in a `View::window_drag` region asked of the
     /// window, once: the desktop host takes it after each pointer press.
@@ -3008,6 +3474,11 @@ impl Ui {
         self.storage.dispatching.set(false);
         Ok(result)
     }
+    /// Whether the wheel being dispatched is a platform's, in the window's
+    /// points, rather than one the engine made in a scroll view's own.
+    pub(crate) fn wheel_in_window(&self) -> bool {
+        self.storage.wheel_in_window.get()
+    }
     /// Give `event` to the nodes with `dispatch`, with elastic scrolling
     /// around it when that is on, then what the selection and keyboard
     /// scrolling make of it.
@@ -3041,7 +3512,13 @@ impl Ui {
             (elastic && !crate::zoom::wheel_zooms() && matches!(event, InputEvent::Scroll { .. }))
                 .then(|| event.clone());
         let key = matches!(event, InputEvent::KeyDown { .. }).then(|| event.clone());
+        // A platform's wheel, in the window's points; the engine's own
+        // (`InputDispatcher::dispatch_to`: keys, find, a reveal) are in a
+        // scroll view's.
+        let wheel = matches!(event, InputEvent::Scroll { .. });
+        self.storage.wheel_in_window.set(wheel);
         let mut result = dispatch(self, event);
+        self.storage.wheel_in_window.set(false);
         self.after_dispatch(after, &mut result);
         if let Some(key) = key {
             self.find_after_dispatch(&key, &mut result);
@@ -3392,6 +3869,8 @@ impl Ui {
             let mut storage = self.storage.editors.borrow_mut();
             ids.iter().filter_map(|id| storage.remove(id)).collect()
         };
+        // A hook can hold a whole script: it goes with its editor.
+        let paste_hooks = (!editors.is_empty()).then(|| self.take_paste_hooks(&ids));
         // Detach geometry before listener captures or cached layouts can run
         // user destructors. Reentrant removal of this owner (or an ancestor)
         // then observes an already removed subtree instead of stale node IDs.
@@ -3417,6 +3896,7 @@ impl Ui {
         self.shrink_storage();
         drop(owned);
         drop(editors);
+        drop(paste_hooks);
         if refocus.is_some() && self.input.focused().is_none() {
             self.storage.refocus.set(refocus);
         }
@@ -3457,6 +3937,11 @@ impl Ui {
             let mut storage = self.storage.editors.borrow_mut();
             storage.extract_if(|id, _| !scene.contains(*id)).collect()
         };
+        let paste_hooks: Vec<_> = {
+            let scene = self.scene.borrow();
+            let mut storage = self.storage.paste_hooks.borrow_mut();
+            storage.extract_if(|id, _| !scene.contains(*id)).collect()
+        };
         self.semantics.borrow_mut().bury(&ids);
         self.input.forget_removed(&self.scene);
         self.storage.dying.borrow_mut().extend(ids);
@@ -3465,6 +3950,7 @@ impl Ui {
         drop(cached_layout);
         drop(resources);
         drop(editors);
+        drop(paste_hooks);
         if refocus.is_some() && self.input.focused().is_none() {
             self.storage.refocus.set(refocus);
         }
@@ -3619,19 +4105,24 @@ impl Ui {
         let window_blurred = Rc::new(Cell::new(false));
         let draw_window_blurred = window_blurred.clone();
         let scroll = Rc::new(RefCell::new((0f32, 0f32)));
-        let selection_nodes = Rc::new(RefCell::new(Vec::new()));
+        // Carries the selection's highlight, made when one first shows.
+        let selection_node: Rc<Cell<Option<NodeId>>> = Rc::new(Cell::new(None));
         // A selection showing when the theme (or the system's accent)
-        // changes takes the new colour, as one drawn after it would.
+        // changes takes the new look, as one drawn after it would.
         {
-            let (nodes, scene, theme) =
-                (selection_nodes.clone(), self.scene.clone(), theme.clone());
+            let (node, scene, theme) = (selection_node.clone(), self.scene.clone(), theme.clone());
             self.bind_marked(root, true, move || {
                 let color = theme.color(tok::SELECTION);
                 let mut s = scene.borrow_mut();
-                for id in nodes.borrow().iter() {
-                    if s.contains(*id) {
-                        s.set_kind(*id, NodeKind::Rect(color));
-                    }
+                if let Some(id) = node.get()
+                    && let Some(shown) = s.text_highlight(id).cloned()
+                {
+                    let look = crate::scene::TextHighlight {
+                        color,
+                        radius: theme.number_untracked(tok::SELECTION_RADIUS).max(0.),
+                        ..shown
+                    };
+                    s.set_text_highlight(id, Some(look));
                 }
             });
         }
@@ -3682,6 +4173,7 @@ impl Ui {
         let gesture = Rc::new(EditorDrag::default());
         let draw_gesture = gesture.clone();
         let hint = Rc::new(EditorHint::new(value));
+        let wheel_hint = hint.clone();
         hint.composition_layer.set(Some(preedit_layer));
         let draw_hint = hint.clone();
         // Its text's line count and its semantic value, by the revision of
@@ -3907,7 +4399,8 @@ impl Ui {
             let mut scroll = scroll_for_draw.borrow_mut();
             let reveal = draw_reveal_caret.replace(true) && draw_gesture.mode.get().is_none();
             // A place asked for (find's match), else the caret.
-            let (rx, ry, rh, asked) = match draw_hint.reveal_at.take() {
+            let (place, align) = draw_hint.reveal_at.take().unzip();
+            let (rx, ry, rh, asked) = match place {
                 Some(at) => {
                     let r = layout.caret_position(TextPosition {
                         byte_offset: at,
@@ -3929,6 +4422,14 @@ impl Ui {
                 }
                 if ry < scroll.1 {
                     scroll.1 = ry;
+                }
+                match align {
+                    Some(crate::compose::RowAlign::Start) => scroll.1 = ry,
+                    Some(crate::compose::RowAlign::Center) => {
+                        scroll.1 = ry - (inner_height - rh) / 2.
+                    }
+                    Some(crate::compose::RowAlign::End) => scroll.1 = ry - (inner_height - rh),
+                    _ => {}
                 }
             }
             let (tw, th) = layout.size();
@@ -3963,6 +4464,12 @@ impl Ui {
                 // One line, centred in the box (negative: pushed down).
                 (line_height - inner_height) / 2.
             };
+            if let Some(code) = draw_hint.code()
+                && code.top_line_listened.get()
+            {
+                let top = layout.hit_test(0., scroll.1 + line_height / 2.);
+                code.top_line_drawn.set(Some(e.line_of(top) + 1));
+            }
             let caret_width = draw_hint
                 .caret
                 .get()
@@ -4139,23 +4646,26 @@ impl Ui {
             // shows again when the focus comes back. Read-only text gives its up on blur.
             let shows_selection =
                 *focus.borrow() || draw_window_blurred.get() || draw_read_only.get();
-            let rects: Vec<_> = if e.preedit().is_none() && shows_selection {
-                layout
-                    .selection_within(selection.range(), scroll.1, scroll.1 + inner_height)
-                    .into_iter()
-                    .filter_map(|r| {
-                        let y = r.y - scroll.1;
-                        (y + r.height > 0. && y < inner_height).then_some((
-                            r.x - scroll.0,
-                            y,
-                            r.width,
-                            r.height,
-                        ))
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            // With a line more each way, so the lines in view know what they
+            // meet: a selection running on past the edge is not rounded off.
+            let rects: Vec<_> =
+                if e.preedit().is_none() && shows_selection {
+                    let (top, bottom) = (
+                        scroll.1 - line_height,
+                        scroll.1 + inner_height + line_height,
+                    );
+                    layout
+                        .selection_within(selection.range(), top, bottom)
+                        .into_iter()
+                        .filter_map(|r| {
+                            let y = r.y - scroll.1;
+                            (y + r.height > -line_height && y < inner_height + line_height)
+                                .then_some((r.x - scroll.0, y, r.width, r.height))
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
             // Behind the selection: the caret's row and the marked ranges
             // (a search's matches), those in view.
             if let Some(code) = draw_hint.code() {
@@ -4163,6 +4673,9 @@ impl Ui {
                 if let Some(row) = code.current_line.get() {
                     marks.push((Rect::new(0., cy - scroll.1, inner_width, line_height), row));
                 }
+                // Each range one shape, as a selection is.
+                let mut shaped: Vec<crate::scene::TextMark> = Vec::new();
+                let mut ends = Vec::new();
                 {
                     let decorations = code.decorations.borrow();
                     // Those in the text in view: from where the first line
@@ -4185,15 +4698,14 @@ impl Ui {
                         {
                             break;
                         }
-                        marks.extend(rects.into_iter().map(|r| {
-                            (
-                                Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height),
-                                *mark,
-                            )
+                        shaped.extend(rects.into_iter().map(|r| crate::scene::TextMark {
+                            rect: Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height),
+                            color: *mark,
                         }));
+                        ends.push(shaped.len());
                     }
                 }
-                if !marks.is_empty()
+                if (!marks.is_empty() || !shaped.is_empty())
                     && code
                         .decoration_layer
                         .get()
@@ -4214,6 +4726,7 @@ impl Ui {
                     s.reorder_children(viewport, &order);
                     code.decoration_layer.set(Some(layer));
                     code.decoration_nodes.borrow_mut().clear();
+                    code.decoration_text.set(None);
                 }
                 let mut marked = code.decoration_nodes.borrow_mut();
                 while marked.len() > marks.len() {
@@ -4238,21 +4751,105 @@ impl Ui {
                     }
                 }
                 drop(marked);
+                // The decorations, over the current line: a node of their own.
+                if !shaped.is_empty() || code.decoration_text.get().is_some() {
+                    let size = (inner_width, inner_height);
+                    let radius = theme.number_untracked(tok::MARK_RADIUS);
+                    show_decorations(&mut s, code, size, (shaped, ends), radius);
+                }
+                // Under the text in view, each row of a range a node.
+                let underlines = code.underlines.borrow();
+                let mut rows: Vec<(Rect, Color, crate::rich_text::LineStyle)> = Vec::new();
+                let shown_from = match &long_lines {
+                    Some(lines) => lines.line_range(lines.line_at(scroll.1)).start,
+                    None => 0,
+                };
+                let first = underlines.partition_point(|u| u.range.end < shown_from);
+                for underline in &underlines[first..] {
+                    let found = layout.selection_within(
+                        underline.range.clone(),
+                        scroll.1,
+                        scroll.1 + inner_height,
+                    );
+                    if found.is_empty()
+                        && long_lines.as_ref().is_some_and(|lines| {
+                            lines.top(lines.line_of(underline.range.start))
+                                > scroll.1 + inner_height
+                        })
+                    {
+                        break;
+                    }
+                    rows.extend(found.into_iter().map(|r| {
+                        let at = Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height);
+                        (at, underline.color, underline.line)
+                    }));
+                }
+                let mut drawn = code.underline_nodes.borrow_mut();
+                while drawn.len() > rows.len() {
+                    s.remove(drawn.pop().unwrap().0);
+                }
+                for (k, (rect, color, line)) in rows.into_iter().enumerate() {
+                    let wanted = ((rect.width * 4.) as u32, color, line);
+                    if k == drawn.len() {
+                        let id = s.append(viewport, NodeKind::Container(Layout::Overlay), {
+                            Style::default()
+                        });
+                        drawn.push((id, (u32::MAX, color, line)));
+                    }
+                    let (id, shown) = &mut drawn[k];
+                    if *shown != wanted {
+                        *shown = wanted;
+                        s.set_kind(
+                            *id,
+                            NodeKind::Canvas(std::sync::Arc::new(underline_canvas(
+                                rect.width, color, line,
+                            ))),
+                        );
+                    }
+                    s.set_style(*id, fixed(rect.width.max(1.), 3.));
+                    s.set_transform(
+                        *id,
+                        Transform {
+                            x: rect.x,
+                            y: rect.y + rect.height - 3.,
+                        },
+                    );
+                }
             }
-            let mut nodes = selection_nodes.borrow_mut();
-            while nodes.len() > rects.len() {
-                s.remove(nodes.pop().unwrap());
-            }
-            while nodes.len() < rects.len() {
-                nodes.push(s.append(
-                    selection_layer,
-                    NodeKind::Rect(theme.color_untracked(tok::SELECTION)),
-                    Style::default(),
-                ));
-            }
-            for (id, (x, y, w, h)) in nodes.iter().zip(rects) {
-                s.set_style(*id, fixed(w, h));
-                s.set_transform(*id, Transform { x, y });
+            // The selection, one shape over the view: its node shows no text
+            // of its own, a long document's lines being nodes apart.
+            if rects.is_empty() {
+                if let Some(id) = selection_node.get() {
+                    s.set_text_highlight(id, None);
+                }
+            } else {
+                let id = selection_node.get().unwrap_or_else(|| {
+                    let id = s.append(
+                        selection_layer,
+                        NodeKind::Text {
+                            text: "".into(),
+                            color: Color(0, 0, 0, 0),
+                            font_size: 1.,
+                        },
+                        Style::default(),
+                    );
+                    selection_node.set(Some(id));
+                    id
+                });
+                // Padded: flush takes its ink from its box, shaping nothing.
+                let mut style = fixed(inner_width, inner_height);
+                style.padding = 1.;
+                s.set_style(id, style);
+                let highlight = crate::scene::TextHighlight {
+                    color: theme.color_untracked(tok::SELECTION),
+                    rects: rects
+                        .into_iter()
+                        .map(|(x, y, w, h)| Rect::new(x, y, w, h))
+                        .collect(),
+                    text_color: None,
+                    radius: theme.number_untracked(tok::SELECTION_RADIUS).max(0.),
+                };
+                s.set_text_highlight(id, Some(highlight));
             }
             // The numbers of the lines in view: found by where each line
             // starts (rows are in order, so the first is a binary search),
@@ -4576,6 +5173,21 @@ impl Ui {
                             *slot = Some(callback);
                         }
                     }
+                    for _ in 0..4 {
+                        let line = code.top_line_drawn.get();
+                        if line.is_none() || line == code.top_line_told.get() {
+                            break;
+                        }
+                        let Some(mut callback) = code.on_top_line.borrow_mut().take() else {
+                            break;
+                        };
+                        code.top_line_told.set(line);
+                        callback(line.unwrap_or(1));
+                        let mut slot = code.on_top_line.borrow_mut();
+                        if slot.is_none() {
+                            *slot = Some(callback);
+                        }
+                    }
                 }
                 let arm = hook.borrow().as_ref().and_then(Weak::upgrade);
                 if let Some(arm) = arm {
@@ -4675,6 +5287,8 @@ impl Ui {
                 layout.hit_position(x, y).byte_offset
             })
         };
+        // Kept in the hint, which offset_at and the drop handler both reach.
+        let _ = hint.point.set(drop_point);
         let drag_select: Rc<dyn Fn()> = {
             let scene = scene.clone();
             let gesture = gesture.clone();
@@ -4948,6 +5562,13 @@ impl Ui {
                             offset.1 = (offset.1 + delta_y).clamp(0., limit.1);
                         }
                         if previous == *offset {
+                            // At its edge: contained, the gesture stays here
+                            // (taken, so the scroll views around it don't
+                            // move, and the rest of it latches here).
+                            if wheel_hint.contain.get() && (delta_y != 0. || delta_x != 0.) {
+                                cx.prevent_default();
+                                cx.stop_propagation();
+                            }
                             return;
                         }
                         drop(offset);
@@ -5194,7 +5815,7 @@ impl Ui {
                         // Over it: the caret where it would drop.
                         (crate::input::DragPhase::Over, Some(_)) if !read_only.get() => {
                             cx.accept_drag();
-                            let at = drop_point(drag.x, drag.y);
+                            let at = tab_indent.point.get().map_or(0, |point| point(drag.x, drag.y));
                             let mut edit = editor.borrow_mut();
                             if gesture.drop_restore.get().is_none() {
                                 gesture.drop_restore.set(Some(edit.selection()));
@@ -5219,7 +5840,7 @@ impl Ui {
                         (crate::input::DragPhase::Drop, Some(text))
                             if !read_only.get() && !cx.default_prevented() =>
                         {
-                            let at = drop_point(drag.x, drag.y);
+                            let at = tab_indent.point.get().map_or(0, |point| point(drag.x, drag.y));
                             let mut edit = editor.borrow_mut();
                             if let Some(was) = gesture.drop_restore.take() {
                                 edit.set_selection(was.anchor, was.focus);
@@ -5375,6 +5996,9 @@ impl Ui {
                         e.set_selection(anchor, next.byte_offset);
                         position.set(next);
                     } else {
+                        // Where the caret shows, for the arrows through
+                        // right-to-left text, which may keep its side.
+                        let shown = position.get();
                         if !directional {
                             position.set(TextPosition {
                                 byte_offset: e.selection().focus,
@@ -5417,12 +6041,14 @@ impl Ui {
                                     Some(s.bounds(viewport).width.max(1.)),
                                     &font,
                                 );
-                                e.move_visually(
+                                let to = e.move_visually(
                                     word,
                                     modifiers.shift,
                                     key == Key::ArrowLeft,
-                                    |byte| layout.caret(byte),
+                                    shown,
+                                    |p| layout.caret_position(p),
                                 );
+                                position.set(to);
                             }
                             Key::ArrowLeft => e.move_left(word, modifiers.shift),
                             Key::ArrowRight => e.move_right(word, modifiers.shift),
@@ -5600,10 +6226,19 @@ impl Ui {
                             Key::Character(ref k) if command && k.eq_ignore_ascii_case("a") => {
                                 e.select_all()
                             }
-                            Key::Character(ref k) if command && k.eq_ignore_ascii_case("z") => {
+                            // With nothing to undo or redo, the key goes on to
+                            // the app's commands (its own undo), as AppKit's
+                            // responder chain hands it to the window's.
+                            Key::Character(ref k)
+                                if command
+                                    && k.eq_ignore_ascii_case("z")
+                                    && (if modifiers.shift { e.can_redo() } else { e.can_undo() }) =>
+                            {
                                 changed = if modifiers.shift { e.redo() } else { e.undo() };
                             }
-                            Key::Character(ref k) if command && k.eq_ignore_ascii_case("y") => {
+                            Key::Character(ref k)
+                                if command && k.eq_ignore_ascii_case("y") && e.can_redo() =>
+                            {
                                 changed = e.redo();
                             }
                             // A composition to cancel takes it; otherwise it goes
@@ -6289,6 +6924,17 @@ mod ownership_tests {
     }
 }
 
+/// Whether a size has changed from what was told of it: by a 1024th of a
+/// point or more. Less is rounding, not movement. Sums at a column's scale
+/// land on neighbouring floats (a list's 29.2342 and 29.234184) depending on
+/// what was laid out afresh, so a reader of the size that dirties layout
+/// would flip it each pass, for ever (#1027). What creeps is still told,
+/// as this compares with what was told last.
+#[inline]
+fn resized(told: (f32, f32), now: (f32, f32)) -> bool {
+    !((told.0 - now.0).abs() < SIZE_NOISE && (told.1 - now.1).abs() < SIZE_NOISE)
+}
+
 fn allocated_content_size(scene: &Scene, node: NodeId) -> (f32, f32) {
     // Its own box: a size, whatever moved it.
     let bounds = scene.layout_bounds(node);
@@ -6533,6 +7179,176 @@ mod bounds_observer_tests {
         assert!(!ui.scene.borrow().contains(node));
         assert!(ui.storage.observed_bounds.borrow().is_empty());
         assert_eq!(ui.runtime.effect_count(), 0);
+    }
+
+    /// A box whose width follows from its own width, 100 ↔ 200 for as long
+    /// as `broken` holds, and how often its binding ran.
+    fn oscillating(ui: &mut Ui, broken: Rc<Cell<bool>>) -> (NodeId, Rc<Cell<u32>>) {
+        let node = ui.container(ui.root(), Layout::Overlay, fixed(100., 40.));
+        let size = ui.observe_size(node);
+        let (scene, runs) = (Rc::downgrade(&ui.scene), Rc::new(Cell::new(0)));
+        let told = runs.clone();
+        ui.bind(node, move || {
+            let seen = size.get().0;
+            told.set(told.get() + 1);
+            if broken.get() {
+                let width = if seen == 200. { 100. } else { 200. };
+                let scene = scene.upgrade().unwrap();
+                scene.borrow_mut().set_style(node, fixed(width, 40.));
+            }
+        });
+        (node, runs)
+    }
+
+    #[test]
+    fn layout_that_never_settles_is_held_reported_once_and_recovers() {
+        let mut ui = Ui::new(400., 200.);
+        ui.contain_layout_feedback();
+        let issues = Rc::new(RefCell::new(Vec::<String>::new()));
+        let heard = issues.clone();
+        // A degradation: the app goes on, and the cause can be the engine's.
+        let _listener = crate::issues::on_issue_kind(&ui.runtime, move |kind, issue| {
+            assert_eq!(kind, crate::issues::IssueKind::Degraded);
+            heard.borrow_mut().push(issue.to_string());
+        });
+        let delivered = Rc::new(Cell::new(0));
+        let read = delivered.clone();
+        ui.on_event(ui.root(), false, move |_| read.set(read.get() + 1));
+        let broken = Rc::new(Cell::new(true));
+        let (node, runs) = oscillating(&mut ui, broken.clone());
+
+        // It would have ended the app: it goes on, told once which node.
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(issues.borrow().len(), 1);
+        let said = issues.borrow()[0].clone();
+        assert!(said.contains(&format!("@{}", node.number())), "{said}");
+        assert!(said.contains("did not settle after 64 passes"), "{said}");
+
+        // Held: frames do nothing more, so an idle window stays idle.
+        let held = runs.get();
+        let bounds = ui.scene.borrow().bounds(node);
+        for _ in 0..5 {
+            ui.try_prepare_frame().unwrap();
+        }
+        assert_eq!(runs.get(), held, "nothing hears a held layout");
+        assert_eq!(ui.scene.borrow().bounds(node), bounds);
+
+        // Input goes on, against what shows.
+        ui.try_dispatch(InputEvent::PointerMove { x: 1., y: 1. })
+            .unwrap();
+        assert!(delivered.get() > 0);
+
+        // Something else changes it: tried again in fewer passes, unreported.
+        let other = ui.container(ui.root(), Layout::Overlay, fixed(10., 10.));
+        ui.try_prepare_frame().unwrap();
+        let retried = runs.get() - held;
+        assert!((1..=16).contains(&retried), "{retried} passes");
+        assert_eq!(issues.borrow().len(), 1, "one trouble, one report");
+        ui.remove(other);
+
+        // Repaired (a reload), it settles and geometry is heard again.
+        broken.set(false);
+        ui.scene.borrow_mut().set_style(node, fixed(150., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(ui.scene.borrow().bounds(node).width, 150.);
+        let settled = runs.get();
+        ui.scene.borrow_mut().set_style(node, fixed(120., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert!(runs.get() > settled, "heard again once settled");
+        assert_eq!(issues.borrow().len(), 1);
+
+        // A new trouble is a new report.
+        broken.set(true);
+        ui.scene.borrow_mut().set_style(node, fixed(100., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(issues.borrow().len(), 2);
+    }
+
+    /// #1027: a size flipping between neighbouring floats, its reader
+    /// dirtying layout each time, settles; it is rounding, not movement.
+    #[test]
+    fn a_size_differing_only_by_rounding_settles_and_real_changes_are_told() {
+        let mut ui = Ui::new(400., 200.);
+        let node = ui.container(ui.root(), Layout::Overlay, fixed(100., 40.));
+        let size = ui.observe_size(node);
+        let (scene, seen) = (Rc::downgrade(&ui.scene), Rc::new(Cell::new((0., 0.))));
+        let (told, flips, wanted) = (
+            seen.clone(),
+            Rc::new(Cell::new(0)),
+            Rc::new(Cell::new(100.)),
+        );
+        let (flipped, want) = (flips.clone(), wanted.clone());
+        ui.bind(node, move || {
+            told.set(size.get());
+            // As a list's height does: each reading nudges it a float over.
+            let nudge = if flipped.get() % 2 == 0 { 2e-5 } else { 0. };
+            flipped.set(flipped.get() + 1);
+            let scene = scene.upgrade().unwrap();
+            scene
+                .borrow_mut()
+                .set_style(node, fixed(want.get() + nudge, 40.));
+        });
+        ui.try_prepare_frame().unwrap();
+        assert!((seen.get().0 - 100.).abs() < 0.001, "{:?}", seen.get());
+        assert!(flips.get() < 8, "{} readings", flips.get());
+        // A change anyone could see is told, at once.
+        wanted.set(120.);
+        ui.scene.borrow_mut().set_style(node, fixed(120., 40.));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(seen.get().0.round(), 120.);
+        // So is a creep too slow for any one step to tell, once it adds up.
+        let base = seen.get().0;
+        for step in 1..=4 {
+            let width = base + step as f32 * 0.0004;
+            wanted.set(width);
+            ui.scene.borrow_mut().set_style(node, fixed(width, 40.));
+            ui.try_prepare_frame().unwrap();
+        }
+        assert!(seen.get().0 > base + 0.0009, "{:?}", seen.get());
+    }
+
+    /// A hook can hold a script's whole VM: it goes with its editor.
+    #[test]
+    fn a_paste_hook_goes_with_its_editor() {
+        let mut ui = Ui::new(400., 200.);
+        let held = Rc::new(());
+        let editor_under = |ui: &mut Ui, parent: NodeId, held: &Rc<()>| {
+            let value = ui.signal(String::new());
+            let node = ui.text_input(parent, "Field", value, 100., false).node;
+            let kept = held.clone();
+            ui.set_paste_hook(
+                node,
+                Rc::new(move |_| {
+                    let _ = &kept;
+                    true
+                }),
+            );
+            node
+        };
+        let root = ui.root();
+        let node = editor_under(&mut ui, root, &held);
+        assert!(ui.takes_paste(node));
+        assert_eq!(Rc::strong_count(&held), 2);
+        ui.remove(node);
+        ui.prepare_frame();
+        assert_eq!(Rc::strong_count(&held), 1);
+        assert!(!ui.takes_paste(node));
+        // Nor does a large removal, which frees its nodes over later frames.
+        let parent = ui.container(ui.root(), Layout::Overlay, fixed(100., 40.));
+        editor_under(&mut ui, parent, &held);
+        for _ in 0..=RECLAIM_NOW {
+            ui.container(parent, Layout::Overlay, fixed(1., 1.));
+        }
+        assert_eq!(Rc::strong_count(&held), 2);
+        ui.remove(parent);
+        assert_eq!(Rc::strong_count(&held), 1);
+    }
+
+    #[test]
+    fn without_containment_layout_that_never_settles_is_an_error() {
+        let mut ui = Ui::new(400., 200.);
+        oscillating(&mut ui, Rc::new(Cell::new(true)));
+        assert_eq!(ui.try_prepare_frame().unwrap_err().passes, 64);
     }
 
     #[test]

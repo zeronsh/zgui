@@ -1,5 +1,11 @@
 //! `zgx`: developer tools for zgx-script.
 //!
+//! `zgx new <name> [--template T] [--i18n]` writes a Luau app that runs at
+//! once, with its tests and a CI workflow (`zgx_script::scaffold`).
+//!
+//! `zgx run [--inspect] <app> [args…]` runs the app by zgx-run (beside this
+//! binary, or on PATH), as `zgx audit` audits it.
+//!
 //! `zgx check [--nonstrict] <file-or-dir>...` type checks Luau scripts
 //! with luau-lsp and the bundled `ui`/`anime` definitions, printing
 //! `file:line:col` findings; it exits 1 when there are errors.
@@ -12,17 +18,33 @@
 //! (`<dir>/.zgx/types.d.luau`, `zgx_script::app_types`), for editors to
 //! complete `"$app.…"`.
 //!
+//! `zgx test [<app-dir>] [<filter>]` runs the app's Luau tests
+//! (`*.test.luau`) against it mounted headless (`zgx_script::test_runner`).
+//!
 //! `zgx inspect <command>…` asks a running app serving devtools (`zgx-run
 //! --inspect`): its tree, nodes, states and errors, and clicks, typing and
 //! keys (`zgx_script::inspect`; `docs/agents/inspect.md`).
 use std::{path::PathBuf, process::ExitCode};
 use zgx_script::check::{CheckError, Options, Report, check};
 
-const USAGE: &str = "usage: zgx check [--nonstrict] <file-or-dir>...
+const USAGE: &str = "usage: zgx new <name> [--template basic|router|list|form|plugins] [--i18n]
+       zgx run [--inspect] <app.luau-or-dir> [args...]
+       zgx check [--nonstrict] <file-or-dir>...
        zgx lint [--format text|json] <file-or-dir>...
        zgx lint --rules
        zgx types <dir>...
+       zgx test [<app-dir>] [<name filter>]
        zgx inspect [--app PID] [--json] <command> [args]   (zgx inspect help)
+       zgx audit [--human] <app.luau-or-dir>
+
+new: writes a Luau app into the directory <name> (empty or new): app.luau,
+components/, a theme, tests/, zgx.json, a README and a CI workflow running
+the checks below. `zgx run <name>` runs it, and check, lint, audit and test
+are clean. --i18n writes its text as ui.t messages with locales/en.json.
+
+run: opens the app in a window and reloads it as its files change
+(zgx-run, beside zgx or on PATH; `zgx-run --help` says what zgx.json sets).
+--inspect serves devtools (`zgx inspect help`).
 
 check: type checks zgx Luau scripts with luau-lsp, the bundled ui/anime
 types, the standard platform and the new type solver. Strict mode applies
@@ -35,7 +57,18 @@ line above accepts a deliberate exception. It exits 1 when it finds any;
 
 types: writes each app's own theme tokens (`ui.theme.tokens`) as Luau
 types to <dir>/.zgx/types.d.luau, for editors to complete \"$app.…\" (list
-it in luau-lsp's definition files). `zgx check` writes it too.";
+it in luau-lsp's definition files). `zgx check` writes it too.
+
+audit: what assistive technology gets of an app, headless (zgx-run
+--audit): its first screen, then each command, each of its buttons
+pressed and each route, from a fresh start. One line of JSON (each finding's
+rule, target, role, name, detail, source line and state), or a table with
+--human. It exits 1 when it finds any (docs/accessibility-audit.md).
+
+test: runs the app's tests (files named *.test.luau under <app-dir>, `.` if
+not given), each against the app mounted headless: `test(name, body)`,
+`mount()` and `expect(v)` (docs/scripting.md, Testing an app). A filter runs the
+tests whose names hold it. It exits 1 when any fails.";
 
 /// `zgx types <dir>...`
 fn types(args: Vec<String>) -> ExitCode {
@@ -66,13 +99,178 @@ fn types(args: Vec<String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `zgx audit [--human] <app.luau-or-dir>`: the app's accessibility audit,
+/// run headless by `zgx-run --audit` (beside this binary, or on PATH), which
+/// has the desktop's accessibility projection this tool doesn't link.
+fn audit(args: Vec<String>) -> ExitCode {
+    if args.iter().filter(|a| !a.starts_with('-')).count() != 1
+        || args.iter().any(|a| a.starts_with('-') && a != "--human")
+    {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let run = zgx_run();
+    match std::process::Command::new(&run)
+        .arg("--audit")
+        .args(&args)
+        .status()
+    {
+        Ok(status) => ExitCode::from(status.code().unwrap_or(2).clamp(0, 255) as u8),
+        Err(error) => {
+            eprintln!(
+                "zgx audit: couldn't run {} ({error}); install zgx-run beside zgx or on PATH",
+                run.display()
+            );
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `zgx new <name> [--template T] [--i18n]`
+fn new(args: Vec<String>) -> ExitCode {
+    let mut dir: Option<PathBuf> = None;
+    let mut template = zgx_script::scaffold::TEMPLATES[0].0.to_string();
+    let mut i18n = false;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--template" | "-t" => match args.next() {
+                Some(name) => template = name,
+                None => {
+                    eprintln!("zgx new: --template takes a name\n");
+                    for (name, about) in zgx_script::scaffold::TEMPLATES {
+                        eprintln!("  {name:8} {about}");
+                    }
+                    return ExitCode::from(2);
+                }
+            },
+            "--i18n" => i18n = true,
+            "-h" | "--help" => {
+                println!("{USAGE}\n\ntemplates:");
+                for (name, about) in zgx_script::scaffold::TEMPLATES {
+                    println!("  {name:8} {about}");
+                }
+                return ExitCode::SUCCESS;
+            }
+            flag if flag.starts_with('-') => {
+                eprintln!("zgx new: unknown option {flag}\n\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            _ if dir.is_some() => {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            path => dir = Some(PathBuf::from(path)),
+        }
+    }
+    let Some(dir) = dir else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    match zgx_script::scaffold::create(&dir, &template, i18n) {
+        Ok(files) => {
+            for file in &files {
+                println!("  {}", file.strip_prefix(&dir).unwrap_or(file).display());
+            }
+            println!(
+                "\nMade {}. Next:\n  cd {}\n  zgx run .\n  zgx test",
+                dir.display(),
+                dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("zgx new: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `zgx test [<app-dir>] [<name filter>]`
+fn test(args: Vec<String>) -> ExitCode {
+    if args.len() > 2 || args.iter().any(|a| a.starts_with('-')) {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let dir = PathBuf::from(args.first().map_or(".", String::as_str));
+    let filter = args.get(1).map(String::as_str);
+    let report = zgx_script::test_runner::run(&dir, filter, |outcome| {
+        let millis = outcome.duration.as_secs_f64() * 1e3;
+        match &outcome.failure {
+            None => println!("ok   {} ({millis:.0} ms)", outcome.name),
+            Some(failure) => {
+                println!("FAIL {} ({})", outcome.name, outcome.file.display());
+                for line in failure.lines() {
+                    println!("     {line}");
+                }
+            }
+        }
+    });
+    match report {
+        Ok(report) => {
+            let failed = report.failed();
+            eprintln!("{} passed, {failed} failed", report.outcomes.len() - failed);
+            if failed > 0 {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("zgx test: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// The zgx-run beside this binary, else the one on PATH: what `zgx run`
+/// and `zgx audit` hand an app to (it links the desktop, which this tool
+/// doesn't).
+fn zgx_run() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| exe.with_file_name(format!("zgx-run{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|run| run.is_file())
+        .unwrap_or_else(|| PathBuf::from("zgx-run"))
+}
+
+/// `zgx run [--inspect] <app.luau-or-dir> [args…]`: the app in a window,
+/// reloading as it changes, by zgx-run. On Unix zgx-run takes this
+/// process's place, so signals and the exit status are its own.
+fn run(args: Vec<String>) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let run = zgx_run();
+    let mut command = std::process::Command::new(&run);
+    command.args(&args);
+    #[cfg(unix)]
+    let error = std::os::unix::process::CommandExt::exec(&mut command);
+    #[cfg(not(unix))]
+    let error = match command.status() {
+        Ok(status) => return ExitCode::from(status.code().unwrap_or(2).clamp(0, 255) as u8),
+        Err(error) => error,
+    };
+    eprintln!(
+        "zgx run: couldn't run {} ({error}); install zgx-run beside zgx or on PATH \
+         (cargo install zgx-run)",
+        run.display()
+    );
+    ExitCode::from(2)
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("check") => {}
+        Some("test") => return test(args.collect()),
+        Some("new") => return new(args.collect()),
         Some("lint") => return lint(args.collect()),
         Some("types") => return types(args.collect()),
         Some("inspect") => return inspect(args.collect()),
+        Some("audit") => return audit(args.collect()),
+        Some("run") => return run(args.collect()),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -222,6 +420,7 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   node <target>        find <target>
   state [name] [--full]                  set <name> <json>
   click <target>       type <target> <text>      key <keys>
+  hover <target|x,y>   right-click <target|x,y>  drag <from> <to|x,y>
   scroll <target> <dy> command <id>
   errors               lint
   frames [n] [--runs N] [--all] [--since MARK|FRAME] [--keep N]
@@ -234,6 +433,7 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   search [query] [--next] [--prev] [--all] [--close]
                        find in page: count, current, the first matches
   zoom [in|out|reset|150%]               the window's zoom and its viewport
+  memory [--human]                       what the app holds, a line each, as JSON
   sleep <ms>           raw <json>
   help                 what the app answers
   mcp                  serve these as MCP tools on stdio, for agents
@@ -246,6 +446,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
     use zgx_script::{Value, inspect_client};
     let mut app: Option<u32> = None;
     let mut json = false;
+    let mut human = false;
     let mut words: Vec<String> = Vec::new();
     let mut flags: Vec<(String, Option<String>)> = Vec::new();
     // Where `snapshot` copies its picture, or `record stop` writes its tape.
@@ -261,6 +462,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
                 }
             },
             "--json" => json = true,
+            "--human" => human = true,
             "-h" | "--help" => {
                 println!("{INSPECT_USAGE}");
                 return ExitCode::SUCCESS;
@@ -307,7 +509,9 @@ fn inspect(args: Vec<String>) -> ExitCode {
         }
     };
     match cmd.as_str() {
-        "tree" | "node" | "find" | "click" | "wait" | "snapshot" => put("target", arg(1)),
+        "tree" | "node" | "find" | "click" | "hover" | "right-click" | "wait" | "snapshot" => {
+            put("target", arg(1))
+        }
         "record" => {
             if arg(1).as_deref() == Some("stop") {
                 fields.push(("stop".into(), Value::Bool(true)));
@@ -332,6 +536,10 @@ fn inspect(args: Vec<String>) -> ExitCode {
         "type" => {
             put("target", arg(1));
             put("text", arg(2));
+        }
+        "drag" => {
+            put("target", arg(1));
+            put("to", arg(2));
         }
         "scroll" => {
             put("target", arg(1));
@@ -430,7 +638,10 @@ fn inspect(args: Vec<String>) -> ExitCode {
             eprintln!("zgx inspect: {out}: {error}");
             return ExitCode::FAILURE;
         }
-        if !json {
+        if cmd == "memory" && !json && !human {
+            // For agents first: its lines, as JSON. `--human` for the table.
+            println!("{}", data.cloned().unwrap_or_default().to_json());
+        } else if !json {
             let text = parsed
                 .field("text")
                 .map(Value::to_string)
@@ -500,6 +711,12 @@ const TOOLS: &[Tool] = &[
         "Find in page, as Cmd/Ctrl+F: case and accents ignored, all text including fields and virtual lists' unmounted rows. Answers the count, the current match and the first n (5; all with all): where each is (@node, or a list's row), its range, the text around it, its box if shown. next/prev step the current match in the window.",
     ),
     (
+        "zgx_memory",
+        "memory",
+        &[],
+        "What the app holds, by what holds it, one line each: the process's footprint and its allocator, each Luau VM's heap, decoded pictures shown and cached, text caches, the glyph atlas, GPU textures, layers and buffers, scene nodes and the frame log. Compare two answers to see which line grew.",
+    ),
+    (
         "zgx_zoom",
         "zoom",
         &[("to", "string", false)],
@@ -522,6 +739,24 @@ const TOOLS: &[Tool] = &[
         "click",
         &[("target", "string", true)],
         "Click a node.",
+    ),
+    (
+        "zgx_hover",
+        "hover",
+        &[("target", "string", true)],
+        "Move the pointer to a node's middle or to \"x,y\" in window points, for what shows on hover: a tooltip, a row's actions.",
+    ),
+    (
+        "zgx_right_click",
+        "right-click",
+        &[("target", "string", true)],
+        "Click the context button on a node or at \"x,y\": its context menu opens, and its items are nodes to click.",
+    ),
+    (
+        "zgx_drag",
+        "drag",
+        &[("target", "string", true), ("to", "string", true)],
+        "Drag with the primary button from a node (its middle) or \"x,y\" to a node or \"x,y\", in steps as a hand moves.",
     ),
     (
         "zgx_type",

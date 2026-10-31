@@ -18,9 +18,10 @@
 //! Windows, with `zgx-desktop`'s `webview2` feature), laid out, clipped,
 //! moved and faded as the node is; zgx content painted after it (menus,
 //! popovers, a composer) draws above it, and glass over it blurs the page on
-//! macOS (see [`crate::native_view`]). Without a platform backend (headless,
-//! the software renderer, other platforms for now) the node renders a
-//! labelled placeholder box.
+//! macOS (see [`crate::native_view`]). On Linux (`zgx-desktop`'s `webkitgtk`
+//! feature) the host draws the page itself, as an image ([`PageViews`]).
+//! Without a platform backend (headless, the software renderer) the node
+//! renders a labelled placeholder box.
 //!
 //! The controller outlives the node: unmounting hides the page and keeps it
 //! loaded; mounting it again (in any window) shows it where it is placed.
@@ -816,6 +817,20 @@ impl Focusable {
         }
     }
 }
+/// Makes the boxes showing pages where the host draws pages into the window
+/// itself, as images it is given, rather than as native views (Linux's
+/// WebKitGTK pages): provided by the desktop host, asked before a native
+/// view is mounted. `None` (no engine on this system): a native view, or
+/// its placeholder.
+#[derive(Clone)]
+pub struct PageViews(Rc<MakePage>);
+type MakePage = dyn Fn(&WebView) -> Option<View>;
+impl PageViews {
+    /// Boxes for pages, made by `make`.
+    pub fn new(make: impl Fn(&WebView) -> Option<View> + 'static) -> Self {
+        Self(Rc::new(make))
+    }
+}
 fn native(
     content: NativeContent,
     web: Option<WebView>,
@@ -830,6 +845,11 @@ fn native(
                 web.set_src(&url);
             });
             cx.retain(effect);
+        }
+        if let (Some(web), Some(pages)) = (&web, cx.try_service::<PageViews>())
+            && let Some(view) = (pages.0)(web)
+        {
+            return view;
         }
         let focus = Focusable::of(&content);
         let mut root = div().focusable(focus.is_some()).on_event(move |event| {

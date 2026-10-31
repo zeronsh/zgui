@@ -56,6 +56,9 @@ pub(crate) struct MetalFrame {
     /// The image effects' pipeline (image_effects.wgsl), with the first
     /// image drawn with one (`None`: it did not compile).
     image_effects: std::cell::OnceCell<Option<Pipeline>>,
+    /// Pixelated images' pipelines, their sampler nearest (`full`, `basic`,
+    /// `opaque`), compiled with the first (`None`: they did not compile).
+    nearest: std::cell::OnceCell<Option<[Pipeline; 3]>>,
     /// Polyline strokes' library and pipelines, compiled with the first
     /// (None: not here).
     polyline: std::cell::OnceCell<Option<Polylines>>,
@@ -150,6 +153,7 @@ impl MetalFrame {
             effects: std::cell::OnceCell::new(),
             fills: Default::default(),
             image_effects: std::cell::OnceCell::new(),
+            nearest: std::cell::OnceCell::new(),
             polyline: std::cell::OnceCell::new(),
             warm: std::cell::OnceCell::new(),
         })
@@ -200,7 +204,7 @@ impl MetalFrame {
         self.polyline
             .get_or_init(|| {
                 let library =
-                    Library::new(&self.device, &crate::polyline_source(), Kind::Quads).ok()?;
+                    Library::new(&self.device, &crate::polyline_source(true), Kind::Quads).ok()?;
                 let format = MTLPixelFormat::BGRA8Unorm;
                 let plain = library
                     .pipeline(&self.device, "vs", "fs_polyline", format, Blend::Over)
@@ -399,6 +403,7 @@ impl MetalFrame {
             buffer,
             encoder,
             current: None,
+            nearest: false,
             scissor: None,
             vertices: {
                 use objc2::Message;
@@ -412,6 +417,38 @@ impl MetalFrame {
         frame
     }
 
+    /// `shading`'s pipeline sampling its texture's nearest texel, for a
+    /// pixelated image: `DRAW_MSL` with its inline sampler nearest,
+    /// compiled with the first. `None` if it doesn't compile (the image then
+    /// draws smooth).
+    fn nearest_pipeline(&self, shading: Shading) -> Option<Pipeline> {
+        let pipelines = self.nearest.get_or_init(|| {
+            let source = DRAW_MSL.replace("filter::linear", "filter::nearest");
+            let draw = Library::translated(&self.device, &source, Kind::Quads).ok()?;
+            let pipeline = |vertex: &str, fragment: &str, blend: Blend| {
+                draw.pipeline(
+                    &self.device,
+                    vertex,
+                    fragment,
+                    MTLPixelFormat::BGRA8Unorm,
+                    blend,
+                )
+                .ok()
+            };
+            Some([
+                pipeline("vs", "fs", Blend::Over)?,
+                pipeline("vs_basic", "fs_basic", Blend::Over)?,
+                pipeline("vs_basic", "fs_basic", Blend::Replace)?,
+            ])
+        });
+        let [full, basic, opaque] = pipelines.as_ref()?;
+        match shading {
+            Shading::Full => Some(full.clone()),
+            Shading::Basic => Some(basic.clone()),
+            Shading::Opaque => Some(opaque.clone()),
+            _ => None,
+        }
+    }
     fn pipeline(&self, shading: Shading) -> Pipeline {
         match shading {
             Shading::Full => self.full.clone(),
@@ -445,6 +482,8 @@ impl MetalFrame {
 #[derive(Clone, Copy, PartialEq)]
 enum Bound {
     Quads(Shading),
+    /// As `Quads`, sampling the nearest texel (`Pass::nearest`).
+    Nearest(Shading),
     FullClear,
     CopyOffset,
 }
@@ -494,6 +533,8 @@ pub(crate) struct Frame {
     buffer: CommandBuffer,
     encoder: Encoder,
     current: Option<Bound>,
+    /// Quads sample their texture's nearest texel (a pixelated image's).
+    nearest: bool,
     /// The scissor last set on `encoder`: setting it again costs the
     /// driver as much as a change (most batches share their region's).
     scissor: Option<(u32, u32, u32, u32)>,
@@ -706,10 +747,18 @@ impl Frame {
         self.current = Some(bound);
         let pipeline = match bound {
             Bound::Quads(shading) => frame.pipeline(shading),
+            Bound::Nearest(shading) => frame
+                .nearest_pipeline(shading)
+                .unwrap_or_else(|| frame.pipeline(shading)),
             Bound::FullClear => frame.full_clear.clone(),
             Bound::CopyOffset => frame.copy_offset.clone(),
         };
         self.encoder.setRenderPipelineState(&pipeline);
+    }
+    /// Whether quads sample their texture's nearest texel from here: a
+    /// pixelated image's (`TextureSource::Pixelated`).
+    pub(crate) fn nearest(&mut self, on: bool) {
+        self.nearest = on;
     }
     /// The texture fragments sample: the atlas, or for catch-up copies the
     /// shown surface.
@@ -755,6 +804,7 @@ impl Frame {
                 true,
             ) => Bound::FullClear,
             (Shading::Basic | Shading::Opaque, true) => Bound::Quads(Shading::Opaque),
+            (shading, false) if self.nearest => Bound::Nearest(shading),
             (shading, false) => Bound::Quads(shading),
         };
         self.bind(frame, bound);

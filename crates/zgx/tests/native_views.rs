@@ -477,6 +477,44 @@ fn unmounting_unregisters_and_unsupported_windows_show_a_placeholder() {
     assert_eq!(web.url(), "https://example.com/");
 }
 
+/// Where the host draws pages itself (`PageViews`, Linux's), a page's box is
+/// what it makes: no native view registered, nothing platform painted, the
+/// page's styles on it; where it makes none, the native view as before.
+#[test]
+fn a_host_drawing_pages_makes_their_boxes() {
+    let mut ui = Ui::new(400., 300.);
+    let natives = supported();
+    let drawn = WebView::new(&ui.runtime, WebViewOptions::default());
+    let native = WebView::new(&ui.runtime, WebViewOptions::default());
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let pages = {
+        let (drawn, asked) = (drawn.clone(), asked.clone());
+        zgx::web_view::PageViews::new(move |web| {
+            asked.borrow_mut().push(web.id());
+            (*web == drawn).then(|| div().child(div().id("drawn page").w_full().h_full()))
+        })
+    };
+    let view = ui.mount(provide(
+        natives.clone(),
+        provide(
+            pages,
+            column()
+                .child(web_view(&drawn).id("first").w(200.).h(100.).rounded(8.))
+                .child(web_view(&native).id("second").w(200.).h(100.)),
+        ),
+    ));
+    ui.prepare_frame();
+    assert_eq!(*asked.borrow(), vec![drawn.id(), native.id()]);
+    let (first, second) = (view.find("first").unwrap(), view.find("second").unwrap());
+    assert!(view.find("drawn page").is_some());
+    assert_eq!(natives.nodes(), vec![second]);
+    let scene = ui.scene.borrow();
+    assert!(!scene.is_platform_painted(first));
+    assert!(scene.is_platform_painted(second));
+    assert_eq!(scene.bounds(first).width, 200.);
+    assert_eq!(scene.bounds(first).height, 100.);
+}
+
 struct Recorder(RefCell<Vec<String>>);
 impl WebViewBackend for Recorder {
     fn run(&self, command: WebViewCommand) {

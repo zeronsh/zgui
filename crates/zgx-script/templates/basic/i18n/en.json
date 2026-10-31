@@ -1,0 +1,8 @@
+{
+  "title": "Tasks",
+  "count": "{n, plural, one {# task} other {# tasks}}",
+  "new": { "label": "New task", "placeholder": "What needs doing?" },
+  "add": "Add",
+  "empty": "Nothing to do.",
+  "clear": "Clear done"
+}

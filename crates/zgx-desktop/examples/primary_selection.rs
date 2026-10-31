@@ -2,7 +2,10 @@
 //! primary selection, and a middle click pastes it where it lands. It wears
 //! the built-in themes, following the system's dark or light, accent, high
 //! contrast (the Linux settings portal probe uses that).
-//! `--smoke-test` reports the editors' text as it closes, after 14 s.
+//! `--smoke-test` reports the editors' text as it closes, after 14 s, and
+//! the double-click time whenever it changes (`DOUBLE_CLICK 1000`): the
+//! desktop's arrives once its settings portal answers, maybe after the
+//! window shows.
 use std::time::Duration;
 use zgx::compose::prelude::*;
 use zgx_desktop::{Application, WindowOptions};
@@ -46,6 +49,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             });
             if smoke {
+                let ui = cx.ui.downgrade();
+                cx.tasks.spawn(async move {
+                    let mut shown = None;
+                    while let Some(ui) = ui.upgrade() {
+                        let time = ui.input.double_click_time().as_millis();
+                        drop(ui);
+                        if shown != Some(time) {
+                            println!("DOUBLE_CLICK {time}");
+                            shown = Some(time);
+                        }
+                        zgx::timer::sleep(Duration::from_millis(50)).await;
+                    }
+                });
                 let window = cx.window.clone();
                 cx.tasks.spawn(async move {
                     zgx::timer::sleep(Duration::from_secs(14)).await;

@@ -515,6 +515,118 @@ fn frames_read_since_a_mark_with_the_runs_asked_for_the_gpu_and_the_engines_note
 }
 
 #[test]
+fn memory_says_what_holds_it_a_line_each() {
+    let (app, session) = app();
+    let answer = ask(&app, &session, r#"{"cmd":"memory"}"#);
+    let table = text(&answer);
+    assert!(table.contains("scene nodes mounted"), "{table}");
+    let line = |area: &str, name: &str| {
+        answer
+            .field("data")
+            .unwrap()
+            .list()
+            .iter()
+            .find(|l| {
+                l.field("area").map(Value::to_string).as_deref() == Some(area)
+                    && l.field("name")
+                        .is_some_and(|n| n.to_string().starts_with(name))
+            })
+            .unwrap_or_else(|| panic!("no {area} {name}: {}", answer.to_json()))
+            .clone()
+    };
+    let number = |line: Value, field: &str| line.field(field).and_then(Value::as_f64).unwrap();
+    assert_eq!(
+        number(line("scene", "nodes mounted"), "n") as usize,
+        app.ui.scene.borrow().len()
+    );
+    assert!(number(line("scene", "slots"), "bytes") > 0.);
+    assert!(number(line("luau", "app"), "bytes") > 100_000.);
+    // Nothing shown, nothing cached.
+    assert_eq!(number(line("images", "decoded shown"), "n"), 0.);
+    assert_eq!(number(line("images", "decoded cached"), "bytes"), 0.);
+    // Frames kept for `frames`, here where devtools are.
+    line("devtools", "frame log");
+}
+
+#[test]
+fn hover_right_click_and_drag_act_as_a_hand_does() {
+    const APP: &str = r##"
+local hovered = ui.state("hovered", false)
+local dropped = ui.state("dropped", "")
+local over = ui.state("over", 0)
+return ui.column {
+    ui.div { id = "row", w = 100, h = 20, on_hover = function(inside) hovered:set(inside) end,
+        context_menu = function() return { ui.menu_item { "Rename", id = "rename" } } end },
+    ui.div { id = "away", w = 100, h = 20 },
+    ui.div { id = "card", w = 100, h = 40, on_drag = function() return "the card" end },
+    ui.div { id = "lane", w = 100, h = 40,
+        on_drag_over = function() over:update(function(n) return n + 1 end) end,
+        on_drop = function(payload) dropped:set(payload) end },
+    ui.div { id = "end", w = 100, h = 40 },
+}
+"##;
+    let app = TestApp::new(|runtime| ScriptHost::inline(runtime, "app", APP));
+    let session = Session::new(&app.ui, app.handle.clone(), &app.host, None);
+    let state = |name: &str| {
+        let answer = ask(
+            &app,
+            &session,
+            &format!(r#"{{"cmd":"state","name":"{name}"}}"#),
+        );
+        text(&answer)
+    };
+    text(&ask(&app, &session, r##"{"cmd":"hover","target":"#row"}"##));
+    assert!(state("hovered").contains("true"));
+    // A point works as a target does.
+    text(&ask(&app, &session, r#"{"cmd":"hover","target":"50,30"}"#));
+    assert!(state("hovered").contains("false"));
+    text(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"right-click","target":"#row"}"##,
+    ));
+    ask(&app, &session, r#"{"cmd":"sleep","ms":20}"#);
+    // It opened, and devtools see it, though it mounts outside the view.
+    let menu = text(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"find","target":"#rename"}"##,
+    ));
+    assert!(menu.contains("Rename"), "{menu}");
+    text(&ask(&app, &session, r#"{"cmd":"key","keys":"Escape"}"#));
+    let answer = ask(
+        &app,
+        &session,
+        r##"{"cmd":"drag","target":"#card","to":"#lane"}"##,
+    );
+    assert!(text(&answer).contains("dragged"));
+    assert!(
+        state("dropped").contains("the card"),
+        "{}",
+        state("dropped")
+    );
+    assert!(!state("over").contains(" 0"), "{}", state("over"));
+    // To a point past it: it was only passed over.
+    ask(
+        &app,
+        &session,
+        r#"{"cmd":"set","name":"dropped","value":"\"\""}"#,
+    );
+    text(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"drag","target":"#card","to":"50,130"}"##,
+    ));
+    assert!(
+        !state("dropped").contains("the card"),
+        "{}",
+        state("dropped")
+    );
+    let bad = error(&ask(&app, &session, r##"{"cmd":"drag","target":"#card"}"##));
+    assert!(bad.contains("`to`"), "{bad}");
+}
+
+#[test]
 fn switches_are_listed_and_switched_by_name() {
     let (app, session) = app();
     let listed = text(&ask(&app, &session, r#"{"cmd":"switch"}"#));
@@ -652,4 +764,48 @@ return ui.column {
     let found = text(&ask(&app, &session, r#"{"cmd":"find","target":"\"Go\""}"#));
     assert_eq!(found.lines().count(), 2, "{found}");
     assert_eq!(found.matches(" hidden").count(), 1, "{found}");
+}
+
+#[test]
+fn an_action_names_the_clip_or_the_node_in_its_way() {
+    let app = TestApp::new(|runtime| {
+        ScriptHost::inline(
+            runtime,
+            "app",
+            r##"
+local said = ui.state("said", "")
+return ui.column {
+    ui.scroll { id = "list", h = 100, w = 200,
+        ui.button { id = "near", h = 40, "Near", on_click = function() said:set("near") end },
+        ui.div { h = 300 },
+        ui.button { id = "far", h = 40, "Far", on_click = function() said:set("far") end },
+    },
+    ui.overlay { w = 200, h = 40,
+        ui.button { id = "under", "Under", on_click = function() said:set("under") end },
+        ui.div { id = "lid", w = 200, h = 40, bg = "#000", on_click = function() end },
+    },
+}
+"##,
+        )
+    });
+    let session = Session::new(&app.ui, app.handle.clone(), &app.host, None);
+    let clipped = error(&ask(&app, &session, r##"{"cmd":"click","target":"#far"}"##));
+    assert!(clipped.contains("in #list's clip"), "{clipped}");
+    assert!(clipped.contains("clip"), "{clipped}");
+    let covered = error(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"hover","target":"#under"}"##,
+    ));
+    assert!(covered.contains("covered"), "{covered}");
+    assert!(covered.contains("#lid"), "{covered}");
+    text(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"click","target":"#near"}"##,
+    ));
+    assert_eq!(
+        text(&ask(&app, &session, r#"{"cmd":"state","name":"said"}"#)),
+        "said = \"near\""
+    );
 }

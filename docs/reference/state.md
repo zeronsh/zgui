@@ -40,6 +40,8 @@ ui.open_files(opts: FilePickerOptions?) -> Promise<{ File }>
 ui.save_file(opts: FilePickerOptions?) -> Promise<File?>
 ui.read_file(file: File | string) -> Promise<string>
 ui.write_file(file: File | string, text: string) -> Promise<nil>
+ui.open_folder(opts: FolderPickerOptions?) -> Promise<Folder?>
+ui.remembered_folder(key: string) -> Promise<Folder?>
 ui.args: { string }
 ui.on_open(handler: (e: { files: { File }, urls: { string } }) -> ())
 ```
@@ -295,9 +297,132 @@ return ui.column {
 
 `ui.image { src = "https://…" }` and `ui.svg { src = "https://…" }` load through the same fetcher: one request per URL however many nodes show it, decoded off the main thread, cached for the host's life; a node shows nothing until its source arrives, and only the nodes showing it redraw.
 
+### Live connections
+
+`ui.socket(url, opts)` keeps a connection open (a WebSocket: a chat's, a feed's) through the host's connector, as React's `useWebSocket`. Its `status` is a state, `"connecting"`, `"open"`, `"reconnecting"` or `"closed"`, for a banner; each message goes to `on_message(message, binary)`, text as a string (decoded first with `json = true`) or a binary message's bytes as a string. A decoded message is the script's own: a plain table, made for it alone, that it may change and keep (add a field, put it in state), where tables read from state are read-only. `send(v)` sends a string as text and any other value as JSON, and `send_bytes(s)` a binary message; sent while the connection is not open, they wait and go in order once it is. `buffered` is a state of the bytes sent and not yet taken by the connection, and past `max_buffered` (16 MB) `send` refuses, returning false, as it does once the socket is closed for good. A connection that ends or fails opens again after a wait: `reconnect = { min = 500, max = 30000, factor = 2, jitter = 0.2, attempts = math.huge }` is the default (true), `false` none. Meanwhile `attempt` counts and `retry_in` is the wait in ms; out of attempts it is `"closed"`, and `error` (a `UiError`, tracked) says why it last ended. `on_open` and `on_close(err)` hear each connection begin and end. `close()` closes it until `reconnect()`, which also cuts a wait short. `url` may be a function: a state it reads changing (a room, a token) opens it again at once. It closes with its owner (a component, or the script on reload).
+
+The host connects with `ScriptHost::socket_connector(|request, socket| async { … })`: it opens `request.url`, calls `socket.opened()`, hands each message that arrives to `socket.receive`, and sends what `socket.next().await` gives, as fast as the connection takes it, until that answers `None` (the script closed it); its future answers `Ok(())` when the connection ends and `Err(message)` when it fails. A plugin needs the host's `Capability::Fetch`. `ui.sleep(ms)` is a promise settled after `ms`, to await in a task.
+
+```lua
+type Message = { from: string, text: string }
+local messages = ui.state("messages", {} :: { Message })
+local socket = ui.socket("wss://chat.example/room/1", {
+	json = true,
+	on_message = function(message: Message)
+		messages:push(message)
+	end,
+})
+return ui.column {
+	ui.show(function()
+		return socket.status:get() ~= "open"
+	end, ui.text {
+		function()
+			local wait = socket.retry_in:get()
+			return if wait > 0 then `Reconnecting in {math.ceil(wait / 1000)} s…` else "Connecting…"
+		end,
+	}),
+	ui.each(messages, function(m: Message)
+		return ui.text { `{m.from}: {m.text}` }
+	end),
+	ui.button {
+		"Wave",
+		on_click = function()
+			socket.send({ text = "👋" })
+		end,
+	},
+}
+```
+
+### Folders
+
+`ui.open_folder()` shows the system's folder dialog and settles with a `Folder`, or nil if the person cancels. Only that dialog makes one, as a browser's `showDirectoryPicker` does: a script can't build a handle from a path or a table, and a handle can be kept in state.
+
+```lua
+local folder = ui.state("folder", nil :: Folder?)
+local function open()
+	ui.task(function()
+		local picked = ui.open_folder({ title = "Open a vault" }):await()
+		if not picked then
+			return
+		end
+		folder:set(picked)
+		for _, entry in picked:list("", { recursive = true }):await() do
+			if entry.kind == "file" and string.find(entry.name, "%.md$") then
+				print(entry.path, entry.size, picked:read(entry.path):await())
+			end
+		end
+		picked:write("notes/new.md", "# New"):await()
+	end)
+end
+return ui.button { "Open a vault", on_click = open }
+```
+
+| Member | |
+| --- | --- |
+| `name` | the folder's own name |
+| `list(path?, { recursive?, limit? })` | a promise of `{ name, path, kind, size, modified }`: `path` from the root, `kind` `"file"` or `"folder"`, `modified` in milliseconds since 1970, by name, depth first. `limit` stops it (100,000 by default) |
+| `read(path)` | a promise of a text file's contents |
+| `file(path)` | a promise of a file inside it as a `File`, its `path` absolute, which `ui.image`, `ui.read_file` and `drag_export`'s `files` take as they do a dialog's (a thumbnail, a drag out to Finder). `list(path, { files = true })` gives each file entry its `file` the same way |
+| `write(path, text)` | a promise settled once the file is replaced whole: its folders made, a temporary file beside it renamed over it, its permissions kept. A failure leaves the old file as it was |
+| `forget()` | the host keeps it no more: a later launch's `ui.remembered_folder` is nil. This run's handle still reaches it |
+
+Everything runs off the main thread, and a failure is a `UiError`: `kind` `"denied"` for a path the handle refuses, `"io"` for what the system says.
+
+**What a handle can't reach:** paths are relative with `/` between their parts, so `..`, `.`, an absolute path, a drive and a backslash are refused. A symbolic link counts as where it leads: a link leading out of the folder is refused, left out of `list`, and not written through, and a link inside it is read but not entered by `recursive` (links can loop). It holds no delete or rename. A hard link can't be told from a file, so one made outside the app does reach out, and a link swapped by another process between the check and the open is out of its hands: the guarantee is against scripts, which can make neither.
+
+**Who gets one:** a plugin only with the `folders` grant (`zgx.json`, or `ScriptHost::grant(plugin, Capability::Folders)`). A Rust host can refuse it to every script, the app's own too, with `ScriptHost::refuse_folders()`, and a platform without a folder dialog settles with an error.
+
+**A handle lasts the run, unless the host keeps it.** `ui.persist` doesn't save one. `ui.open_folder({ remember = "library" })` asks the host to keep the grant under that key, and on a later launch `ui.remembered_folder("library")` settles with the handle if the folder still resolves, or nil (gone, refused, or never kept). The handle keeps every rule above, and `folder:forget()` drops the grant.
+
+```lua
+local library = ui.state("library", nil :: Folder?)
+ui.task(function()
+	library:set(ui.remembered_folder("library"):await())
+end)
+local function choose()
+	ui.task(function()
+		library:set(ui.open_folder({ title = "Choose a library", remember = "library" }):await())
+	end)
+end
+return ui.button { "Choose a library", on_click = choose }
+```
+
+What the host keeps, and where: on macOS a bookmark, which follows the folder moved or renamed. In the sandbox it's security-scoped, the scope entered while the handle lasts. Outside it's plain, because a security-scoped bookmark resolves only under the code-signing identifier that made it, and an unbundled app's (zgx-run's) changes with each version, which would forget every folder at an upgrade. Elsewhere it's the folder's path. It goes in the host's storage (`ScriptHost::storage`, or the app's data directory under `app_id`, in `.folders`, a file per key), where no script reads, since scripts read only what was picked. A host without storage keeps it in memory, for the run. A sandboxed macOS app needs the `com.apple.security.files.user-selected.read-write` entitlement for the dialog's folder to be readable at all, and `com.apple.security.files.bookmarks.app-scope` to make bookmarks. Plugins keep no folders. A Rust host can refuse to keep any with `ScriptHost::refuse_remembered_folders()`: `remember` then picks as without it, and `ui.remembered_folder` settles with nil. `ui.remembered_folder` is a promise rather than a value because a script's first load runs before its window exists, and resolving a grant takes the window's platform (on macOS, resolving the bookmark and entering its scope). It settles once the window is there, so it works at a script's top level, inside `ui.task`.
+
+In a test, `app:pick_folder(name)` answers the next dialog with a folder of the test's own files ([testing](../scripting.md#testing-an-app)).
+
 ### The clipboard and files
 
-A desktop window gives scripts its clipboard and file dialogs (`zgx::platform`). `ui.clipboard.read()` returns its text, `ui.clipboard.write(text)` replaces it. `ui.clipboard.read_image()` settles with its image as a full-colour `Bitmap` (`w`, `h`; a screenshot, an image editor's copy, a browser's Copy Image), or nil, and `ui.clipboard.write_image(bitmap)` puts one there (a `ui.bitmap`, or one read before) for other apps to paste, settling with whether it took it: promises, as a large image is decoded and encoded off the main thread (a 4K one took 15 to 70 ms to read and 130 ms to write). State can keep a `Bitmap`, its pixels counted against a plugin's memory limit, and `ui.image { src = state }` shows the one it holds (a pasted picture: `ui.clipboard.read_image():after(function(b) if b then pasted:set(b) end end)`). `ui.open_files({ title, directory, filters = { { "Images", { "png" } } }, multiple })` settles with the files the user picks (an empty list if they cancel) and `ui.save_file({ name })` with where they choose to save (or nil), each a `{ path, name }`. A script reads and writes only files the user picked in this host's dialogs, as a web page does: `ui.read_file(file)` settles with its text and `ui.write_file(file, text)` writes beside it and renames over it (never half a file), both off the main thread. Headless, without a window, they are errors.
+A desktop window gives scripts its clipboard and file dialogs (`zgx::platform`). `ui.clipboard.read()` returns its text, `ui.clipboard.write(text)` replaces it. `ui.clipboard.read_image()` settles with its image as a full-colour `Bitmap` (`w`, `h`; a screenshot, an image editor's copy, a browser's Copy Image), or nil, and `ui.clipboard.write_image(bitmap)` puts one there (a `ui.bitmap`, or one read before) for other apps to paste, settling with whether it took it: promises, as a large image is decoded and encoded off the main thread (a 4K one took 15 to 70 ms to read and 130 ms to write). State can keep a `Bitmap`, its pixels counted against a plugin's memory limit, and `ui.image { src = state }` shows the one it holds (a pasted picture: `ui.clipboard.read_image():after(function(b) if b then pasted:set(b) end end)`). `ui.open_files({ title, directory, filters = { { "Images", { "png" } } }, multiple })` settles with the files the user picks (an empty list if they cancel) and `ui.save_file({ name })` with where they choose to save (or nil), each a `{ path, name }`. A script reads and writes only files the user picked in this host's dialogs, as a web page does: `ui.read_file(file)` settles with its text and `ui.write_file(file, text)` writes beside it and renames over it (never half a file), both off the main thread. A dialog asked for as a script loads (a task at its top level, before its view mounts in a window) opens once the window is there. Headless, without a window, they are errors, shown as any script error is.
+
+A file, from `ui.open_files`, a drop (`on_file_drop`, [events](events.md)) or `ui.on_open`, is `{ path, name, size, type }` as the web's `File` is: `size` in bytes and `type` its media type by its extension (`"image/png"`, `""` when unknown). `ui.fetch(url, { file = f })` sends it as the request's body with its type (a POST unless `method` says otherwise), and `multipart = { caption = "Hi", attachment = f }` sends a form's fields, text or files, as `multipart/form-data` (the web's `FormData`). The files are read on a thread of their own, so a large one never holds up the window. `on_progress = function(sent, total)` hears the body go out: the transport tells it as it writes (zgx-run's does; a host's streaming fetcher calls `Body::sent`), and one that does not say reports it all at the answer. Cancelling the task or the promise stops the upload, as it stops any fetch. A plugin needs `Capability::Files` as well as `Fetch` to send files.
+
+```lua
+local progress = ui.state("progress", 0)
+local function upload(file: File)
+	ui.task(function()
+		local response = ui.fetch("https://files.example/upload", {
+			multipart = { attachment = file, room = "general" },
+			on_progress = function(sent: number, total: number)
+				progress:set(if total > 0 then sent / total else 1)
+			end,
+		}):await()
+		if not response.ok then
+			ui.toast { title = "Upload failed", body = `HTTP {response.status}`, kind = "error" }
+		end
+	end)
+end
+return ui.column {
+	h = 200,
+	on_file_drop = function(files: { File })
+		for _, file in files do
+			upload(file)
+		end
+	end,
+	ui.text { "Drop a file here" },
+	ui.progress { value = progress },
+}
+```
 
 `ui.args` is what the app was launched with after its script (`zgx-run app/ notes.txt` gives `{ "notes.txt" }`), and `ui.on_open(handler)` is handed the files and URLs the system asks it to open: those among its launch's arguments, and with an `application_id` (reverse-DNS, in `zgx.json` or `Application::application_id`) a file opened with the app, a link to it, or a second launch's on Windows. Its files are the user's choice, as a dialog's are, so `ui.read_file` takes them; what arrives before the script registers its handler waits for it. It is the app's: a plugin's `ui.on_open` is an error.
 
@@ -376,6 +501,8 @@ A ref has no element methods of its own: `r:get():focus()`, not `r:focus()`. [Ev
 type CardProps = { title: string, [number]: Child, children: { Child }? }
 local Card = ui.component(function(props: CardProps) … end)
 ```
+
+An `id` (and a `class`) given to a component names its root: `Card { id = "summary" }` is `#summary` to `ui.contribute` and to tests. One set on the root inside goes unseen, so a component holding a record takes it under another name (`Panel { issue = 5 }`, not `id`); `zgx lint`'s `component-id` and a warning as it mounts say when this happens.
 
 What `each` rows, `presence` content and `list` rows build owns what it makes in the same way, as long as that part is mounted. Made at the top level, computeds and effects live as long as the script.
 
@@ -498,9 +625,9 @@ return ui.column {
 | `open(path, { replace? }?)` | to the route a path matches (`open("/thread/7")`), as a deep link goes; a path no route matches is an error |
 | `back()`, `forward()`, `can_back`, `can_forward` | the history, and whether there is any behind or ahead |
 | `is(name)` | whether the route is `name` now, tracked |
-| `view(cases, props?)` | what each route shows: a node, or a function of its params made again as they change. It takes the mouse's back and forward buttons (`grow = 1` unless sized) |
+| `view(cases, props?)` | what each route shows: a node, or a function of its params made again as they change. It takes the mouse's back and forward buttons and a trackpad's swipe between pages (`grow = 1` unless sized) |
 
-Back and forward come from the platform's own input as well: the mouse's back and forward buttons over the view, and the commands `router.back` and `router.forward`, which the desktop host binds to Alt+← and Alt+→ (⌘[ and ⌘] on macOS). With a `scheme`, a link the system opens the app with (`mail://thread/42`) navigates to the route its path matches; a link that matches none is reported once. A route-driven modal reads the route in a controlled `open` and goes back in `on_close` ([overlays](overlays.md)).
+Back and forward come from the platform's own input as well: the mouse's back and forward buttons over the view, a trackpad's swipe between pages over it (macOS, [`on_navigate`](events.md)), and the commands `router.back` and `router.forward`, which the desktop host binds to Alt+← and Alt+→ (⌘[ and ⌘] on macOS). With a `scheme`, a link the system opens the app with (`mail://thread/42`) navigates to the route its path matches; a link that matches none is reported once. A route-driven modal reads the route in a controlled `open` and goes back in `on_close` ([overlays](overlays.md)).
 
 `zgx types` (and `zgx check`) types an app's literal routes ([scripting](../scripting.md)). `navigate` and `replace` take one overload per route, its params named by its path's `:params`, so `navigate("thraed")` and `navigate("thread", { idd = 7 })` are type errors. `is` takes the route names, and each `view` case's function gets its route's params. Up to 100 routes are typed with their params, and up to 1,000 by name alone. Past that, or for routes built at run time, they stay strings, and the `unknown-route` lint checks literal names.
 

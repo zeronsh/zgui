@@ -10,6 +10,9 @@
 //! Rules (each is also in [`RULES`]):
 //! - `untracked-get`: `state:get()` while an element is built. The interface
 //!   is built once, untracked, so the element shows the value it had then.
+//! - `list-row-get`: `state:get()` in a `ui.list`'s `row` builder, where the
+//!   list has `count` and no `data` or `key`: a row is built once per index,
+//!   so it keeps what it read then as the list changes under it.
 //! - `state-in-builder`: `ui.state` in a component, `each` row or `list` row.
 //!   Its key is the script's, so every instance shares one state.
 //! - `timer-interval`: `ui.every` faster than a display refresh.
@@ -46,6 +49,11 @@
 //!   assistive technology is the list's: selection and plain text leave it
 //!   out and copied HTML makes it a `<ul>` or `<ol>`; one that isn't is
 //!   copied, and read, as text.
+//! - `window-size-layout`: an element's size or place (`w`, `max_w`, `x`…)
+//!   a function computes from `ui.window.size`, which runs Luau on every
+//!   frame of a resize. Layout says it without the script (a percentage,
+//!   `grow`, `max_w`); the window's size is for decisions (a sidebar
+//!   collapsing).
 //! - `unknown-token`: a `"$…"` token in a style, a `hover` table or a
 //!   computed style that neither zgx nor the app's `ui.theme.tokens`
 //!   declares (`"$app.crad"`: did you mean `$app.card`?), one of the wrong
@@ -68,11 +76,35 @@
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
 
+/// What `ui.window { … }` reads (`WindowOptions`).
+const WINDOW_OPTIONS: &[&str] = &[
+    "id",
+    "title",
+    "width",
+    "height",
+    "open",
+    "frame_autosave",
+    "under_pointer",
+    "tabbing",
+];
+
 /// Every rule's name and a one-line summary.
 pub const RULES: &[(&str, &str)] = &[
     (
+        "window-option",
+        "a ui.window option that doesn't exist, which types can't catch",
+    ),
+    (
+        "component-id",
+        "an id given to a component replaces the one set on its root",
+    ),
+    (
         "untracked-get",
         "state:get() while an element is built is read once",
+    ),
+    (
+        "list-row-get",
+        "state:get() in a positional ui.list's row is read once per index",
     ),
     (
         "state-in-builder",
@@ -135,6 +167,10 @@ pub const RULES: &[(&str, &str)] = &[
         "a list item's marker text not `aria_hidden`: copied and read as text",
     ),
     (
+        "window-size-layout",
+        "an element's size computed from ui.window.size rather than laid out",
+    ),
+    (
         "unknown-token",
         "a \"$…\" token nothing declares, or of the wrong kind for its field",
     ),
@@ -181,6 +217,9 @@ const NOT_ELEMENTS: &[&str] = &[
     "resource",
     "paged",
     "debounced",
+    "socket",
+    "sleep",
+    "editor",
     "form",
     "try",
     "effect",
@@ -188,6 +227,8 @@ const NOT_ELEMENTS: &[&str] = &[
     "every",
     "after",
     "shortcut_text",
+    "window_rect",
+    "windows",
     "set",
     "toggle",
     "add",
@@ -225,8 +266,13 @@ const NOT_ELEMENTS: &[&str] = &[
     "router",
     "async",
     "optimistic",
+    "actions",
     "open_files",
+    "open_folder",
+    "remembered_folder",
     "save_file",
+    "notify",
+    "badge",
     "read_file",
     "write_file",
     "i18n",
@@ -550,6 +596,7 @@ fn lint_tokens(file: &Path, tokens: &[Token], comments: &[(u32, String)]) -> Vec
     };
     linter.run();
     linter.list_key();
+    linter.component_id();
     linter.list_measured();
     linter.reserved_system_key();
     linter.canvas_view();
@@ -718,6 +765,12 @@ struct Frame {
     params: Vec<String>,
 }
 
+/// Element fields layout sizes and places by itself.
+const LAID_OUT: &[&str] = &[
+    "w", "h", "size", "min_w", "max_w", "min_h", "max_h", "basis", "x", "y", "left", "right",
+    "top", "bottom",
+];
+
 const KEYWORDS: &[&str] = &[
     "and", "break", "continue", "do", "else", "elseif", "end", "false", "for", "function", "if",
     "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
@@ -850,6 +903,27 @@ impl Linter<'_> {
         (!hidden).then_some(marker)
     }
     /// The index of the bracket that closes the one opened at `at`.
+    /// Whether the table opened at `open` has one of `fields` at its own
+    /// level (`data = …`), not in a table or call inside it.
+    fn table_has(&self, open: usize, fields: &[&str]) -> bool {
+        let close = self.closing(open);
+        let mut depth = 0;
+        for j in open + 1..close {
+            let token = &self.tokens[j];
+            if token.kind == Kind::Punct {
+                match token.text.as_str() {
+                    "(" | "{" | "[" => depth += 1,
+                    ")" | "}" | "]" => depth -= 1,
+                    _ => {}
+                }
+                continue;
+            }
+            if depth == 0 && fields.contains(&token.text.as_str()) && self.is(j + 1, "=") {
+                return true;
+            }
+        }
+        false
+    }
     fn closing(&self, at: usize) -> usize {
         let mut depth = 0;
         for (j, token) in self.tokens.iter().enumerate().skip(at) {
@@ -870,6 +944,77 @@ impl Linter<'_> {
         self.tokens.len()
     }
 
+    /// A component given an `id` where its own root, in this file, sets one:
+    /// the root's goes unseen (`ui.component`). Other files' components
+    /// reach the warning as they mount.
+    fn component_id(&mut self) {
+        let mut rooted: Vec<(String, String)> = Vec::new();
+        for at in 2..self.tokens.len() {
+            if !(self.is(at, "ui")
+                && self.is(at + 1, ".")
+                && self.is(at + 2, "component")
+                && self.is(at + 3, "(")
+                && self.is(at - 1, "="))
+            {
+                continue;
+            }
+            let Some(name) = self.name(at - 2).map(str::to_string) else {
+                continue;
+            };
+            let end = self.closing(at + 3);
+            let Some(table) = (at + 4..end).find(|&j| {
+                self.is(j, "return")
+                    && self.is(j + 1, "ui")
+                    && self.is(j + 2, ".")
+                    && self.is(j + 4, "{")
+            }) else {
+                continue;
+            };
+            if let Some(id) = self.direct_field(table + 4, "id") {
+                rooted.push((name, self.tokens[id].text.clone()));
+            }
+        }
+        for at in 1..self.tokens.len() {
+            if !self.is(at, "{") {
+                continue;
+            }
+            let Some(name) = self.name(at - 1) else {
+                continue;
+            };
+            let Some((name, own)) = rooted.iter().find(|(n, _)| n == name).cloned() else {
+                continue;
+            };
+            if let Some(id) = self.direct_field(at, "id") {
+                self.report(
+                    id,
+                    "component-id",
+                    format!(
+                        "`{name} {{ id = … }}` replaces the `id = {own}` set on its root. An `id` \
+                         prop names the element: give data another name."
+                    ),
+                );
+            }
+        }
+    }
+    /// The token after `key =` directly in the table opening at `open`.
+    fn direct_field(&self, open: usize, key: &str) -> Option<usize> {
+        let close = self.closing(open);
+        let mut depth = 0;
+        for at in open + 1..close {
+            let token = &self.tokens[at];
+            if token.kind == Kind::Punct {
+                match token.text.as_str() {
+                    "{" | "(" | "[" => depth += 1,
+                    "}" | ")" | "]" => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth == 0 && self.is(at, key) && self.is(at + 1, "=") {
+                return Some(at + 2);
+            }
+        }
+        None
+    }
     /// A `ui.list` without `key` in a file that reads a list state by index
     /// (`rows:get()[i]`, `rows:at(i)`) and removes from it or inserts into
     /// it: rows by position are each written again when one goes or comes.
@@ -1299,6 +1444,30 @@ impl Linter<'_> {
                 }
             }
         }
+        // `state:get()` straight in a positional `ui.list`'s `row`.
+        if self.is(at, ":")
+            && self.is(at + 1, "get")
+            && self.is(at + 2, "(")
+            && let Some(f) = function
+            && f > 0
+            && stack[f].key.as_deref() == Some("row")
+            && stack[f - 1].open == Open::Brace
+            && stack[f - 1].callee.as_deref() == Some("ui.list")
+            && !self.table_has(stack[f - 1].at, &["data", "key"])
+        {
+            let state = self.name(at.wrapping_sub(1)).unwrap_or("state").to_string();
+            self.report(
+                at - 1,
+                "list-row-get",
+                format!(
+                    "`{state}:get()` is read once, while a row is built, so the row shows the \
+                     value of that moment and never updates: a positional `ui.list` builds a \
+                     row once per index and keeps it as the list changes under it. Give the \
+                     list `data = {state}` and a `key`, so each row follows its item, or read \
+                     it in a function the row's elements take."
+                ),
+            );
+        }
         // `zoom = ui.tween(…)` or `ui.spring(…)`, or `zoom` animated by `anime`.
         if self.is(at, "zoom") && self.is(at + 1, "=") && self.field(at + 2).is_some() {
             let tweened = self.is(at + 2, "ui")
@@ -1322,6 +1491,45 @@ impl Linter<'_> {
                         .into(),
                 );
             }
+        }
+        // A misspelled option of `ui.window`, which types can't catch: it's
+        // called through `__call`, so its table takes extra fields.
+        if let Some(frame) = stack.last()
+            && frame.open == Open::Brace
+            && frame.callee.as_deref() == Some("ui.window")
+            && self.is(at + 1, "=")
+            && let Some(key) = self.name(at)
+            && !WINDOW_OPTIONS.contains(&key)
+        {
+            let known = WINDOW_OPTIONS.join("`, `");
+            self.report(
+                at,
+                "window-option",
+                format!("`ui.window` has no option `{key}`: it takes `{known}`."),
+            );
+        }
+        // `w = function() … ui.window.size … end`: a size from the window's.
+        if self.is(at, "ui")
+            && self.is(at + 1, ".")
+            && self.is(at + 2, "window")
+            && self.is(at + 3, ".")
+            && self.is(at + 4, "size")
+            && !self.is(at.wrapping_sub(1), ".")
+            && let Some(f) = function
+            && let Some(key) = stack[f].key.as_deref()
+            && LAID_OUT.contains(&key)
+        {
+            self.report(
+                at,
+                "window-size-layout",
+                format!(
+                    "`{key}` computed from `ui.window.size` runs Luau on every frame of a \
+                     resize, for what layout does without the script: a percentage \
+                     (`{key} = \"30%\"`), `grow`, `min_w` and `max_w`. Read the window's size \
+                     for decisions layout can't make (collapsing a sidebar to icons), and a \
+                     ref's `width` for the room one element has."
+                ),
+            );
         }
         // `zoomable = state` in a table that also gives `zoom`.
         if self.is(at, "zoomable")
@@ -1698,6 +1906,33 @@ mod tests {
         assert_eq!(found, Vec::new());
     }
 
+    #[test]
+    fn a_misspelled_window_option_is_reported() {
+        let source = r##"
+ui.window { id = "a", titel = "A", open = open, ui.text { "x", color = "#fff" } }
+ui.window { id = "b", title = "B", width = 300, height = 200, open = open, tabbing = "preferred" }
+"##;
+        assert_eq!(rules(source), one(2, "window-option"));
+    }
+
+    #[test]
+    fn an_id_replacing_one_on_a_components_root_is_reported() {
+        let source = r##"
+local Panel = ui.component(function(props)
+    return ui.column { id = "detail", ui.text { "x", id = "inner" } }
+end)
+local Plain = ui.component(function(props)
+    return ui.column { ui.text { "x", id = "inner" } }
+end)
+return ui.column {
+    Panel { id = 5 },
+    Panel { issue = 5 },
+    Plain { id = 5 },
+}
+"##;
+        assert_eq!(rules(source), one(9, "component-id"));
+    }
+
     fn rules(source: &str) -> Vec<(u32, String)> {
         lint_source(Path::new("app.luau"), source)
             .into_iter()
@@ -1723,6 +1958,25 @@ ui.row { role = "option", ui.text { "•" } }
             vec![
                 (2, "list-marker-hidden".to_string()),
                 (3, "list-marker-hidden".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_size_from_the_window_is_reported_and_a_decision_is_not() {
+        let source = r##"
+ui.div { w = function() return ui.window.size:get().width * 0.3 end }
+ui.div { max_w = function() return ui.window.size:get().height - 40 end }
+local narrow = ui.computed(function() return ui.window.size:get().width < 700 end)
+ui.div { visible = function() return ui.window.size:get().width >= 700 end }
+ui.div { w = function() return if narrow:get() then 48 else 240 end }
+ui.div { w = "30%", grow = 1 }
+"##;
+        assert_eq!(
+            rules(source),
+            [
+                (2, "window-size-layout".to_string()),
+                (3, "window-size-layout".to_string())
             ]
         );
     }
@@ -1905,6 +2159,33 @@ end, { key = function(item) return item.id end })
             [
                 (5, "untracked-get".to_string()),
                 (8, "untracked-get".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_positional_list_rows_read_of_state_is_read_once() {
+        let source = r##"
+local files = ui.state("files", {})
+return ui.column {
+    ui.list { count = function() return #files:get() end, row = function(i)
+        local f = files:get()[i]
+        return ui.text { f.title, literal = true }
+    end },
+    ui.list { data = files, key = function(f) return f.id end, row = function(f)
+        return ui.text { files:get()[1].title, literal = true }
+    end },
+    ui.list { count = 3, row = function(i)
+        return ui.text { function() return files:get()[i].title end }
+    end },
+}
+"##;
+        // The keyed list's read is in an element: the read-once rule's.
+        assert_eq!(
+            rules(source),
+            [
+                (5, "list-row-get".to_string()),
+                (9, "untracked-get".to_string())
             ]
         );
     }

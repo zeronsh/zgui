@@ -1089,9 +1089,37 @@ fn check(ui: &Ui, labels: &HashMap<NodeId, Label>) -> Vec<Warning> {
                 }
             }
         }
-        // A percentage against a parent that sizes to its content.
+        // A list's fixed row whose content is taller: it runs over the next.
+        // Rows are placed by transforms; a `scroll`'s children aren't.
+        if let Some(height) = style.height
+            && !clip_y
+            && scene.transform(id).y > 0.
+            && scene.parent(id).is_some_and(|p| scene.is_scroll_content(p))
+        {
+            let content = scene
+                .children(id)
+                .iter()
+                .filter(in_flow)
+                .map(|c| scene.bounds(*c).height)
+                .fold(0., f32::max);
+            if content > height + 0.5 {
+                warnings.push(warn(
+                    WarningKind::Overflow,
+                    format!(
+                        "a row {} tall holds content {} tall, which runs over the next row; set the list's height, or measured = true",
+                        n(height),
+                        n(content)
+                    ),
+                ));
+            }
+        }
+        // A percentage against a parent that sizes to its content: not a
+        // scroll's own viewport and content, which the engine sizes so (a
+        // `scroll_x` with no height takes a definite one, or its content's).
         let (pw, ph) = scene.unresolved_percentages(id);
-        if pw || ph {
+        let scrolls = scene.is_scroll_content(id)
+            || scene.children(id).iter().any(|c| scene.is_scroll_content(*c));
+        if (pw || ph) && !scrolls {
             let (axis, value, size) = if pw {
                 ("width", style.width_percent, item.bounds.width)
             } else {

@@ -17,6 +17,8 @@ mod io;
 mod large_data;
 #[path = "../module_overrides.rs"]
 mod module_overrides;
+#[path = "../notify.rs"]
+mod notify;
 #[path = "../packages.rs"]
 mod packages;
 #[path = "../paged.rs"]
@@ -33,11 +35,15 @@ mod plugins;
 mod router;
 #[path = "../script.rs"]
 mod script;
+#[path = "../socket.rs"]
+mod socket;
 #[path = "../state.rs"]
 mod state;
 #[path = "../streaming.rs"]
 mod streaming;
 #[path = "../ui_errors.rs"]
 mod ui_errors;
+#[path = "../upload.rs"]
+mod upload;
 #[path = "../windows.rs"]
 mod windows;

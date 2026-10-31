@@ -9,6 +9,7 @@ gdb
 gir1.2-atspi-2.0
 gir1.2-gtk-3.0
 grim
+gstreamer1.0-tools
 hunspell-en-us
 ibus
 ibus-libpinyin
@@ -17,11 +18,13 @@ libdbus-1-dev
 libenchant-2-2
 libfontconfig1-dev
 libwayland-dev
+libwebkit2gtk-4.1-0
 libxcb1-dev
 libxkbcommon-dev
 libxrandr-dev
 mesa-vulkan-drivers
 openbox
+orca
 picom
 pkg-config
 python3-gi

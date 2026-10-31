@@ -1,0 +1,25 @@
+-- Run with `zgx test`. The app is mounted with its plugins, as zgx.json
+-- lists them. Targets are devtools' own: `#id`, `"label"`, `role:button`.
+test("the plugin's Focus hides what is done", function()
+	local app = mount()
+	expect(app:has("#task-2")).to_be(true)
+	app:click("#focus")
+	expect(app:has("#task-2")).to_be(false)
+	expect(app:text("#focus")).to_be("Show all")
+	app:click("#focus")
+	expect(app:has("#task-2")).to_be(true)
+end)
+
+test("the plugin calls the app's action", function()
+	local app = mount()
+	app:click("#done-next")
+	expect(app:state("tasks")[1].done).to_be(true)
+end)
+
+test("adding a task", function()
+	local app = mount()
+	app:type("#new", "Write a plugin")
+	app:key("Enter")
+	expect(#app:state("tasks")).to_be(3)
+	expect(app:text("#focus")).to_be("Focus (2)")
+end)

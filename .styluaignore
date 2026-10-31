@@ -1,4 +1,5 @@
 # Definitions use `declare` syntax StyLua cannot parse.
 crates/zgx-script/types/zgx.d.luau
+crates/zgx-script/types/zgx-test.d.luau
 # Generated from the motion lab's design data.
 crates/zgx-script/examples/composer_states/states.luau

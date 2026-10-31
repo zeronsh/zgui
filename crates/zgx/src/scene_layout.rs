@@ -15,6 +15,9 @@ pub(super) struct AdvancedLayoutCache {
     /// The percentage bases children were last measured under: taffy keys
     /// a leaf's cached size by its known and available sizes alone.
     bases: (Option<f32>, Option<f32>),
+    /// Whether a child was mapped with a size from what it holds
+    /// (`min-content` and the like): what the container measures first.
+    content_sized: bool,
 }
 /// What a child's leaf style was mapped from: its style and the style of
 /// the node it lays out as (`laid_out_as`), each by node and count of
@@ -28,8 +31,11 @@ struct Mapped {
     stacked: bool,
 }
 impl AdvancedLayoutCache {
-    fn new() -> Self {
-        let mut tree = t::TaffyTree::new();
+    /// For a container of `children`: its root and them. Taffy's own default
+    /// (16 slots in each of its maps) would give every small flex container
+    /// a tree of its own at about 10 KB, what a page of them peaks on.
+    fn new(children: usize) -> Self {
+        let mut tree = t::TaffyTree::with_capacity(children + 1);
         tree.disable_rounding();
         let root = tree
             .new_leaf(t::Style::default())
@@ -40,6 +46,7 @@ impl AdvancedLayoutCache {
             nodes: Default::default(),
             order: Vec::new(),
             bases: (None, None),
+            content_sized: false,
         }
     }
 }
@@ -99,6 +106,142 @@ fn placement(start: Option<i16>, count: Option<u16>, full: bool) -> t::Line<t::G
             .filter(|v| *v != 0)
             .map_or(t::GridPlacement::Auto, line),
         end: count.map_or(t::GridPlacement::Auto, |v| span(v.max(1))),
+    }
+}
+/// `tracks` as taffy's list.
+#[cold]
+fn tracks(tracks: &crate::grid_tracks::GridTracks) -> Vec<t::GridTemplateComponent<String>> {
+    use crate::grid_tracks::{Track, TrackBreadth as B, TrackRepeat, TrackSize};
+    fn min(size: B) -> t::MinTrackSizingFunction {
+        match size {
+            B::Points(v) => t::MinTrackSizingFunction::length(v),
+            B::Percent(v) => t::MinTrackSizingFunction::percent(v),
+            B::Fr(_) | B::Auto => t::MinTrackSizingFunction::auto(),
+            B::MinContent => t::MinTrackSizingFunction::min_content(),
+            B::MaxContent => t::MinTrackSizingFunction::max_content(),
+        }
+    }
+    fn max(size: B) -> t::MaxTrackSizingFunction {
+        match size {
+            B::Points(v) => t::MaxTrackSizingFunction::length(v),
+            B::Percent(v) => t::MaxTrackSizingFunction::percent(v),
+            B::Fr(v) => t::MaxTrackSizingFunction::fr(v),
+            B::Auto => t::MaxTrackSizingFunction::auto(),
+            B::MinContent => t::MaxTrackSizingFunction::min_content(),
+            B::MaxContent => t::MaxTrackSizingFunction::max_content(),
+        }
+    }
+    fn size(size: TrackSize) -> t::TrackSizingFunction {
+        let (lower, upper) = match size {
+            TrackSize::Is(size) => (min(size), max(size)),
+            TrackSize::MinMax(lower, upper) => (min(lower), max(upper)),
+            TrackSize::FitContent(limit) => (
+                t::MinTrackSizingFunction::auto(),
+                match limit {
+                    B::Percent(v) => t::MaxTrackSizingFunction::fit_content_percent(v),
+                    B::Points(v) => t::MaxTrackSizingFunction::fit_content_px(v),
+                    _ => t::MaxTrackSizingFunction::auto(),
+                },
+            ),
+        };
+        taffy::style_helpers::minmax(lower, upper)
+    }
+    tracks
+        .0
+        .iter()
+        .filter_map(|track| match track {
+            Track::Names(_) => None,
+            Track::Size(track) => Some(t::GridTemplateComponent::Single(size(*track))),
+            Track::Repeat(times, sizes) => {
+                let count = match times {
+                    TrackRepeat::Times(times) => t::RepetitionCount::Count(*times),
+                    TrackRepeat::AutoFill => t::RepetitionCount::AutoFill,
+                    TrackRepeat::AutoFit => t::RepetitionCount::AutoFit,
+                };
+                Some(taffy::style_helpers::repeat(
+                    count,
+                    sizes.iter().copied().map(size).collect(),
+                ))
+            }
+        })
+        .collect()
+}
+/// A track list's line names, as taffy takes them: those of each line,
+/// before each track and after the last.
+fn line_names(tracks: &crate::grid_tracks::GridTracks) -> Vec<Vec<String>> {
+    use crate::grid_tracks::Track;
+    let mut lines = vec![Vec::new()];
+    for track in &tracks.0 {
+        match track {
+            Track::Names(names) => lines
+                .last_mut()
+                .expect("a line")
+                .extend(names.iter().cloned()),
+            _ => lines.push(Vec::new()),
+        }
+    }
+    lines
+}
+/// `output` with `template`'s track lists, over its equal ones.
+#[cold]
+fn grid_template(output: &mut t::Style, template: &crate::grid_tracks::GridTemplate) {
+    use crate::grid_tracks::{GridFlow, Track};
+    let named = |tracks: &crate::grid_tracks::GridTracks| {
+        tracks
+            .0
+            .iter()
+            .any(|track| matches!(track, Track::Names(_)))
+    };
+    if let Some(columns) = &template.columns {
+        output.grid_template_columns = tracks(columns);
+        if named(columns) {
+            output.grid_template_column_names = line_names(columns);
+        }
+    }
+    if let Some(rows) = &template.rows {
+        output.grid_template_rows = tracks(rows);
+        if named(rows) {
+            output.grid_template_row_names = line_names(rows);
+        }
+    }
+    if let Some(areas) = &template.areas {
+        output.grid_template_areas = areas
+            .areas
+            .iter()
+            .map(|(name, [row_start, row_end, column_start, column_end])| {
+                taffy::style::GridTemplateArea {
+                    name: name.clone(),
+                    row_start: *row_start,
+                    row_end: *row_end,
+                    column_start: *column_start,
+                    column_end: *column_end,
+                }
+            })
+            .collect();
+    }
+    if let Some(flow) = template.flow {
+        output.grid_auto_flow = match flow {
+            GridFlow::Row => t::GridAutoFlow::Row,
+            GridFlow::Column => t::GridAutoFlow::Column,
+            GridFlow::RowDense => t::GridAutoFlow::RowDense,
+            GridFlow::ColumnDense => t::GridAutoFlow::ColumnDense,
+        };
+    }
+}
+/// An item's place in its grid by name or line (`Scene::set_grid_place`),
+/// over its numbered one.
+fn grid_lines(lines: &crate::grid_tracks::GridLines) -> t::Line<t::GridPlacement<String>> {
+    use crate::grid_tracks::GridEdge as E;
+    let edge = |edge: &E| match edge {
+        E::Auto => t::GridPlacement::Auto,
+        E::Line(n) => line(*n),
+        E::Span(n) => span(*n),
+        E::Name(name, n) => t::GridPlacement::NamedLine(name.clone(), *n),
+        E::NameSpan(name, n) => t::GridPlacement::NamedSpan(name.clone(), *n),
+    };
+    t::Line {
+        start: edge(&lines.start),
+        end: edge(&lines.end),
     }
 }
 fn style(style: &Style, layout: Layout, leaf: bool) -> t::Style {
@@ -330,6 +473,9 @@ impl Scene {
         space: t::Size<t::AvailableSpace>,
         bases: (Option<f32>, Option<f32>),
     ) {
+        if cache.content_sized {
+            self.measure_content_widths(cache, ids, keys, bases);
+        }
         self.rebase(cache, ids, keys, bases);
         let root = cache.root;
         cache
@@ -385,6 +531,7 @@ impl Scene {
     }
     /// Children resolve percentages against `bases` now: drop taffy's cached
     /// sizes of those that do, if the bases changed.
+    #[inline(always)]
     fn rebase(
         &self,
         cache: &mut AdvancedLayoutCache,
@@ -404,6 +551,105 @@ impl Scene {
                     .tree
                     .mark_dirty(*key)
                     .expect("retained child invalidation");
+            }
+        }
+        if self.any_size_calcs() {
+            self.rebase_size_calcs(cache, ids, keys, bases);
+        }
+    }
+    /// Whether any of `ids` takes a width from what it holds.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn any_content_sized(&self, ids: &[NodeId]) -> bool {
+        ids.iter().any(|id| self.content_sized(*id))
+    }
+    /// Keep `parent`'s layout cache knowing whether a child takes a width
+    /// from what it holds, as its child `id`'s sizes change.
+    pub(super) fn content_sizes_changed(&mut self, parent: NodeId) {
+        let ids = self.children_raw(self.node(parent)).clone();
+        let sized = self.any_content_sized(&ids);
+        if let Some(cache) = self.node_mut(parent).advanced_layout.as_deref_mut() {
+            cache.content_sized = sized;
+        }
+    }
+    /// Whether `id` takes a width from what it holds (`min-content` and the
+    /// like), which its parent measures first.
+    fn content_sized(&self, id: NodeId) -> bool {
+        self.size_calcs(id).is_some_and(|sizes| {
+            [&sizes.width, &sizes.min_width, &sizes.max_width]
+                .into_iter()
+                .flatten()
+                .any(|size| size.intrinsic())
+        })
+    }
+    /// Measure what those of `ids` sized by what they hold (`min-content`
+    /// and the like) hold, and size them by it if that changed.
+    #[cold]
+    #[inline(never)]
+    fn measure_content_widths(
+        &mut self,
+        cache: &mut AdvancedLayoutCache,
+        ids: &[NodeId],
+        keys: &[t::NodeId],
+        bases: (Option<f32>, Option<f32>),
+    ) {
+        let probe = Constraints {
+            percent_width: bases.0,
+            percent_height: bases.1,
+            ..Constraints::default()
+        };
+        for (child, key) in ids.iter().zip(keys) {
+            if !self.content_sized(*child) {
+                continue;
+            }
+            let least = self.min_content(*child, probe, true);
+            let most = self.max_content_width(*child, probe).max(least);
+            if self.keep_content_widths(*child, (least, most)) {
+                let mut mapped = cache.tree.style(*key).expect("retained style").clone();
+                self.map_size_calcs(*child, &mut mapped, bases);
+                cache
+                    .tree
+                    .set_style(*key, mapped)
+                    .expect("retained style update");
+            }
+        }
+    }
+    /// `id`'s width laid out on one line. A size of its own from size math
+    /// is set aside by its style, which has none (`w_calc`); one from points
+    /// with a content limit is set aside here, its kept results with it,
+    /// as `measure_unsized` does for `min_content`: a copy, so that
+    /// `min_content` keeps it to itself, inlined.
+    fn max_content_width(&mut self, id: NodeId, probe: Constraints) -> f32 {
+        let node = self.node_mut(id);
+        let saved = (node.style.width.take(), node.style.width_percent.take());
+        let kept = (
+            node.measurement.take(),
+            std::mem::take(&mut node.alternates),
+            std::mem::take(&mut node.sizes),
+        );
+        let width = self.measure(id, probe).0;
+        let node = self.node_mut(id);
+        (node.style.width, node.style.width_percent) = saved;
+        (node.measurement, node.alternates, node.sizes) = kept;
+        width
+    }
+    /// The sizes `ids` work out from the containing block, for new `bases`.
+    #[cold]
+    #[inline(never)]
+    fn rebase_size_calcs(
+        &self,
+        cache: &mut AdvancedLayoutCache,
+        ids: &[NodeId],
+        keys: &[t::NodeId],
+        bases: (Option<f32>, Option<f32>),
+    ) {
+        for (child, key) in ids.iter().zip(keys) {
+            let mut mapped = cache.tree.style(*key).expect("retained style").clone();
+            if self.map_size_calcs(*child, &mut mapped, bases) {
+                cache
+                    .tree
+                    .set_style(*key, mapped)
+                    .expect("retained style update");
             }
         }
     }
@@ -486,6 +732,75 @@ impl Scene {
         style.padding_edges = Some(self.resolved_padding(id, constraints));
         style
     }
+    /// Work the sizes `id` takes from its containing block out against
+    /// `bases`, in its mapped style. With no base, one with a percentage is
+    /// `auto`, as CSS has it. Whether it has any.
+    #[cold]
+    #[inline(never)]
+    fn map_size_calcs(
+        &self,
+        id: NodeId,
+        mapped: &mut t::Style,
+        bases: (Option<f32>, Option<f32>),
+    ) -> bool {
+        let Some(sizes) = self.size_calcs(id) else {
+            return false;
+        };
+        // Heights by what the box holds are its height at its width:
+        // `auto`, as CSS lays most boxes out.
+        let widths = self.content_widths(id);
+        let set = |dimension: &mut t::Dimension,
+                   size: &Option<std::sync::Arc<crate::size_calc::SizeCalc>>,
+                   basis,
+                   content| {
+            if let Some(size) = size {
+                *dimension = size
+                    .resolve_in(basis, content)
+                    .map_or(t::Dimension::auto(), t::Dimension::length);
+            }
+        };
+        set(&mut mapped.size.width, &sizes.width, bases.0, widths);
+        set(&mut mapped.size.height, &sizes.height, bases.1, None);
+        set(
+            &mut mapped.min_size.width,
+            &sizes.min_width,
+            bases.0,
+            widths,
+        );
+        set(
+            &mut mapped.max_size.width,
+            &sizes.max_width,
+            bases.0,
+            widths,
+        );
+        set(
+            &mut mapped.min_size.height,
+            &sizes.min_height,
+            bases.1,
+            None,
+        );
+        set(
+            &mut mapped.max_size.height,
+            &sizes.max_height,
+            bases.1,
+            None,
+        );
+        true
+    }
+    /// Place `id` in its grid by name or line, if it has such a place.
+    #[cold]
+    #[inline(never)]
+    fn map_grid_place(&self, id: NodeId, mapped: &mut t::Style) {
+        let Some(place) = self.grid_place(id) else {
+            return;
+        };
+        if let Some(column) = &place.column {
+            mapped.grid_column = grid_lines(column);
+        }
+        if let Some(row) = &place.row {
+            mapped.grid_row = grid_lines(row);
+        }
+    }
     pub(super) fn uses_advanced_layout(&self, id: NodeId) -> bool {
         // By reference: most nodes have no options, and a copy is ~170 bytes.
         let node = self.node(id);
@@ -564,12 +879,16 @@ impl Scene {
         if root_options.display == Some(ViewDisplay::None) {
             return self.measure_hidden(id, constraints);
         }
-        let mut cache = self
-            .node_mut(id)
-            .advanced_layout
-            .take()
-            .unwrap_or_else(|| Box::new(AdvancedLayoutCache::new()));
+        let mut cache = self.node_mut(id).advanced_layout.take().unwrap_or_else(|| {
+            let children = self.children_raw(self.node(id)).len();
+            Box::new(AdvancedLayoutCache::new(children))
+        });
         let mut ids = self.children_raw(self.node(id)).clone();
+        // Children laid out in their own place lay theirs out here.
+        let flat = self.has_flat_children(id);
+        if flat {
+            ids = self.flatten(&ids);
+        }
         // Those whose containing block is further up are placed by it.
         if self.relative_count > 0 {
             ids.retain(|child| !self.escapes(*child));
@@ -601,8 +920,13 @@ impl Scene {
                     laid_writes: self.node(laid).style_writes,
                     stacked,
                 };
+                let bases = cache.bases;
                 let map = |scene: &Self| {
                     let mut mapped = style(&scene.node(*child).style, Layout::Column, true);
+                    if scene.node(*child).style.layout_options.is_some() {
+                        scene.map_size_calcs(*child, &mut mapped, bases);
+                        scene.map_grid_place(*child, &mut mapped);
+                    }
                     // A `contents` child clips as the child it lays out as.
                     mapped.overflow = overflow(super::clips(&scene.node(laid).style));
                     if stacked {
@@ -642,6 +966,8 @@ impl Scene {
             .collect();
         let root = cache.root;
         if cache.order != ids {
+            // A child's sizes change it too (`Scene::set_size_calcs`).
+            cache.content_sized = self.any_size_calcs() && self.any_content_sized(&ids);
             cache
                 .tree
                 .set_children(root, &children)
@@ -655,6 +981,9 @@ impl Scene {
         mapping_options.min_height = None;
         mapping_options.max_height = None;
         let mut mapped = style_with(&root_style, mapping_options, layout, false);
+        if let Some(template) = self.grid_template(id) {
+            grid_template(&mut mapped, template);
+        }
         mapped.position = t::Position::Relative;
         mapped.margin = taffy::style_helpers::zero();
         mapped.inset = t::Rect::auto();
@@ -884,10 +1213,91 @@ impl Scene {
                 )
             })
             .collect();
+        let positions = match flat {
+            true => self.fold_flat(id, positions, (inner_width, inner_height)),
+            false => positions,
+        };
         let size = (root_layout.size.width, root_layout.size.height);
         self.store_measurement(id, constraints, size, positions);
         self.node_mut(id).advanced_layout = Some(cache);
         size
+    }
+    /// `ids` with each laid out in its place (`set_display_contents`)
+    /// replaced by its children, theirs too, in document order.
+    #[cold]
+    #[inline(never)]
+    fn flatten(&self, ids: &[NodeId]) -> Vec<NodeId> {
+        let mut out = Vec::with_capacity(ids.len());
+        for child in ids {
+            if self.is_display_contents(*child) {
+                let inner = self.children_raw(self.node(*child)).clone();
+                out.extend(self.flatten(&inner));
+            } else {
+                out.push(*child);
+            }
+        }
+        out
+    }
+    /// The places `positions` gives the children laid out in their
+    /// parents' place (`flatten`'s order), back under those parents: each
+    /// such parent placed around its own, which it holds measured relative
+    /// to it, as `arrange` walks the tree. Children placed by an ancestor
+    /// further up (`escapes`) aren't among them.
+    #[cold]
+    #[inline(never)]
+    fn fold_flat(
+        &mut self,
+        id: NodeId,
+        positions: Vec<ChildPlacement>,
+        inner: (f32, f32),
+    ) -> Vec<ChildPlacement> {
+        let mut placed = positions.into_iter().peekable();
+        let ids = self.children_raw(self.node(id)).clone();
+        self.fold_level(&ids, &mut placed, inner)
+    }
+    fn fold_level(
+        &mut self,
+        ids: &[NodeId],
+        placed: &mut std::iter::Peekable<std::vec::IntoIter<ChildPlacement>>,
+        inner: (f32, f32),
+    ) -> Vec<ChildPlacement> {
+        let mut out = Vec::with_capacity(ids.len());
+        for child in ids {
+            if self.is_display_contents(*child) {
+                let own = self.children_raw(self.node(*child)).clone();
+                let held = self.fold_level(&own, placed, inner);
+                // Its box spans what it holds.
+                let span = held
+                    .iter()
+                    .map(|(_, rect, _)| *rect)
+                    .reduce(|a, b| a.union(b))
+                    .unwrap_or_default();
+                let held = held
+                    .into_iter()
+                    .map(|(node, rect, c)| {
+                        (
+                            node,
+                            Rect::new(rect.x - span.x, rect.y - span.y, rect.width, rect.height),
+                            c,
+                        )
+                    })
+                    .collect();
+                let constraints = Constraints {
+                    width: Some(span.width),
+                    height: Some(span.height),
+                    percent_width: Some(inner.0),
+                    percent_height: Some(inner.1),
+                    force_width: Some(span.width),
+                    force_height: Some(span.height),
+                };
+                let constraints = self.relevant(*child, constraints);
+                self.store_measurement(*child, constraints, (span.width, span.height), held);
+                out.push((*child, span, constraints));
+            } else if placed.peek().is_some_and(|(node, ..)| node == child) {
+                out.extend(placed.next());
+            }
+        }
+        out
     }
 }
 

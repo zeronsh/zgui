@@ -139,7 +139,7 @@ fn evict(cache: &mut Cache) -> bool {
         return false;
     };
     if let Some(Entry::Ready { image, .. }) = cache.entries.remove(&key) {
-        cache.bytes -= image.pixels().len();
+        cache.bytes -= image.bytes();
     }
     true
 }
@@ -233,7 +233,7 @@ impl Future for ImageRequest {
             if current {
                 cache.entries.remove(&self.shared.key);
                 if let Ok(image) = &result {
-                    let bytes = image.pixels().len();
+                    let bytes = image.bytes();
                     if bytes <= cache.budget {
                         while cache.bytes + bytes > cache.budget {
                             if !evict(&mut cache) {

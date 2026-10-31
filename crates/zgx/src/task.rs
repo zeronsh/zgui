@@ -3,6 +3,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     pin::Pin,
     rc::{Rc, Weak},
     sync::{
@@ -165,7 +166,8 @@ impl LocalExecutor {
             tasks
         };
         let mut polled = 0;
-        for id in ready {
+        let mut ready = ready.into_iter();
+        while let Some(id) = ready.next() {
             if self
                 .tasks
                 .get(&id)
@@ -177,13 +179,27 @@ impl LocalExecutor {
             if let Some(task) = self.tasks.get_mut(&id) {
                 polled += 1;
                 let waker = Waker::from(task.wake.clone());
-                if task
-                    .future
-                    .as_mut()
-                    .poll(&mut Context::from_waker(&waker))
-                    .is_ready()
-                {
-                    self.tasks.remove(&id);
+                let mut cx = Context::from_waker(&waker);
+                match catch_unwind(AssertUnwindSafe(|| task.future.as_mut().poll(&mut cx))) {
+                    Ok(Poll::Ready(())) => {
+                        self.tasks.remove(&id);
+                    }
+                    Ok(Poll::Pending) => {}
+                    // The panic goes on to whoever ticks. A future that
+                    // panicked can't be polled again, and the tasks after it
+                    // stay ready for the next tick.
+                    Err(panic) => {
+                        self.tasks.remove(&id);
+                        let mut queue = self.scheduler.ready.lock().unwrap();
+                        for id in ready {
+                            if queue.queued.insert(id) {
+                                queue.queue.push_back(id);
+                            }
+                        }
+                        drop(queue);
+                        (self.scheduler.wake_event_loop)();
+                        resume_unwind(panic);
+                    }
                 }
             }
         }
@@ -347,6 +363,25 @@ impl<T> Drop for LatestReceiver<T> {
 mod tests {
     use super::*;
     use std::{cell::Cell, rc::Rc, sync::atomic::AtomicUsize};
+    #[test]
+    fn a_panicking_task_goes_and_the_tasks_after_it_still_run() {
+        let mut executor = LocalExecutor::new();
+        let polls = Rc::new(Cell::new(0));
+        let ran = Rc::new(Cell::new(false));
+        let (first, second) = (polls.clone(), ran.clone());
+        executor.spawn(async move {
+            first.set(first.get() + 1);
+            panic!("in a task");
+        });
+        executor.spawn(async move { second.set(true) });
+        let caught = catch_unwind(AssertUnwindSafe(|| executor.tick()));
+        assert!(caught.is_err(), "the panic reaches whoever ticks");
+        assert!(!ran.get());
+        executor.tick();
+        assert!(ran.get(), "the next task was still ready");
+        assert_eq!(polls.get(), 1, "a panicked future isn't polled again");
+        assert!(executor.is_empty());
+    }
     #[test]
     fn yield_resumes_next_tick_and_idle_does_not_poll() {
         let mut executor = LocalExecutor::new();

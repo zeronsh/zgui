@@ -69,9 +69,61 @@ pub(crate) fn run<R>(
     }
 }
 
+/// `run` for a frame: an error it returns skips it just as a panic does
+/// (`None`), but for a lost device, which the host answers with a new
+/// renderer. Its panics go to `report` (the banner); its errors are the
+/// renderer going on with less (`queue_issue`, `IssueKind::Degraded`),
+/// each said once.
+pub(crate) fn run_frame<T>(
+    fault: &mut Option<Fault>,
+    revision: u64,
+    now: Instant,
+    what: &str,
+    mut report: impl FnMut(&str),
+    piece: impl FnOnce() -> Result<T, zgx_gpu::GpuError>,
+) -> Option<Result<T, zgx_gpu::GpuError>> {
+    let said = fault.as_ref().map(|last| last.message.clone());
+    let done = run(fault, revision, now, what, &mut report, piece);
+    match done {
+        Some(Err(error)) if !error.is_device_lost() => {
+            *fault = said.map(|message| Fault {
+                at: now,
+                revision,
+                message,
+            });
+            failed(fault, revision, now, what, &error);
+            None
+        }
+        done => done,
+    }
+}
+
+/// `error` ended `what`: a degradation (`queue_issue`) unless it is the
+/// last one said, which `fault` then holds. `true`: it is news.
+pub(crate) fn failed(
+    fault: &mut Option<Fault>,
+    revision: u64,
+    now: Instant,
+    what: &str,
+    error: &zgx_gpu::GpuError,
+) -> bool {
+    let message = error.to_string();
+    let news = fault.as_ref().is_none_or(|last| last.message != message);
+    if news {
+        queue_issue(format!("{what} was skipped: {message}"));
+    }
+    *fault = Some(Fault {
+        at: now,
+        revision,
+        message,
+    });
+    news
+}
+
 thread_local! {
-    /// Panics contained where no window host is at hand (a popup's frame,
-    /// drawn by its host), for the window's banner (`take_reported`).
+    /// What was contained where no window host is at hand (a popup's
+    /// frame, drawn by its host; layout that didn't settle, heard as it
+    /// prepares), for the window's banner (`take_reported`).
     static REPORTED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 /// Keep `message` for the window's banner (`run`'s `report` where only the
@@ -82,6 +134,66 @@ pub(crate) fn queue(message: &str) {
 /// What `queue` kept since the last take.
 pub(crate) fn take_reported() -> Vec<String> {
     REPORTED.with(|reported| std::mem::take(&mut *reported.borrow_mut()))
+}
+thread_local! {
+    /// What a popup's renderer went on without, for the window that has a
+    /// runtime to tell (`report_issues`).
+    static ISSUES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+/// Keep `issue` of a frame drawn where no `Runtime` is at hand.
+pub(crate) fn queue_issue(issue: String) {
+    ISSUES.with(|issues| issues.borrow_mut().push(issue));
+}
+/// Tell `runtime`'s listeners what `queue_issue` kept, as what the
+/// renderer went on without (`IssueKind::Degraded`). Its window takes them
+/// as it draws, before another window can.
+pub(crate) fn report_issues(runtime: &zgx::reactive::Runtime) {
+    for issue in ISSUES.with(|issues| std::mem::take(&mut *issues.borrow_mut())) {
+        zgx::issues::report_kind(runtime, zgx::issues::IssueKind::Degraded, &issue);
+    }
+}
+
+/// What a window's listener heard (`window_issues`), for its banner.
+pub(crate) type WindowIssues =
+    std::rc::Rc<std::cell::RefCell<Vec<(zgx::issues::IssueKind, String)>>>;
+/// Listen to a window's `runtime`: each issue logged once, and kept for
+/// that window's banner alone (another window's never shows there).
+pub(crate) fn window_issues(
+    runtime: &zgx::reactive::Runtime,
+) -> (zgx::issues::IssueListener, WindowIssues) {
+    let issues = WindowIssues::default();
+    let kept = issues.clone();
+    let listener = zgx::issues::on_issue_kind(runtime, move |kind, issue| {
+        match kind {
+            zgx::issues::IssueKind::Degraded => {
+                if logged_first(issue) {
+                    eprintln!("zgx: degraded: {issue}");
+                }
+            }
+            _ => eprintln!("zgx: {issue}"),
+        }
+        kept.borrow_mut().push((kind, issue.to_string()));
+    });
+    (listener, issues)
+}
+thread_local! {
+    /// Degradations logged so far, by any window (`logged_first`).
+    static LOGGED: std::cell::RefCell<std::collections::HashSet<String>> = std::cell::RefCell::default();
+}
+/// Whether `issue` is a degradation no window has logged yet: two windows
+/// missing the same budget log it once, not once each.
+fn logged_first(issue: &str) -> bool {
+    LOGGED.with(|logged| logged.borrow_mut().insert(issue.to_string()))
+}
+/// What a window's banner says of what it heard since the last call: its
+/// errors, and what the renderer went on without in `debug` builds alone.
+pub(crate) fn banner(issues: &WindowIssues, debug: bool) -> Vec<String> {
+    let heard = std::mem::take(&mut *issues.borrow_mut());
+    heard
+        .into_iter()
+        .filter(|(kind, _)| *kind != zgx::issues::IssueKind::Degraded || debug)
+        .map(|(_, message)| message)
+        .collect()
 }
 
 /// Debug builds: whether `ZGX_PANIC_IN` names `what` (`"a popup's frame"`,
@@ -168,6 +280,119 @@ mod tests {
         assert_eq!(frame(2, 6), Some(()), "changed: tried, and it works");
         assert_eq!(frame(2, 6), Some(()), "working: runs every frame");
         assert_eq!(runs.get(), 3);
+    }
+
+    /// A frame's error skips it as a panic does, reported once, and it is
+    /// tried again once what it draws changes, a second on.
+    #[test]
+    fn a_failed_frame_is_reported_once_and_tried_again() {
+        let (start, mut fault) = (Instant::now(), None);
+        let (banners, runs) = (Cell::new(0), Cell::new(0));
+        for frame in 0..120u64 {
+            let done = run_frame(
+                &mut fault,
+                frame,
+                start + Duration::from_millis(frame * 1000 / 60),
+                "the window's frame",
+                |_| banners.set(banners.get() + 1),
+                || {
+                    runs.set(runs.get() + 1);
+                    Err::<(), _>(zgx_gpu::GpuError("frame geometry".into()))
+                },
+            );
+            assert!(done.is_none());
+        }
+        assert_eq!(runs.get(), 2, "the first frame, then a second on");
+        assert_eq!(banners.get(), 0, "not a panic: no banner of its own");
+        assert_eq!(
+            degradations(),
+            ["the window's frame was skipped: frame geometry"]
+        );
+    }
+
+    /// A popup's issue reaches the runtime's listeners, and only once.
+    #[test]
+    fn a_queued_issue_reaches_the_listeners_once() {
+        let runtime = zgx::reactive::Runtime::new();
+        let heard = std::rc::Rc::new(Cell::new(0));
+        let hears = heard.clone();
+        let _listener = zgx::issues::on_issue(&runtime, move |issue| {
+            assert_eq!(issue, "a layer went coarser");
+            hears.set(hears.get() + 1);
+        });
+        queue_issue("a layer went coarser".into());
+        report_issues(&runtime);
+        report_issues(&runtime);
+        assert_eq!(heard.get(), 1);
+    }
+
+    /// A frame's error past `run_frame` (a present, a plane) is news once.
+    #[test]
+    fn a_repeated_error_is_news_once() {
+        let (now, mut fault) = (Instant::now(), None);
+        let error = zgx_gpu::GpuError("surface acquisition: Timeout".into());
+        let fail = |fault: &mut Option<Fault>| failed(fault, 1, now, "the window's frame", &error);
+        assert!(fail(&mut fault));
+        assert!(!fail(&mut fault));
+        assert_eq!(degradations().len(), 1);
+    }
+
+    /// A budget miss drawing window A: logged, heard by A's listeners as a
+    /// degradation, in A's banner in debug builds alone, and never in B's.
+    /// An error (a script's) is in A's banner either way.
+    #[test]
+    fn a_degradation_stays_in_its_window_and_out_of_release_banners() {
+        let (a, b) = (zgx::reactive::Runtime::new(), zgx::reactive::Runtime::new());
+        let (_a_listener, a_issues) = window_issues(&a);
+        let (_b_listener, b_issues) = window_issues(&b);
+        let kinds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let hears = kinds.clone();
+        let _app = zgx::issues::on_issue_kind(&a, move |kind, _| hears.borrow_mut().push(kind));
+        queue_issue("the images one frame draws exceed the 64 MiB budget".into());
+        report_issues(&a);
+        assert!(banner(&b_issues, true).is_empty(), "nothing in B's banner");
+        let (debug, release) = (a_issues.clone(), a_issues.clone());
+        assert!(
+            banner(&release, false).is_empty(),
+            "nothing in A's in release"
+        );
+        queue_issue("a layer went coarser".into());
+        report_issues(&a);
+        assert_eq!(
+            banner(&debug, true),
+            ["a layer went coarser"],
+            "A's, in debug"
+        );
+        zgx::issues::report(&a, "a script failed");
+        assert_eq!(banner(&a_issues, false), ["a script failed"]);
+        use zgx::issues::IssueKind::{Degraded, Error};
+        assert_eq!(
+            *kinds.borrow(),
+            [Degraded, Degraded, Error],
+            "apps hear each, by kind"
+        );
+    }
+
+    /// The same degradation in two windows is logged once in the process;
+    /// another is logged too.
+    #[test]
+    fn a_degradation_is_logged_once_however_many_windows_have_it() {
+        assert!(logged_first("a layer went coarser in two windows"));
+        assert!(!logged_first("a layer went coarser in two windows"));
+        assert!(logged_first("an image drawn softer"));
+    }
+
+    /// What the queue holds, as degradations heard by a runtime.
+    fn degradations() -> Vec<String> {
+        let runtime = zgx::reactive::Runtime::new();
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let hears = heard.clone();
+        let _listener = zgx::issues::on_issue_kind(&runtime, move |kind, issue| {
+            assert_eq!(kind, zgx::issues::IssueKind::Degraded);
+            hears.borrow_mut().push(issue.to_string());
+        });
+        report_issues(&runtime);
+        heard.take()
     }
 
     /// Another panic in the same piece is reported too.

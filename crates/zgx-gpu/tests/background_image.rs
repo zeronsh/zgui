@@ -188,3 +188,84 @@ fn background_images_round_with_their_box_under_border_and_children() {
         assert_eq!(pixel(&p, 178, 42), [0; 4]);
     }
 }
+
+/// `bg_radial`: its stops at its centre and its edge, the middle one where it
+/// was asked for, an off-centre centre, and a fade that stays its own colour
+/// (mixed premultiplied, as CSS's are) rather than going through black.
+#[test]
+fn a_radial_gradient_lies_where_css_puts_it() {
+    use zgx::{canvas::GradientStop, compose::prelude::*, widgets::Ui};
+    let stop = |offset: f32, color: Color| GradientStop { offset, color };
+    let (red, blue) = (Color(255, 0, 0, 255), Color(0, 0, 255, 255));
+    let render = |view: View| {
+        let mut gpu = GpuRenderer::new(200, 200).unwrap();
+        let mut ui = Ui::new(200., 200.);
+        ui.mount(view);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        gpu.readback().unwrap()
+    };
+    let at = |pixels: &[u8], x: usize, y: usize| -> [u8; 4] {
+        pixels[(y * 200 + x) * 4..][..4].try_into().unwrap()
+    };
+    let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 4);
+    let two = render(div().size(200., 200.).bg_radial(
+        (0.5, 0.5),
+        1.,
+        [stop(0., red), stop(1., blue)],
+    ));
+    assert!(
+        near(at(&two, 100, 100), [255, 0, 0, 255]),
+        "{:?}",
+        at(&two, 100, 100)
+    );
+    assert!(
+        near(at(&two, 199, 199), [0, 0, 255, 255]),
+        "{:?}",
+        at(&two, 199, 199)
+    );
+    // On the farthest corner's ellipse: halfway out along an axis is 0.354
+    // of the way to it.
+    let along = at(&two, 150, 100);
+    assert!(
+        along[0] > 150 && along[0] < 180 && along[2] > 75 && along[2] < 105,
+        "{along:?}"
+    );
+    // Off centre: its first stop there.
+    let corner = render(div().size(200., 200.).bg_radial(
+        (0., 0.),
+        1.,
+        [stop(0., red), stop(1., blue)],
+    ));
+    assert!(
+        near(at(&corner, 1, 1), [255, 0, 0, 255]),
+        "{:?}",
+        at(&corner, 1, 1)
+    );
+    // Three stops: all of the middle one by its offset.
+    let three = render(div().size(200., 200.).bg_radial(
+        (0.5, 0.5),
+        1.,
+        [
+            stop(0., red),
+            stop(0.25, Color(0, 255, 0, 255)),
+            stop(1., blue),
+        ],
+    ));
+    let middle = at(&three, 100 + 50, 100);
+    assert!(middle[1] > 215, "{middle:?}");
+    // Fading out over white: red all the way, never darker.
+    let fade = render(div().size(200., 200.).bg(rgb(0xffffff)).child(
+        div().size(200., 200.).bg_radial(
+            (0.5, 0.5),
+            1.,
+            [stop(0., red), stop(1., Color(0, 0, 0, 0))],
+        ),
+    ));
+    let halfway = at(&fade, 150, 100);
+    assert!(
+        halfway[0] > 245 && halfway[1] > 60,
+        "stays red over white: {halfway:?}"
+    );
+}

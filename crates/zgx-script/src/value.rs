@@ -36,8 +36,10 @@ pub enum Value {
     /// (and `field` finds them by halves): build one with
     /// [`Value::record`], which sorts them.
     Map(Rc<[(Rc<str>, Value)]>),
-    /// An element a script keeps (`ui.use_state(el)`): opaque to Rust, equal
-    /// only to itself, and `null` as JSON.
+    /// An element a script keeps (`ui.use_state(el)`), or a folder a person
+    /// picked (`ui.open_folder`): opaque to Rust, equal only to itself, and
+    /// `null` as JSON. Sharing a variant keeps a rare handle off every
+    /// conversion's match.
     Element(ElementHandle),
     /// An image a script keeps (a `Bitmap`: `ui.bitmap`'s, or the
     /// clipboard's): equal only to itself, and `null` as JSON.
@@ -47,25 +49,44 @@ pub enum Value {
 /// A value's room in a list or map, for `Value::weight`.
 const SLOT: usize = std::mem::size_of::<Value>();
 
-/// A mounted (or once mounted) element held in state.
+/// A mounted (or once mounted) element held in state, or a picked folder.
 #[derive(Clone)]
-pub struct ElementHandle(pub(crate) Rc<crate::element::Element>);
+pub struct ElementHandle(pub(crate) Rc<Held>);
+/// What an [`ElementHandle`] holds, behind one pointer: `Value`'s other
+/// variants are one too, so its clone and drop stay a single path.
+pub(crate) enum Held {
+    Element(Rc<crate::element::Element>),
+    Folder(Rc<crate::folder::Folder>),
+}
 impl ElementHandle {
     /// Whether the element is in the interface now.
     pub fn is_mounted(&self) -> bool {
-        self.0.is_mounted()
+        match &*self.0 {
+            Held::Element(element) => element.is_mounted(),
+            Held::Folder(_) => false,
+        }
+    }
+    /// What it holds, as an address: two handles to one thing share it.
+    pub(crate) fn address(&self) -> usize {
+        match &*self.0 {
+            Held::Element(element) => Rc::as_ptr(element).cast::<()>() as usize,
+            Held::Folder(folder) => Rc::as_ptr(folder).cast::<()>() as usize,
+        }
     }
 }
 impl PartialEq for ElementHandle {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        self.address() == other.address()
     }
 }
 impl std::fmt::Debug for ElementHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.0.id {
-            Some(id) => write!(f, "Element({}#{id})", self.0.tag),
-            None => write!(f, "Element({})", self.0.tag),
+        match &*self.0 {
+            Held::Element(element) => match &element.id {
+                Some(id) => write!(f, "Element({}#{id})", element.tag),
+                None => write!(f, "Element({})", element.tag),
+            },
+            Held::Folder(_) => write!(f, "Folder"),
         }
     }
 }
@@ -159,7 +180,7 @@ impl Value {
             }
             Value::Element(_) => 64,
             // Its pixels: a pasted 4K screenshot is 33 MB.
-            Value::Image(image) => 64 + image.pixels().len(),
+            Value::Image(image) => 64 + image.bytes(),
             Value::Nil | Value::Bool(_) | Value::Num(_) => 0,
         }
     }
@@ -622,9 +643,16 @@ fn convert_in(value: mlua::Value, old: Option<&Value>, depth: u32) -> mlua::Resu
         mlua::Value::UserData(ud) if ud.is::<crate::design::RawUd>() => {
             ud.borrow::<crate::design::RawUd>()?.0.clone()
         }
-        mlua::Value::UserData(ud) if ud.is::<crate::element::ElementUd>() => Value::Element(
-            ElementHandle(ud.borrow::<crate::element::ElementUd>()?.0.clone()),
-        ),
+        mlua::Value::UserData(ud) if ud.is::<crate::element::ElementUd>() => {
+            Value::Element(ElementHandle(Rc::new(Held::Element(
+                ud.borrow::<crate::element::ElementUd>()?.0.clone(),
+            ))))
+        }
+        mlua::Value::UserData(ud) if ud.is::<crate::folder::FolderUd>() => {
+            Value::Element(ElementHandle(Rc::new(Held::Folder(
+                ud.borrow::<crate::folder::FolderUd>()?.0.clone(),
+            ))))
+        }
         mlua::Value::UserData(ud) if ud.is::<crate::node::BitmapUd>() => {
             Value::Image(ud.borrow::<crate::node::BitmapUd>()?.0.clone())
         }
@@ -1003,9 +1031,11 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
             table.set_readonly(frozen);
             Ok(mlua::Value::Table(table))
         }
-        Value::Element(e) => lua
-            .create_userdata(crate::element::ElementUd(e.0.clone()))
-            .map(mlua::Value::UserData),
+        Value::Element(handle) => match &*handle.0 {
+            Held::Element(e) => lua.create_userdata(crate::element::ElementUd(e.clone())),
+            Held::Folder(folder) => lua.create_userdata(crate::folder::FolderUd(folder.clone())),
+        }
+        .map(mlua::Value::UserData),
         Value::Image(image) => lua
             .create_userdata(crate::node::BitmapUd(image.clone()))
             .map(mlua::Value::UserData),
@@ -2463,6 +2493,9 @@ fn list_of<'a>(value: &'a Value, method: &str) -> mlua::Result<&'a [Value]> {
 pub struct Store {
     runtime: Runtime,
     signals: RefCell<HashMap<String, Signal<Value>>>,
+    /// Keys a plugin's default made (`shared`), which the app's own default
+    /// replaces.
+    provisional: RefCell<std::collections::HashSet<String>>,
 }
 impl Store {
     /// An empty store on `runtime`.
@@ -2470,6 +2503,28 @@ impl Store {
         Self {
             runtime: runtime.clone(),
             signals: RefCell::default(),
+            provisional: RefCell::default(),
+        }
+    }
+    /// Shared state `key` (`ui.shared`), as [`Store::state`], except that a
+    /// plugin's default gives way to the app's: plugins load before the app,
+    /// so without a host's value (`ScriptHost::shared`) the app's own
+    /// default is what shows, as a Luau app run by `zgx run` declares it.
+    pub(crate) fn shared(&self, key: &str, initial: Value, plugin: bool) -> Signal<Value> {
+        let existing = self.signals.borrow().get(key).cloned();
+        match existing {
+            Some(signal) => {
+                if !plugin && self.provisional.borrow_mut().remove(key) {
+                    signal.set(initial);
+                }
+                signal
+            }
+            None => {
+                if plugin {
+                    self.provisional.borrow_mut().insert(key.to_owned());
+                }
+                self.state(key, initial)
+            }
         }
     }
     /// The existing state for `key`, or new state starting at `initial`.

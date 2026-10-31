@@ -34,6 +34,8 @@ A drag's preview is its own window, over every window and app. It is drawn once,
 
 Every macOS app has a Window menu: its own if it has one titled "Window", else a standard one. AppKit lists the windows there, and ⌘` cycles through them.
 
+A script's windows read their own state through `win`: `ui.windows`' `build(item, win)` and `ui.window`'s `function(win)` content give `win.active`, `win.shown` and `win.size`, that window's ([native](reference/native.md#a-windows-own-state)). `ui.window.active` and its siblings are the main window's. A window can't be found from inside its content instead, because a read from Luau carries no window: the same function runs in whichever window's view calls it, and a state is a value, not a place.
+
 A window opened with no position cascades from the front one. `frame_autosave` reopens a window where it was left, at the size it was left, whatever its title bar. `tabbing` decides whether a window joins AppKit's window tabs: `Disallowed` suits windows with tabs of their own.
 
 ## Rust
@@ -152,7 +154,7 @@ return ui.row {
 }
 ```
 
-Luau also has `on_drag_outside` and `drag_moves_window` ([events](reference/events.md)). Opening a torn-off tab's window from a script would need a window per tab, which `ui.window`'s declared windows don't express yet.
+Luau also has `on_drag_outside` and `drag_moves_window` ([events](reference/events.md)). `ui.tabs { on_tear_off }` tears tabs off ([containers](reference/containers.md#tabs)): told the tab's id and where it was grabbed, a script adds it to the list `ui.windows` opens a window per item of, under the grab with `under_pointer = { e.grab_x, e.grab_y }` ([native](reference/native.md#a-window-an-item)), and the tab dragged onto a strip of its group in another window goes back.
 
 ## Measuring
 

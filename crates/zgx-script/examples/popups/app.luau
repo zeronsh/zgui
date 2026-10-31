@@ -117,7 +117,7 @@ local function popover(): Node
 		gap = 10,
 		rounded = 14,
 		ui.text { "Rename", text_size = 15 },
-		ui.input { value = name, h = 28 },
+		ui.input { label = "Name", value = name, h = 28 },
 		ui.text {
 			"Keys reach this field while the window keeps its focus.",
 			wrap = true,

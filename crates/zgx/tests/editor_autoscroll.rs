@@ -12,7 +12,8 @@ fn fixture(single: bool, wrap: bool) -> (Ui, EditorHandle, Rc<Cell<usize>>) {
     let count = calls.clone();
     ui.scene.borrow_mut().set_font_text_shaper(
         move |text: &str, size, width, font: &FontStyle| -> Box<dyn TextLayout> {
-            count.set(count.get() + 1);
+            // A selection's own empty text, measured once, is not the editor's.
+            count.set(count.get() + usize::from(!text.is_empty()));
             Box::new(FallbackTextLayout::with_line_height(
                 text,
                 size,

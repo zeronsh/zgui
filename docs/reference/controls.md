@@ -21,6 +21,8 @@ ui.time_field(props: TimeFieldProps) -> Node
 
 Every control dims while `disabled` (to 45% opacity, as native controls do) unless it says how it looks then.
 
+`select`, `combobox` and `date_picker` are the box you size: `id`, `w`, `grow` and the like land on it, and the trigger or field fills it, so in a `ui.column` one fills the column as an `input` does (`w` or `items = "start"` narrows it). Their popups are styled apart from that.
+
 ## button
 
 A focusable box whose children lie in a row; `on_click` runs on a click, Enter (as it goes down) or Space (as it comes up), as a browser's button does.
@@ -54,7 +56,13 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `caret_width` | `number` | the app's (`1`, or the system's text-cursor width) | the caret's width in points |
 | `select_on_focus` | `boolean` | `false` | focusing selects all the text (an address bar) |
 | `inputmode` | `"text" \| "decimal" \| "numeric" \| "tel" \| "search" \| "email" \| "url" \| "none"` | `"text"` | what kind of text it takes (HTML's `inputmode`): which touch keyboard Windows shows (digits, `@`, `.com`) and what a Wayland input method offers; `"none"` shows no virtual keyboard, for a field with its own keypad. A hint, never a check of what is typed |
+| `on_paste` | `(e: { text: string?, files: { File } }) -> boolean?` | none | hears a person's paste before it goes in, from a key, a menu or a middle click (HTML's `paste` event): `e.text` is the clipboard's, `nil` where it holds no text, as with an image (`ui.clipboard.read_image`), and `e.files` the files copied in Finder, Explorer or a file manager, readable as `ui.open_files`'s are (a copied file may also put its name in `e.text`: look at `files` first). A plugin hears files with both the `Clipboard` and `Files` grants. Returning `true` takes the paste, so nothing goes in; otherwise the text goes in as usual. With it, the context menu's Paste stays enabled on a clipboard without text. It isn't called for a read-only field, or for `el:replace_selection` |
 | `spellcheck` | `boolean \| Readable<boolean> \| (() -> boolean)` | `false` | check the spelling as it is typed (HTML's `spellcheck`): misspelled words get a dotted line (not the word being typed), and the context menu offers the system checker's guesses, Learn Spelling and Ignore Spelling. Never in a password field |
+| `autocorrect` | `boolean` | `false` | correct a misspelled word as it ends and expand the person's text replacements ("omw" to "On my way!"), as the system's own fields do where the person has them on (macOS: System Settings, Keyboard, Text Input). Windows' spelling checker (`ISpellChecker`) carries no corrections of its own and has no smart quotes, so on Windows and Linux both options change nothing. Each is an undo step of its own: undo puts back what was typed, and it stays. Never in a password field |
+| `smart_punctuation` | `boolean` | `false` | curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’ for `"` and `'`, — for `--`), in the forms the person chose, where they have the system's smart quotes and dashes on (macOS). Undo puts back what was typed. Leave it off for code and data |
+| `overscroll` | `"auto"` \| `"contain"` | `"auto"` | `"contain"`: a wheel over the field stays with it at its edges, the scroll views around it never moving ([scrolling](scrolling.md)) |
+| `read_only` | `boolean \| Readable<boolean> \| (() -> boolean)` | `false` | selectable and focusable, the person's edits refused (HTML's `readonly`): a log, a generated file. `value` still sets the text |
+| `active_descendant` | `string \| Readable<string?> \| (() -> string?)` | none | the `id` of the suggestion it is on (HTML's `aria-activedescendant`): focus stays in the field while its keys (`on_key`) move through a list of them, a mention's in a popover `at_caret`, and assistive technology hears the one it is on. Nil for none |
 | `multiline` | `boolean` | `false` (`textarea`: always) | `input` with several lines |
 | `w`, `h` | `Length` | `240` wide (an intrinsic width), `36` high (`textarea`: `156`) | |
 | `px`, `py` | `Length` | `8`, `6` | |
@@ -62,14 +70,18 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `shrink` | `number` | `1` | a row too narrow for it shrinks it, to nothing if need be (it scrolls its text); `shrink = 0` holds it |
 | `wrap` | `boolean` | `false` | `textarea`: wrap long lines rather than scroll them |
 | `line_numbers` | `boolean` | `false` | `textarea`: number the lines in a gutter at the left, the caret's brighter (a code editor); only the lines in view are built |
-| `highlight` | `(line, state) -> (spans, state)` | none | `textarea`: style each line (a code editor's syntax, a Markdown composer's emphasis): spans `{ from, to, color }` in bytes from 1 (as `string.find` gives them), with any of `weight`, `italic`, `strike` and `bg` by name ([styled spans](#styled-spans)), and what the line leaves the next (a block comment running on; `0` before the first). Asked for the lines in view, and again only for one that changes or whose line before leaves another state; it must depend on its arguments alone |
+| `highlight` | `(line, state) -> (spans, state)` | none | `textarea`: style each line (a code editor's syntax, a Markdown composer's emphasis): spans `{ from, to, color }` in bytes from 1 (as `string.find` gives them), with any of `weight`, `italic`, `strike` and `bg` by name ([styled spans](#styled-spans)), and what the line leaves the next (a block comment running on: any value, a number, a string or a table; `0` before the first). Asked for the lines in view, and again only for one that changes or whose line before leaves another state; it must depend on its arguments alone |
+| `underlines` | state or `() -> { { from =, to =, color =?, style =? } }` | none | `textarea`: ranges of the whole text underlined, as a spelling mistake or a diagnostic is: `style` as `underline_style` (`"wavy"` by default), `color` the theme's danger colour by default; in bytes from 1; only those in view are drawn |
 | `decorations` | state or `() -> { { from, to, color? } }` | none | `textarea`: ranges of the whole text marked behind it (a search's matches), in bytes from 1; only those in view are drawn |
 | `find` | `{ query, case?, current?, limit?, color?, current_color? }` | none | `textarea`: a search's matches marked behind the text, found by the editor where the text is held (no list made in the script); `current` (from 1) shows in `current_color` (`$warning`), the rest in `color` (`$selection`); `case = false` folds ASCII case |
 | `current_line` | `Reactive<Color>` | none | `textarea`: the colour behind the caret's row |
 | `tab` | `string` | none | `textarea`: what Tab inserts (`"    "`) instead of moving focus; with lines selected it indents each, Shift+Tab outdents, one step of undo |
 | `on_caret` | `(line, column, anchor, focus) -> ()` | none | `textarea`: where the caret is whenever it moves (a status bar): line and column from 1, the selection in bytes from 0 |
+| `on_top_line` | `(line) -> ()` | none | `textarea`: the first line in view, from 1, whenever it changes (an outline following the text). Asked only with it set, so a textarea without it pays nothing |
 
-Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
+A field with nothing to undo lets ⌘Z go on to the app's commands, and with nothing to redo ⌘⇧Z and Ctrl+Y, as AppKit's responder chain hands them to the window: a `ui.command { key = "cmd+z" }` undoes the app's own steps without `reserved`. A value the app sets is a new document: it clears the undo history, as setting an HTML field's value does, so ⌘Z can't write the old text over it. An answer to the field's own edit keeps the history: with `value = function`, the function's next change after `on_change` or `on_commit`, however late, and with `value = state`, a different value within 100 ms of the edit.
+
+Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo; `ui.editor.scroll_to_line(el, n, { align })` puts line `n`, from 1, at the `"start"`, `"center"` or `"end"` of the view, or as near as shows it (`"nearest"`, the default), its caret left where it is; `ui.editor.undo(el)` and `ui.editor.redo(el)` step its history as ⌘Z and ⌘⇧Z do, answering whether there was a step, and `ui.editor.can_undo(el)` and `ui.editor.can_redo(el)` say whether there is one (for an app's own stack across panes, with `ui.command { key = "cmd+z", reserved = true }`); `ui.editor.offset_at(el, x, y)` is the byte, from 0, a click at those window points would put the caret at, for a drop that goes where the pointer is or a link in the text ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
 
 ### Styled spans
 
@@ -203,7 +215,7 @@ return ui.combobox { label = "City", text = query, items = matches, value = city
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `text` | `State<string>` | required | what the field holds, both ways |
-| `items` | `State<{ string \| { label, value?, detail? } }>` | required | the options to show; a `detail` shows after the label |
+| `items` | a list of `string \| { label, value?, detail? }`, or a state of one | required | the options to show; a `detail` shows after the label |
 | `value` | `State<any>` | none | the chosen option's value |
 | `loading` | `State<boolean>` | none | while true, the list says it is searching |
 | `empty` | `string` | `"No results"` | what the list says with no options |
@@ -260,7 +272,8 @@ return ui.row {
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<string?>` | required | the date (`"2026-10-23"`) or time (`"09:30"`), both ways |
+| `value` | `State<string?>`, or `() -> string?` | required | the date (`"2026-10-23"`) or time (`"09:30"`), both ways; a function controls it, a change going to `on_change` |
+| `on_change` | `(value: string?) -> ()` | none | a controlled field's change |
 | `min`, `max` | `string` | none | `calendar`, `date_picker`: the first and last days that can be chosen |
 | `first_weekday` | `number` | `0` | the week's first day: `0` for Sunday, `1` for Monday |
 | `unavailable` | `(date: string, weekday: number) -> boolean` | none | days that can't be chosen; `weekday` runs from 0 for Sunday |
@@ -273,11 +286,11 @@ In Rust (`zgx-components`): `calendar(label, value, CalendarOptions { … })`, `
 
 ## progress
 
-A determinate bar from a 0-to-1 state; it takes no input.
+A determinate bar from a value from 0 to 1; it takes no input.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<number?>` | required | 0 to 1, clamped; `nil` is indeterminate (work of unknown size): a stretch of the bar sweeps across, and assistive technology hears no value |
+| `value` | `State<number?>`, a number, or `() -> number?` | required | 0 to 1, clamped; `nil` is indeterminate (work of unknown size): a stretch of the bar sweeps across, and assistive technology hears no value |
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `w`, `h` | `Length` | `240`, `8` | |
 | `bg` | `Color` | `"$input.bg"` | the track |

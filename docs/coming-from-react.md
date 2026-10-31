@@ -20,6 +20,7 @@ Every example on this page runs, and type checks in strict mode, as part of zgx-
 | `useMemo(() => f(a, b), [a, b])` | `ui.computed(function() return f(a:get(), b:get()) end)`: dependencies are what it reads |
 | `useEffect(() => { … return cleanup }, [deps])` | `ui.effect(function() … ui.on_cleanup(cleanup) end)`: re-runs when what it read changes |
 | `useEffect(() => …, [])` | `ui.on_mount(f)` |
+| reading state without subscribing (a store's `getState()`, Solid's `untrack`) | `count:peek()` |
 | `useRef(null)` on an element | `local el = ui.ref()`, `ref = el`, `el:peek():focus()` |
 | `useRef(value)` for a mutable value | a plain Luau local in the component's build |
 | `createContext` / `useContext` | `provide = { user = user }` on a node, `ui.use_context("user")` in a component below |
@@ -30,13 +31,17 @@ Every example on this page runs, and type checks in strict mode, as part of zgx-
 | Suspense, React Query, SWR | `ui.resource(load)`: `data`, `loading`, `error`, `status` as states |
 | `fetch`, `await`, `AbortController` | `ui.fetch(url, opts):await()` in a `ui.task`; `task:cancel()` stops the request |
 | streaming a response (`ReadableStream`, SSE) | `ui.fetch(url, { on_event = function(e) … end })` |
+| `useWebSocket` (react-use-websocket), `reconnecting-websocket` | `ui.socket(url, { json = true, on_message = fn })`: `status` a state, `send` queued until open, reconnect with backoff built in |
+| `await new Promise(r => setTimeout(r, ms))` | `ui.sleep(ms):await()` in a `ui.task` |
 | controlled inputs | `ui.input { value = state }`, or `value = function` with `on_change` |
-| React Hook Form | `ui.form { fields, validate, submit }` with `field = form.fields.name` on a control |
+| `<form onSubmit>`, React Hook Form | `ui.form { fields, validate, submit }` with `field = form.fields.name` on a control: Enter in a field submits, as in a `<form>`; a lone `ui.input` hears it in `on_key` |
 | portals and modals | `ui.modal { open = state, … }`, `ui.popover`, `ui.menu`: panels over everything, still in your tree |
 | error boundaries | a script error shows a banner and the rest keeps running; `ui.try(f)` catches one with its message |
 | `className`, CSS | properties on the node: `px = 12, rounded = 8, bg = "$surface.raised", hover = { bg = "$hover" }` |
 | react-markdown | `ui.markdown_view { text }` |
 | React Testing Library | `zgx_script::testing::TestApp`: find, click, type, read texts, headless |
+
+A script's root fills its parent across, as a block does, and is as tall as what it holds; `h_full = true` fills the height too.
 
 ## Components and props
 
@@ -62,6 +67,8 @@ return ui.column {
 	Counter { label = "Pears", start = 3 },
 }
 ```
+
+One prop isn't only yours: `id` names the component's root element, for targets and tests, so a record's id goes under another name (`Panel { issue = id }`).
 
 There is no re-render, so a component's body is not where values change: it describes, once, what follows the state. Reads go in templates, functions and computeds.
 
@@ -289,9 +296,11 @@ return ui.column {
 
 Requests go through the host's transport (`ScriptHost::fetcher`), as a browser's go through its network stack. `ui.fetch(url, { on_chunk, on_event })` hears a response as it arrives (a model's reply, server-sent events), and cancelling the task that awaits it stops the request, as `AbortController` does.
 
+A WebSocket is `ui.socket(url, opts)`, through the host's `ScriptHost::socket_connector` (zgx-run brings one): what `useWebSocket` gives, with reconnection as `reconnecting-websocket`'s. `status` is a state for a banner, a message sent before the connection opens waits for it, a dropped connection opens again after a growing wait (`attempt`, `retry_in`), and a URL function reading a state (a room) opens it again when that changes. It closes with the component that made it, as an effect's cleanup would close it.
+
 ## Forms
 
-A control bound to a state is a controlled input both ways: typing writes the state, and writing the state (clearing a draft on send) shows in it. For validation and submitting, `ui.form` holds the fields as React Hook Form does.
+A control bound to a state is a controlled input both ways: typing writes the state, and writing the state (clearing a draft on send) shows in it. A value you set is a new document, not an edit: it clears the field's undo, as `el.value = x` does in a browser, and an answer to what was just typed (a trim, a format) keeps it. For validation and submitting, `ui.form` holds the fields as React Hook Form does.
 
 ```lua
 local form = ui.form {

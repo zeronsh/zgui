@@ -101,6 +101,41 @@ fn save_png(image: &zgx::image::ImageData) -> Result<std::path::PathBuf, String>
     Ok(path)
 }
 
+/// A memory report as a table, and as a list of lines: `area`, `name`, and
+/// `n` (entries) and `bytes` where the line can tell.
+fn memory_answer(report: &zgx::memory::Report) -> (String, Value) {
+    let named = |line: &zgx::memory::Line| format!("{} {}", line.area, line.name);
+    let width = report
+        .lines
+        .iter()
+        .map(|l| named(l).len())
+        .max()
+        .unwrap_or(0);
+    let mut text = String::new();
+    for line in &report.lines {
+        let entries = line.entries.map_or(String::new(), |n| n.to_string());
+        let bytes = line.bytes.map_or(String::new(), |bytes| {
+            format!("{:.1} MB", bytes as f64 / (1024. * 1024.))
+        });
+        let name = named(line);
+        text.push_str(&format!("{name:width$}  {entries:>8}  {bytes:>10}\n"));
+    }
+    let lines = report.lines.iter().map(|line| {
+        let mut fields = vec![
+            ("area", Value::from(line.area)),
+            ("name", Value::from(line.name.as_str())),
+        ];
+        if let Some(entries) = line.entries {
+            fields.push(("n", Value::Num(entries as f64)));
+        }
+        if let Some(bytes) = line.bytes {
+            fields.push(("bytes", Value::Num(bytes as f64)));
+        }
+        Value::record(fields)
+    });
+    (text, Value::List(lines.collect::<Vec<_>>().into()))
+}
+
 /// The window is hidden, minimized or covered: what devtools say of it.
 const NOT_PRESENTING: &str = "the window isn't presenting (hidden, minimized or covered): it \
      draws no frames, and input waits for it until it shows";
@@ -346,6 +381,9 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   state   [name] [full]                          named states and their values
   set     name value                             set a named state (value is JSON)
   click   target                                 press and release at its middle
+  hover   target|x,y                             move the pointer there, as a hand does
+  right-click target|x,y                         click the context button there (a context menu opens)
+  drag    target|x,y to                          drag with the primary button; `to` is a target or x,y
   type    target text                            click it, then type text
   key     keys                                   e.g. \"Enter\", \"cmd+k\", \"alt+ArrowDown\"
   scroll  target dy                              scroll the viewport under it
@@ -362,6 +400,7 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   switch  [name] [on]                            list fast paths, or switch one on or off, to compare
   search  [query] [next] [prev] [all] [n=5] [close]  find in page: the count, the current match, the first n
   zoom    [to: in|out|reset|1.5|150%]            the window's zoom (Cmd/Ctrl +, -, 0) and its viewport in points
+  memory                                         what the app holds, by what holds it: a line each
   wait    target [text] [gone] [timeout_ms=3000] until it shows (the text), or is gone
   sleep   ms                                     let the app run
 targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b (inside)";
@@ -413,6 +452,27 @@ impl Session {
         let target = |ui: &Ui| -> Result<zgx::scene::NodeId, String> {
             let target = text("target").ok_or("this command takes a `target`")?;
             driver::find(ui, &self.0.handle, &target)
+        };
+        // The same for an action: what of it a person can reach, inside
+        // its clips and uncovered, or why not.
+        let reachable = |ui: &Ui| -> Result<zgx::scene::NodeId, String> {
+            let target = text("target").ok_or("this command takes a `target`")?;
+            driver::find_shown(ui, &self.0.handle, &target)
+        };
+        let reach = |ui: &Ui| -> Result<(zgx::scene::NodeId, zgx::scene::Rect), String> {
+            let target = text("target").ok_or("this command takes a `target`")?;
+            driver::reach(ui, &self.0.handle, &target)
+        };
+        // Where a field says: a target's middle, or `x,y` in window points.
+        let point_of = |ui: &Ui, name: &str| -> Result<(f32, f32), String> {
+            let said = text(name).ok_or_else(|| format!("this command takes a `{name}`"))?;
+            if let Some((x, y)) = said.split_once(',')
+                && let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse())
+            {
+                return Ok((x, y));
+            }
+            let (_, shown) = driver::reach(ui, &self.0.handle, &said)?;
+            Ok(driver::middle(shown))
         };
         let answer = match cmd.as_str() {
             "help" => Ok((HELP.to_string(), Value::Nil)),
@@ -571,15 +631,37 @@ impl Session {
                 self.0.host.set_state(&name, value)?;
                 Ok((format!("{name} set"), Value::Nil))
             })(),
-            "click" => target(&ui).map(|node| {
-                let b = ui.scene.borrow().bounds(node);
+            "click" => reach(&ui).map(|(node, b)| {
                 driver::click_at(&mut ui, b);
                 (format!("clicked @{}", driver::number(node)), Value::Nil)
             }),
+            "hover" => point_of(&ui, "target").map(|at| {
+                driver::hover_at(&mut ui, at);
+                (format!("pointer at {:.0},{:.0}", at.0, at.1), Value::Nil)
+            }),
+            "right-click" => point_of(&ui, "target").map(|at| {
+                driver::right_click_at(&mut ui, at);
+                (
+                    format!("right-clicked at {:.0},{:.0}", at.0, at.1),
+                    Value::Nil,
+                )
+            }),
+            "drag" => (|| {
+                let (from, to) = (point_of(&ui, "target")?, point_of(&ui, "to")?);
+                driver::drag_between(&mut ui, from, to);
+                Ok((
+                    format!(
+                        "dragged {:.0},{:.0} to {:.0},{:.0}",
+                        from.0, from.1, to.0, to.1
+                    ),
+                    Value::Nil,
+                ))
+            })(),
             "type" => (|| {
-                let node = target(&ui)?;
+                let (node, b) = reach(&ui)?;
                 let typed = text("text").ok_or("type takes a `text`")?;
-                driver::type_into(&mut ui, node, &typed);
+                driver::click_at(&mut ui, b);
+                ui.dispatch(zgx::input::InputEvent::Text(typed));
                 Ok((format!("typed into @{}", driver::number(node)), Value::Nil))
             })(),
             "key" => (|| {
@@ -589,7 +671,7 @@ impl Session {
                 Ok((format!("pressed {keys}"), Value::Nil))
             })(),
             "snapshot" => (|| {
-                let node = target(&ui)?;
+                let node = reachable(&ui)?;
                 let width = number("width").map_or(4096, |w| w.clamp(1., 16384.) as u32);
                 let image = ui.snapshot(node, width).ok_or(
                     "no picture: the node is hidden or not laid out, or this window takes none \
@@ -612,7 +694,7 @@ impl Session {
                 ))
             })(),
             "scroll" => (|| {
-                let node = target(&ui)?;
+                let node = reachable(&ui)?;
                 driver::scroll(&mut ui, node, number("dy").unwrap_or(100.) as f32);
                 Ok((format!("scrolled @{}", driver::number(node)), Value::Nil))
             })(),
@@ -644,6 +726,10 @@ impl Session {
                     .unwrap_or_default()
                 {
                     lines.push(format!("layout: {warning}"));
+                }
+                // What the framework said (`zgx::issues`), by kind.
+                for (kind, issue) in host.issues() {
+                    lines.push(format!("{}: {issue}", kind.name()));
                 }
                 let text = if lines.is_empty() {
                     "none".to_string()
@@ -885,7 +971,7 @@ impl Session {
                         .and_then(|l| l.split_whitespace().next()?.parse::<f64>().ok())
                         .unwrap_or(0.)
                         .clamp(0., 60_000.);
-                    let b = ui.scene.borrow().bounds(node);
+                    let b = ui.scene.borrow().transformed_bounds(node);
                     let at = (b.x + b.width / 2., b.y + b.height / 2.);
                     let from = zgx::trace::now_ms();
                     let said = ui.wheel_tape(zgx::widgets::WheelTape::Play {
@@ -934,6 +1020,37 @@ impl Session {
                         }))
                     }
                 };
+            }
+            "memory" => {
+                let session = self.clone();
+                return Reply::Later(Box::pin(async move {
+                    let mut report = zgx::memory::from_host().await;
+                    let Some(ui) = session.0.ui.upgrade() else {
+                        return failed("the window has closed");
+                    };
+                    ui.scene.borrow().memory(&mut report);
+                    zgx::trace::memory(&mut report);
+                    session.0.host.memory(&mut report);
+                    // Each layer by its node's `id` too, beside its `@n`.
+                    let ids = session.0.handle.ids();
+                    for line in report
+                        .lines
+                        .iter_mut()
+                        .filter(|line| line.area == "gpu layer")
+                    {
+                        let number = line.name.strip_prefix('@').and_then(|rest| {
+                            rest.split(' ').next().and_then(|n| n.parse::<u32>().ok())
+                        });
+                        if let Some(id) = number
+                            .and_then(|number| ids.iter().find(|(node, _)| node.number() == number))
+                        {
+                            let at = line.name.find(' ').unwrap_or(line.name.len());
+                            line.name.insert_str(at, &format!(" #{}", id.1));
+                        }
+                    }
+                    let (text, data) = memory_answer(&report);
+                    ok(text, data)
+                }));
             }
             "sleep" => {
                 let ms = number("ms").unwrap_or(100.).clamp(0., 60_000.);
@@ -1314,7 +1431,8 @@ impl Session {
                 return failed("the window has closed");
             };
             ui.prepare_frame();
-            let found = driver::find(&ui, &self.0.handle, &target);
+            // What doesn't show isn't there, to wait for or to wait out.
+            let found = driver::find_shown(&ui, &self.0.handle, &target);
             let met = match (&found, gone) {
                 (Err(_), true) => true,
                 (Ok(_), true) => false,

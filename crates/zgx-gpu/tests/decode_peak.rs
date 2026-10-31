@@ -48,6 +48,11 @@ unsafe impl GlobalAlloc for Counting {
 }
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
+/// Held by each test while it measures: the counts are the process's, and
+/// the harness runs tests on threads of their own at once, so another
+/// test's decode counted in this one's peak (0.26 images, past a bound of
+/// 0.25, now and then).
+static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The most `decode_image(bytes)` holds at once beyond what was held
 /// before, and its pixels.
@@ -69,6 +74,7 @@ fn pattern(width: u32, height: u32, channels: usize) -> Vec<u8> {
 
 #[test]
 fn a_decode_holds_about_the_image_once() {
+    let _alone = ALONE.lock().unwrap_or_else(|p| p.into_inner());
     use image::{ExtendedColorType, ImageEncoder};
     let (width, height) = (1024_u32, 768_u32);
     let image_bytes = width as usize * height as usize * 4;
@@ -118,4 +124,77 @@ fn a_decode_holds_about_the_image_once() {
             peak as f64 / image_bytes as f64
         );
     }
+}
+
+/// A smooth `width` by `height` RGB picture, as a photo is (gradients, a
+/// disc, stripes), not noise a downsample can't keep.
+fn photo(width: u32, height: u32) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let (fx, fy) = (x as f32 / width as f32, y as f32 / height as f32);
+            let disc = ((fx - 0.6).powi(2) + (fy - 0.4).powi(2)).sqrt() < 0.2;
+            let stripe = (x / 24) % 2 == 0;
+            rgb.extend([
+                (fx * 200. + if disc { 50. } else { 0. }) as u8,
+                (fy * 180. + if stripe { 40. } else { 0. }) as u8,
+                ((1. - fx) * 150. + fy * 60.) as u8,
+            ]);
+        }
+    }
+    rgb
+}
+
+/// A JPEG drawn at a quarter of its size decodes at a quarter (the DCT
+/// scaled: vendor/zune-jpeg), never whole: its decode holds a small part of
+/// the image, and draws what decoding it whole and shrinking it would.
+#[test]
+fn a_jpeg_drawn_small_never_decodes_whole() {
+    let _alone = ALONE.lock().unwrap_or_else(|p| p.into_inner());
+    use image::{ExtendedColorType, ImageEncoder};
+    let (width, height) = (1024_u32, 768_u32);
+    let image_bytes = width as usize * height as usize * 4;
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+        .write_image(
+            &photo(width, height),
+            width,
+            height,
+            ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    let size = (256, 192);
+    let image = zgx_gpu::assets::decode_image_kept(jpeg.clone().into()).unwrap();
+    image.set_decoding(zgx::image::Decoding::Sync);
+    let before = NOW.load(Ordering::Relaxed);
+    PEAK.store(before, Ordering::Relaxed);
+    let scaled = image.pixels_at(size).expect("decoded").pixels.to_vec();
+    let peak = PEAK.load(Ordering::Relaxed) - before;
+    // Its quarter is a sixteenth of the image; the decoder's rows and
+    // tables, as large as the image is wide, come to as much again or so.
+    // Decoded whole, it held at least the image (`a_decode_holds_...`).
+    assert!(
+        peak * 4 <= image_bytes,
+        "a decode drawn at a quarter held {:.2} images at once",
+        peak as f64 / image_bytes as f64
+    );
+    // The same picture as decoding whole and shrinking, near enough.
+    let image = zgx_gpu::assets::decode_image(&jpeg).unwrap();
+    let mut reference = image.pixels().to_vec();
+    let (mut w, mut h) = (width, height);
+    while w.div_ceil(2) >= size.0 && h.div_ceil(2) >= size.1 {
+        (reference, w, h) = zgx::image::resample::halve(&reference, w, h);
+    }
+    assert_eq!((w, h), size);
+    let (sum, squares, worst) = scaled
+        .iter()
+        .zip(&reference)
+        .map(|(a, b)| f64::from(a.abs_diff(*b)))
+        .fold((0., 0., 0f64), |(s, q, m), d| (s + d, q + d * d, m.max(d)));
+    let n = scaled.len() as f64;
+    let (mae, psnr) = (sum / n, 10. * (255f64.powi(2) / (squares / n)).log10());
+    assert!(
+        mae <= 2. && psnr >= 35.,
+        "mean error {mae:.2}, PSNR {psnr:.1} dB, worst {worst}"
+    );
 }

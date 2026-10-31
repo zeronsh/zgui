@@ -86,6 +86,15 @@ architecture. Rows retain their state while mounted; removing an offscreen row
 disposes its owned subscriptions and tasks. See [virtual lists](composition.md)
 for complete signatures, anchoring and cache costs.
 
+Lists report their ends without a script or effect running as they scroll:
+`.on_end(distance, f)` calls `f` as the end comes within `distance` points,
+once each time and again once the rows grow, and `.on_start(distance, f)` does
+the same at the start (a history's earlier pages), keeping the rows in view
+where they are when rows are added above them. `.on_at_end(f)` hears whether the
+list rests at its end. `.overscroll_contain()`, CSS's `overscroll-behavior:
+contain`, keeps a wheel or trackpad gesture with the view at its edges, momentum
+included, so the scroll views around it neither move nor stretch.
+
 The lower-level `ScrollView::mount(ui, parent, width, height)` returns a clipped viewport, a `content` node, and signals for offset, extent, and viewport size. Set its content height explicitly as data changes. Scroll offsets clamp when content or viewport dimensions change. Moving content changes a retained transform; it does not relayout every child. Nested wheel scrolling chains to a parent when the inner scroll view cannot
 move farther, at the start of a gesture. Once a view scrolls, the gesture
 latches to it, as on macOS. The rest of the gesture along that axis, momentum
@@ -161,6 +170,8 @@ compositor places and keeps on its outputs ([Linux](linux.md#popups-on-wayland))
 
 On macOS every zgx app has a Window menu: the app's own if it has a menu titled "Window", else a standard one (Minimize, Zoom, Bring All to Front) after its menus. AppKit lists the app's windows in it, adds its tab and tiling commands, and ⌘` cycles through them.
 
+`WindowOptions { visible: false, .. }` makes a window hidden: its content is laid out and its first frame drawn as it is made, and nothing more is drawn while it stays hidden, so it does no work then. `WindowHandle::set_visible(true)` draws what changed since, before the window appears, and shows it whole at once, with no blank or half-laid-out frame: an app playing an intro of its own first shows its window ready. On Wayland a window appears as it first draws, so there a hidden window's state stays current but nothing is drawn until it shows: its first frame is drawn then, before it appears, so it still shows whole, with no blank frame, only later by the time a frame takes. On X11 a window keeps no picture while unmapped (without a compositor, and before a compositor has its pixmap), so it shows its background from the moment it maps until its first frame after, which it draws as the server exposes it: a few milliseconds (0.3 to 8 under Xvfb, a debug build on llvmpipe). That background is the theme's (the window's own colour, set on the X window while it is hidden), not black or white, so the gap hardly shows; `python3 scripts/hidden_window_x11_smoke.py target/debug/examples/hidden_window --output <dir>` checks it under Xvfb and Openbox. Its content is laid out and its glyphs rasterized by then, so that frame is the quick part. `cargo run --release -p zgx-desktop --example hidden_window` shows it, and `python3 scripts/hidden_window_probe.py` checks it on macOS.
+
 A window opened with no position (`WindowOptions::bounds` without one, and no `display`) cascades from the app's front window, as AppKit's document windows do, rather than opening over it. `WindowOptions::frame_autosave = Some(name)` saves its frame under that name as it moves and resizes, and opens it where it was left. `WindowOptions::tabbing` joins AppKit's window tabs as the user's setting says (`Tabbing::Automatic`), always (`Preferred`), or never (`Disallowed`, for windows with tabs of their own, as Safari's), and `tabbing_identifier` keeps windows of different kinds apart. `WindowOptions::under_pointer` opens a window with a point of its content under the pointer, for a tab torn off its window ([drag and drop](drag-drop.md)).
 
 A layer over the desktop, as an intro playing over whatever is open (`cargo run --release -p zgx-desktop --example agents_intro`): `WindowOptions::covers_display` places the window over its display's whole frame (the selected display, else the primary) rather than in a fullscreen space; with `transparent`, `decorations: false` and `shadow: false` nothing of a window shows but what zgx paints, `level: WindowLevel::AlwaysOnTop` keeps it over every app's windows (macOS's floating level, Windows' topmost), and `WindowHandle::set_pointer_passthrough(true)` lets the pointer through to what is behind until there is something to press. `set_level` and `set_shadow` change those later. Every window lays out at the size it opened at from its first frame (bounds, a saved frame, a display it covers), not at `width` and `height` first.
@@ -226,6 +237,10 @@ Use `cx.windows.open(options, builder)` to create another window. An application
 
 `cx.on_close_requested(|| bool)` handles native close requests and `window.request_close()`: return false to keep the window open, for example while a save-confirmation dialog is shown. `window.close()` closes immediately and bypasses that policy. `cx.on_closed(|| ...)` runs once during window disposal. Asynchronous confirmation should reject the initial request and call `close` after the user completes it.
 
+## Giving memory back
+
+As a window goes idle, 1.5 s after its last frame, the desktop host gives back what a busy frame wouldn't stop for: a script host collects its scripts' garbage and drops the decoded pictures no node shows, and the allocator returns what was freed. `zgx::idle::on_idle(&runtime, f)` adds what else an app should let go of, for as long as the `IdleTrim` it returns lives. `ScriptHost::collect_garbage` collects at once, and `ScriptHost::image_cache(bytes)` sets how many bytes of unshown pictures stay while the app is in use. `zgx inspect memory` shows [what a running app holds](agents/inspect.md#what-it-holds).
+
 ## When something fails
 
 An app keeps running through what goes wrong while it runs, where that is safe:
@@ -233,9 +248,11 @@ An app keeps running through what goes wrong while it runs, where that is safe:
 - **A panic** in an event handler, an effect or a task is contained by the desktop host: the panic hook logs it as usual, the window shows a banner saying what went wrong (a click dismisses it; assistive technology reads it out), and the app goes on. zgx keeps its state consistent across the unwind: borrows, subscriptions and focus recover. **A panic in a piece of a frame** (the window's frame, a popup's, the popup windows' update) is contained in that piece: it is reported once (logged, and the banner) and the piece is skipped, keeping its last frame, until what it draws changes, then tried again at most once a second; a panic it repeats is not reported again. So one that would come every frame (a bad box in a popup's fade, every frame of a tween) costs that piece's frames, not the app. Other panics that keep coming (20 within a second) end the app with the last one's message, rather than spin. Debug builds take `ZGX_PANIC_IN="a popup's frame"` (or `"the window's frame"`, `"the popups' update"`) to make that piece panic, for tests.
 - **A lost GPU device** (a driver reset, an external GPU removed) fails the window's frames with `GpuError::is_device_lost`; the window makes a renderer on a new device and draws again in full, with its state as it was. Until one can be made it tries again each second. `WindowHandle::debug_lose_gpu()` loses it on purpose, for tests. A lost or outdated surface is recreated without either.
 - **A script's runtime error** is logged and shown over the window in debug builds (`ScriptHost::error`); the rest of the script keeps working.
+- **Layout that never settles** (a size that depends on itself: a ref's `width` deciding that element's width, a resize callback changing what it measured) would otherwise run forever. After 64 passes the window keeps the layout the last one left and tells nothing more of its geometry, which ends the feedback and leaves an idle window idle. Input goes on against what shows. It's reported once, naming the nodes that still moved (`@12`, as `zgx inspect` names them): on stderr, in the window's banner, and to `zgx::issues::on_issue` and `ScriptHost::on_error`. Whenever the layout changes (a hot reload, a resize), a frame tries again in at most 16 passes, and once it settles all is as before.
+- **The renderer going on with less** (a layer drawn coarser, an image softer, a glyph left out, a frame skipped after a GPU error) is logged once per process (not once per window), prefixed `degraded:`. Only debug builds show it in the window's banner, and only in the window it happened in. Apps hear it through `zgx::issues::on_issue_kind` or `ScriptHost::on_issue` as `IssueKind::Degraded` (and through `on_issue` and `on_error` untagged), and `zgx inspect errors` lists it. So is layout that never settles: its cause can be the engine's, and the app goes on.
 - **A missing image** draws empty in its place, its error reported as a script error is; a font that isn't installed falls back to the system's.
 
-Other errors (a window that can't be made, layout that never settles) still end the app with the error, as before.
+Other errors (a window that can't be made) still end the app with the error, as before.
 
 ## Future templates
 

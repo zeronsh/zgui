@@ -145,14 +145,17 @@ def load(directory):
                     cell[key] = spread(values)
             # What the app adds to the GPU's power, in mW.
             cell['gpu_power_mw'] = spread([(float(t['gpu_system_watts']) - desktop_gpu) * 1000 for t in rows])
-            if mode == 'idle' and audit['scene'] != 'field':
+            # Active cells too once a run has six rounds, each with its desktop.
+            if audit['scene'] != 'field' and (mode == 'idle' or protocol['repeats'] >= 6):
                 # Idle WindowServer less its own round's desktop alone (the
                 # field shows its carets' whole cost, as measured): the
                 # window server reads one of a few levels launch to launch,
                 # for every app and the desktop alike (M1 Max, 2026-10-28:
                 # no launch of 32 over its round's desktop by 0.2 points).
+                # A cell's extra trial (its spread) has no round, so no desktop.
                 cell['windowserver_over_desktop'] = spread(
-                    [float(t['windowserver_cpu_percent']) - desktop_server[t['repeat']] for t in rows])
+                    [float(t['windowserver_cpu_percent']) - desktop_server[t['repeat']]
+                     for t in rows if t['repeat'] in desktop_server])
             if mode != 'idle':
                 captures = [p for p in paced if (p['framework'], p['mode']) == (framework, mode)]
                 assert len(captures) == protocol['pacing_repeats'], (directory, framework, mode)
@@ -174,7 +177,8 @@ def load(directory):
             cells.append(cell)
     # WindowServer with no app running, each repeat's desktop baseline.
     desktop = [float(t['windowserver_cpu_percent']) for t in trials if t['framework'] == 'desktop']
-    over = [c['windowserver_over_desktop']['median'] for c in cells if 'windowserver_over_desktop' in c]
+    over = [c['windowserver_over_desktop']['median'] for c in cells
+            if c['mode'] == 'idle' and 'windowserver_over_desktop' in c]
     return {
         'desktop_server': statistics.median(desktop), 'desktop_gpu_mw': desktop_gpu * 1000,
         # Idle WindowServer is noise while no app's median over its round's
@@ -248,6 +252,14 @@ def value(scene, framework, mode, key, field='median'):
     return cell(scene, framework, mode)[key][field]
 
 
+def server(scene, framework, mode):
+    """WindowServer CPU for a cell: less its rounds' desktop alone where the
+    run has one per trial (six rounds, `windowserver_over_desktop`), else as
+    read."""
+    c = cell(scene, framework, mode)
+    return (c.get('windowserver_over_desktop') or c['windowserver_cpu_percent'])['median']
+
+
 def fmt(v, digits):
     return f'{v:,.{digits}f}'
 
@@ -281,8 +293,7 @@ def headline(by):
     if PLATFORM == 'macos':
         # Where the window server spends more on zgx's window than on the
         # lowest rival's: said beside the verdict, not left to its chart.
-        over = [value(s, 'zgx', m, 'windowserver_cpu_percent')
-                - min(value(s, r, m, 'windowserver_cpu_percent') for r in rivals if r in s['frameworks'])
+        over = [server(s, 'zgx', m) - min(server(s, r, m) for r in rivals if r in s['frameworks'])
                 for s, m in active]
         # Under 0.05 points rounds to level on the chart.
         over = [o for o in over if o >= 0.05]
@@ -336,9 +347,11 @@ def chart(scene, metric):
     if metric == 'board':
         unit += f' ({fmt(scene["desktop_board_w"], 1)} W)'
     modes = [m for m in scene['modes'] if applies == 'all' or m != 'idle']
-    # Idle WindowServer: what each app adds over its round's desktop alone.
-    over = metric == 'server' and 'idle_server' in scene
-    source = lambda m: 'windowserver_over_desktop' if over and m == 'idle' else key
+    # WindowServer: what each app adds over its round's desktop alone, where
+    # the run has it (idle; active cells too with six rounds).
+    over = metric == 'server'
+    source = lambda m: ('windowserver_over_desktop'
+                        if over and 'windowserver_over_desktop' in cell(scene, scene['frameworks'][0], m) else key)
     rows = [(m, f, c[source(m)]) for m in modes for f in scene['frameworks']
             for c in [cell(scene, f, m)] if source(m) in c]
     top = max(max(s['median'], 0) * scale for _, _, s in rows) or 1
@@ -355,7 +368,8 @@ def chart(scene, metric):
             width = 100 * max(median, 0) / top
             # Idle CPU is a fraction of a percent: two places show it.
             places = 2 if (metric, mode) == ('cpu', 'idle') else digits
-            label = idle_server_label(scene) if over and mode == 'idle' else MODES[mode]
+            label = (idle_server_label(scene) if over and mode == 'idle' and 'idle_server' in scene
+                     else f"{MODES[mode]}, less the desktop" if source(mode) != key else MODES[mode])
             head = f'<th scope="rowgroup" rowspan="{len(group)}" class="mode">{label}</th>' if i == 0 else ''
             low, high = fmt(low, places), fmt(high, places)
             spread_text = '' if low == high else f' <span class="range">({low}–{high})</span>'
@@ -753,8 +767,7 @@ def macos_facts(by, e, env, display, tools, mygo_build, commit, protocol, anchor
     active = [(s, m) for s in by.values() for m in s['modes'] if m != 'idle']
     rivals = [f for f in heavy['frameworks'] if not f.startswith('zgx')]
     # How far above the cheapest rival's window zgx's costs WindowServer, per test.
-    server_gaps = [value(s, 'zgx', m, 'windowserver_cpu_percent')
-                   - min(value(s, r, m, 'windowserver_cpu_percent') for r in rivals if r in s['frameworks'])
+    server_gaps = [server(s, 'zgx', m) - min(server(s, r, m) for r in rivals if r in s['frameworks'])
                    for s, m in active]
     server_more = sum(gap > 0 for gap in server_gaps)
     server_gap = max(server_gaps)

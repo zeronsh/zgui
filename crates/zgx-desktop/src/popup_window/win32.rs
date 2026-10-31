@@ -1095,7 +1095,7 @@ impl PopupHost {
                 .is_none_or(|old| (old.width, old.height) != (rect.width, rect.height));
             if changed || resized {
                 let renderer = panel.renderer.as_mut().expect("made above");
-                let drawn = crate::contain::run(
+                let drawn = crate::contain::run_frame(
                     &mut panel.fault,
                     revision,
                     std::time::Instant::now(),
@@ -1106,6 +1106,9 @@ impl PopupHost {
                         renderer.render(scene, &[])
                     },
                 );
+                for issue in renderer.take_issues() {
+                    crate::contain::queue_issue(issue);
+                }
                 if let Some(drawn) = drawn {
                     drawn?;
                     renderer.present()?;
@@ -1241,6 +1244,10 @@ impl PopupHost {
         }
     }
     /// Hide every popup (the window closes or goes away).
+    pub fn memory(&self, report: &mut zgx::memory::Report) {
+        let renderers = self.shown.iter();
+        super::report_popups(renderers.filter_map(|(_, p)| p.renderer.as_ref()), report);
+    }
     pub fn hide_all(&mut self, _: &winit::window::Window) {
         for (_, panel) in self.shown.drain(..) {
             release(panel);

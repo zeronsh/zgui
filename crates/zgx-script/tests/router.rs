@@ -1,5 +1,5 @@
 //! `ui.router`: named routes with params, history, the platform's back and
-//! forward input (keys, the mouse's buttons), deep links by scheme, and a
+//! forward input (keys, the mouse's buttons, a trackpad's swipe), deep links by scheme, and a
 //! modal route through an overlay's controlled `open` with `on_close`.
 mod common;
 use common::Harness;
@@ -146,6 +146,33 @@ fn history_goes_back_and_forward() {
         "thread /thread/9 9",
         "and its forward button"
     );
+}
+
+#[test]
+fn a_swipe_between_pages_over_the_view_goes_back_and_forward() {
+    use zgx::input::{Navigation, ScrollGesture};
+    let (mut h, _) = app();
+    h.click("open-7");
+    h.click("open-9");
+    let view = h.bounds("view");
+    let (x, y) = (view.x + 20., view.y + 20.);
+    assert!(h.ui.input.navigate(&h.ui.scene, x, y, Navigation::Back));
+    h.settle();
+    assert_eq!(h.text("where"), "thread /thread/7 7", "a swipe back");
+    assert!(h.ui.input.navigate(&h.ui.scene, x, y, Navigation::Forward));
+    h.settle();
+    assert_eq!(h.text("where"), "thread /thread/9 9", "and forward");
+    // A trackpad gesture across the view is a swipe (the host tracks it).
+    h.ui.set_elastic_scrolling(true);
+    h.ui.set_navigation_swipes(true);
+    h.ui.dispatch(InputEvent::ScrollGesture(ScrollGesture::Began));
+    h.ui.dispatch(InputEvent::Scroll {
+        x,
+        y,
+        delta_x: -20.,
+        delta_y: 0.,
+    });
+    assert!(h.ui.take_navigation_swipe());
 }
 
 #[test]

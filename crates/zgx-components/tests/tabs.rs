@@ -93,6 +93,106 @@ fn panel(ui: &Ui, view: &ViewHandle) -> String {
     }
 }
 
+type Strips = (
+    Ui,
+    ViewHandle,
+    [zgx::reactive::Signal<Vec<Tab>>; 2],
+    [zgx::reactive::Signal<String>; 2],
+);
+/// Two strips side by side, the left's tabs ids `a` and `b`, the right's `c`.
+fn two_strips(group: Option<&str>, told: Rc<RefCell<Vec<(String, String)>>>) -> Strips {
+    let mut ui = Ui::new(600., 200.);
+    let items = [
+        ui.signal(vec![Tab::new("a", "Alpha"), Tab::new("b", "Beta")]),
+        ui.signal(vec![Tab::new("c", "Gamma")]),
+    ];
+    let selected = [ui.signal("a".to_owned()), ui.signal("c".to_owned())];
+    let strip = |side: usize, label: &str| {
+        let told = told.clone();
+        tabs(
+            label,
+            items[side].clone(),
+            selected[side].clone(),
+            TabsOptions {
+                reorderable: true,
+                group: group.map(str::to_owned),
+                on_move: Some(Rc::new(move |id: &str, to: &str| {
+                    told.borrow_mut().push((id.to_owned(), to.to_owned()));
+                })),
+                ..Default::default()
+            },
+            |id, _| text(format!("Panel {id}")),
+        )
+        .w(300.)
+        .h(200.)
+    };
+    let view = ui.mount(
+        row()
+            .w(600.)
+            .h(200.)
+            .child(strip(0, "Left"))
+            .child(strip(1, "Right")),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    (ui, view, items, selected)
+}
+fn drag_tab(ui: &mut Ui, view: &ViewHandle, label: &str, x: f32, y: f32) {
+    let tabs = with_role(ui, view, Role::Tab);
+    let names = labels(ui, &tabs);
+    let at = names
+        .iter()
+        .position(|name| name == label)
+        .expect("the tab");
+    let b = ui.scene.borrow().bounds(tabs[at]);
+    let (from_x, from_y) = (b.x + b.width / 2., b.y + b.height / 2.);
+    ui.dispatch(InputEvent::PointerDown {
+        x: from_x,
+        y: from_y,
+        button: PointerButton::Primary,
+    });
+    ui.dispatch(InputEvent::PointerMove {
+        x: from_x + 20.,
+        y: from_y,
+    });
+    ui.dispatch(InputEvent::PointerMove { x, y });
+    ui.prepare_frame();
+    ui.dispatch(InputEvent::PointerUp {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    ui.prepare_frame();
+    ui.prepare_frame();
+}
+
+#[test]
+fn a_tab_dragged_over_another_strip_of_its_group_goes_there() {
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let (mut ui, view, items, selected) = two_strips(Some("panes"), told.clone());
+    drag_tab(&mut ui, &view, "Alpha", 450., 120.);
+    assert_eq!(order(&items[0]), ["b"]);
+    assert_eq!(order(&items[1]), ["c", "a"]);
+    assert_eq!(selected[0].get(), "b", "its neighbour is chosen");
+    assert_eq!(selected[1].get(), "a", "and it is, where it went");
+    assert_eq!(*told.borrow(), [("a".to_owned(), "Right".to_owned())]);
+
+    // Its last tab gone, a strip chooses nothing.
+    drag_tab(&mut ui, &view, "Beta", 450., 20.);
+    assert_eq!(order(&items[0]), Vec::<String>::new());
+    assert_eq!(selected[0].get(), "");
+    assert_eq!(order(&items[1]), ["c", "a", "b"]);
+}
+
+#[test]
+fn a_tab_stays_in_its_strip_without_a_group() {
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let (mut ui, view, items, _) = two_strips(None, told.clone());
+    drag_tab(&mut ui, &view, "Alpha", 450., 120.);
+    assert_eq!(order(&items[1]), ["c"]);
+    assert!(told.borrow().is_empty());
+}
+
 #[test]
 fn tabs_choose_their_panel_by_pointer_and_keyboard() {
     let (mut ui, view, _, selected) = mounted(500., TabsOptions::default());
@@ -351,4 +451,121 @@ fn a_bare_button_opens_its_menu() {
     let b = view.find("b").unwrap();
     click(&mut ui, b);
     assert!(open.get());
+}
+
+/// Two windows of one app (on one runtime), each a strip in group `docs`
+/// that tears off: the left's tabs `a` and `b`, the right's `c`. What each
+/// tells, in `log`.
+type TornWindows = (
+    [(Ui, ViewHandle); 2],
+    [zgx::reactive::Signal<Vec<Tab>>; 2],
+    [zgx::reactive::Signal<String>; 2],
+);
+fn torn_windows(log: Rc<RefCell<Vec<String>>>) -> TornWindows {
+    let mut left = Ui::new(400., 200.);
+    let mut right = Ui::with_runtime(left.runtime.clone(), 400., 200.);
+    let items = [
+        left.signal(vec![Tab::new("a", "Alpha"), Tab::new("b", "Beta")]),
+        left.signal(vec![Tab::new("c", "Gamma")]),
+    ];
+    let selected = [left.signal("a".to_owned()), left.signal("c".to_owned())];
+    let strip = |side: usize, label: &str| {
+        let (moved, torn) = (log.clone(), log.clone());
+        tabs(
+            label,
+            items[side].clone(),
+            selected[side].clone(),
+            TabsOptions {
+                reorderable: true,
+                group: Some("docs".into()),
+                on_move: Some(Rc::new(move |id: &str, to: &str| {
+                    moved.borrow_mut().push(format!("moved {id} to {to}"));
+                })),
+                // `c` stays home: refused, it isn't torn off.
+                on_tear_off: Some(Rc::new(move |id: &str, e: &zgx::input::DragEvent| {
+                    let grab = e.grab_x.round();
+                    torn.borrow_mut()
+                        .push(format!("torn {id} grabbed {grab} in"));
+                    id != "c"
+                })),
+                ..Default::default()
+            },
+            |id, _| text(format!("Panel {id}")),
+        )
+        .w(400.)
+        .h(200.)
+    };
+    let left_view = left.mount(strip(0, "Left"));
+    let right_view = right.mount(strip(1, "Right"));
+    for _ in 0..2 {
+        left.prepare_frame();
+        right.prepare_frame();
+    }
+    ([(left, left_view), (right, right_view)], items, selected)
+}
+/// Press `label`'s tab and drag it down off its strip: a drag starts.
+fn tear(ui: &mut Ui, view: &ViewHandle, label: &str) -> zgx::actions::Action {
+    let tabs = with_role(ui, view, Role::Tab);
+    let at = labels(ui, &tabs).iter().position(|n| n == label).unwrap();
+    let b = ui.scene.borrow().bounds(tabs[at]);
+    let (x, y) = (b.x + 10., b.y + b.height / 2.);
+    ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    ui.dispatch(InputEvent::PointerMove { x, y: y + 120. });
+    let drag = ui.input.drag_state().expect("torn off, it drags");
+    drag.payload
+}
+
+#[test]
+fn a_tab_torn_off_leaves_drops_on_another_windows_strip_or_comes_home() {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let ([(mut left, left_view), (mut right, right_view)], items, selected) =
+        torn_windows(log.clone());
+
+    // Out of every window: it leaves, and the app is told where it was grabbed.
+    tear(&mut left, &left_view, "Alpha");
+    left.input.end_drag_elsewhere(&left.scene, false, true);
+    left.prepare_frame();
+    assert_eq!(order(&items[0]), ["b"]);
+    assert_eq!(selected[0].get(), "b", "its neighbour is chosen");
+    assert_eq!(*log.borrow(), ["torn a grabbed 10 in"]);
+
+    // Onto the other window's strip: it goes there, and is chosen.
+    log.borrow_mut().clear();
+    let payload = tear(&mut left, &left_view, "Beta");
+    left.input.set_drag_away(&left.scene, true);
+    assert!(right.input.drag_over(&right.scene, &payload, 200., 15.));
+    assert!(right.input.drag_drop(&right.scene, &payload, 200., 15.));
+    left.input.end_drag_elsewhere(&left.scene, true, false);
+    left.prepare_frame();
+    right.prepare_frame();
+    assert_eq!(order(&items[0]), Vec::<String>::new());
+    assert_eq!(order(&items[1]), ["c", "b"]);
+    assert_eq!(selected[1].get(), "b");
+    assert_eq!(*log.borrow(), ["moved b to Right"]);
+
+    // Dropped back on its own strip: it stays, and nobody is told.
+    log.borrow_mut().clear();
+    tear(&mut right, &right_view, "Gamma");
+    right.dispatch(InputEvent::PointerMove { x: 100., y: 100. });
+    right.dispatch(InputEvent::PointerUp {
+        x: 100.,
+        y: 100.,
+        button: PointerButton::Primary,
+    });
+    right.prepare_frame();
+    assert_eq!(order(&items[1]), ["c", "b"]);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+
+    // Out of every window, refused: it stays where it was.
+    tear(&mut right, &right_view, "Gamma");
+    right.input.end_drag_elsewhere(&right.scene, false, true);
+    right.prepare_frame();
+    assert_eq!(order(&items[1]), ["c", "b"]);
+    assert_eq!(*log.borrow(), ["torn c grabbed 10 in"]);
+    let ended = right.input.take_drag_ended().expect("it ended");
+    assert!(!ended.outside, "not taken: its preview slides home");
 }

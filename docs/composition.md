@@ -171,7 +171,10 @@ those not mounted by their `row_text`, else by building the row's description
 without mounting it), case and accents ignored as Chrome's and Safari's do
 ("cafe" finds "Café", composed and decomposed forms alike, curly quotes as
 straight ones). Each match is marked behind its text (`find.match`), the
-current one apart (`find.current`) and scrolled into view; Enter and
+current one apart (`find.current`), each drawn as a selection is: one shape
+over the lines it runs on, rounded by `mark.radius` (by default the selection's
+radius), as an editor's decorations are too. The current one is scrolled
+into view; Enter and
 Command-G (Control-G, F3) go to the next, with Shift the one before,
 wrapping; Escape closes it, the match selected where the text is selectable
 (a field's match is scrolled to but its selection left until then). On
@@ -209,10 +212,16 @@ pasted from a PNG where one is there, else from the DIB another app copied
 The highlight is styled as CSS's `::selection` is. Its background is the
 theme's `selection` token (`selection.inactive` while the window is at the
 back). The glyphs inside it repaint in `selection.text` (`selection.text.inactive`),
-which is transparent by default, so they keep their own colours. Its rects
-round by `selection.radius` (0). Override them for a subtree with
+which is transparent by default, so they keep their own colours. Lines that
+touch draw as one shape, in selectable text and in editors alike: outer corners
+round by `selection.radius` (3, at most half a line), the corners between a line
+and a longer one curve the other way, and a translucent colour stays even across
+them. An empty line in the selection shows as a sliver, as in an editor. A radius
+of 0 draws plain rectangles; so does the software renderer for a selection over
+lines, which rounds a selection on one line alone. Override them for a subtree with
 `theme_scope(ThemeOverride::new().with(tok::SELECTION_TEXT, color), view)`,
-or on one region with `.selection_color(color)` and `.selected_text_color(color)`
+or on one region with `.selection_color(color)`, `.selected_text_color(color)` and
+`.selection_radius(radius)`
 (`_when` variants follow reactive reads), which hold in either window state. A
 glyph recolours when its centre lies in a highlight rect, from the glyphs
 already laid out on the GPU and software paths: changing a colour or the
@@ -413,6 +422,10 @@ Selection and read-only refreshes retain unchanged paint text and semantic value
 
 Editors accept the ordinary dimension, padding, decoration, typography, focus, and disabled styles. Their internals remain stable when layout reallocates their width. `text_area` preserves explicit line breaks and scrolls horizontally for long lines by default. Add `.text_wrap(true)` to wrap at the allocated content width. This inherited style also supports reactive changes; visual wrapping never inserts model newlines. Single-line `text_input` stays unwrapped. Both editor constructors are leaves and reject child views. Unmounting releases input handlers and model subscriptions. Custom headless hosts should call `Ui::prepare_frame()` before flushing or rendering the scene so editor viewports follow allocated layout.
 
+`.read_only_when(f)` keeps a field selectable and focusable and refuses the person's edits while `f` says so. `.input_mode(InputMode::Email)`, HTML's `inputmode`, says what kind of text a field takes. `.caret_color(color)` (or `.caret_color_when(f)`) and `.caret_width(points)` set a field's own caret, and `EditorHandle::set_caret_style` changes it later. `.span_highlighter(f)` styles a text area's lines with `SpanStyle`s (`SpanStyle::default().weight(600).italic()`): weights and italics are shaped, so carets and clicks follow them, and strikes and washes sit on top. `EditorHandle::set_span_highlighter` replaces it.
+
+`.at_caret()` places a popover at the caret of the field in its anchor, following it as text is typed, a line wraps, the field scrolls and an input method composes: a mention's or a slash command's suggestions. It takes no focus, so the field's keys move through them, and `.active_descendant(f)`, HTML's `aria-activedescendant`, tells assistive technology the one it is on.
+
 ### Virtual lists
 
 `virtual_list` mounts fixed-height rows from a reactive count and an indexed key
@@ -549,7 +562,7 @@ still report the bounded layout feedback error described below.
 
 ## Allocation feedback errors
 
-A size-dependent row constructor or disposal callback can repeatedly change its own viewport. `Ui::try_prepare_frame` returns `LayoutFeedbackError` after at most 64 stabilization passes instead of hanging. Reentrant preparation defers notifications to the outer call. Correct the model dependency before retrying; application mutations are not rolled back. `try_dispatch` also reports this error without delivering input against unstable geometry. The convenience `prepare_frame` and `dispatch` methods panic with the same diagnostic, while native drawing and input propagate it through `Application::run`.
+A size-dependent row constructor or disposal callback can repeatedly change its own viewport. `Ui::try_prepare_frame` returns `LayoutFeedbackError` after at most 64 stabilization passes instead of hanging. Reentrant preparation defers notifications to the outer call. Correct the model dependency before retrying; application mutations are not rolled back. Window hosts call `Ui::contain_layout_feedback`, so in a window this is reported through `zgx::issues::on_issue` and the app goes on with the layout it reached ([what an app keeps running through](application.md#when-something-fails)). `try_dispatch` also reports this error without delivering input against unstable geometry. The convenience `prepare_frame` and `dispatch` methods panic with the same diagnostic, while native drawing and input propagate it through `Application::run`.
 
 ```rust
 use zgx::{widgets::Ui, input::InputEvent};

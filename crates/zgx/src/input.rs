@@ -117,6 +117,18 @@ pub enum ScrollGesture {
     /// Momentum scrolling ended.
     MomentumEnded,
 }
+/// A step back or forward through where an app has been, as a browser's
+/// Back and Forward go: a trackpad's swipe between pages (macOS) reaches
+/// the view under it as this action, in an [`InputEvent::Action`]
+/// ([`InputDispatcher::navigate`]); a view takes it with
+/// `View::on_navigate`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Navigation {
+    /// Back, to where it was.
+    Back,
+    /// Forward again, to where it went back from.
+    Forward,
+}
 /// An input event, routed to nodes by the [`InputDispatcher`]. Positions
 /// are in window points from the top left.
 #[derive(Clone, Debug, PartialEq)]
@@ -606,6 +618,8 @@ struct State {
     /// Views that take keys while nothing is focused (`take_unfocused_keys`),
     /// the last mounted first.
     unfocused_keys: Vec<NodeId>,
+    /// Views that take a step back or forward (`take_navigation`).
+    navigators: Vec<NodeId>,
     entries: crate::scene::NodeMap<Vec<Entry>>,
     options: crate::scene::NodeMap<NodeInput>,
     /// Boxes the pointer passes through while nothing they hold is displayed
@@ -761,6 +775,52 @@ impl InputDispatcher {
         state.unfocused_keys.retain(|n| *n != node);
         state.unfocused_keys.push(node);
     }
+    /// `node` takes a step back or forward ([`Navigation`]) from what is
+    /// under it: a trackpad's swipe over it navigates rather than scrolls
+    /// where nothing between scrolls that way (`Ui::set_navigation_swipes`).
+    /// It hears the action with its listeners (`View::on_navigate`).
+    pub fn take_navigation(&self, node: NodeId, scene: &Scene) {
+        let mut state = self.state.borrow_mut();
+        state
+            .navigators
+            .retain(|n| *n != node && scene.contains(*n));
+        state.navigators.push(node);
+    }
+    /// Whether `target` or a view around it takes navigation
+    /// (`take_navigation`). Reads only.
+    pub(crate) fn navigates(&self, scene: &Scene, target: NodeId) -> bool {
+        let state = self.state.borrow();
+        !state.navigators.is_empty()
+            && std::iter::once(target)
+                .chain(scene.ancestors(target))
+                .any(|node| state.navigators.contains(&node))
+    }
+    /// Step back or forward from what is under `x`, `y`, as a swipe there
+    /// does: the view under it hears `navigation`, and the views around it
+    /// as it bubbles. Whether one took it.
+    pub fn navigate(
+        &self,
+        scene: &Rc<RefCell<Scene>>,
+        x: f32,
+        y: f32,
+        navigation: Navigation,
+    ) -> bool {
+        let Some(target) = self.hit_target(&scene.borrow(), x, y) else {
+            return false;
+        };
+        self.dispatch_to(
+            scene,
+            target,
+            InputEvent::Action(crate::actions::Action::new(navigation)),
+        )
+        .default_prevented
+    }
+    /// The next press starts a count of its own, as one after the
+    /// double-click time has passed would: separate clicks a test makes in
+    /// a row, which a person's hand could not make that fast.
+    pub fn forget_clicks(&self) {
+        self.state.borrow_mut().clicks.0 = None;
+    }
     /// How soon after a press another on the same spot counts as a double
     /// (then triple) click: the system's double-click time, which the
     /// desktop host gives (macOS's and Windows' setting, GNOME's and KDE's);
@@ -768,6 +828,11 @@ impl InputDispatcher {
     pub fn set_double_click_time(&self, interval: Duration) {
         self.state.borrow_mut().clicks.1 =
             interval.clamp(Duration::from_millis(100), Duration::from_secs(5));
+    }
+    /// The double-click time in use (`set_double_click_time`): 500 ms until
+    /// the host gives the system's.
+    pub fn double_click_time(&self) -> Duration {
+        self.state.borrow().clicks.1
     }
     /// The box, in points, centred on a press, that the next must land in
     /// to count as its double (then triple) click: the system's, which the
@@ -1309,8 +1374,9 @@ impl InputDispatcher {
         let hit = self.hit_target(&scene.borrow(), x, y);
         self.set_hover(scene, hit);
     }
-    /// What a press at `x, y` lands on, as dispatch finds it.
-    pub(crate) fn pointer_target(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
+    /// What a press at `x, y` lands on, as dispatch finds it: the nearest
+    /// node with listeners under it, past pass-through and empty overlays.
+    pub fn pointer_target(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
         self.hit_target(scene, x, y)
     }
     /// What a primary press at `x, y` would focus, as dispatch finds it:
@@ -1448,7 +1514,57 @@ impl InputDispatcher {
     /// listeners may have removed it or moved focus on (a dialog's button
     /// closing the dialog), and what has focus now did not hear the key.
     fn still_targeted(&self, scene: &Rc<RefCell<Scene>>, target: Option<NodeId>) -> Option<NodeId> {
-        target.filter(|id| self.focused() == Some(*id) && scene.borrow().contains(*id))
+        target.filter(|id| {
+            let scene = scene.borrow();
+            // Inert content (a row leaving) activates on no key.
+            self.focused() == Some(*id) && scene.contains(*id) && scene.inert_around(*id).is_none()
+        })
+    }
+    /// Move focus off inert content (`Scene::set_inert`: a row playing its
+    /// exit, gone from its data): to the next focusable control after it,
+    /// else the one before, else the nearest focusable around it, as a
+    /// platform's list moves focus off a row it deletes. Whoever makes
+    /// content inert calls it (`NodeHandle::leave`).
+    pub fn leave_inert(&self, scene: &Rc<RefCell<Scene>>) {
+        let target = {
+            let scene = scene.borrow();
+            let Some(focused) = self.focused() else {
+                return;
+            };
+            let Some(leaving) = scene.inert_around(focused) else {
+                return;
+            };
+            let takes = |id: NodeId| {
+                self.options(id)
+                    .is_some_and(|o| o.focusable && o.tab_index >= 0)
+                    && scene.inert_around(id).is_none()
+                    && self.enabled(&scene, id)
+            };
+            // Document order, leaving's subtree passed over.
+            let (mut before, mut after) = (None, None);
+            let mut passed = false;
+            let mut stack = vec![scene.root()];
+            while let Some(id) = stack.pop() {
+                if id == leaving {
+                    passed = true;
+                    continue;
+                }
+                if takes(id) {
+                    if passed {
+                        after = Some(id);
+                        break;
+                    }
+                    before = Some(id);
+                }
+                stack.extend(scene.children(id).iter().rev().copied());
+            }
+            after
+                .or(before)
+                .or_else(|| scene.ancestors(leaving).find(|id| takes(*id)))
+        };
+        if target.is_none() || !self.focus(scene, target) {
+            self.focus(scene, None);
+        }
     }
     /// Whether `node` can take input now: shown, not disabled itself or by
     /// an ancestor, not transparent, and inside the active modal scope.
@@ -2741,6 +2857,7 @@ mod tests {
         assert_eq!(press(0), 1);
         assert_eq!(press(700), 1, "past the default 500 ms");
         input.set_double_click_time(Duration::from_millis(900));
+        assert_eq!(input.double_click_time(), Duration::from_millis(900));
         assert_eq!(press(1400), 2);
         input.set_double_click_time(Duration::ZERO);
         assert_eq!(input.state.borrow().clicks.1, Duration::from_millis(100));

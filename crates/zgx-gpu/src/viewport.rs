@@ -126,18 +126,59 @@ pub fn texture_with_levels(
         ),
         "texture_with_levels makes Rgba8UnormSrgb or Rgba8Unorm textures, not {format:?}"
     );
+    with_levels(device, queue, size, format, 1, levels, label)
+}
+
+/// A cube texture for a painter to sample (an environment's light), holding
+/// `levels` of `Rgb9e5Ufloat` texels (4 bytes each, high dynamic range): a
+/// level is its six faces one after another (+x, -x, +y, -y, +z, -z, as
+/// WebGPU faces them), each a square of rows top to bottom, the first
+/// `side` and each next half the one before (at least 1). Written in place
+/// by the CPU on a Mac with unified memory, as `texture_with_levels` is;
+/// view it with `TextureViewDimension::Cube`.
+///
+/// Panics if a level holds other than six of its squares' texels.
+pub fn cube_with_levels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    side: u32,
+    levels: &[&[u8]],
+    label: &str,
+) -> wgpu::Texture {
+    with_levels(
+        device,
+        queue,
+        (side, side),
+        wgpu::TextureFormat::Rgb9e5Ufloat,
+        6,
+        levels,
+        label,
+    )
+}
+
+/// A texture of `layers` (1, or a cube's 6) of 4-byte texels, `levels`
+/// holding each level's layers one after another.
+fn with_levels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    size: (u32, u32),
+    format: wgpu::TextureFormat,
+    layers: u32,
+    levels: &[&[u8]],
+    label: &str,
+) -> wgpu::Texture {
     let level_size = |level: usize| ((size.0 >> level).max(1), (size.1 >> level).max(1));
-    for (level, pixels) in levels.iter().enumerate() {
+    for (level, texels) in levels.iter().enumerate() {
         let (width, height) = level_size(level);
         assert_eq!(
-            pixels.len() as u64,
-            u64::from(width) * u64::from(height) * 4,
-            "texture level {level}: {width} by {height} RGBA8 pixels"
+            texels.len() as u64,
+            u64::from(width) * u64::from(height) * 4 * u64::from(layers),
+            "texture level {level}: {layers} layers of {width} by {height} 4-byte texels"
         );
     }
     let count = levels.len().max(1) as u32;
     #[cfg(target_os = "macos")]
-    if let Some(texture) = shared_levels(device, size, format, levels, count, label) {
+    if let Some(texture) = shared_levels(device, size, format, layers, levels, count, label) {
         return texture;
     }
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -145,7 +186,7 @@ pub fn texture_with_levels(
         size: wgpu::Extent3d {
             width: size.0,
             height: size.1,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: layers,
         },
         mip_level_count: count,
         sample_count: 1,
@@ -154,7 +195,7 @@ pub fn texture_with_levels(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    for (level, pixels) in levels.iter().enumerate() {
+    for (level, texels) in levels.iter().enumerate() {
         let (width, height) = level_size(level);
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -163,7 +204,7 @@ pub fn texture_with_levels(
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            pixels,
+            texels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 4),
@@ -172,19 +213,20 @@ pub fn texture_with_levels(
             wgpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: layers,
             },
         );
     }
     texture
 }
-/// `texture_with_levels` on a Metal device with unified memory: a shared
-/// texture the CPU writes in place. `None` on another device.
+/// `with_levels` on a Metal device with unified memory: a shared texture
+/// the CPU writes in place. `None` on another device.
 #[cfg(target_os = "macos")]
 fn shared_levels(
     device: &wgpu::Device,
     size: (u32, u32),
     format: wgpu::TextureFormat,
+    layers: u32,
     levels: &[&[u8]],
     count: u32,
     label: &str,
@@ -199,18 +241,28 @@ fn shared_levels(
     if !hal.raw_device().hasUnifiedMemory() {
         return None;
     }
-    // SAFETY: A plain 2D texture descriptor of this size.
+    let pixel_format = match format {
+        wgpu::TextureFormat::Rgba8UnormSrgb => MTLPixelFormat::RGBA8Unorm_sRGB,
+        wgpu::TextureFormat::Rgb9e5Ufloat => MTLPixelFormat::RGB9E5Float,
+        _ => MTLPixelFormat::RGBA8Unorm,
+    };
+    let cube = layers == 6;
+    // SAFETY: A plain 2D or cube texture descriptor of this size.
     let descriptor = unsafe {
-        MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-            if format == wgpu::TextureFormat::Rgba8UnormSrgb {
-                MTLPixelFormat::RGBA8Unorm_sRGB
-            } else {
-                MTLPixelFormat::RGBA8Unorm
-            },
-            size.0 as usize,
-            size.1 as usize,
-            false,
-        )
+        if cube {
+            MTLTextureDescriptor::textureCubeDescriptorWithPixelFormat_size_mipmapped(
+                pixel_format,
+                size.0 as usize,
+                false,
+            )
+        } else {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                pixel_format,
+                size.0 as usize,
+                size.1 as usize,
+                false,
+            )
+        }
     };
     // SAFETY: Each level halves the one before, at least 1 (asserted by
     // the caller's sizes), so there are no more than the full chain's.
@@ -219,7 +271,7 @@ fn shared_levels(
     descriptor.setStorageMode(MTLStorageMode::Shared);
     let metal = hal.raw_device().newTextureWithDescriptor(&descriptor)?;
     drop(hal);
-    for (level, pixels) in levels.iter().enumerate() {
+    for (level, texels) in levels.iter().enumerate() {
         let (width, height) = ((size.0 >> level).max(1), (size.1 >> level).max(1));
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
@@ -229,27 +281,38 @@ fn shared_levels(
                 depth: 1,
             },
         };
-        // SAFETY: Level `level` whole, of a new RGBA8 texture no submission
-        // reads, from `pixels` holding its rows of `width * 4` bytes
-        // (asserted by the caller).
-        unsafe {
-            metal.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
-                region,
-                level,
-                std::ptr::NonNull::from(*pixels).cast(),
-                (width * 4) as usize,
-            )
-        };
+        let layer_bytes = (width * height * 4) as usize;
+        for layer in 0..layers as usize {
+            let bytes = &texels[layer * layer_bytes..][..layer_bytes];
+            // SAFETY: Layer `layer` of level `level` whole, of a new texture
+            // of 4-byte texels no submission reads, from `bytes` holding its
+            // rows of `width * 4` bytes (asserted by the caller).
+            unsafe {
+                metal.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
+                    region,
+                    level,
+                    layer,
+                    std::ptr::NonNull::from(bytes).cast(),
+                    (width * 4) as usize,
+                    layer_bytes,
+                )
+            };
+        }
     }
-    // SAFETY: Metal made this texture on this device: RGBA8 in `format`, this size,
-    // `count` levels and one layer, readable by shaders; wgpu takes
-    // ownership of it, written (and so initialized) whole.
+    // SAFETY: Metal made this texture on this device: `format`, this size,
+    // `count` levels and `layers` layers (a cube's six as its faces),
+    // readable by shaders; wgpu takes ownership of it, written (and so
+    // initialized) whole.
     Some(unsafe {
         let raw = wgpu::hal::metal::Device::texture_from_raw(
             metal,
             format,
-            MTLTextureType::Type2D,
-            1,
+            if cube {
+                MTLTextureType::TypeCube
+            } else {
+                MTLTextureType::Type2D
+            },
+            layers,
             count,
             wgpu::hal::CopyExtent {
                 width: size.0,
@@ -264,7 +327,7 @@ fn shared_levels(
                 size: wgpu::Extent3d {
                     width: size.0,
                     height: size.1,
-                    depth_or_array_layers: 1,
+                    depth_or_array_layers: layers,
                 },
                 mip_level_count: count,
                 sample_count: 1,
@@ -369,7 +432,7 @@ impl GpuRenderer {
         let mut kept = None;
         let key = (frame.view, frame.shown_by);
         if let Some(last) = views.shown.remove(&key)
-            && let Some((bind, bytes, Some(texture))) = self.images.remove(&last.image)
+            && let Some((bind, bytes, Some(texture), _)) = self.images.remove(&last.image)
             && last.size == size
         {
             kept = Some((bind, bytes, texture, last.targets));
@@ -412,7 +475,8 @@ impl GpuRenderer {
             views.hidden.push(key);
             zgx::gpu_view::set_planed(key.0, key.1, false);
         }
-        self.images.insert(image.id(), (bind, bytes, Some(texture)));
+        self.images
+            .insert(image.id(), (bind, bytes, Some(texture), (0, 0)));
         self.views.as_mut().unwrap().shown.insert(
             key,
             Shown {

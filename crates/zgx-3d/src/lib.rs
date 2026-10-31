@@ -30,6 +30,13 @@
 //! ```
 #![warn(missing_docs)]
 
+#[cfg(all(doctest, feature = "gltf"))]
+#[doc = include_str!("../../../docs/3d.md")]
+mod guide {}
+
+#[cfg(feature = "gltf")]
+mod animation;
+mod environment;
 mod geometry;
 #[cfg(feature = "gltf")]
 mod gltf;
@@ -40,13 +47,17 @@ mod render;
 mod texture;
 mod world;
 
-pub use geometry::{Geometry, Vertex};
+#[cfg(feature = "gltf")]
+pub use animation::{Clip, Placed};
+pub use environment::Environment;
+pub use geometry::{Geometry, MorphTarget, Vertex};
 #[cfg(feature = "gltf")]
 pub use gltf::{Model, ModelError};
 pub use math::{Mat4, Quat, Transform, Vec3, vec3};
-pub use orbit::Orbit;
+pub use orbit::{Answer, Orbit, OrbitControls};
 pub use pick::Hit;
-pub use texture::{Map, Texture};
+pub use texture::{Map, MapPlacement, Texture, Wrap};
 pub use world::{
-    Camera, Light, LightId, Material, Object, ObjectId, POINT_LIGHTS, World, srgb_to_linear,
+    Camera, Light, LightId, MAX_JOINTS, Material, Object, ObjectId, POINT_LIGHTS, Skin, Spot,
+    ToneMapping, Transmission, World, srgb_to_linear,
 };

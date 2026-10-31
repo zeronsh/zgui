@@ -210,6 +210,9 @@ pub mod event_loop;
 mod icon;
 pub mod keyboard;
 pub mod monitor;
+#[cfg(any(windows_platform, test))]
+#[cfg_attr(not(windows_platform), allow(dead_code))]
+mod occlusion_area;
 mod platform_impl;
 mod utils;
 pub mod window;

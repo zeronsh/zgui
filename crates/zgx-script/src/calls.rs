@@ -63,11 +63,17 @@ pub struct Response {
 pub struct Body(Rc<BodyInner>);
 /// What hears each piece of a body: the script's handlers.
 type Sink = Box<dyn FnMut(&[u8])>;
+/// What hears a request's body go out: `on_progress(sent, total)`.
+type Progress = Box<dyn FnMut(u64, u64)>;
 struct BodyInner {
     /// What hears each piece. None: kept whole.
     sink: RefCell<Option<Sink>>,
     kept: RefCell<Vec<u8>>,
     open: Cell<bool>,
+    /// What hears the request's body going out (`on_progress`), and
+    /// whether the transport has told it.
+    progress: RefCell<Option<Progress>>,
+    told: Cell<bool>,
 }
 impl Body {
     fn new(sink: Option<Sink>) -> Self {
@@ -75,6 +81,8 @@ impl Body {
             sink: RefCell::new(sink),
             kept: RefCell::default(),
             open: Cell::new(true),
+            progress: RefCell::default(),
+            told: Cell::new(false),
         }))
     }
     /// A body kept whole, for the response's `body`.
@@ -97,6 +105,23 @@ impl Body {
                 }
             }
             None => self.0.kept.borrow_mut().extend_from_slice(bytes),
+        }
+    }
+    /// How much of the request's body has gone out: `sent` of `total`
+    /// bytes, for the script's `on_progress` (an upload's bar). A
+    /// transport tells it as it writes; one that never does is taken to
+    /// have sent it all once it answers.
+    pub fn sent(&self, sent: u64, total: u64) {
+        if !self.is_open() {
+            return;
+        }
+        self.0.told.set(true);
+        let taken = self.0.progress.borrow_mut().take();
+        if let Some(mut progress) = taken {
+            progress(sent, total);
+            if self.is_open() {
+                *self.0.progress.borrow_mut() = Some(progress);
+            }
         }
     }
     /// Whether the script still listens: false once it cancelled the
@@ -456,7 +481,7 @@ pub(crate) fn settle_with(
 }
 /// As `settle_with`, for a future that tells its failures apart (a fetch:
 /// the transport, a cancel, a status).
-fn settle_failing(
+pub(crate) fn settle_failing(
     lua: &Lua,
     promise: &Rc<Promise>,
     future: impl Future<Output = Result<Value, Failure>> + 'static,
@@ -510,6 +535,205 @@ fn request(lua: &Lua, url: String, opts: Option<Table>) -> mlua::Result<Request>
     }
     Ok(request)
 }
+/// What a request's body is read from: a file, or a form's fields.
+enum Upload {
+    File(std::path::PathBuf),
+    /// `multipart = { name = value }`: text, or a `File`, in name order.
+    Multipart(Vec<(String, Part)>),
+}
+enum Part {
+    Text(String),
+    File(std::path::PathBuf),
+}
+
+/// `file`, `multipart` and `on_progress` of `ui.fetch`'s options.
+fn uploading(opts: &Table, files: bool) -> mlua::Result<(Option<Upload>, Option<Function>)> {
+    let path_of = |value: mlua::Value, what: &str| -> mlua::Result<std::path::PathBuf> {
+        match value {
+            mlua::Value::Table(file) => Ok(file.get::<String>("path")?.into()),
+            mlua::Value::String(path) => Ok(path.to_str()?.to_string().into()),
+            _ => Err(mlua::Error::runtime(format!(
+                "ui.fetch: `{what}` is a file (`{{ path, … }}`, as ui.open_files gives)"
+            ))),
+        }
+    };
+    let file = opts.get::<mlua::Value>("file")?;
+    let multipart = opts.get::<Option<Table>>("multipart")?;
+    let upload = match (file, multipart) {
+        (mlua::Value::Nil, None) => None,
+        (file, None) => Some(Upload::File(path_of(file, "file")?)),
+        (mlua::Value::Nil, Some(fields)) => {
+            let mut parts = Vec::new();
+            for pair in fields.pairs::<String, mlua::Value>() {
+                let (name, value) = pair?;
+                let part = match value {
+                    mlua::Value::String(text) => Part::Text(text.to_str()?.to_string()),
+                    mlua::Value::Number(n) => Part::Text(n.to_string()),
+                    mlua::Value::Integer(n) => Part::Text(n.to_string()),
+                    mlua::Value::Boolean(b) => Part::Text(b.to_string()),
+                    other => Part::File(path_of(other, &format!("multipart.{name}"))?),
+                };
+                parts.push((name, part));
+            }
+            parts.sort_by(|a, b| a.0.cmp(&b.0));
+            Some(Upload::Multipart(parts))
+        }
+        _ => {
+            return Err(mlua::Error::runtime(
+                "ui.fetch: a body is one of `body`, `file` and `multipart`",
+            ));
+        }
+    };
+    if upload.is_some() && !files {
+        return Err(mlua::Error::runtime(
+            "ui.fetch: a plugin sends files only if the host grants it \
+             (`ScriptHost::grant(plugin, Capability::Files)`)",
+        ));
+    }
+    Ok((upload, opts.get("on_progress")?))
+}
+
+/// The bytes and content type of `upload`, read on a thread of their own:
+/// a large file never holds up the window.
+fn read_upload(upload: Upload) -> impl Future<Output = Result<(Vec<u8>, String), String>> {
+    use std::sync::{Arc, Mutex};
+    type Read = Option<Result<(Vec<u8>, String), String>>;
+    let shared: Arc<Mutex<(Read, Option<std::task::Waker>)>> = Arc::default();
+    let done = shared.clone();
+    let read = move || -> Result<(Vec<u8>, String), String> {
+        let read = |path: &std::path::Path| {
+            std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
+        };
+        match upload {
+            Upload::File(path) => {
+                let kind = match crate::io::media_type(&path) {
+                    "" => "application/octet-stream",
+                    kind => kind,
+                };
+                Ok((read(&path)?, kind.to_string()))
+            }
+            Upload::Multipart(parts) => {
+                let boundary = format!("zgx-{:016x}{:016x}", nonce(), nonce());
+                let mut body = Vec::new();
+                for (name, part) in parts {
+                    let name = name.replace('"', "%22");
+                    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+                    match part {
+                        Part::Text(text) => {
+                            body.extend_from_slice(
+                                format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n")
+                                    .as_bytes(),
+                            );
+                            body.extend_from_slice(text.as_bytes());
+                        }
+                        Part::File(path) => {
+                            let file_name = path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().replace('"', "%22"))
+                                .unwrap_or_default();
+                            let kind = match crate::io::media_type(&path) {
+                                "" => "application/octet-stream",
+                                kind => kind,
+                            };
+                            body.extend_from_slice(
+                                format!(
+                                    "Content-Disposition: form-data; name=\"{name}\"; \
+                                     filename=\"{file_name}\"\r\nContent-Type: {kind}\r\n\r\n"
+                                )
+                                .as_bytes(),
+                            );
+                            body.extend_from_slice(&read(&path)?);
+                        }
+                    }
+                    body.extend_from_slice(b"\r\n");
+                }
+                body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+                Ok((body, format!("multipart/form-data; boundary={boundary}")))
+            }
+        }
+    };
+    let spawned = std::thread::Builder::new()
+        .name("zgx-script upload".into())
+        .spawn(move || {
+            let result = read();
+            let waker = {
+                let mut done = done.lock().unwrap();
+                done.0 = Some(result);
+                done.1.take()
+            };
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        });
+    let failed = spawned.err().map(|e| e.to_string());
+    std::future::poll_fn(move |cx| {
+        if let Some(e) = &failed {
+            return std::task::Poll::Ready(Err(e.clone()));
+        }
+        let mut state = shared.lock().unwrap();
+        match state.0.take() {
+            Some(result) => std::task::Poll::Ready(result),
+            None => {
+                state.1 = Some(cx.waker().clone());
+                std::task::Poll::Pending
+            }
+        }
+    })
+}
+
+/// A number different each call (a multipart boundary's).
+fn nonce() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(0);
+    hasher.finish()
+}
+
+/// A request whose body is read from files first, or that tells
+/// `on_progress`: the transport's `Body::sent`, or all of it once the
+/// answer comes from a transport that never says.
+fn sending(
+    lua: &Lua,
+    mut request: Request,
+    upload: Option<Upload>,
+    on_progress: Option<Function>,
+    fetch: Fetcher,
+    body: Body,
+) -> mlua::Result<Fetch> {
+    if let Some(on_progress) = on_progress {
+        let vm = env(lua)?.vm.clone();
+        *body.0.progress.borrow_mut() = Some(Box::new(move |sent, total| {
+            if let Some(vm) = vm.upgrade()
+                && let Err(e) = vm.call::<()>(&on_progress, (sent as f64, total as f64))
+            {
+                vm.report(e);
+            }
+        }));
+    }
+    Ok(Box::pin(async move {
+        if let Some(upload) = upload {
+            let (bytes, kind) = read_upload(upload).await?;
+            if !request
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+            {
+                request.headers.push(("content-type".into(), kind));
+            }
+            if request.method == "GET" {
+                request.method = "POST".into();
+            }
+            request.body = Some(bytes);
+        }
+        let total = request.body.as_ref().map_or(0, |b| b.len() as u64);
+        let response = fetch(request, body.clone()).await?;
+        if !body.0.told.get() {
+            body.sent(total, total);
+        }
+        Ok(response)
+    }))
+}
+
 /// A response as a script reads it: `status`, `ok` (2xx), `headers`
 /// (lower-case names), `body` (text) and `json` (when it is JSON).
 fn response_value(response: Response) -> Value {
@@ -807,6 +1031,8 @@ pub(crate) fn install(
     ui: &Table,
     actions: AsyncActions,
     fetcher: Option<SharedFetcher>,
+    // Whether it may read files for a body (`file`, `multipart`).
+    files: bool,
 ) -> mlua::Result<()> {
     let (await_fn, try_fn): (Function, Function) =
         crate::lazy::builtin(lua, "=await", AWAIT_SOURCE)?.call(ui.clone())?;
@@ -868,6 +1094,12 @@ pub(crate) fn install(
                 Some(opts) => opts.get::<Option<bool>>("raise")?.unwrap_or(false),
                 None => false,
             };
+            // `file` or `multipart`: a body read from files, off the
+            // window's thread; `on_progress(sent, total)` as it goes out.
+            let (upload, on_progress) = match &opts {
+                Some(opts) => uploading(opts, files)?,
+                None => (None, None),
+            };
             let request = request(lua, url.clone(), opts)?;
             let body = match &listener {
                 Some(listener) => {
@@ -878,7 +1110,12 @@ pub(crate) fn install(
                 }
                 None => Body::kept(),
             };
-            let future = fetch(request, body.clone());
+            let future = match (upload, on_progress) {
+                (None, None) => fetch(request, body.clone()),
+                (upload, on_progress) => {
+                    sending(lua, request, upload, on_progress, fetch, body.clone())?
+                }
+            };
             let stop = Rc::new(Stop::default());
             *promise.abort.borrow_mut() = Some(Box::new({
                 let (stop, body) = (stop.clone(), body.clone());

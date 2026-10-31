@@ -176,6 +176,7 @@ def measure(spec):
     hide = 'tell application "System Events" to if exists process "Zeron" then set visible of process "Zeron" to {}'
     subprocess.run(['osascript', '-e', hide.format('false')], capture_output=True)
     try:
+        preflight.desktop_still()
         parts = spec.get('parts', {})
         # Each round launches every cell twice: with the present log, for the
         # first frames' timings only (the log samples the layer tree every

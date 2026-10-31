@@ -154,6 +154,30 @@ impl FontFeatures {
     pub fn settings(&self) -> &[([u8; 4], u32)] {
         self.0.as_deref().unwrap_or(&[])
     }
+    /// zgx's own tag for hyphenation (`_hyp`: no font's feature can have it,
+    /// registered tags being lowercase letters and digits and font vendors'
+    /// private ones uppercase letters, OpenType's two tag spaces, neither
+    /// with punctuation). Words break at their hyphenation
+    /// points, a hyphen ending the line (CSS's `hyphens: auto`), in the
+    /// system's language. It rides with the features, inherited as they are,
+    /// and is never given to a font; it takes zgx's `hyphens` feature
+    /// (`HYPHENATION`). Luau's `font_features = "hyphens"` sets it.
+    pub const HYPHENS: [u8; 4] = *b"_hyp";
+    /// Whether words break at their hyphenation points (`HYPHENS`).
+    pub fn hyphens(&self) -> bool {
+        self.settings()
+            .iter()
+            .any(|(tag, value)| *tag == Self::HYPHENS && *value != 0)
+    }
+    /// These features, with words breaking at their hyphenation points or not.
+    pub fn with_hyphens(&self, hyphens: bool) -> Self {
+        if self.hyphens() == hyphens {
+            return self.clone();
+        }
+        let others = self.settings().iter().copied();
+        let others = others.filter(|(tag, _)| *tag != Self::HYPHENS);
+        Self::new(others.chain(hyphens.then_some((Self::HYPHENS, 1))))
+    }
     /// The bytes the settings take, for cache accounting.
     pub fn storage_bytes(&self) -> usize {
         std::mem::size_of_val(self.settings())
@@ -288,6 +312,81 @@ pub struct TextPosition {
     /// Which side of a shared boundary the caret sits on.
     pub affinity: TextAffinity,
 }
+/// How wide a selection shows an empty line of `line_height`: its line
+/// break, a sliver as in an editor.
+pub fn empty_line_width(line_height: f32) -> f32 {
+    line_height * 0.25
+}
+/// A layout drawn `dx` to the right of its own origin: balanced text that is
+/// centred or right-aligned in its box (`Scene::text_wrap`).
+pub(crate) struct Inset {
+    inner: Box<dyn TextLayout>,
+    dx: f32,
+}
+impl Inset {
+    /// `layout`, moved `dx` right; itself if not moved.
+    pub(crate) fn around(layout: Box<dyn TextLayout>, dx: f32) -> Box<dyn TextLayout> {
+        if dx == 0. {
+            layout
+        } else {
+            Box::new(Self { inner: layout, dx })
+        }
+    }
+    fn moved(&self, rect: Rect) -> Rect {
+        Rect::new(rect.x + self.dx, rect.y, rect.width, rect.height)
+    }
+}
+impl TextLayout for Inset {
+    fn cache_weight(&self) -> Option<usize> {
+        self.inner.cache_weight()
+    }
+    fn size(&self) -> (f32, f32) {
+        let (width, height) = self.inner.size();
+        (width + self.dx, height)
+    }
+    fn hit_test(&self, x: f32, y: f32) -> usize {
+        self.inner.hit_test(x - self.dx, y)
+    }
+    fn caret(&self, byte_offset: usize) -> Rect {
+        self.moved(self.inner.caret(byte_offset))
+    }
+    fn selection(&self, range: Range<usize>) -> Vec<Rect> {
+        let rects = self.inner.selection(range);
+        rects.into_iter().map(|rect| self.moved(rect)).collect()
+    }
+    fn selection_within(&self, range: Range<usize>, top: f32, bottom: f32) -> Vec<Rect> {
+        let rects = self.inner.selection_within(range, top, bottom);
+        rects.into_iter().map(|rect| self.moved(rect)).collect()
+    }
+    fn hit_position(&self, x: f32, y: f32) -> TextPosition {
+        self.inner.hit_position(x - self.dx, y)
+    }
+    fn caret_position(&self, position: TextPosition) -> Rect {
+        self.moved(self.inner.caret_position(position))
+    }
+    fn line_carets(&self, text: &str) -> Option<Vec<LineCarets>> {
+        let mut lines = self.inner.line_carets(text)?;
+        for line in &mut lines {
+            for x in &mut line.carets {
+                *x += self.dx;
+            }
+        }
+        Some(lines)
+    }
+    fn carets_x(&self, offsets: &[usize]) -> Vec<f32> {
+        let xs = self.inner.carets_x(offsets);
+        xs.into_iter().map(|x| x + self.dx).collect()
+    }
+    fn visual_line_range(&self, position: TextPosition) -> (TextPosition, TextPosition) {
+        self.inner.visual_line_range(position)
+    }
+    fn visual_line_edge(&self, position: TextPosition, end: bool) -> TextPosition {
+        self.inner.visual_line_edge(position, end)
+    }
+}
+/// Whether this build hyphenates (zgx's `hyphens` feature): without it,
+/// features with `FontFeatures::HYPHENS` break words as before.
+pub const HYPHENATION: bool = cfg!(feature = "hyphens");
 /// A visual line's carets (`TextLayout::line_carets`), in the layout's
 /// coordinates.
 #[derive(Clone, Debug, PartialEq)]
@@ -861,8 +960,13 @@ impl TextLayout for FallbackTextLayout {
             return Vec::new();
         }
         let mut result: Vec<Rect> = Vec::new();
-        for (index, r) in &self.cells {
-            if index.start < end && index.end > start && r.width > 0. {
+        // Cells are in text order: from the first that reaches `start`.
+        let first = self.cells.partition_point(|(index, _)| index.end <= start);
+        for (i, (index, r)) in self.cells.iter().enumerate().skip(first) {
+            if index.start >= end {
+                break;
+            }
+            if r.width > 0. {
                 if let Some(last) = result.last_mut()
                     && last.y == r.y
                     && last.x + last.width >= r.x
@@ -871,6 +975,10 @@ impl TextLayout for FallbackTextLayout {
                     continue;
                 }
                 result.push(*r);
+            } else if i == 0 || self.cells[i - 1].1.y != r.y {
+                // An empty line's break.
+                let width = empty_line_width(r.height);
+                result.push(Rect::new(r.x, r.y, width, r.height));
             }
         }
         result

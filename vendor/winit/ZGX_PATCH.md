@@ -111,6 +111,31 @@ heard `ThemeChanged`, so its content kept its mode too.
    `scripts/windows_settings_smoke.py --both`: switched both ways while
    the window runs, its title bar and its content follow within a second.
 
+## Windows: `WindowEvent::Occluded`
+
+Windows has no event for a window being covered, and winit sent none, so a
+covered window went on drawing: 2.4–9.2 points of one core and all of its GPU
+use, against a minimized one (WING-PC, medians of 4 rotated rounds).
+
+10. `src/platform_impl/windows/occlusion.rs` finds a window occluded when it
+    is cloaked (another virtual desktop) or when windows above it known to be
+    opaque leave none of it. The rectangles' sums and when to
+    check are in `src/occlusion_area.rs`, built everywhere for its tests.
+    Whatever might show what's behind it covers nothing: layered,
+    click-through, tool and `WS_EX_NOREDIRECTIONBITMAP` windows, an acrylic
+    backdrop (Mica shows the wallpaper, no window), a shaped region, the window's own owned ones, and the corners a
+    framed window rounds. Two checks in a row must agree before it stops.
+    It says hidden only of a window whole on one monitor, under covers whole
+    on that monitor, among monitors of one scale at positive coordinates;
+    anything else keeps drawing. That's by construction, unit tested on
+    made-up layouts: no multi-monitor machine has run it.
+    A window checks from `pre_present_notify`, twice a second, so an idle one
+    does nothing; an occluded one has a `SetWinEventHook` hook and looks each
+    second for what no event reports. `scripts/windows_occlusion_smoke.py`.
+
+    A window translucent by the undocumented accent API isn't recognised, and
+    a window being captured while covered stops like any other.
+
 ## X11: no waiting on an input method that has gone
 
 libX11 learns that an input method's server went (ibus-x11 killed or
@@ -185,13 +210,13 @@ shows no copy badge and every release would look taken.
       passes it (`definitions.rs` declared a pointer, never read before).
     Wayland's drags reach zgx's own data device, not winit.
 
-## Where dragged files are (macOS)
+## Where dragged files are (macOS, Windows, X11)
 
-A drag holds the pointer: while files from Finder are over a window, AppKit
-sends it no mouse moves, only its dragging destination's calls, and winit's
-`HoveredFile` and `DroppedFile` carry no position. An app placing them at the
-pointer's last place dropped them on whatever it was last over before the
-drag came in.
+A drag holds the pointer: while files from Finder, Explorer or a file
+manager are over a window, the window hears no mouse moves, only the drag's
+own calls, and winit's `HoveredFile` and `DroppedFile` carry no position. An
+app placing them at the pointer's last place dropped them on whatever it was
+last over before the drag came in.
 
 12. `window_delegate.rs`: a drag carrying files sends `CursorMoved`, at the
     drag's point in the content, as it enters (before `HoveredFile`), as it
@@ -199,6 +224,20 @@ drag came in.
     `DroppedFile`), and `CursorLeft` as it leaves (after
     `HoveredFileCancelled`). `scripts/macos_native_checks_probe.py` drops
     two files on a box with the pointer last elsewhere.
+    - Windows (`drop_handler.rs`): the same, from `IDropTarget`'s
+      `DragEnter`, `DragOver` (when the point moved) and `Drop`, whose
+      `POINTL` is in the screen's pixels (`ScreenToClient`), and
+      `CursorLeft` after `DragLeave`'s `HoveredFileCancelled`. An OLE drag
+      from Explorer sends the window no `WM_MOUSEMOVE` at all.
+    - X11 (`event_processor.rs`, `dnd.rs`): each `XdndPosition` of a drag
+      carrying files, translated to the window, sends `CursorMoved` when it
+      moved (before the first `HoveredFile`, which waits for the data), and
+      `XdndLeave` `CursorLeft` after `HoveredFileCancelled`; `XdndDrop`
+      carries no point, so files drop at the last position's.
+      `scripts/file_drop_smoke.py` drops with the pointer last over a card,
+      at scale 1 and 1.5 (`file-drop-scaled`).
+    Wayland's drags reach zgx's own data device, whose drop carries its
+    point.
 
 ## X11: a closing window, or an ending app, waits on no input method
 
@@ -245,3 +284,40 @@ content purpose could not say email, URL, number, digits or phone (zgx's
 `Email`, `Url`, `Number`, `Digits` and `Phone` (`window.rs`), sent as
 those content purposes (`seat/text_input/mod.rs`); other platforms ignore a
 purpose, as before. zgx-desktop sets it as an editor takes the input method.
+
+## macOS: a trackpad's swipe between pages
+
+Safari, Finder and Xcode go back and forward on a trackpad's swipe between
+pages: two fingers across (the system's default) or three, as System
+Settings' Trackpad has it. Three fingers reach a view as `swipeWithEvent:`,
+which winit's left to the responder chain; two fingers are scroll events,
+which an app hands to AppKit's swipe tracking (`-[NSEvent
+trackSwipeEventWithOptions:…]`) when the gesture starts where nothing
+scrolls that way, and winit had no way to.
+
+15. `platform::macos::NavigationSwipes` and `set_navigation_swipes`: an
+    app's answer, kept on the main thread, to a swipe over a window that
+    went back or forward, from where it began (physical pixels in the
+    content, as `CursorMoved`'s). `view.rs`: `swipeWithEvent:` reports a
+    three-finger swipe by its `deltaX` (to the right, positive: back);
+    with no answer, or vertically, it goes up the chain as before.
+16. `platform::macos::begin_navigation_swipe`: the gesture scrolling over a
+    window swipes from its next scroll, for an app that found the gesture's
+    first scroll moved nothing it is over (each scroll view at its edge) and
+    something there navigates. As WebKit does once its web process says it
+    took no scroll, the view starts AppKit's tracking from that later scroll
+    of the gesture (`trackSwipeEventWithOptions` locked to its direction,
+    clamped, −1 to 1), the fingers still down and
+    `+[NSEvent isSwipeTrackingFromScrollEventsEnabled]` (the system's "Swipe
+    between pages" set to two fingers; `swipes_from_scrolls`). The app
+    hears its scroll gesture end there (a `MouseWheel` of nothing, phase
+    `Ended`); the gesture's remaining scrolls, momentum's too, are the
+    swipe's until a new touch or a mouse's wheel; one AppKit reports ended
+    (the fingers carried it through) reaches `swiped`, back when it went
+    right. A request no gesture takes is forgotten as its gesture ends.
+    `wantsScrollEventsForSwipeTrackingOnAxis:` answers yes across while an
+    app takes swipes. objc2-app-kit's `block2` feature, for the tracking's
+    handler (`Cargo.toml`).
+
+`scripts/macos_swipe_probe.py` (zgx) checks the three-finger path, and the
+two-finger one where the system swipes with two fingers.

@@ -19,6 +19,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=pathlib.Path)
     parser.add_argument('--output', type=pathlib.Path, required=True)
+    parser.add_argument('--burst', action='store_true',
+                        help="Pinyin typed as fast as a person types it (30 ms a key, nothing awaited between): "
+                             "every preedit reaches the editor and each word commits")
     parser.add_argument('--input-modes', action='store_true',
                         help="native_ime --input-modes: each field's input mode reaches the input method as its "
                              "content purpose (email, then digits)")
@@ -169,6 +172,37 @@ def main():
                 time.sleep(.3)
                 engine = subprocess.check_output(['fcitx5-remote','-n'],env=env,text=True).strip()
                 assert engine == 'pinyin', engine
+                if args.burst:
+                    # Each round all at once: the input method's updates
+                    # come while the editor is still answering the last
+                    # (a new caret area mid-burst used to make them stale).
+                    def displayed(first, shown, timeout=8):
+                        deadline=time.monotonic()+timeout
+                        while True:
+                            trace=(args.output/'application.log').read_text()
+                            tick=trace[trace.rfind('MODEL '):]
+                            model=re.search(r'MODEL \d+ first=(".*?") second=',tick)
+                            shown_now=re.search(r'DISPLAY first (".*?") Rect',tick)
+                            now=(json.loads(model[1]) if model else None, json.loads(shown_now[1]) if shown_now else None)
+                            if now == (first, shown): return now
+                            if time.monotonic()>deadline or app.poll() is not None:
+                                raise AssertionError(f'burst: expected model {first!r} showing {shown!r}, observed {now!r}')
+                            time.sleep(.05)
+                    rounds=[]
+                    for round in range(1, 4):
+                        xdo('type','--clearmodifiers','--delay',30,'nihao')
+                        rounds.append(displayed('你好'*(round-1), '你好'*(round-1)+'ni hao'))
+                        key('space')
+                        rounds.append(displayed('你好'*round, '你好'*round))
+                    subprocess.run(['swaymsg',f'[pid={app.pid}] kill'],env=env,capture_output=True)
+                    app.wait(timeout=25)
+                    protocol=(args.output/'protocol.log').read_text()
+                    result=dict(result='pass', backend='native Wayland text-input-v3 / Sway / Fcitx5 Pinyin',
+                                checks=['burst preedit delivered','burst commits'], rounds=rounds,
+                                cursor_rectangles=protocol.count('.set_cursor_rectangle('))
+                    (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+                    print('PASS: '+', '.join(result['checks']))
+                    return
                 type_text('nihao')
                 capture(1)
                 key('space'); capture(2)

@@ -564,3 +564,43 @@ pub unsafe fn key_event_of(ns_event: *const c_void) -> crate::event::KeyEvent {
     let event = unsafe { &*ns_event.cast::<objc2_app_kit::NSEvent>() };
     crate::platform_impl::create_key_event(event, true, false)
 }
+
+/// zgx patch: a trackpad's swipe between pages over a window (Safari's
+/// Back and Forward), which the app navigates on. Set once by the app
+/// ([`set_navigation_swipes`]).
+pub trait NavigationSwipes {
+    /// A swipe over `window`, begun at `(x, y)` (physical pixels in the
+    /// content, as `CursorMoved`'s), went back (`back`, to the right) or
+    /// forward.
+    fn swiped(&self, window: crate::window::WindowId, x: f64, y: f64, back: bool);
+}
+
+/// zgx patch: windows' views report swipes between pages to `swipes`: a
+/// three-finger swipe as it happens (`swipeWithEvent:`, with the system set
+/// to swipe between pages so), and a two-finger one the app asked for
+/// ([`begin_navigation_swipe`]) as AppKit's tracking of it completes. Main
+/// thread only; with none, a swipe goes up the responder chain as before.
+pub fn set_navigation_swipes(swipes: Option<std::rc::Rc<dyn NavigationSwipes>>) {
+    crate::platform_impl::set_navigation_swipes(swipes);
+}
+
+/// zgx patch: whether a trackpad's two-finger horizontal scroll can swipe
+/// between pages (`+[NSEvent isSwipeTrackingFromScrollEventsEnabled]`): the
+/// system's "Swipe between pages" set to scroll with two fingers. Main
+/// thread only.
+pub fn swipes_from_scrolls() -> bool {
+    unsafe { objc2_app_kit::NSEvent::isSwipeTrackingFromScrollEventsEnabled() }
+}
+
+/// zgx patch: the trackpad gesture scrolling over `window` swipes between
+/// pages from its next scroll: AppKit tracks it from there (elastic, given
+/// up if the fingers bring it back), the window's view takes the rest of
+/// the gesture (the app hears its scroll gesture end), and a swipe the
+/// fingers carry through reaches [`NavigationSwipes::swiped`]. For an app
+/// that found the gesture's first scroll moved nothing (every scroll view
+/// under it at its edge) over what navigates. Asked with no gesture going
+/// on, or with [`swipes_from_scrolls`] off, it is forgotten as the gesture
+/// ends. Main thread only.
+pub fn begin_navigation_swipe(window: &Window) {
+    window.window.maybe_wait_on_main(|delegate| delegate.begin_navigation_swipe());
+}

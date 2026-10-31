@@ -48,12 +48,15 @@ fn han_unification(locale: &str) -> &'static [&'static str] {
         "ja" => &["Hiragino Sans"],
         // Korea
         "ko" => &["Apple SD Gothic Neo"],
+        // zgx: Heiti after PingFang, should PingFang not load (macOS 26
+        // keeps it outside the font directories: `load_pingfang`). With
+        // neither, Han fell to Arial Unicode MS's forms whatever the Chinese.
         // Hong Kong
-        "zh-HK" => &["PingFang HK"],
+        "zh-HK" => &["PingFang HK", "Heiti TC"],
         // Taiwan
-        "zh-TW" => &["PingFang TC"],
+        "zh-TW" => &["PingFang TC", "Heiti TC"],
         // Simplified Chinese is the default (also catches "zh-CN" for China)
-        _ => &["PingFang SC"],
+        _ => &["PingFang SC", "Heiti SC"],
     }
 }
 

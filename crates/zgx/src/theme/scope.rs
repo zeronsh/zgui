@@ -508,8 +508,10 @@ impl ThemeScope {
             signal.with(|_| ());
         }
     }
-    /// Increases whenever a refresh changes any token's value here.
-    pub(crate) fn epoch(&self) -> u64 {
+    /// Increases whenever a refresh changes any token's value here (a
+    /// theme switched, a token overridden): what a cache of resolved tokens
+    /// compares to know it is stale.
+    pub fn revision(&self) -> u64 {
         self.epoch.get()
     }
     /// The token's value here, without subscribing to it.

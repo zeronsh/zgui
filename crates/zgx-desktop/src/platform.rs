@@ -6,6 +6,9 @@ use zgx::platform::{FilePicker, Pending, Platform};
 pub(crate) struct Desktop {
     pub(crate) clipboard: Rc<RefCell<Option<crate::clipboard::Clipboard>>>,
     pub(crate) dialogs: crate::FileDialogs,
+    /// The app's windows, for what applies to all of them (the language its
+    /// text is in); none where only the clipboard is asked of it.
+    pub(crate) windows: Option<crate::WindowFactory>,
 }
 
 impl Desktop {
@@ -39,6 +42,28 @@ fn options(picker: &FilePicker) -> crate::FileDialogOptions {
 }
 
 impl Platform for Desktop {
+    fn notify(
+        &self,
+        notification: zgx::platform::Notification,
+    ) -> Pending<Result<(), zgx::platform::NotifyError>> {
+        crate::notify::notify(notification)
+    }
+    fn set_badge(&self, badge: Option<&str>) -> bool {
+        let window = self.dialogs.window();
+        crate::notify::set_badge(badge, window.as_deref())
+    }
+    fn next_notification_click(&self) -> Pending<Option<String>> {
+        let (window, next) = (self.dialogs.window(), crate::notify::next_click());
+        Box::pin(async move {
+            let tag = next.await?;
+            // The app forward, to where the click asks it to go.
+            if let Some(window) = window {
+                window.set_minimized(false);
+                window.focus_window();
+            }
+            Some(tag)
+        })
+    }
     fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow_mut().as_mut()?.get_text().ok()
     }
@@ -48,15 +73,47 @@ impl Platform for Desktop {
             .as_mut()
             .is_some_and(|clipboard| clipboard.set_text(text).is_ok())
     }
+    #[cfg(target_os = "linux")]
+    fn primary_text(&self) -> Option<String> {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()?
+            .get_primary_text()
+            .ok()
+    }
+    #[cfg(target_os = "linux")]
+    fn set_primary_text(&self, text: String) -> bool {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|clipboard| clipboard.set_primary_text(text).is_ok())
+    }
     #[cfg(target_os = "macos")]
     fn looks_up(&self) -> bool {
         true
+    }
+    #[cfg(target_os = "macos")]
+    fn bookmark_folder(&self, folder: &std::path::Path) -> Option<Vec<u8>> {
+        bookmarks::make(folder)
+    }
+    #[cfg(target_os = "macos")]
+    fn resolve_folder(&self, grant: &[u8]) -> Option<zgx::platform::ResolvedFolder> {
+        bookmarks::resolve(grant)
+    }
+    #[cfg(target_os = "macos")]
+    fn release_folder(&self, folder: &std::path::Path) {
+        bookmarks::release(folder);
     }
     #[cfg(target_os = "macos")]
     fn look_up(&self, text: &str, baseline: (f32, f32), size: f32) -> bool {
         self.dialogs
             .window()
             .is_some_and(|window| crate::look_up::show(&window, text, baseline, size))
+    }
+    fn set_text_language(&self, language: Option<&str>) {
+        if let Some(windows) = &self.windows {
+            let _ = windows.set_text_language(language.map(str::to_owned));
+        }
     }
     fn open_url(&self, url: &str) -> bool {
         // The launcher runs detached: nothing waits on the browser.
@@ -77,6 +134,25 @@ impl Platform for Desktop {
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     fn ignore_spelling(&self, word: &str) {
         spelling::ignore(word);
+    }
+    #[cfg(target_os = "macos")]
+    fn substitutions(
+        &self,
+        text: &str,
+        kinds: zgx::platform::Substitutions,
+    ) -> Vec<(std::ops::Range<usize>, String)> {
+        spelling::substitutions(text, kinds)
+    }
+    #[cfg(target_os = "macos")]
+    fn correction(&self, text: &str, word: std::ops::Range<usize>) -> Option<String> {
+        spelling::correction(text, word)
+    }
+    fn clipboard_files(&self) -> Vec<std::path::PathBuf> {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()
+            .and_then(|clipboard| clipboard.get_files().ok())
+            .unwrap_or_default()
     }
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
         self.clipboard
@@ -102,6 +178,15 @@ impl Platform for Desktop {
             off_thread(move || crate::clipboard::write_image(&images, &image).is_ok())
                 .await
                 .unwrap_or(false)
+        })
+    }
+    fn open_folder(&self, picker: FilePicker) -> Pending<Result<Option<PathBuf>, String>> {
+        let dialogs = self.dialogs.clone();
+        Box::pin(async move {
+            dialogs
+                .open_folder(options(&picker))
+                .await
+                .map_err(|e| e.to_string())
         })
     }
     fn open_files(&self, picker: FilePicker) -> Pending<Result<Vec<PathBuf>, String>> {
@@ -149,6 +234,141 @@ fn byte_offset(text: &str, units: usize) -> usize {
 #[cfg(target_os = "linux")]
 use crate::linux_spelling as spelling;
 
+/// macOS's bookmarks: a folder the user picked reached on a later launch,
+/// wherever it was moved or renamed. Security-scoped in the sandbox, which
+/// needs the scope to reach it; plain outside, as a security-scoped one
+/// resolves only under the code-signing identifier that made it, and an
+/// unbundled app's changes with its build (zgx-run's is cargo's metadata
+/// hash: an upgrade would forget every folder).
+#[cfg(target_os = "macos")]
+mod bookmarks {
+    use objc2::{rc::Retained, runtime::Bool};
+    use objc2_foundation::{
+        NSData, NSString, NSURL, NSURLBookmarkCreationOptions, NSURLBookmarkResolutionOptions,
+    };
+    use std::{cell::RefCell, path::Path, path::PathBuf};
+    use zgx::platform::ResolvedFolder;
+
+    thread_local! {
+        /// The folders resolved and not yet released, by path: a scope ends
+        /// through the URL that began it.
+        static OPEN: RefCell<Vec<(PathBuf, Retained<NSURL>)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Whether the app runs in the sandbox (its container named).
+    fn sandboxed() -> bool {
+        std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+    }
+
+    pub(super) fn make(folder: &Path) -> Option<Vec<u8>> {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(folder.to_str()?));
+        let options = match sandboxed() {
+            true => NSURLBookmarkCreationOptions::WithSecurityScope,
+            false => NSURLBookmarkCreationOptions(0),
+        };
+        url.bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(
+            options, None, None,
+        )
+        .ok()
+        .map(|data| data.to_vec())
+    }
+    pub(super) fn resolve(grant: &[u8]) -> Option<ResolvedFolder> {
+        let data = NSData::with_bytes(grant);
+        let mut stale = Bool::NO;
+        // The kind this app makes first, then the other: a grant kept
+        // before a move into or out of the sandbox.
+        let scoped = NSURLBookmarkResolutionOptions::WithSecurityScope;
+        let plain = NSURLBookmarkResolutionOptions(0);
+        let order = match sandboxed() {
+            true => [scoped, plain],
+            false => [plain, scoped],
+        };
+        let (url, kind) = order.into_iter().find_map(|options| {
+            // SAFETY: `stale` points at a BOOL that outlives the call.
+            unsafe {
+                NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
+                    &data, options, None, &mut stale,
+                )
+            }
+            .ok()
+            .map(|url| (url, options))
+        })?;
+        let path = PathBuf::from(url.path()?.to_string());
+        if !path.is_dir() {
+            return None;
+        }
+        // SAFETY: a URL a bookmark resolved to; `release` ends its scope.
+        // Outside the sandbox there is no scope to begin, and that is fine.
+        if unsafe { url.startAccessingSecurityScopedResource() } {
+            OPEN.with_borrow_mut(|open| open.push((path.clone(), url)));
+        }
+        // Stale (moved), or of the kind this app no longer makes: kept anew.
+        let renew = stale.as_bool() || kind != order[0];
+        let folder = ResolvedFolder::new(path.clone());
+        Some(match renew.then(|| make(&path)).flatten() {
+            Some(renewed) => folder.renewed(renewed),
+            None => folder,
+        })
+    }
+    pub(super) fn release(folder: &Path) {
+        let url = OPEN.with_borrow_mut(|open| {
+            let at = open.iter().position(|(path, _)| path == folder)?;
+            Some(open.swap_remove(at).1)
+        });
+        if let Some(url) = url {
+            // SAFETY: its scope began in `resolve`.
+            unsafe { url.stopAccessingSecurityScopedResource() };
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// Outside the sandbox a grant is a plain bookmark: one any build
+        /// of the app resolves, not only the signer that made it.
+        #[test]
+        fn outside_the_sandbox_a_grant_is_a_plain_bookmark() {
+            use objc2_foundation::{NSData, NSURL, NSURLBookmarkResolutionOptions};
+            let dir = std::env::temp_dir().join(format!("zgx-plain-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let grant = super::make(&dir).expect("a bookmark");
+            let mut stale = objc2::runtime::Bool::NO;
+            // SAFETY: `stale` points at a BOOL that outlives the call.
+            let plain = unsafe {
+                NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(
+                    &NSData::with_bytes(&grant),
+                    NSURLBookmarkResolutionOptions(0),
+                    None,
+                    &mut stale,
+                )
+            };
+            assert!(plain.is_ok(), "resolves without a security scope");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        /// A bookmark finds its folder renamed, and says it went stale.
+        #[test]
+        fn a_bookmark_follows_its_folder_renamed() {
+            let base = std::env::temp_dir().join(format!("zgx-bookmark-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(base.join("library")).unwrap();
+            let base = base.canonicalize().unwrap();
+            let grant = super::make(&base.join("library")).expect("a bookmark");
+            let found = super::resolve(&grant).expect("it resolves");
+            assert_eq!(found.path, base.join("library"));
+            super::release(&found.path);
+            std::fs::rename(base.join("library"), base.join("photos")).unwrap();
+            let moved = super::resolve(&grant).expect("it follows the folder");
+            assert_eq!(moved.path, base.join("photos"));
+            super::release(&moved.path);
+            std::fs::remove_dir_all(base.join("photos")).unwrap();
+            assert!(
+                super::resolve(&grant).is_none(),
+                "gone, it resolves to nothing"
+            );
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+}
+
 /// macOS's spelling checker (`NSSpellChecker`), for editors that check
 /// (`View::spellcheck`). One document tag for the app: what Ignore Spelling
 /// ignores, it ignores in every editor until the app quits.
@@ -156,7 +376,7 @@ use crate::linux_spelling as spelling;
 mod spelling {
     use super::byte_offset;
     use objc2_app_kit::NSSpellChecker;
-    use objc2_foundation::{NSRange, NSString};
+    use objc2_foundation::{NSRange, NSString, NSTextCheckingType};
     use std::ops::Range;
 
     fn tag() -> isize {
@@ -214,9 +434,99 @@ mod spelling {
         NSSpellChecker::sharedSpellChecker()
             .ignoreWord_inSpellDocumentWithTag(&NSString::from_str(word), tag());
     }
+    /// Smart quotes and dashes and text replacements, each only where the
+    /// person has it on in System Settings, as AppKit's text views do.
+    pub(super) fn substitutions(
+        text: &str,
+        kinds: zgx::platform::Substitutions,
+    ) -> Vec<(Range<usize>, String)> {
+        let mut types = 0;
+        if kinds.punctuation && NSSpellChecker::isAutomaticQuoteSubstitutionEnabled() {
+            types |= NSTextCheckingType::Quote.0;
+        }
+        if kinds.punctuation && NSSpellChecker::isAutomaticDashSubstitutionEnabled() {
+            types |= NSTextCheckingType::Dash.0;
+        }
+        if kinds.replacements && NSSpellChecker::isAutomaticTextReplacementEnabled() {
+            types |= NSTextCheckingType::Replacement.0;
+        }
+        if types == 0 {
+            return Vec::new();
+        }
+        let string = NSString::from_str(text);
+        // SAFETY: no options (the defaults) and no word count asked for (a
+        // null pointer, which the method allows).
+        let found = unsafe {
+            NSSpellChecker::sharedSpellChecker()
+                .checkString_range_types_options_inSpellDocumentWithTag_orthography_wordCount(
+                    &string,
+                    NSRange::new(0, string.length()),
+                    types,
+                    None,
+                    tag(),
+                    None,
+                    std::ptr::null_mut(),
+                )
+        };
+        found
+            .iter()
+            .filter_map(|result| {
+                let replacement = result.replacementString()?.to_string();
+                let range = result.range();
+                let start = byte_offset(text, range.location);
+                Some((
+                    start..byte_offset(text, range.location + range.length),
+                    replacement,
+                ))
+            })
+            .collect()
+    }
+    /// The checker's autocorrection for `word` in `text`, where the person
+    /// has "Correct spelling automatically" on.
+    pub(super) fn correction(text: &str, word: Range<usize>) -> Option<String> {
+        if !NSSpellChecker::isAutomaticSpellingCorrectionEnabled() {
+            return None;
+        }
+        let units = |bytes: &str| bytes.encode_utf16().count();
+        let range = NSRange::new(
+            units(text.get(..word.start)?),
+            units(text.get(word.clone())?),
+        );
+        let checker = NSSpellChecker::sharedSpellChecker();
+        checker
+            .correctionForWordRange_inString_language_inSpellDocumentWithTag(
+                range,
+                &NSString::from_str(text),
+                &checker.language(),
+                tag(),
+            )
+            .map(|correction| correction.to_string())
+    }
 
     #[cfg(test)]
     mod tests {
+        use zgx::platform::Substitutions;
+        #[test]
+        fn the_system_substitutes_where_the_person_has_it_on() {
+            use objc2_app_kit::NSSpellChecker;
+            // The person's settings decide; on this machine's, it does.
+            if NSSpellChecker::isAutomaticQuoteSubstitutionEnabled() {
+                let text = "He said \"hi\"";
+                let kinds = Substitutions {
+                    punctuation: true,
+                    replacements: false,
+                };
+                let found = super::substitutions(text, kinds);
+                assert!(found.contains(&(8..9, "“".into())), "{found:?}");
+                assert!(found.contains(&(11..12, "”".into())), "{found:?}");
+                assert!(super::substitutions(text, Substitutions::default()).is_empty());
+            }
+            if NSSpellChecker::isAutomaticSpellingCorrectionEnabled() {
+                let text = "fix teh bug";
+                assert_eq!(super::correction(text, 4..7).as_deref(), Some("the"));
+                assert_eq!(super::correction(text, 8..11), None, "spelled right");
+            }
+        }
         #[test]
         fn the_system_checker_finds_misspellings_as_byte_ranges() {
             let text = "Thé quikc brown fox";

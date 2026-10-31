@@ -94,18 +94,23 @@ export type Group = { mode: string; label: string; bars: Bar[] };
 export function chart(s: Scene, metric: string) {
   const m = text.metrics[metric as keyof typeof text.metrics];
   const modes = s.modes.filter((mode) => m.applies === 'all' || mode !== 'idle');
-  // Idle WindowServer: what each app adds over its round's desktop alone
-  // (the builder's `idle_server_label`).
+  // WindowServer: what each app adds over its round's desktop alone, where
+  // the run has it (idle; active cells too with six rounds; the builder's
+  // `idle_server_label` and `server`).
   const idle = metric === 'server' ? (s as { idle_server?: { noise: boolean; desktop: Stat } }).idle_server : undefined;
-  const over = (mode: string) => idle !== undefined && mode === 'idle';
+  const over = (mode: string) =>
+    metric === 'server' && s.frameworks.some((f) => cell(s, f, mode)?.['windowserver_over_desktop'] !== undefined);
+  const label = (mode: string) => text.modes[mode as keyof typeof text.modes];
   const groups: Group[] = modes.map((mode) => ({
     mode,
-    label: over(mode)
-      ? `${text.modes.idle}, less the desktop` +
-        (idle!.noise
-          ? `: within noise (no app above the desktop alone's own spread, ${fmt(idle!.desktop.min, 2)}–${fmt(idle!.desktop.max, 2)})`
-          : '')
-      : text.modes[mode as keyof typeof text.modes],
+    label: !over(mode)
+      ? label(mode)
+      : mode === 'idle' && idle
+        ? `${label(mode)}, less the desktop` +
+          (idle.noise
+            ? `: within noise (no app above the desktop alone's own spread, ${fmt(idle.desktop.min, 2)}–${fmt(idle.desktop.max, 2)})`
+            : '')
+        : `${label(mode)}, less the desktop`,
     bars: s.frameworks.flatMap((f) => {
       const stat = cell(s, f, mode)?.[over(mode) ? 'windowserver_over_desktop' : m.source] as Stat | undefined;
       if (!stat) return [];

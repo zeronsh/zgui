@@ -11,8 +11,9 @@
 //! - `no-name`: a control, image or dialog with no name;
 //! - `no-action`: a control a reader cannot work (press, focus, set);
 //! - `no-state`: a check box, switch, radio button, tab or option that does
-//!   not say whether it is checked or chosen, or a slider, progress bar or
-//!   spin button with no value (or range);
+//!   not say whether it is checked or chosen, a slider or spin button with no
+//!   value, or a slider or progress bar with a value and no range (a
+//!   progress bar with no value is indeterminate);
 //! - `focus-unreachable`: Tab never reaches something that takes focus;
 //! - `focus-trap`: Tab stops coming round, held on one control or a few;
 //! - `not-announced`: an alert or status that is not live, or an invalid
@@ -252,7 +253,8 @@ pub fn audit(ui: &mut Ui) -> Report {
         if reached.contains(&id) || in_group {
             continue;
         }
-        if walked.trap.is_none() && !walked.escaped {
+        // Only a walk that came round saw every stop.
+        if walked.round && walked.trap.is_none() && !walked.escaped {
             report.findings.push(finding(
                 "focus-unreachable",
                 Some(id),
@@ -351,11 +353,13 @@ fn check_node(node: &accesskit::Node, scene: Option<NodeId>, out: &mut Vec<Findi
         Tab if node.is_selected().is_none() => {
             push("no-state", "does not say whether it is chosen")
         }
-        Slider | SpinButton | ProgressIndicator | ScrollBar if node.numeric_value().is_none() => {
+        // A progress bar with no value is indeterminate, as ARIA's.
+        Slider | SpinButton | ScrollBar if node.numeric_value().is_none() => {
             push("no-state", "has no value")
         }
         Slider | ProgressIndicator
-            if node.min_numeric_value().is_none() || node.max_numeric_value().is_none() =>
+            if (role == Slider || node.numeric_value().is_some())
+                && (node.min_numeric_value().is_none() || node.max_numeric_value().is_none()) =>
         {
             push("no-state", "has no range")
         }
@@ -374,6 +378,8 @@ fn check_node(node: &accesskit::Node, scene: Option<NodeId>, out: &mut Vec<Findi
 
 struct Walk {
     stops: Vec<NodeId>,
+    /// Focus came round to the first stop: every stop was seen.
+    round: bool,
     trap: Option<(NodeId, String)>,
     /// Escape left a modal scope Tab kept: what is outside it went unwalked.
     escaped: bool,
@@ -399,11 +405,14 @@ fn walk_tab(ui: &mut Ui, focusable: usize) -> Walk {
     let mut stops: Vec<NodeId> = Vec::new();
     let mut trap = None;
     let mut escaped = false;
+    let mut round = false;
     let control = Modifiers {
         control: true,
         ..Default::default()
     };
-    for _ in 0..focusable + 2 {
+    // Tab can stop at more than the focusable nodes painted (a list's own
+    // stop): a bound far past them, only against a walk that never ends.
+    for _ in 0..focusable * 2 + 16 {
         press(ui, Key::Tab, Modifiers::default());
         let Some(mut now) = ui.input.focused() else {
             break;
@@ -426,6 +435,7 @@ fn walk_tab(ui: &mut Ui, focusable: usize) -> Walk {
             }
         }
         if stops.first() == Some(&now) {
+            round = true;
             break;
         }
         if let Some(at) = stops.iter().position(|s| *s == now) {
@@ -443,6 +453,7 @@ fn walk_tab(ui: &mut Ui, focusable: usize) -> Walk {
     let _ = ui.input.focus(&ui.scene, before);
     Walk {
         stops,
+        round,
         trap,
         escaped,
     }
@@ -524,9 +535,18 @@ mod tests {
         let mut check = with(Native::Switch, &[Action::Click, Action::Focus]);
         check.set_label("Wi-Fi");
         assert_eq!(rules(&check)[0].0, "no-state");
+        for role in [Native::MenuItemCheckBox, Native::MenuItemRadio] {
+            let mut item = with(role, &[Action::Click, Action::Focus]);
+            item.set_label("Word wrap");
+            assert_eq!(rules(&item)[0].0, "no-state");
+            item.set_toggled(accesskit::Toggled::True);
+            assert!(rules(&item).is_empty(), "{:?}", rules(&item));
+        }
         let mut tab = with(Native::Tab, &[Action::Click, Action::Focus]);
         tab.set_label("General");
         assert_eq!(rules(&tab)[0].0, "no-state");
+        // Indeterminate: no value, and none needed.
+        assert_eq!(rules(&Node::new(Native::ProgressIndicator)), []);
         let mut progress = Node::new(Native::ProgressIndicator);
         progress.set_numeric_value(3.);
         assert_eq!(rules(&progress), [("no-state", "has no range".into())]);

@@ -45,9 +45,15 @@ fn faded(vertical: [f32; 2], horizontal: [f32; 2]) -> Scene {
     );
     scene
 }
-/// The alpha `distance` into a band `width` wide: the quadratic ramp.
+/// How far `distance` into a band `width` wide is faded in: smoothstep,
+/// level at both ends.
+fn eased(distance: f32, width: f32) -> f32 {
+    let t = (distance / width).clamp(0., 1.);
+    t * t * (3. - 2. * t)
+}
+/// The alpha `distance` into a band `width` wide.
 fn ramp(distance: f32, width: f32) -> u8 {
-    ((distance / width).powi(2) * 255.).round() as u8
+    (eased(distance, width) * 255.).round() as u8
 }
 fn render(direct: bool, scene: &mut Scene) -> Vec<u8> {
     let mut gpu = GpuRenderer::new(SIZE, SIZE).unwrap();
@@ -62,14 +68,14 @@ fn a_row_fades_its_right_edge_alone() {
     let _gpu_fixture = gpu_fixture();
     for direct in [true, false] {
         let p = render(direct, &mut faded([0., 0.], [0., 28.]));
-        // Opaque to 28 px from the right edge (x 180), then a quadratic
+        // Opaque to 28 px from the right edge (x 180), then an eased
         // ramp down to nothing; top, bottom and left stay sharp.
         assert_eq!(alpha(&p, 150, 60), 255, "direct {direct}");
         assert_eq!(alpha(&p, 21, 60), 255);
         assert_eq!(alpha(&p, 100, 21), 255);
         assert_eq!(alpha(&p, 100, 98), 255);
-        // Into the band, the square of how far in: at x 166 (its centre
-        // 13.5 px from the edge), (13.5 / 28)².
+        // Into the band, eased by how far in: at x 166 (its centre 13.5 px
+        // from the edge), smoothstep(13.5 / 28).
         let half = alpha(&p, 166, 60);
         assert!(half.abs_diff(ramp(13.5, 28.)) <= 1, "half {half}");
         assert!(alpha(&p, 179, 60) < 5);
@@ -578,4 +584,94 @@ fn a_fade_folded_shut_in_a_popup_draws() {
     gpu.render(&scene, &damage).unwrap();
     gpu.render(&scene, &[Rect::new(0., 0., 400., 400.)])
         .unwrap();
+}
+
+/// A 160 × 160 clip at (20, 20) fading 40 px at its top and bottom, holding
+/// a clip of its own 160 × 60 at its top, fading `inner_y` (top, bottom)
+/// and `inner_x` (left, right), filled by `fill` (one rect, or two stacked
+/// to draw the bands as one).
+fn nested(inner_y: [f32; 2], inner_x: [f32; 2], stacked: bool) -> Scene {
+    let mut scene = Scene::new(SIZE as f32, SIZE as f32);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let outer = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(160.),
+            height: Some(160.),
+            clip: true,
+            fade_edges: [40., 40.],
+            ..Default::default()
+        },
+    );
+    scene.set_transform(outer, Transform { x: 20., y: 20. });
+    let inner = scene.append(
+        outer,
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(160.),
+            height: Some(60.),
+            clip: true,
+            fade_edges: inner_y,
+            fade_edges_x: inner_x,
+            ..Default::default()
+        },
+    );
+    let colors: &[Color] = match stacked {
+        true => &[Color(40, 40, 80, 255), Color(255, 0, 0, 255)],
+        false => &[Color(255, 0, 0, 255)],
+    };
+    for color in colors {
+        scene.append(
+            inner,
+            NodeKind::Rect(*color),
+            Style {
+                width: Some(160.),
+                height: Some(60.),
+                ..Default::default()
+            },
+        );
+    }
+    scene
+}
+
+#[test]
+fn a_fade_inside_a_fade_takes_both() {
+    // A label fading its right end in a list fading its top (x inside y),
+    // and a fade inside another on the same edge (y inside y): each pixel
+    // takes both masks, multiplied, on both paths, one item or stacked
+    // (bands drawn as one). The nearest fade alone cut the outer's off.
+    let _gpu_fixture = gpu_fixture();
+    let near = |got: u8, want: f32| (got as f32 - want * 255.).abs() <= 2.;
+
+    for direct in [true, false] {
+        for stacked in [false, true] {
+            // x inside y: the outer's top band (y 20 to 60), the inner's
+            // right band (x 150 to 180).
+            let p = render(direct, &mut nested([0., 0.], [0., 30.], stacked));
+            let outer = eased(10.5, 40.);
+            let a = alpha(&p, 60, 30);
+            assert!(
+                near(a, outer),
+                "outer alone {a} (direct {direct}, stacked {stacked})"
+            );
+            let a = alpha(&p, 165, 30);
+            let both = outer * eased(14.5, 30.);
+            assert!(
+                near(a, both),
+                "both {a} want {} (direct {direct})",
+                both * 255.
+            );
+            // Below the outer's band, the inner's right band alone.
+            let a = alpha(&p, 165, 70);
+            assert!(near(a, eased(14.5, 30.)), "inner alone {a}");
+            // y inside y: both fade the top, over 40 and 20 px.
+            let p = render(direct, &mut nested([20., 0.], [0., 0.], stacked));
+            let a = alpha(&p, 60, 30);
+            let both = eased(10.5, 40.) * eased(10.5, 20.);
+            assert!(near(a, both), "y in y {a} want {}", both * 255.);
+            let a = alpha(&p, 60, 50);
+            assert!(near(a, eased(30.5, 40.)), "past the inner's band {a}");
+        }
+    }
 }

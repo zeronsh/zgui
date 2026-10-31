@@ -57,10 +57,27 @@ pub enum Map {
     /// 0 none), dimming the hemisphere's ambient light, not the sun's or a
     /// bulb's (glTF's occlusion).
     Occlusion,
+    /// How much of its light passes through each point (red), multiplying
+    /// its transmission's factor (`World::set_transmission`; glTF's
+    /// transmission texture). Read at its first texture coordinates as
+    /// they are (never placed), and only while light passes through it.
+    Transmission,
+    /// How thick it is at each point (green), multiplying its
+    /// transmission's thickness (glTF's volume thickness texture). Read as
+    /// `Transmission` is.
+    Thickness,
 }
-/// How many maps a mesh may have.
+/// How many maps a mesh may have, but for those of light passing through.
 pub(crate) const MAPS: usize = 5;
+/// How many maps light passing through a mesh may have.
+pub(crate) const GLASS_MAPS: usize = 2;
 impl Map {
+    /// A map of light passing through: its place in `Extras::glass_maps`.
+    /// (They follow `ALL`'s: one comparison.)
+    #[inline(always)]
+    pub(crate) fn glass(self) -> Option<usize> {
+        (self as usize).checked_sub(MAPS)
+    }
     /// Every map, in the order a frame binds them.
     pub(crate) const ALL: [Map; MAPS] = [
         Map::BaseColour,
@@ -190,6 +207,7 @@ mod tests {
     use super::*;
 
     /// A 2 by 1 PNG: red, then blue.
+    #[cfg(feature = "gltf")]
     const RED_BLUE: &[u8] = &[
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 1, 8, 6,
         0, 0, 0, 244, 34, 127, 138, 0, 0, 0, 14, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0,
@@ -197,6 +215,7 @@ mod tests {
         130,
     ];
 
+    #[cfg(feature = "gltf")]
     #[test]
     fn a_decoded_texture_keeps_its_file_not_its_pixels() {
         let texture = Texture::decode(RED_BLUE).unwrap();
@@ -208,9 +227,106 @@ mod tests {
         assert_eq!(texture.pixels().unwrap().pixels(), pixels);
         assert_eq!(texture.pixels().unwrap().pixels(), pixels);
         assert!(!texture.holds_pixels(), "and not kept");
-        // Pixels given are all it has: they stay.
-        let made = Texture::from_rgba8(2, 1, pixels.to_vec()).unwrap();
+    }
+
+    #[test]
+    fn a_texture_keeps_pixels_it_was_given() {
+        // They're all it has.
+        let made = Texture::from_rgba8(2, 1, vec![255; 8]).unwrap();
         made.uploaded();
         assert!(made.holds_pixels());
+    }
+}
+
+/// How a texture repeats past its edges (`MapPlacement::wrap`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Wrap {
+    /// Over again.
+    #[default]
+    Repeat,
+    /// Its edge's colour on.
+    Clamp,
+    /// Over again, every other time flipped.
+    Mirror,
+}
+
+/// Where a map sits on a mesh (`World::set_map_placement`): which of its
+/// texture coordinates it reads, moved how, and how it repeats. Unset, it
+/// reads its first set as they are, repeating.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MapPlacement {
+    pub(crate) offset: [f32; 2],
+    pub(crate) rotation: f32,
+    pub(crate) scale: [f32; 2],
+    pub(crate) uv_set: u8,
+    pub(crate) wrap: [Wrap; 2],
+}
+impl Default for MapPlacement {
+    fn default() -> Self {
+        Self {
+            offset: [0.; 2],
+            rotation: 0.,
+            scale: [1.; 2],
+            uv_set: 0,
+            wrap: [Wrap::Repeat; 2],
+        }
+    }
+}
+impl MapPlacement {
+    /// As it is: the first texture coordinates, repeating.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// It read `u`, `v` further on.
+    pub fn offset(mut self, u: f32, v: f32) -> Self {
+        self.offset = [u, v];
+        self
+    }
+    /// It read turned `radians`, as glTF's `KHR_texture_transform` turns it.
+    pub fn rotated(mut self, radians: f32) -> Self {
+        self.rotation = radians;
+        self
+    }
+    /// It read at `u`, `v` times its size in coordinates (2 repeats it twice).
+    pub fn scaled(mut self, u: f32, v: f32) -> Self {
+        self.scale = [u, v];
+        self
+    }
+    /// It read from the geometry's second texture coordinates
+    /// (`Geometry::with_second_uvs`) if `set` is 1, else its first.
+    pub fn uv_set(mut self, set: u8) -> Self {
+        self.uv_set = set;
+        self
+    }
+    /// How it repeats along `u` and `v`. A mesh's maps share one sampler:
+    /// its first map's wrap holds for all of them, its base colour's if it
+    /// has one.
+    pub fn wrap(mut self, u: Wrap, v: Wrap) -> Self {
+        self.wrap = [u, v];
+        self
+    }
+    /// Its two rows mapping coordinates: `u' = a u + b v + c`, the row's
+    /// fourth its set.
+    pub(crate) fn rows(&self) -> [[f32; 4]; 2] {
+        let (sin, cos) = self.rotation.sin_cos();
+        let [su, sv] = self.scale;
+        let [ou, ov] = self.offset;
+        let set = f32::from(u8::from(self.uv_set == 1));
+        [[su * cos, sv * sin, ou, set], [-su * sin, sv * cos, ov, 0.]]
+    }
+    /// Whether it only reads its first coordinates as they are (wrapping
+    /// takes a sampler, no more).
+    pub(crate) fn in_place(&self) -> bool {
+        self.offset == [0.; 2] && self.rotation == 0. && self.scale == [1.; 2] && self.uv_set != 1
+    }
+    /// All it says, as numbers: meshes alike share a binding by these.
+    pub(crate) fn numbers(&self) -> [u32; 8] {
+        let [ou, ov] = self.offset.map(f32::to_bits);
+        let [su, sv] = self.scale.map(f32::to_bits);
+        let [wu, wv] = self.wrap.map(|wrap| wrap as u32);
+        let set = u32::from(self.uv_set == 1);
+        [ou, ov, self.rotation.to_bits(), su, sv, set, wu, wv]
     }
 }

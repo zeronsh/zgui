@@ -51,6 +51,7 @@ def main():
     hidden = comparison.hide(args.hide) if args.hide else False
     results = {}
     try:
+        preflight.desktop_still()
         for scene in scenes:
             began = time.monotonic()
             print(f'== {scene}', flush=True)

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/zgx", "crates/zgx-3d", "crates/zgx-components", "crates/zgx-desktop", "crates/zgx-ghostty-sys", "crates/zgx-gpu", "crates/zgx-script", "crates/zgx-run", "comparisons/workload", "comparisons/demo"]
+members = ["crates/zgx", "crates/zgx-3d", "crates/zgx-components", "crates/zgx-desktop", "crates/zgx-ghostty-sys", "crates/zgx-gpu", "crates/zgx-script", "crates/zgx-run", "crates/zgx-terminal", "comparisons/workload", "comparisons/demo"]
 exclude = [
     "comparisons/gpui",
     "comparisons/quickgui",
@@ -8,11 +8,13 @@ exclude = [
     "vendor/accesskit_macos",
     "vendor/accesskit_unix",
     "vendor/accesskit_windows",
+    "vendor/alacritty-terminal",
     "vendor/cosmic-text",
     "vendor/harfrust",
     "vendor/mlua",
     "vendor/taffy",
     "vendor/winit",
+    "vendor/zune-jpeg",
 ]
 resolver = "2"
 
@@ -59,9 +61,10 @@ codegen-units = 1
 lto = "thin"
 codegen-units = 1
 
-# Text shaping (and the shaper under it), layout and the Luau bindings are
-# forks published as zgx's own crates (zgx-cosmic-text, zgx-harfrust,
-# zgx-taffy, zgx-mlua), which zgx's crates depend on
+# Text shaping (and the shaper under it), layout, the Luau bindings and the
+# terminal's screen model are forks published as zgx's own crates
+# (zgx-cosmic-text, zgx-harfrust, zgx-taffy, zgx-mlua, zgx-alacritty-terminal),
+# which zgx's crates depend on
 # by path and version, each with its ZGX_PATCH.md. The crates below are
 # patched in this repository alone: a zgx crate from crates.io builds against
 # their releases, without the fixes, where an API a patch adds is detected at

@@ -176,3 +176,37 @@ fn a_layer_shader_that_does_not_compile_composites_the_layer_as_painted() {
     assert_eq!(pixel(&p, 70, 100), [255, 0, 0, 255]);
     assert_eq!(pixel(&p, 130, 100), [0, 255, 0, 255]);
 }
+
+/// `hue_rotate`, `sepia` and `invert`, against the numbers CSS's matrices give
+/// for these colours, applied alone and one after another.
+#[test]
+fn color_filters_give_the_numbers_css_does() {
+    use zgx::compose::prelude::*;
+    use zgx::widgets::Ui;
+    let _gpu = gpu_fixture();
+    type Case = (&'static str, fn(View) -> View, Color, [u8; 3]);
+    let cases: [Case; 9] = [
+        ("invert", |v| v.invert(1.), RED, [0, 255, 255]),
+        ("half invert", |v| v.invert(0.5), RED, [128, 128, 128]),
+        ("no invert", |v| v.invert(0.), RED, [255, 0, 0]),
+        ("sepia", |v| v.sepia(1.), RED, [100, 89, 69]),
+        ("no hue", |v| v.hue_rotate(0.), RED, [255, 0, 0]),
+        ("hue 90", |v| v.hue_rotate(90.), RED, [0, 91, 0]),
+        ("hue 180", |v| v.hue_rotate(180.), RED, [0, 109, 109]),
+        ("hue 360", |v| v.hue_rotate(360.), GREEN, [0, 255, 0]),
+        // In order: inverted to cyan, then back.
+        ("twice", |v| v.invert(1.).invert(1.), RED, [255, 0, 0]),
+    ];
+    for (name, filter, color, expected) in cases {
+        let mut gpu = GpuRenderer::new(SIZE, SIZE).unwrap();
+        let mut ui = Ui::new(SIZE as f32, SIZE as f32);
+        ui.mount(filter(div().size(100., 100.).bg(color)));
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        let pixels = gpu.readback().unwrap();
+        let got = pixel(&pixels, 50, 50);
+        let wanted = [expected[0], expected[1], expected[2], 255];
+        assert!(near(got, wanted), "{name}: {got:?}, not {wanted:?}");
+    }
+}

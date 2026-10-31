@@ -13,11 +13,15 @@
 //! }
 //! ```
 //!
-//! The terminal is the platform's own view (a Ghostty surface on macOS, with
-//! the desktop host's `ghostty` feature), placed like a web page: laid out,
-//! clipped, moved and faded as its node, with zgx content drawn over it (see
-//! [`crate::native_view`]). It renders, reads the keyboard (IME included) and
-//! the mouse itself. Without a backend the node shows a labelled placeholder.
+//! With the desktop host's `ghostty` feature on macOS, the terminal is the
+//! platform's own view (a Ghostty surface), placed like a web page: laid
+//! out, clipped, moved and faded as its node, with zgx content drawn over it
+//! (see [`crate::native_view`]). It renders, reads the keyboard (IME
+//! included) and the mouse itself. With the host's `terminal` feature (any
+//! platform), zgx draws it: a pseudoterminal's screen in the window's own
+//! text, keys through an input method at its cursor (`zgx-terminal`, given
+//! as a [`TerminalRenderer`]). Without either the node shows a labelled
+//! placeholder.
 //!
 //! The controller owns the session: unmounting hides the terminal and keeps
 //! its process running; mounting it again (another split, another tab)
@@ -229,6 +233,44 @@ pub trait TerminalBackend {
 }
 
 type Listener = Rc<RefCell<dyn FnMut(&TerminalEvent)>>;
+type ClipboardReader = Rc<RefCell<dyn FnMut(ClipboardRead)>>;
+
+/// A program's request to read the clipboard (OSC 52), for the app to
+/// answer ([`Terminal::on_clipboard_read`]): [`allow`](Self::allow) gives
+/// the program the clipboard's text, [`deny`](Self::deny) (or dropping the
+/// request) an empty answer.
+pub struct ClipboardRead(Option<Box<dyn FnOnce(bool)>>);
+impl ClipboardRead {
+    /// A request answered by `answer` (the platform's side): `true` to give
+    /// the program the clipboard's text.
+    pub fn new(answer: impl FnOnce(bool) + 'static) -> Self {
+        Self(Some(Box::new(answer)))
+    }
+    /// Give the program the clipboard's text.
+    pub fn allow(mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(true);
+        }
+    }
+    /// Give the program nothing.
+    pub fn deny(mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(false);
+        }
+    }
+}
+impl Drop for ClipboardRead {
+    fn drop(&mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(false);
+        }
+    }
+}
+impl std::fmt::Debug for ClipboardRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClipboardRead")
+    }
+}
 struct Inner {
     id: u64,
     /// How it starts; settable until a platform terminal starts it.
@@ -244,6 +286,8 @@ struct Inner {
     queued: RefCell<Vec<TerminalCommand>>,
     listeners: RefCell<Vec<(u64, Listener)>>,
     next_listener: Cell<u64>,
+    /// What answers a program asking to read the clipboard (OSC 52).
+    clipboard_reader: RefCell<Option<ClipboardReader>>,
 }
 /// A terminal session's controller; clones share it.
 #[derive(Clone)]
@@ -305,6 +349,7 @@ impl Terminal {
             queued: RefCell::new(Vec::new()),
             listeners: RefCell::new(Vec::new()),
             next_listener: Cell::new(0),
+            clipboard_reader: RefCell::new(None),
         }))
     }
     /// Unique per controller in this thread.
@@ -423,6 +468,29 @@ impl Terminal {
         let backend = self.0.backend.borrow().clone();
         backend.and_then(|backend| backend.snapshot(max_width.max(1)))
     }
+    /// Answer programs asking to read the clipboard (OSC 52) with
+    /// `reader`: it gets each [`ClipboardRead`] and allows or denies it, at
+    /// once or after asking its user (a request dropped is denied). `None`
+    /// leaves them to the platform terminal: Ghostty asks with a dialog of
+    /// its own, the engine-drawn terminal denies them.
+    pub fn on_clipboard_read(&self, reader: Option<impl FnMut(ClipboardRead) + 'static>) {
+        *self.0.clipboard_reader.borrow_mut() =
+            reader.map(|reader| Rc::new(RefCell::new(reader)) as ClipboardReader);
+    }
+    /// Hand `request` to the app's reader (the platform's side); it comes
+    /// back when the app set none, for the platform to answer.
+    pub fn request_clipboard_read(&self, request: ClipboardRead) -> Option<ClipboardRead> {
+        let reader = self.0.clipboard_reader.borrow().clone();
+        match reader {
+            Some(reader) => {
+                if let Ok(mut reader) = reader.try_borrow_mut() {
+                    reader(request);
+                }
+                None
+            }
+            None => Some(request),
+        }
+    }
     /// Call `listener` with each platform event, until the subscription drops.
     pub fn on_event(&self, listener: impl FnMut(&TerminalEvent) + 'static) -> TerminalSubscription {
         let id = self.0.next_listener.get() + 1;
@@ -491,8 +559,24 @@ impl Drop for Inner {
     }
 }
 
+/// What draws terminals in place of a platform view: the desktop host's
+/// engine-drawn terminal (its `terminal` feature), provided to the
+/// components a window mounts. [`terminal`] uses it where one is provided.
+#[derive(Clone)]
+pub struct TerminalRenderer(Rc<dyn Fn(&Terminal) -> View>);
+impl TerminalRenderer {
+    /// A renderer making each terminal's view with `view`.
+    pub fn new(view: impl Fn(&Terminal) -> View + 'static) -> Self {
+        Self(Rc::new(view))
+    }
+}
+
 /// Show `term` in a node laid out like any other: give it a size (or let it
 /// grow), round it, clip it, move and fade it.
 pub fn terminal(term: &Terminal) -> View {
-    crate::web_view::native_view(NativeContent::Terminal(term.clone()))
+    let term = term.clone();
+    crate::compose::component(move |cx| match cx.try_service::<TerminalRenderer>() {
+        Some(renderer) => (renderer.0)(&term),
+        None => crate::web_view::native_view(NativeContent::Terminal(term)),
+    })
 }

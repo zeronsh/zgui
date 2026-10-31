@@ -718,6 +718,68 @@ impl TransformPatch {
 /// Properties few views set, kept apart and shared so that every `Styles`
 /// (a view's, its node's style effect's and that effect's memo) stays small:
 /// a `Styles` is copied and compared on every re-run.
+/// The largest of what `RareStyles` holds, and what few of the styles that
+/// have one set: apart, so a node with a `min_width` doesn't carry a
+/// shader's uniforms (144 of its bytes) on each copy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ColdStyles {
+    /// `Styled::shader_uniforms`.
+    pub(crate) shader_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// `Styled::layer_uniforms`.
+    pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// `Styled::grid_template_columns` and `grid_template_rows`.
+    pub(crate) grid_template: Option<std::sync::Arc<crate::grid_tracks::GridTemplate>>,
+    /// `Styled::grid_area`, `grid_column` and `grid_row`.
+    pub(crate) grid_place: Option<std::sync::Arc<crate::grid_tracks::GridPlace>>,
+    /// `Styled::z`.
+    pub(crate) z: Option<i32>,
+    /// `Styled::display_contents`.
+    pub(crate) display_contents: bool,
+    /// `Styled::sticky_top`.
+    pub(crate) sticky_top: Option<f32>,
+    /// `Styled::object_position`.
+    pub(crate) object_position: Option<(f32, f32)>,
+    /// `Styled::text_shadow` and `text_shadows`.
+    pub(crate) text_shadows: Option<std::sync::Arc<[crate::scene::TextShadow]>>,
+    /// `Styled::image_rendering`.
+    pub(crate) image_rendering: Option<crate::image::ImageRendering>,
+    /// `Styled::outline_style`.
+    pub(crate) outline_style: Option<crate::decoration::BorderStyle>,
+    /// `Styled::w_calc` and the like.
+    pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
+    /// `Styled::text_balance`.
+    pub(crate) text_balance: Option<bool>,
+}
+/// How an image sits in its box: `Styled::object_fit` and `object_position`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ImagePlacement {
+    pub(crate) fit: ObjectFit,
+    pub(crate) position: (f32, f32),
+}
+impl Default for ImagePlacement {
+    fn default() -> Self {
+        Self {
+            fit: ObjectFit::default(),
+            position: (0.5, 0.5),
+        }
+    }
+}
+/// What of `styles`' size is worked out from its containing block.
+fn size_calcs(styles: &mut Styles) -> &mut crate::size_calc::SizeCalcs {
+    // A parent lays out what has options with taffy, the only layout that
+    // reads these: a value that changes nothing, to say so.
+    styles.layout_options_mut().reverse.get_or_insert(false);
+    let cold = styles.rare_mut().cold.get_or_insert_default();
+    std::sync::Arc::make_mut(cold.size_calcs.get_or_insert_default())
+}
+/// Where `styles` lies in its grid by name or line.
+fn grid_place(styles: &mut Styles) -> &mut crate::grid_tracks::GridPlace {
+    // Its parent maps it for taffy (`map_cold_child`) where it maps what has
+    // options: a value that changes nothing, to say so.
+    styles.layout_options_mut().reverse.get_or_insert(false);
+    let cold = styles.rare_mut().cold.get_or_insert_default();
+    std::sync::Arc::make_mut(cold.grid_place.get_or_insert_default())
+}
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
     pub(crate) min_width: Option<f32>,
@@ -738,8 +800,8 @@ pub(crate) struct RareStyles {
     /// `Styled::outline`, `outline_offset` (width and colour; offset).
     pub(crate) outline: Option<Option<(f32, Color)>>,
     pub(crate) outline_offset: Option<f32>,
-    /// `Styled::shader_uniforms`.
-    pub(crate) shader_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// What fewer styles still set (`ColdStyles`).
+    pub(crate) cold: Option<Box<ColdStyles>>,
     pub(crate) shadows: Option<Option<std::sync::Arc<[BoxShadow]>>>,
     /// `Styled::inset_shadows`.
     pub(crate) inset_shadows: Option<Option<std::sync::Arc<[BoxShadow]>>>,
@@ -758,7 +820,6 @@ pub(crate) struct RareStyles {
     pub(crate) mask: Option<Option<MaskImage>>,
     /// `Styled::layer_shader`, `layer_uniforms`.
     pub(crate) layer_shader: Option<Option<std::sync::Arc<crate::decoration::FillShader>>>,
-    pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
     /// `Styled::blend`.
     pub(crate) blend: Option<crate::scene::BlendMode>,
     /// `Styled::relative`: a containing block for absolute descendants.
@@ -793,7 +854,7 @@ impl RareStyles {
         border_over: None,
         outline: None,
         outline_offset: None,
-        shader_uniforms: None,
+        cold: None,
         shadows: None,
         inset_shadows: None,
         clip_feather: None,
@@ -807,7 +868,6 @@ impl RareStyles {
         font_fallbacks: None,
         mask: None,
         layer_shader: None,
-        layer_uniforms: None,
         blend: None,
         relative: None,
         zoom: None,
@@ -856,8 +916,73 @@ impl RareStyles {
         if other.outline_offset.is_some() {
             self.outline_offset = other.outline_offset;
         }
-        if other.shader_uniforms.is_some() {
-            self.shader_uniforms = other.shader_uniforms;
+        if let Some(theirs) = &other.cold {
+            let mine = self.cold.get_or_insert_default();
+            if theirs.shader_uniforms.is_some() {
+                mine.shader_uniforms = theirs.shader_uniforms;
+            }
+            if let Some(sizes) = &theirs.size_calcs {
+                match &mut mine.size_calcs {
+                    Some(mine) => std::sync::Arc::make_mut(mine).merge(sizes),
+                    None => mine.size_calcs = Some(sizes.clone()),
+                }
+            }
+            if theirs.layer_uniforms.is_some() {
+                mine.layer_uniforms = theirs.layer_uniforms;
+            }
+            if theirs.object_position.is_some() {
+                mine.object_position = theirs.object_position;
+            }
+            if theirs.text_balance.is_some() {
+                mine.text_balance = theirs.text_balance;
+            }
+            if theirs.text_shadows.is_some() {
+                mine.text_shadows = theirs.text_shadows.clone();
+            }
+            if theirs.image_rendering.is_some() {
+                mine.image_rendering = theirs.image_rendering;
+            }
+            if theirs.outline_style.is_some() {
+                mine.outline_style = theirs.outline_style;
+            }
+            if theirs.z.is_some() {
+                mine.z = theirs.z;
+            }
+            mine.display_contents |= theirs.display_contents;
+            if let Some(template) = &theirs.grid_template {
+                match &mut mine.grid_template {
+                    Some(mine) => {
+                        let mine = std::sync::Arc::make_mut(mine);
+                        if template.columns.is_some() {
+                            mine.columns = template.columns.clone();
+                        }
+                        if template.rows.is_some() {
+                            mine.rows = template.rows.clone();
+                        }
+                        if template.areas.is_some() {
+                            mine.areas = template.areas.clone();
+                        }
+                        if template.flow.is_some() {
+                            mine.flow = template.flow;
+                        }
+                    }
+                    None => mine.grid_template = Some(template.clone()),
+                }
+            }
+            if let Some(place) = &theirs.grid_place {
+                match &mut mine.grid_place {
+                    Some(mine) => {
+                        let mine = std::sync::Arc::make_mut(mine);
+                        if place.column.is_some() {
+                            mine.column = place.column.clone();
+                        }
+                        if place.row.is_some() {
+                            mine.row = place.row.clone();
+                        }
+                    }
+                    None => mine.grid_place = Some(place.clone()),
+                }
+            }
         }
         if other.border_style.is_some() {
             self.border_style = other.border_style;
@@ -901,9 +1026,6 @@ impl RareStyles {
         if other.layer_shader.is_some() {
             self.layer_shader = other.layer_shader.clone();
         }
-        if other.layer_uniforms.is_some() {
-            self.layer_uniforms = other.layer_uniforms;
-        }
         if other.blend.is_some() {
             self.blend = other.blend;
         }
@@ -917,6 +1039,11 @@ impl RareStyles {
 }
 static NO_RARE: RareStyles = RareStyles::NONE;
 impl Styles {
+    /// Its rare properties, if it has any.
+    #[inline(always)]
+    pub(crate) fn rare_set(&self) -> Option<&RareStyles> {
+        self.rare.as_deref()
+    }
     pub(crate) fn rare(&self) -> &RareStyles {
         self.rare.as_deref().unwrap_or(&NO_RARE)
     }
@@ -1388,6 +1515,125 @@ pub trait Styled: Sized {
         self.styles_mut().layout_options_mut().aspect_ratio = Some(value);
         self
     }
+    /// Paint and hit it by `z` among its siblings, higher over lower (`0`, as
+    /// written, keeps document order). Unlike CSS's `z-index` it orders
+    /// siblings only; layout, focus and the accessibility tree keep document
+    /// order, as in CSS.
+    fn z(mut self, z: i32) -> Self {
+        self.styles_mut().rare_mut().cold.get_or_insert_default().z = Some(z);
+        self
+    }
+    /// Inside a scroll view, hold `top` below its top once scrolling would
+    /// take this past, as far as its parent's box goes (CSS's `position:
+    /// sticky`); it paints over its siblings unless it has a `z`.
+    fn sticky_top(mut self, top: f32) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        cold.sticky_top = Some(top);
+        self
+    }
+    /// Its width from its containing block's (CSS's `calc()`, `min()`,
+    /// `max()` and `clamp()`): `"calc(100% - 24px)".parse()`.
+    fn w_calc(mut self, width: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        self.styles_mut().fields_mut(bit::WIDTH).width = Opt32::none();
+        self.styles_mut()
+            .fields_mut(bit::WIDTH_PERCENT)
+            .width_percent = Opt32::none();
+        size_calcs(self.styles_mut()).width = Some(width.into());
+        self
+    }
+    /// Its height from its containing block's, as `w_calc`.
+    fn h_calc(mut self, height: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        self.styles_mut().fields_mut(bit::HEIGHT).height = Opt32::none();
+        self.styles_mut()
+            .fields_mut(bit::HEIGHT_PERCENT)
+            .height_percent = Opt32::none();
+        size_calcs(self.styles_mut()).height = Some(height.into());
+        self
+    }
+    /// Its smallest width from its containing block's, as `w_calc`.
+    fn min_w_calc(mut self, width: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).min_width = Some(width.into());
+        self
+    }
+    /// Its largest width from its containing block's, as `w_calc`.
+    fn max_w_calc(mut self, width: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).max_width = Some(width.into());
+        self
+    }
+    /// Its smallest height from its containing block's, as `w_calc`.
+    fn min_h_calc(mut self, height: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).min_height = Some(height.into());
+        self
+    }
+    /// Its largest height from its containing block's, as `w_calc`.
+    fn max_h_calc(mut self, height: impl Into<std::sync::Arc<crate::size_calc::SizeCalc>>) -> Self {
+        size_calcs(self.styles_mut()).max_height = Some(height.into());
+        self
+    }
+    /// A grid's columns of any size (CSS `grid-template-columns`), over
+    /// `grid_cols`: `"220 1fr auto".parse()`.
+    fn grid_template_columns(mut self, tracks: crate::grid_tracks::GridTracks) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).columns = Some(std::sync::Arc::new(tracks));
+        self
+    }
+    /// A grid's rows of any size (CSS `grid-template-rows`), over `grid_rows`.
+    fn grid_template_rows(mut self, tracks: crate::grid_tracks::GridTracks) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).rows = Some(std::sync::Arc::new(tracks));
+        self
+    }
+    /// A grid's named areas (CSS `grid-template-areas`), which its items
+    /// place themselves in (`grid_area`).
+    fn grid_template_areas(mut self, areas: crate::grid_tracks::GridAreas) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).areas = Some(std::sync::Arc::new(areas));
+        self
+    }
+    /// How a grid places items without a place (CSS `grid-auto-flow`).
+    fn grid_flow(mut self, flow: crate::grid_tracks::GridFlow) -> Self {
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        let template = cold.grid_template.get_or_insert_default();
+        std::sync::Arc::make_mut(template).flow = Some(flow);
+        self
+    }
+    /// In its grid's area `name` (CSS `grid-area`).
+    fn grid_area(self, name: &str) -> Self {
+        let area = crate::grid_tracks::GridLines::area(name);
+        self.grid_column(area.clone()).grid_row(area)
+    }
+    /// Its columns in its grid, by line, name or span (CSS `grid-column`):
+    /// `"side / main"`, `"2 / span 3"`.
+    fn grid_column(mut self, lines: crate::grid_tracks::GridLines) -> Self {
+        grid_place(self.styles_mut()).column = Some(lines);
+        self
+    }
+    /// Its rows in its grid, as `grid_column` (CSS `grid-row`).
+    fn grid_row(mut self, lines: crate::grid_tracks::GridLines) -> Self {
+        grid_place(self.styles_mut()).row = Some(lines);
+        self
+    }
+    /// Lay this view's children out in its place, as its parent's own, as
+    /// CSS `display: contents` does: in a grid each is a cell, in a row an
+    /// item. Its own size, padding and margins don't apply; it spans its
+    /// children for paint, clip and hits, and keeps its place in focus
+    /// order and for assistive technology (a role or label it has stays,
+    /// its children under it). See `Scene::set_display_contents`.
+    fn display_contents(mut self) -> Self {
+        let styles = self.styles_mut();
+        // Its parent lays out with taffy, which lays it out in its place:
+        // a value that changes nothing, to say so.
+        styles.layout_options_mut().reverse.get_or_insert(false);
+        styles
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .display_contents = true;
+        self
+    }
     /// A grid's number of equal columns (at least 1).
     fn grid_cols(mut self, value: u16) -> Self {
         self.styles_mut().layout_options_mut().columns = Some(value.max(1));
@@ -1666,6 +1912,42 @@ pub trait Styled: Sized {
         self.styles_mut().merge(&style);
         self
     }
+    /// Where a picture lies in its box where it doesn't fill it, as CSS
+    /// `object-position`: fractions of the room to spare, `(0.5, 0.5)` centred
+    /// (the default), `(0.5, 0.)` keeping its top when `cover` crops a portrait.
+    fn object_position(mut self, x: f32, y: f32) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .object_position = Some((x, y));
+        self
+    }
+    /// A shadow under a text's glyphs, as CSS `text-shadow`: its glyphs
+    /// again, moved by `x`, `y` points and painted in `color`. `blur` is the
+    /// Gaussian's sigma in points (0: sharp), each glyph's coverage blurred
+    /// once and kept. It paints outside the text's box, as CSS's does.
+    /// Inherited, as CSS's is: on a container it shadows the text inside.
+    fn text_shadow(self, x: f32, y: f32, blur: f32, color: Color) -> Self {
+        self.text_shadows([crate::scene::TextShadow {
+            offset: crate::scene::Transform { x, y },
+            blur,
+            color,
+        }])
+    }
+    /// Several shadows under a text's glyphs, the first on top (CSS's list);
+    /// none: no shadow.
+    fn text_shadows(
+        mut self,
+        shadows: impl Into<std::sync::Arc<[crate::scene::TextShadow]>>,
+    ) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .text_shadows = Some(shadows.into());
+        self
+    }
     /// Set centered image fitting within its padded content box. Not inherited.
     fn object_fit(mut self, fit: ObjectFit) -> Self {
         self.styles_mut()
@@ -1857,6 +2139,24 @@ pub trait Styled: Sized {
             .paint_background = Some(Some(crate::decoration::Background::Image { image, fit }));
         self
     }
+    /// A radial gradient (CSS `radial-gradient`): an ellipse the box's shape
+    /// about `center` (fractions of the box, `(0.5, 0.5)` its middle), `radius`
+    /// 1 reaching its farthest corner, in two or three `stops` from the centre
+    /// to the edge. Drawn by a shader for each pixel: no raster, and nothing
+    /// for other boxes; boxes only, not a canvas's `Brush`.
+    fn bg_radial(
+        self,
+        center: (f32, f32),
+        radius: f32,
+        stops: impl Into<crate::decoration::RadialStops>,
+    ) -> Self {
+        self.bg_shader(crate::decoration::radial_shader())
+            .shader_uniforms(crate::decoration::radial_uniforms(
+                center,
+                radius,
+                stops.into(),
+            ))
+    }
     /// Fill the view with a shader (see `crate::decoration::FillShader`):
     /// a WGSL `fill` function run per pixel on the GPU, over its `bg`
     /// colour, cut to its rounded corners, under its border and children.
@@ -1871,7 +2171,11 @@ pub trait Styled: Sized {
     /// Animating them per frame repaints the view alone (or set them with
     /// `Scene::set_shader_uniforms` directly, skipping style resolution).
     fn shader_uniforms(mut self, uniforms: crate::decoration::ShaderUniforms) -> Self {
-        self.styles_mut().rare_mut().shader_uniforms = Some(uniforms);
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .shader_uniforms = Some(uniforms);
         self
     }
     /// Round each corner by its own radius; replaces `rounded`.
@@ -1924,6 +2228,27 @@ pub trait Styled: Sized {
     /// negative draws it over the box's edge.
     fn outline_offset(mut self, offset: f32) -> Self {
         self.styles_mut().rare_mut().outline_offset = Some(offset);
+        self
+    }
+    /// How its image, or its background image, is sampled drawn larger or
+    /// smaller (CSS's `image-rendering`): `ImageRendering::Pixelated`, the
+    /// nearest pixel, for pixel art.
+    fn image_rendering(mut self, rendering: crate::image::ImageRendering) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .image_rendering = Some(rendering);
+        self
+    }
+    /// Draw the outline solid, dashed or dotted (CSS `outline-style`; see
+    /// `BorderStyle`, `BorderStyle::DOTTED`).
+    fn outline_style(mut self, style: crate::decoration::BorderStyle) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .outline_style = Some(style);
         self
     }
     /// No outline.
@@ -2123,11 +2448,18 @@ pub trait Styled: Sized {
     /// Backdrop blur (CSS `backdrop-filter: blur()`): what lies behind the
     /// node, within its bounds, blurs by this sigma in logical pixels, as
     /// frosted glass; the node's own content stays sharp. For blurring the
-    /// node's content itself, see `filter_blur`.
+    /// node's content itself, see `filter_blur`. The clearer name is
+    /// `backdrop_blur`: Luau's `blur` is the content blur, and `backdrop_blur`
+    /// this one.
     fn blur(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Blur);
         self.styles_mut().fields_mut(bit::BLUR).overflow_mut().blur = Some(value).into();
         self
+    }
+    /// Backdrop blur (CSS `backdrop-filter: blur()`), by its clear name: what
+    /// lies behind blurs, not the node (`filter_blur`). `blur` is this too.
+    fn backdrop_blur(self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
+        self.blur(value)
     }
     /// Content blur (CSS `filter: blur()`): the node and its subtree blur by
     /// this sigma in logical pixels, spreading past its bounds, under its
@@ -2197,7 +2529,46 @@ pub trait Styled: Sized {
     /// The uniforms its `layer_shader` draws with: time and user parameters
     /// (or set them with `Scene::set_layer_uniforms` directly).
     fn layer_uniforms(mut self, uniforms: crate::decoration::ShaderUniforms) -> Self {
-        self.styles_mut().rare_mut().layer_uniforms = Some(uniforms);
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .layer_uniforms = Some(uniforms);
+        self
+    }
+    /// CSS `filter: hue-rotate()`: colours turned `degrees` round the hue
+    /// circle. Unlike `brightness` and `saturate`, paints its subtree into a
+    /// layer that composites through a shader, so it costs what a layer
+    /// does, and only here. Several of these apply in the order given; it
+    /// takes the place of a `layer_shader`.
+    fn hue_rotate(self, degrees: f32) -> Self {
+        self.color_filter(crate::scene::hue_rotate_matrix(degrees))
+    }
+    /// CSS `filter: sepia()`, `amount` from 0 to 1 (see `hue_rotate`).
+    fn sepia(self, amount: f32) -> Self {
+        self.color_filter(crate::scene::sepia_matrix(amount))
+    }
+    /// CSS `filter: invert()`, `amount` from 0 to 1 (see `hue_rotate`).
+    fn invert(self, amount: f32) -> Self {
+        self.color_filter(crate::scene::invert_matrix(amount))
+    }
+    #[doc(hidden)]
+    fn color_filter(mut self, matrix: crate::scene::ColorMatrix) -> Self {
+        let shader = crate::decoration::color_filter_shader();
+        let rare = self.styles_mut().rare_mut();
+        let cold = rare.cold.get_or_insert_default();
+        // After one already set, this one applies to what it made.
+        let before = (rare.layer_shader.as_ref())
+            .and_then(|set| set.as_ref())
+            .filter(|set| std::sync::Arc::ptr_eq(set, &shader))
+            .and(cold.layer_uniforms)
+            .map(|uniforms| [uniforms.params[0], uniforms.params[1], uniforms.params[2]]);
+        let matrix = crate::scene::compose_color(Some(matrix), before).unwrap_or(matrix);
+        cold.layer_uniforms = Some(crate::decoration::ShaderUniforms {
+            time: 0.,
+            params: [matrix[0], matrix[1], matrix[2], [0.; 4]],
+        });
+        rare.layer_shader = Some(Some(shader));
         self
     }
     /// Clip the view and its descendants to its box inset by these pixels
@@ -2266,6 +2637,17 @@ pub trait Styled: Sized {
     /// Inherited.
     fn text_wrap(mut self, value: bool) -> Self {
         self.styles_mut().fields_mut(bit::TEXT_WRAP).text_wrap = Some(value);
+        self
+    }
+    /// Wrap text with its lines balanced (CSS's `text-wrap: balance`): at
+    /// the narrowest width that keeps as many lines, so a heading's last line
+    /// isn't left short. For up to six lines; its box is as it was.
+    fn text_balance(mut self, balance: bool) -> Self {
+        if balance {
+            self.styles_mut().fields_mut(bit::TEXT_WRAP).text_wrap = Some(true);
+        }
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        cold.text_balance = Some(balance);
         self
     }
     /// `w(width).h(height)`.
@@ -2934,6 +3316,12 @@ pub const fn rgba(value: u32) -> Color {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn backdrop_blur_is_blur_by_its_clear_name() {
+        assert!(Styles::new().backdrop_blur(4.) == Styles::new().blur(4.));
+        assert!(Styles::new().backdrop_blur(4.) != Styles::new().filter_blur(4.));
+    }
+
     use super::*;
 
     /// A style setting none of the properties few set (`Overflow`) holds

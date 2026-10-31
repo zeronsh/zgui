@@ -25,17 +25,20 @@ pub mod gpu_view;
 pub mod components;
 
 pub mod i18n;
+pub mod issues;
 pub mod local_time;
 pub mod timer;
 
 pub mod env;
 pub mod frame;
+pub mod idle;
 pub mod profile;
 pub mod switches;
 #[cfg(feature = "trace")]
 pub mod trace;
 
 pub mod caret_blink;
+pub(crate) mod editor_autocorrect;
 pub(crate) mod editor_lines;
 pub(crate) mod editor_menu;
 pub(crate) mod editor_spell;
@@ -73,6 +76,9 @@ mod composition_guide {}
 #[cfg(doctest)]
 #[doc = include_str!("../../../docs/styling.md")]
 mod styling_guide {}
+#[cfg(doctest)]
+#[doc = include_str!("../../../docs/i18n.md")]
+mod i18n_guide {}
 
 pub mod actions;
 
@@ -82,9 +88,12 @@ pub mod canvas;
 
 pub mod animation;
 
+pub mod grid_tracks;
 pub mod layout;
+pub mod size_calc;
 
 pub mod image_cache;
+pub mod memory;
 
 pub mod decoration;
 

@@ -37,6 +37,13 @@ jobs:
           sudo apt-get update -qq $apt
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $apt $(grep -v '^#' .github/linux-packages.txt)
       - uses: Swatinem/rust-cache@v2
+      # macOS's terminals build Ghostty with Zig 0.16, as a user's build does
+      # (zgx-ghostty-sys), and the check builds every feature its platform has.
+      # Windows and Linux draw theirs with zgx-terminal, which needs no Zig.
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'macOS'
+        with:
+          version: 0.16.0
       - name: The tag is the workspace's version
         if: startsWith(github.ref, 'refs/tags/')
         run: |

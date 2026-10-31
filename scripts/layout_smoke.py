@@ -22,7 +22,7 @@ def main():
         def xdo(*args): return subprocess.run(['xdotool',*map(str,args)],env=env,check=True,capture_output=True,text=True).stdout.strip()
         deadline=time.monotonic()+20;window=None
         while time.monotonic()<deadline:
-            result=subprocess.run(['xdotool','search','--name','^zgx retained layout$'],env=env,capture_output=True,text=True)
+            result=subprocess.run(['xdotool','search','--onlyvisible','--name','^zgx retained layout$'],env=env,capture_output=True,text=True)
             if result.returncode==0: window=result.stdout.splitlines()[0];break
             assert app.poll() is None, 'Gallery exited during startup'
             time.sleep(.1)
@@ -32,9 +32,14 @@ def main():
             xdo('windowsize',window,width,height);time.sleep(.7)
             assert app.poll() is None, 'Gallery exited on resize'
             path=args.output/f'{width}x{height}.png'
-            subprocess.run(['import','-window',window,str(path)],env=env,check=True,capture_output=True)
+            # A window shows before its first frame does: a blank capture is one taken too soon.
+            deadline=time.monotonic()+15
+            while True:
+                done=subprocess.run(['import','-window',window,str(path)],env=env,capture_output=True,text=True)
+                if done.returncode==0 and path.stat().st_size>1000: break
+                assert time.monotonic()<deadline, f'Empty screenshot: {done.stderr}'
+                time.sleep(.2)
             captures.append({'size':[width,height],'file':path.name,'bytes':path.stat().st_size})
-            assert path.stat().st_size>1000, 'Empty screenshot'
         (args.output/'result.json').write_text(json.dumps({'status':'passed','platform':'X11/Xvfb','captures':captures,'scope':'startup and three resizes; geometry assertions live in advanced_layout tests'},indent=2)+'\n')
     finally:
         for process in (app,wm,xvfb):

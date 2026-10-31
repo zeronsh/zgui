@@ -3,6 +3,121 @@ use crate::GpuError;
 use std::{io::Cursor, sync::Arc};
 use zgx::image::ImageData;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
+/// A PNG or JPEG keeping its file (`ImageData::kept`): only its header is
+/// read here; its pixels decode as `decode_image` does, off the main thread,
+/// when it is drawn, at the size it is drawn, and go once a renderer has
+/// them. The bytes are shared, not copied.
+pub fn decode_image_kept(bytes: Arc<[u8]>) -> Result<Arc<ImageData>, GpuError> {
+    if bytes.len() > MAX_BYTES {
+        return Err(GpuError("encoded image exceeds 64 MiB".into()));
+    }
+    let reader = image::ImageReader::new(Cursor::new(&bytes[..]))
+        .with_guessed_format()
+        .map_err(|e| GpuError(e.to_string()))?;
+    let format = reader.format();
+    let decodable = (cfg!(feature = "png") && format == Some(image::ImageFormat::Png))
+        || (cfg!(feature = "jpeg") && format == Some(image::ImageFormat::Jpeg));
+    // Others (a GIF, a format left out) decode now, as they always did.
+    if !decodable {
+        return decode_image(&bytes);
+    }
+    #[cfg(feature = "jpeg")]
+    if format == Some(image::ImageFormat::Jpeg) {
+        let (width, height) = jpeg_size(&bytes)?;
+        return ImageData::kept_scaled(width, height, bytes, redecode, redecode_scaled)
+            .map(Arc::new)
+            .map_err(|e| GpuError(e.into()));
+    }
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|e| GpuError(e.to_string()))?;
+    if width > 8192 || height > 8192 || width as usize * height as usize * 4 > MAX_BYTES {
+        return Err(GpuError("decoded image exceeds 64 MiB".into()));
+    }
+    ImageData::kept(width, height, bytes, redecode)
+        .map(Arc::new)
+        .map_err(|e| GpuError(e.into()))
+}
+/// A kept JPEG's pixels at least `size`: decoded at the smallest of 1/8,
+/// 1/4, 1/2 and whole that still covers it, never larger.
+#[cfg(feature = "jpeg")]
+fn redecode_scaled(bytes: &[u8], size: (u32, u32)) -> Result<(u32, u32, Arc<[u8]>), String> {
+    let (width, height) = jpeg_size(bytes).map_err(|e| e.0)?;
+    let scale = [8, 4, 2]
+        .into_iter()
+        .find(|&d| width.div_ceil(d) >= size.0 && height.div_ceil(d) >= size.1)
+        .unwrap_or(1);
+    jpeg(bytes, scale as u8).map_err(|e| e.0)
+}
+/// A JPEG's size, from its header.
+#[cfg(feature = "jpeg")]
+fn jpeg_size(bytes: &[u8]) -> Result<(u32, u32), GpuError> {
+    let mut decoder = jpeg_decoder(bytes);
+    decoder
+        .decode_headers()
+        .map_err(|e| GpuError(e.to_string()))?;
+    let (width, height) = decoder
+        .dimensions()
+        .ok_or_else(|| GpuError("JPEG without a size".into()))?;
+    if width * height * 4 > MAX_BYTES {
+        return Err(GpuError("decoded image exceeds 64 MiB".into()));
+    }
+    Ok((width as u32, height as u32))
+}
+#[cfg(feature = "jpeg")]
+fn jpeg_decoder(
+    bytes: &[u8],
+) -> zune_jpeg::JpegDecoder<zune_jpeg::zune_core::bytestream::ZCursor<&[u8]>> {
+    use zune_jpeg::zune_core::options::DecoderOptions;
+    let options = DecoderOptions::default()
+        .set_max_width(8192)
+        .set_max_height(8192);
+    zune_jpeg::JpegDecoder::new_with_options(
+        zune_jpeg::zune_core::bytestream::ZCursor::new(bytes),
+        options,
+    )
+}
+/// A JPEG decoded at 1/`scale` of its size (1, 2, 4 or 8), straight into its
+/// final RGBA buffer, and that size.
+#[cfg(feature = "jpeg")]
+fn jpeg(bytes: &[u8], scale: u8) -> Result<(u32, u32, Arc<[u8]>), GpuError> {
+    use zune_jpeg::zune_core::colorspace::ColorSpace;
+    let failed = |e: zune_jpeg::errors::DecodeErrors| GpuError(e.to_string());
+    let mut decoder = jpeg_decoder(bytes);
+    decoder.set_scale(scale);
+    decoder.decode_headers().map_err(failed)?;
+    // Its own colours where RGB(A) or grey, RGB otherwise (YCbCr, CMYK,
+    // YCCK), as `image` asks: the same pixels it made of them. (zune-jpeg's
+    // CMYK to RGBA leaves alpha unset.)
+    let colour = match decoder.input_colorspace() {
+        Some(c @ (ColorSpace::RGB | ColorSpace::RGBA | ColorSpace::Luma | ColorSpace::LumaA)) => c,
+        _ => ColorSpace::RGB,
+    };
+    decoder.set_options(decoder.options().jpeg_set_out_colorspace(colour));
+    let (width, height) = decoder
+        .dimensions()
+        .ok_or_else(|| GpuError("JPEG without a size".into()))?;
+    let pixels = width * height;
+    if pixels * 4 > MAX_BYTES {
+        return Err(GpuError("decoded image exceeds 64 MiB".into()));
+    }
+    // Decoded into the front of its final buffer, widened there.
+    // SAFETY: Zeroed bytes are initialized `u8`s.
+    let mut rgba = unsafe { Arc::<[u8]>::new_zeroed_slice(pixels * 4).assume_init() };
+    let buffer = Arc::get_mut(&mut rgba).expect("a buffer just made");
+    let channels = colour.num_components();
+    decoder
+        .decode_into(&mut buffer[..pixels * channels])
+        .map_err(failed)?;
+    widen(buffer, channels, pixels);
+    Ok((width as u32, height as u32, rgba))
+}
+/// A kept file's pixels (`decode_image_kept`).
+fn redecode(bytes: &[u8]) -> Result<Arc<[u8]>, String> {
+    decode_image(bytes)
+        .map(|image| image.pixels_arc())
+        .map_err(|e| e.0)
+}
 /// Decode PNG/JPEG into immutable, straight-alpha RGBA8. No filesystem/network access.
 ///
 /// The image is decoded into its final buffer, allocated once: 8-bit RGB,
@@ -22,6 +137,13 @@ pub fn decode_image(bytes: &[u8]) -> Result<Arc<ImageData>, GpuError> {
         }
         Some(image::ImageFormat::Jpeg) if !cfg!(feature = "jpeg") => {
             return Err(GpuError("JPEG images need zgx-gpu's `jpeg` feature".into()));
+        }
+        #[cfg(feature = "jpeg")]
+        Some(image::ImageFormat::Jpeg) => {
+            let (width, height, rgba) = jpeg(bytes, 1)?;
+            return ImageData::new(width, height, rgba)
+                .map(Arc::new)
+                .map_err(|e| GpuError(e.into()));
         }
         _ => {}
     }

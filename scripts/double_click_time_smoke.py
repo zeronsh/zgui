@@ -93,13 +93,26 @@ def main():
                     if time.monotonic() > deadline or app.poll() is not None:
                         raise RuntimeError("the example's window did not appear")
                     time.sleep(.05)
+                # The window can show before the portal's answer arrives (zgx
+                # gives it 300 ms, then reads it again behind the window), so
+                # the presses wait for the example to have the time asked for.
+                shown = time.monotonic()
+                deadline = shown + 20
+                log = args.output / f"{milliseconds}-application.log"
+                while f"DOUBLE_CLICK {milliseconds}\n" not in log.read_text():
+                    if time.monotonic() > deadline or app.poll() is not None:
+                        raise RuntimeError(f"the example never had a {milliseconds} ms double-click time: "
+                                           f"{log.read_text()!r}")
+                    time.sleep(.05)
+                print(f"{milliseconds} ms double-click time {(time.monotonic() - shown) * 1000:.0f} ms after the window",
+                      flush=True)
                 xdo = lambda *parts: subprocess.check_call(["xdotool", *map(str, parts)], env=env)
                 xdo("windowactivate", "--sync", window)
                 time.sleep(.4)
                 # The same spot as primary_selection_smoke's double click.
-                xdo("mousemove", "--window", window, 110, 42, "click", 1)
-                time.sleep(gap)
-                xdo("click", 1)
+                # One xdotool for both presses: two take as long to start as a
+                # loaded runner likes, past the time this needs them within.
+                xdo("mousemove", "--window", window, 110, 42, "click", 1, "sleep", gap, "click", 1)
 
                 def primary():
                     read = subprocess.run(["xclip", "-o", "-selection", "primary"], env=env,

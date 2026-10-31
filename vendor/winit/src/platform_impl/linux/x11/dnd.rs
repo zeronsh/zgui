@@ -49,6 +49,10 @@ pub struct Dnd {
     pub result: Option<Result<Vec<PathBuf>, DndDataParseError>>,
     /// zgx patch: a drag carrying text, not files (`platform::text_drop`).
     pub text: Option<TextDrag>,
+    /// zgx patch: where a drag carrying files was last said to be
+    /// (`CursorMoved`), in the window's pixels: the source holds the
+    /// pointer, so the window hears no motion while it is over it.
+    pub file_point: Option<(f64, f64)>,
 }
 
 /// zgx patch: a drag carrying text over a window, as `platform::text_drop`
@@ -76,6 +80,7 @@ impl Dnd {
             source_window: None,
             result: None,
             text: None,
+            file_point: None,
         })
     }
 
@@ -85,6 +90,7 @@ impl Dnd {
         self.source_window = None;
         self.result = None;
         self.text = None;
+        self.file_point = None;
     }
 
     /// zgx patch: the target a drag's text is asked for in, if it carries

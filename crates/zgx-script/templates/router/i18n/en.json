@@ -1,0 +1,5 @@
+{
+  "toolbar": { "back": "Back", "forward": "Forward", "title": "Notes", "settings": "Settings" },
+  "note": { "missing": "No such note." },
+  "settings": { "title": "Settings", "theme": "Theme", "done": "Done" }
+}

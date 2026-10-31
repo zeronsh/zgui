@@ -12,10 +12,18 @@ mod composition_percent;
 mod composition_wrap;
 #[path = "../contents_layout.rs"]
 mod contents_layout;
+#[path = "../display_contents.rs"]
+mod display_contents;
 #[path = "../element_zoom.rs"]
 mod element_zoom;
+#[path = "../grid_areas.rs"]
+mod grid_areas;
+#[path = "../grid_tracks.rs"]
+mod grid_tracks;
 #[path = "../incremental_layout_equivalence.rs"]
 mod incremental_layout_equivalence;
+#[path = "../intrinsic_sizes.rs"]
+mod intrinsic_sizes;
 #[path = "../layout_automatic_minimum.rs"]
 mod layout_automatic_minimum;
 #[path = "../layout_box_model.rs"]
@@ -36,7 +44,13 @@ mod resize_regions;
 mod rtl_layout;
 #[path = "../rtl_scroll.rs"]
 mod rtl_scroll;
+#[path = "../size_calc.rs"]
+mod size_calc;
+#[path = "../sticky.rs"]
+mod sticky;
 #[path = "../wrapped_text_in_capped_box.rs"]
 mod wrapped_text_in_capped_box;
+#[path = "../z_order.rs"]
+mod z_order;
 #[path = "../zoom_relayout.rs"]
 mod zoom_relayout;

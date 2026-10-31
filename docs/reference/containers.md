@@ -57,7 +57,7 @@ return ui.split {
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `size` | `State<number>` | required | the first pane's width (height, `vertical`) in points, both ways: the divider writes it as it drags, and a `ui.persist` keeps the layout across launches |
+| `size` | `State<number>` | a state of its own, at 280 | the first pane's width (height, `vertical`) in points, both ways: the divider writes it as it drags, and a `ui.persist` keeps the layout across launches |
 | `vertical` | `boolean` | `false` | one pane over the other |
 | `second` | `boolean` | `false` | `size` is the second pane's (an inspector at the right), and the first fills the rest |
 | `min`, `max` | `number` | `0`, none | the first pane's bounds |
@@ -100,6 +100,10 @@ return ui.column {
 | `value` | `State<string>` | required | the chosen tab's id |
 | `panel` | `(id: string) -> Node` | required | the chosen tab's panel, built as it is chosen |
 | `reorderable` | `boolean` | `false` | |
+| `keep` | `boolean` | `false` | a panel stays mounted once its tab is chosen, as Radix's `forceMount`, and goes when the tab closes: an editor keeps its undo, caret and scroll. Hidden, it takes no layout, paint or frames; its reactive bindings still follow state, and a script's own timers keep running. A strip then holds a panel per tab it opened, so a `ref` shared by every panel finds the first mounted, not the one shown: give each panel its own (a ref per tab id) |
+| `group` | `string` | none | `reorderable` strips of one group, in one window, take each other's tabs: a tab dragged over another's strip or panel goes there and is chosen, as in an editor's split panes. It arrives as `{ id, label, closable }`, without other fields, and its panel is built there, so `keep`'s state doesn't move with it |
+| `on_move` | `(id: string, to: string) -> ()` | none | a tab of this strip went to another of its group: its id and that strip's `label`, for an app's undo |
+| `on_tear_off` | `(id: string, e: { x, y, grab_x, grab_y }) -> ()` | none | `reorderable` tabs tear off, as a browser's do: a tab dragged off its strip is carried as a drag. Dropped on a strip of its group in any of the app's windows, it goes there (`on_move` told), dropped back on its own strip it stays, and released outside every window (where the host can tell, macOS and X11) this is told its id and where, as `on_drag_outside` is, and the tab leaves `items`. Returning `false` keeps it, its preview sliding home: a tab that stays, such as an "All". Open it in a window of its own with `ui.windows`, `under_pointer = { e.grab_x, e.grab_y }` (plus the strip's offset in that window) putting the tab where it was grabbed |
 | `on_close` | `(id: string) -> boolean?` | none | asked before a tab closes; `false` keeps it open (an editor asking to save first) |
 | `label` | `string` | `""` | the strip's accessible name |
 

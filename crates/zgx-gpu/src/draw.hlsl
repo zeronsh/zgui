@@ -167,38 +167,55 @@ float4 tinted(float index, float4 premultiplied)
     return float4((rgb_1 * premultiplied.w), premultiplied.w);
 }
 
+float faded(float4 b_1, float4 f, float2 p_1)
+{
+    float k = 1.0;
+
+    if ((f.x > 0.0)) {
+        float t_1 = clamp(((p_1.y - b_1.y) / f.x), 0.0, 1.0);
+        float _e16 = k;
+        k = (_e16 * ((t_1 * t_1) * (3.0 - (2.0 * t_1))));
+    }
+    if ((f.y > 0.0)) {
+        float t_2 = clamp(((b_1.z - p_1.x) / f.y), 0.0, 1.0);
+        float _e35 = k;
+        k = (_e35 * ((t_2 * t_2) * (3.0 - (2.0 * t_2))));
+    }
+    if ((f.z > 0.0)) {
+        float t_3 = clamp(((b_1.w - p_1.y) / f.z), 0.0, 1.0);
+        float _e54 = k;
+        k = (_e54 * ((t_3 * t_3) * (3.0 - (2.0 * t_3))));
+    }
+    if ((f.w > 0.0)) {
+        float t_4 = clamp(((p_1.x - b_1.x) / f.w), 0.0, 1.0);
+        float _e73 = k;
+        k = (_e73 * ((t_4 * t_4) * (3.0 - (2.0 * t_4))));
+    }
+    float _e81 = k;
+    return _e81;
+}
+
 float region(float index_1, float2 position_1)
 {
-    float k = (float)0;
+    float k_1 = (float)0;
 
     Region g_1 = ConstructRegion(asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+0)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+16)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+32)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+48)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+64)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+80)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+96)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+112)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+128)), asfloat(regions.Load4((naga_f2u32(index_1) - 1u)*160+144)));
     float _e10 = viewport.z;
-    float2 p_1 = (position_1 / (_e10).xx);
-    const float _e17 = rounded(g_1.round0_, g_1.radii0_, g_1.tint.y, p_1);
-    const float _e22 = rounded(g_1.round1_, g_1.radii1_, g_1.tint.z, p_1);
-    k = (_e17 * _e22);
-    if ((g_1.fade.x > 0.0)) {
-        float t_1 = clamp(((p_1.y - g_1.fade_box.y) / g_1.fade.x), 0.0, 1.0);
-        float _e39 = k;
-        k = (_e39 * (t_1 * t_1));
+    float2 p_2 = (position_1 / (_e10).xx);
+    const float _e17 = rounded(g_1.round0_, g_1.radii0_, g_1.tint.y, p_2);
+    const float _e22 = rounded(g_1.round1_, g_1.radii1_, g_1.tint.z, p_2);
+    k_1 = (_e17 * _e22);
+    float _e25 = k_1;
+    const float _e28 = faded(g_1.fade_box, g_1.fade, p_2);
+    k_1 = (_e25 * _e28);
+    if ((g_1.tint.w > 0.5)) {
+        Region o_2 = ConstructRegion(asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+0)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+16)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+32)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+48)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+64)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+80)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+96)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+112)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+128)), asfloat(regions.Load4((naga_f2u32(g_1.tint.w) - 1u)*160+144)));
+        float _e42 = k_1;
+        const float _e45 = faded(o_2.fade_box, o_2.fade, p_2);
+        k_1 = (_e42 * _e45);
     }
-    if ((g_1.fade.y > 0.0)) {
-        float t_2 = clamp(((g_1.fade_box.z - p_1.x) / g_1.fade.y), 0.0, 1.0);
-        float _e56 = k;
-        k = (_e56 * (t_2 * t_2));
-    }
-    if ((g_1.fade.z > 0.0)) {
-        float t_3 = clamp(((g_1.fade_box.w - p_1.y) / g_1.fade.z), 0.0, 1.0);
-        float _e73 = k;
-        k = (_e73 * (t_3 * t_3));
-    }
-    if ((g_1.fade.w > 0.0)) {
-        float t_4 = clamp(((p_1.x - g_1.fade_box.x) / g_1.fade.w), 0.0, 1.0);
-        float _e90 = k;
-        k = (_e90 * (t_4 * t_4));
-    }
-    float _e93 = k;
-    return _e93;
+    float _e47 = k_1;
+    return _e47;
 }
 
 float2 centred(float2 at, float4 box)
@@ -285,8 +302,8 @@ float4 shade_texel(Out input, float4 given, bool has_texel)
             float _e165 = v_5.shape.x;
             uint a = naga_f2u32(_e165);
             float _e169 = v_5.shape.z;
-            uint b_1 = naga_f2u32(_e169);
-            float4 sides = (float4(float((a & 4095u)), float((a >> 12u)), float((b_1 & 4095u)), float((b_1 >> 12u))) / (16.0).xxxx);
+            uint b_2 = naga_f2u32(_e169);
+            float4 sides = (float4(float((a & 4095u)), float((a >> 12u)), float((b_2 & 4095u)), float((b_2 >> 12u))) / (16.0).xxxx);
             float _e189 = v_5.point_.x;
             float _e192 = v_5.fade.x;
             float _e195 = v_5.fade.z;
@@ -378,11 +395,11 @@ float4 shade_texel(Out input, float4 given, bool has_texel)
         float2 _e467 = v_5.point_;
         float2 distance_1 = min((_e454 - _e456.xy), ((_e460.xy + _e463.zw) - _e467));
         float _e475 = v_5.options.x;
-        float f = clamp((min(distance_1.x, distance_1.y) / _e475), 0.0, 1.0);
+        float f_1 = clamp((min(distance_1.x, distance_1.y) / _e475), 0.0, 1.0);
         float _e481 = color_1.w;
-        color_1.w = (_e481 * f);
+        color_1.w = (_e481 * f_1);
         float _e483 = scale;
-        scale = (_e483 * f);
+        scale = (_e483 * f_1);
     }
     float _e487 = v_5.mask.x;
     if ((_e487 > 0.5)) {
@@ -429,13 +446,13 @@ VertexOutput_vs vs(Vertex v, uint i : SV_VertexID)
     Out o = (Out)0;
 
     float2 corner_1 = float2(float((i & 1u)), float((i >> 1u)));
-    float2 p_2 = (v.rect.xy + (corner_1 * v.rect.zw));
-    position = p_2;
+    float2 p_3 = (v.rect.xy + (corner_1 * v.rect.zw));
+    position = p_3;
     if ((v.options.z > 0.5)) {
-        position = float2((dot(v.shape.xy, p_2) + v.border.x), (dot(v.shape.zw, p_2) + v.border.y));
+        position = float2((dot(v.shape.xy, p_3) + v.border.x), (dot(v.shape.zw, p_3) + v.border.y));
     }
     if ((v.options.z > 1.5)) {
-        w = max((dot(v.border.zw, p_2) + 1.0), 0.0001);
+        w = max((dot(v.border.zw, p_3) + 1.0), 0.0001);
     }
     float _e49 = position.x;
     float _e52 = viewport.x;
@@ -447,7 +464,7 @@ VertexOutput_vs vs(Vertex v, uint i : SV_VertexID)
     o.position = float4((((_e49 / _e52) * 2.0) - _e56), (_e58 - ((_e60 / _e63) * 2.0)), 0.0, _e68);
     o.uv = (v.uv.xy + (corner_1 * v.uv.zw));
     o.color = v.color;
-    o.point_ = p_2;
+    o.point_ = p_3;
     o.fade = v.fade;
     o.options = v.options;
     o.shape = v.shape;
@@ -486,10 +503,10 @@ VertexOutput_vs_basic vs_basic(float4 rect : LOC0, float4 uv : LOC1, float4 colo
     Basic o_1 = (Basic)0;
 
     float2 corner_2 = float2(float((i_1 & 1u)), float((i_1 >> 1u)));
-    float2 p_3 = (rect.xy + (corner_2 * rect.zw));
+    float2 p_4 = (rect.xy + (corner_2 * rect.zw));
     float _e21 = viewport.x;
     float _e30 = viewport.y;
-    o_1.position = float4((((p_3.x / _e21) * 2.0) - 1.0), (1.0 - ((p_3.y / _e30) * 2.0)), 0.0, 1.0);
+    o_1.position = float4((((p_4.x / _e21) * 2.0) - 1.0), (1.0 - ((p_4.y / _e30) * 2.0)), 0.0, 1.0);
     o_1.uv = (uv.xy + (corner_2 * uv.zw));
     o_1.color = color;
     o_1.texture_ = options.y;

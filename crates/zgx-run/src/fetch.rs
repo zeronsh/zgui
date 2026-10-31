@@ -37,6 +37,9 @@ struct Heard {
     head: Option<Result<Head, String>>,
     /// Body read since the task last took it.
     pieces: Vec<u8>,
+    /// How much of the request's body has gone out, since the task last
+    /// told the script: `(sent, total)`.
+    sent: Option<(u64, u64)>,
     /// The body ended, or broke off (`failed`).
     ended: bool,
     failed: Option<String>,
@@ -72,6 +75,12 @@ impl Future for Fetching {
         loop {
             let (pieces, done) = {
                 let mut heard = self.shared.lock().unwrap();
+                if let Some((sent, total)) = heard.sent.take() {
+                    // Outside the lock: the script's `on_progress` runs.
+                    drop(heard);
+                    self.body.sent(sent, total);
+                    continue;
+                }
                 let pieces = std::mem::take(&mut heard.pieces);
                 let done = pieces.is_empty() && (heard.ended || matches!(heard.head, Some(Err(_))));
                 if pieces.is_empty() && !done {
@@ -261,7 +270,7 @@ fn read(request: Request, shared: Shared) {
         }
         true
     };
-    let response = match send(request) {
+    let response = match send(request, &shared) {
         Ok(response) => response,
         Err(error) => {
             tell(&mut |heard| heard.head = Some(Err(error.clone())));
@@ -310,8 +319,9 @@ fn read(request: Request, shared: Shared) {
     }
 }
 
-/// `request` sent, its answer's head read.
-fn send(request: Request) -> Result<ureq::http::Response<ureq::Body>, String> {
+/// `request` sent, its answer's head read; how much of its body has gone
+/// out told to `shared` as it goes.
+fn send(request: Request, shared: &Shared) -> Result<ureq::http::Response<ureq::Body>, String> {
     let mut builder = ureq::http::Request::builder()
         .method(request.method.to_ascii_uppercase().as_str())
         .uri(&request.url);
@@ -321,8 +331,55 @@ fn send(request: Request) -> Result<ureq::http::Response<ureq::Body>, String> {
     let sent = match request.body {
         // No body at all (a GET's), not an empty one.
         None => builder.body(()).map(|request| agent().run(request)),
-        Some(body) => builder.body(body).map(|request| agent().run(request)),
+        Some(body) => {
+            // Its length said, so it goes length-delimited, not chunked,
+            // though read through a counter.
+            let total = body.len() as u64;
+            if !request
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            {
+                builder = builder.header("content-length", total);
+            }
+            let counted = Counted {
+                body: std::io::Cursor::new(body),
+                total,
+                told: 0,
+                shared: shared.clone(),
+            };
+            builder
+                .body(ureq::SendBody::from_owned_reader(counted))
+                .map(|request| agent().run(request))
+        }
     };
     sent.map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
+}
+
+/// A request's body read out to the connection, telling the script's task
+/// how much has gone, at most a hundred times over the body.
+struct Counted {
+    body: std::io::Cursor<Vec<u8>>,
+    total: u64,
+    told: u64,
+    shared: Shared,
+}
+impl Read for Counted {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.body.read(buffer)?;
+        let sent = self.body.position();
+        if sent == self.total || sent - self.told >= (self.total / 100).max(16 * 1024) {
+            self.told = sent;
+            let waker = {
+                let mut heard = self.shared.lock().unwrap();
+                heard.sent = Some((sent, self.total));
+                heard.waker.take()
+            };
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+        Ok(n)
+    }
 }

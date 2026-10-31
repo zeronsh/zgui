@@ -420,7 +420,7 @@ impl Popups {
                     popup.revision = Some(revision);
                     popup.renderer.set_popup(*root, *bounds);
                     let renderer = &mut popup.renderer;
-                    let status = crate::contain::run(
+                    let status = crate::contain::run_frame(
                         &mut popup.fault,
                         revision,
                         std::time::Instant::now(),
@@ -433,6 +433,9 @@ impl Popups {
                                 .and_then(|_| renderer.present_with_status())
                         },
                     );
+                    for issue in popup.renderer.take_issues() {
+                        crate::contain::queue_issue(issue);
+                    }
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?} {status:?}"));
                 }
                 client.state.targets.insert(
@@ -449,6 +452,10 @@ impl Popups {
             Some(())
         });
         Ok(())
+    }
+    /// Its popups' renderers, for a memory report.
+    pub fn renderers(&self) -> impl Iterator<Item = &zgx_gpu::GpuRenderer> {
+        self.shown.iter().map(|(_, popup)| &popup.renderer)
     }
     pub fn hide_all(&mut self, parent: &Window) {
         let shown = std::mem::take(&mut self.shown);

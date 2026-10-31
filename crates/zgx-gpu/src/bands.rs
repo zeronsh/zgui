@@ -90,7 +90,8 @@ impl Pixels {
     }
 }
 
-/// `extras` without a fade mask (shared, for items sharing them).
+/// `extras` without their fade masks, an outer one's too (shared, for
+/// items sharing them).
 fn unmasked(
     extras: &Option<Rc<PaintExtras>>,
     last: &mut Option<(*const PaintExtras, Option<Rc<PaintExtras>>)>,
@@ -103,6 +104,7 @@ fn unmasked(
     }
     let mut plain = PaintExtras::clone(extras);
     plain.mask = None;
+    plain.outer_mask = None;
     let plain = (plain != PaintExtras::default()).then(|| Rc::new(plain));
     *last = Some((Rc::as_ptr(extras), plain.clone()));
     plain
@@ -243,18 +245,13 @@ impl GpuRenderer {
         }
         false
     }
-    /// A run's interior and bands (in device pixels) where it needs its
-    /// bands drawn as one: `None` where it can't be (a backdrop filter or
-    /// blend in one), or where nothing in a band overlaps (item by item is
-    /// exact there, a list of rows: drawn as it was).
-    fn band_strips(
+    /// Where `mask` shows (device pixels, in `target`) and where it is 1;
+    /// `None` where it shows nowhere in `target`.
+    fn boxes(
         &self,
-        scene: &Scene,
-        run: &[PaintItem<'_>],
         (rect, [top, right, bottom, left]): FadeMask,
-        reach: Pixels,
         target: Pixels,
-    ) -> Option<(Pixels, Vec<Pixels>)> {
+    ) -> Option<(Pixels, Pixels)> {
         let scale = self.scale;
         let px = |v: f32| (v * scale).round();
         let [vl, vt, vr, vb] = target.0;
@@ -281,28 +278,56 @@ impl GpuRenderer {
             return None;
         }
         let [ol, ot, or, ob] = outer.0;
-        let inner = Pixels([
-            if left > 0. {
-                px(rect.x + left).clamp(ol, or)
-            } else {
-                ol
-            },
-            if top > 0. {
-                px(rect.y + top).clamp(ot, ob)
-            } else {
-                ot
-            },
-            if right > 0. {
-                px(rect.x + rect.width - right).clamp(ol, or)
-            } else {
-                or
-            },
-            if bottom > 0. {
-                px(rect.y + rect.height - bottom).clamp(ot, ob)
-            } else {
-                ob
-            },
-        ]);
+        Some((
+            outer,
+            Pixels([
+                if left > 0. {
+                    px(rect.x + left).clamp(ol, or)
+                } else {
+                    ol
+                },
+                if top > 0. {
+                    px(rect.y + top).clamp(ot, ob)
+                } else {
+                    ot
+                },
+                if right > 0. {
+                    px(rect.x + rect.width - right).clamp(ol, or)
+                } else {
+                    or
+                },
+                if bottom > 0. {
+                    px(rect.y + rect.height - bottom).clamp(ot, ob)
+                } else {
+                    ob
+                },
+            ]),
+        ))
+    }
+    /// A run's interior and bands (in device pixels) where it needs its
+    /// bands drawn as one: `None` where it can't be (a backdrop filter or
+    /// blend in one), or where nothing in a band overlaps (item by item is
+    /// exact there, a list of rows: drawn as it was).
+    fn band_strips(
+        &self,
+        scene: &Scene,
+        run: &[PaintItem<'_>],
+        (rect, [top, right, bottom, left]): FadeMask,
+        reach: Pixels,
+        target: Pixels,
+    ) -> Option<(Pixels, Vec<Pixels>)> {
+        let scale = self.scale;
+        let (mut outer, mut inner) = self.boxes((rect, [top, right, bottom, left]), target)?;
+        // Under a second fade too (`PaintItem::outer_mask`): where both
+        // are 1, and where either shows.
+        if let Some(around) = run.first().and_then(|item| item.outer_mask()) {
+            let (o, i) = self.boxes(around, target)?;
+            (outer, inner) = (outer.meet(o), inner.meet(i));
+            if outer.empty() {
+                return None;
+            }
+        }
+        let [ol, ot, or, ob] = outer.0;
         let [il, it, ir, ib] = inner.0;
         let strips: Vec<Pixels> = if inner.empty() {
             // Bands meeting: all of it fades.
@@ -460,6 +485,8 @@ impl GpuRenderer {
         let mut last = None;
         // What its composites name (they draw from the texture alone).
         let (kind, font, text_options) = (run[0].kind, run[0].font, run[0].text_options);
+        // A fade around the run's (one mask, one ancestor: one outer).
+        let outer_mask = run[0].outer_mask();
         let mut items: Vec<PaintItem<'a>> = run
             .iter()
             .filter(|item| crossing(item))
@@ -554,6 +581,7 @@ impl GpuRenderer {
         // Each band composited after the run, through the mask once.
         let extras = Some(Rc::new(PaintExtras {
             mask: Some((rect, [top, right, bottom, left])),
+            outer_mask,
             ..Default::default()
         }));
         for strip in strips {

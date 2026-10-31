@@ -183,7 +183,9 @@ impl Raster {
                                 r.height,
                             );
                             let color = tint(highlight.color, item.color());
-                            if highlight.radius > 0. {
+                            // Rounded on one line; lines that touch stay
+                            // square, this path having no inner curves.
+                            if highlight.radius > 0. && highlight.rects.len() == 1 {
                                 let style = zgx::scene::QuadStyle {
                                     fill: color,
                                     radius: highlight.radius,
@@ -289,7 +291,20 @@ impl Raster {
                         #[cfg(target_os = "macos")]
                         NodeKind::NativeSurface(_) => {} // Native GPU-only source; no CPU readback.
                         NodeKind::RichText { text } => {
-                            self.rich_text(text, item.bounds, clip, item.effects)
+                            let (wrap, inset) = scene.text_wrap(item.id, item.bounds.width);
+                            let bounds = Rect {
+                                x: item.bounds.x + inset,
+                                width: wrap,
+                                ..item.bounds
+                            };
+                            if inset != 0.
+                                && let Some(selected) = &mut self.selected
+                            {
+                                for rect in &mut selected.rects {
+                                    rect.x -= inset;
+                                }
+                            }
+                            self.rich_text(text, bounds, clip, item.effects)
                         }
                         NodeKind::Text {
                             text,
@@ -297,6 +312,21 @@ impl Raster {
                             font_size,
                         } => {
                             let color = &tint(*color, item.color());
+                            // At the width its lines wrap at, where they show:
+                            // right of its box, balanced and centred.
+                            let (wrap, inset) = scene.text_wrap(item.id, item.bounds.width);
+                            let bounds = Rect {
+                                x: item.bounds.x + inset,
+                                width: wrap,
+                                ..item.bounds
+                            };
+                            if inset != 0.
+                                && let Some(selected) = &mut self.selected
+                            {
+                                for rect in &mut selected.rects {
+                                    rect.x -= inset;
+                                }
+                            }
                             if item.text_options != Default::default() {
                                 let runs = if text.is_empty() {
                                     Vec::new()
@@ -314,13 +344,13 @@ impl Raster {
                                         .unwrap()
                                         .with_options(item.text_options),
                                 );
-                                self.rich_text(&rich, item.bounds, clip, item.effects);
+                                self.rich_text(&rich, bounds, clip, item.effects);
                             } else if *item.font == Default::default() {
-                                self.text(text, item.bounds, clip, *color, *font_size, item.effects)
+                                self.text(text, bounds, clip, *color, *font_size, item.effects)
                             } else {
                                 self.styled_text(
                                     text,
-                                    item.bounds,
+                                    bounds,
                                     clip,
                                     *color,
                                     *font_size,

@@ -56,6 +56,9 @@ pub(crate) struct WindowState {
     pub dragging: bool,
 
     pub skip_taskbar: bool,
+
+    /// zgx patch: `WindowEvent::Occluded` (`occlusion`).
+    pub occlusion: crate::occlusion_area::Tracker,
 }
 
 #[derive(Clone)]
@@ -177,6 +180,8 @@ impl WindowState {
             dragging: false,
 
             skip_taskbar: false,
+
+            occlusion: Default::default(),
         }
     }
 

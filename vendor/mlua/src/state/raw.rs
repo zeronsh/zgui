@@ -139,7 +139,7 @@ impl RawLua {
         #[cfg(feature = "luau-jit")]
         crate::luau::init_jit_flags();
 
-        let mem_state: *mut MemoryState = Box::into_raw(Box::default());
+        let mem_state: *mut MemoryState = Box::into_raw(Box::new(MemoryState::new()));
         #[cfg(feature = "lua55")]
         let mut state = {
             let seed = ffi::luaL_makeseed(ptr::null_mut());

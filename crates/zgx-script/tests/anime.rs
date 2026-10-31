@@ -577,6 +577,36 @@ fn motion_paths_text_split_scopes_and_drawn_strokes() {
     );
 }
 
+/// `perspective = 900` on a node with none is where it is seen from, from
+/// the first frame: tweened up from 0, a tilted edge passes the eye.
+#[test]
+fn a_bare_perspective_holds_from_the_first_frame() {
+    let mut h = Harness::inline(
+        r##"local box = ui.div { id = "card", w = 300, h = 420, bg = "#58a6ff",
+            on_mount = function(el)
+                anime.animate(el, { perspective = 900, rotateX = { 28, 0 }, duration = 820, ease = "out(3)" })
+            end }
+        anime.animate("#ranged", { perspective = { 200, 900 }, rotateX = { 28, 0 }, duration = 100, ease = "linear" })
+        return ui.column { box, ui.div { id = "ranged", w = 40, h = 40 } }"##,
+    );
+    h.frame();
+    h.run_ms(16.);
+    let local = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.scene.borrow().local_transform(node)
+    };
+    assert_eq!(h.host.error().get(), None);
+    let card = local(&mut h, "card");
+    assert_eq!(card.perspective, 900.);
+    assert!(card.rotate_x > 20f32.to_radians(), "{}", card.rotate_x);
+    h.run_ms(34.);
+    let ranged = local(&mut h, "ranged").perspective;
+    assert!(
+        ranged > 200. && ranged < 900.,
+        "a range still tweens: {ranged}"
+    );
+}
+
 #[test]
 fn tilts_in_perspective_animate_as_compositor_transforms() {
     let mut h = Harness::inline(
@@ -1161,6 +1191,86 @@ fn a_loop_no_one_can_see_waits_until_it_shows() {
 }
 
 #[test]
+fn a_kept_tabs_hidden_loop_waits_until_it_shows() {
+    let mut h = Harness::inline(
+        r##"local items = ui.state("items", { { id = "a", label = "A" }, { id = "b", label = "B" } })
+        local chosen = ui.state("chosen", "a")
+        ui.command { id = "a", title = "a", run = function() chosen:set("a") end }
+        ui.command { id = "b", title = "b", run = function() chosen:set("b") end }
+        return ui.column { h = 200,
+            ui.tabs { label = "t", grow = 1, keep = true, items = items, value = chosen,
+                panel = function(id: string): Node
+                    if id == "b" then return ui.text { "still" } end
+                    return ui.div { id = "spin", w = 10, h = 10, bg = "#ff0000",
+                        on_mount = function(el)
+                            anime.animate(el, { x = { 0, 100 }, duration = 1000, loop = true, frameRate = 30 })
+                        end }
+                end,
+            },
+        }"##,
+    );
+    h.frame();
+    h.run_ms(100.);
+    assert!(h.host.run_command("b"));
+    h.frame();
+    let x = h.x("spin");
+    h.run_ms(300.);
+    assert_eq!(h.x("spin"), x, "hidden, it stands still");
+    assert_eq!(
+        h.clock.demanded_rate(120.),
+        Some(4.),
+        "and the engine only looks now and then"
+    );
+    assert!(h.host.run_command("a"));
+    h.run_ms(300.);
+    assert!(h.x("spin") != x, "chosen again, it moves: {}", h.x("spin"));
+}
+
+#[test]
+fn an_animation_started_beside_unseen_loops_starts_on_the_next_frame() {
+    // Every playing clip an unseen loop, the engine looks a few times a
+    // second; a clip started then started up to 250 ms late, and its first
+    // frame took all of that: a 260 ms tween landed nearly done (a
+    // sidebar's width 286 → 542 in one frame).
+    let mut h = Harness::inline(
+        r##"local open = ui.state("open", true)
+        local width = ui.state("width", 286)
+        ui.command { id = "grow", run = function() anime.animate(width, { value = 542, duration = 260, ease = "linear" }) end }
+        return ui.column {
+            ui.button { id = "b", w = 20, h = 20, on_click = function() open:set(not open:peek()) end, "b" },
+            ui.text { id = "w", "{width}" },
+            ui.modal { open = open, w = 100, h = 100,
+                ui.div { id = "spin", w = 10, h = 10,
+                    on_mount = function(el)
+                        anime.animate(el, { x = { 0, 100 }, duration = 1000, loop = true })
+                    end } } }"##,
+    );
+    h.frame();
+    h.run_ms(100.);
+    h.click("b");
+    h.frame();
+    h.run_ms(300.);
+    assert_eq!(
+        h.clock.demanded_rate(120.),
+        Some(4.),
+        "only unseen loops play"
+    );
+    assert!(h.host.run_command("grow"));
+    let mut width = 286.;
+    for _ in 0..20 {
+        h.frame();
+        width = h.text("w").parse::<f64>().unwrap();
+        if width != 286. {
+            break;
+        }
+    }
+    assert!(
+        width > 286. && width < 286. + 256. * 0.25,
+        "its first frame is a frame's step, not 250 ms of it: {width}"
+    );
+}
+
+#[test]
 fn a_loop_in_a_popup_past_the_window_runs_on() {
     // A popover opened near the window's bottom right, where the host shows
     // it in a window of its own: its panel hangs past this one's edges.
@@ -1259,4 +1369,163 @@ fn a_delayed_animation_takes_over_where_an_earlier_one_left_its_property() {
     close(h.x("box"), 100., "held until the second starts");
     h.run_ms(500.);
     close(h.x("box"), 200., "the second half way, from 100");
+}
+
+/// Loops a renderer plays from frames drawn once (macOS, `Clip::bake`).
+#[cfg(target_os = "macos")]
+mod baked {
+    use super::*;
+
+    const PULSE: &str = r##"opacity = { 1, 0.5 }, duration = 200, ease = "steps(6)", loop = true,
+        alternate = true, loopDelay = 800, frameRate = 30"##;
+
+    impl Harness {
+        /// A scene whose renderer plays loops, and its first frames.
+        fn playing(code: &str) -> Harness {
+            let h = Harness::inline(&script(code));
+            h.ui.scene.borrow().set_plays_loops(true);
+            h.frame();
+            h.frame();
+            h
+        }
+        fn baked(&self) -> Option<std::rc::Rc<zgx::scene::BakedLoop>> {
+            let scene = self.ui.scene.borrow();
+            scene.baked_loops().first().map(|(_, baked)| baked.clone())
+        }
+    }
+
+    #[test]
+    fn a_declared_loop_is_sampled_once_and_stops_ticking() {
+        let mut h = Harness::playing(&format!(r##"anime.animate("#box", {{ {PULSE} }})"##));
+        let baked = h.baked().expect("baked");
+        // Two seconds there and back (the delay after each way) at 30 fps.
+        assert_eq!(baked.frames.len(), 60);
+        assert_eq!(baked.fps, 30.);
+        let opacity = |at: usize| baked.frames[at].0;
+        assert_eq!(opacity(0), 1.);
+        close(opacity(6), 0.5, "the end of the dimming");
+        close(opacity(29), 0.5, "held through the delay");
+        close(opacity(36), 1., "the end of the brightening");
+        close(opacity(59), 1., "held through the delay");
+        let still = h.opacity("box");
+        h.run_ms(500.);
+        assert_eq!(h.opacity("box"), still, "the engine leaves it alone");
+    }
+
+    #[test]
+    fn a_shader_time_loop_bakes_its_run_and_rest() {
+        let h = Harness::playing(
+            r##"anime.animate("#box", { shaderTime = { 0, 3.9 }, duration = 3900, ease = "linear",
+                loop = true, loopDelay = 900, frameRate = 30 })"##,
+        );
+        let baked = h.baked().expect("baked");
+        assert_eq!(baked.frames.len(), 144);
+        close(baked.frames[30].1, 1., "one second in");
+        close(baked.frames[143].1, 3.9, "resting at the end of its run");
+    }
+
+    #[test]
+    fn with_no_renderer_for_it_a_loop_ticks_as_ever() {
+        let mut h = Harness::inline(&script(&format!(
+            r##"anime.animate("#box", {{ {PULSE} }})"##
+        )));
+        h.frame();
+        h.run_ms(100.);
+        assert!(h.baked().is_none());
+        assert!(h.opacity("box") < 1., "it plays");
+    }
+
+    #[test]
+    fn what_the_compositor_cant_play_ticks() {
+        for loop_ in [
+            // A script watching it.
+            r##"opacity = { 1, 0.5 }, duration = 200, loop = true, frameRate = 30,
+                onUpdate = function() end"##,
+            // No frame rate of its own.
+            r##"opacity = { 1, 0.5 }, duration = 200, loop = true"##,
+            // Moving, or laid out.
+            r##"x = { 0, 10 }, duration = 200, loop = true, frameRate = 30"##,
+            // An end.
+            r##"opacity = { 1, 0.5 }, duration = 200, frameRate = 30"##,
+            // Too long to draw.
+            r##"shaderTime = { 0, 600 }, duration = 600000, loop = true, frameRate = 12"##,
+            // Hiding: nothing would show its layer.
+            r##"opacity = { 0, 1 }, duration = 200, loop = true, frameRate = 30"##,
+        ] {
+            let h = Harness::playing(&format!(r##"anime.animate("#box", {{ {loop_} }})"##));
+            assert!(h.baked().is_none(), "{loop_}");
+        }
+    }
+
+    #[test]
+    fn a_refused_loop_goes_on_from_where_it_has_reached() {
+        let mut h = Harness::playing(
+            r##"anime.animate("#box", { opacity = { 1, 0.5 }, duration = 1000, ease = "linear",
+                loop = true, frameRate = 30 })"##,
+        );
+        let baked = h.baked().expect("baked");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        baked.refuse();
+        // (The engine stopped with nothing to tick: it wakes, then ticks.)
+        h.frames(8);
+        assert!(h.baked().is_none(), "the scene's is gone");
+        let opacity = h.opacity("box");
+        assert!(opacity < 0.9, "at its place in the loop: {opacity}");
+    }
+
+    #[test]
+    fn a_loop_refused_is_offered_again() {
+        let h = Harness::playing(&format!(r##"anime.animate("#box", {{ {PULSE} }})"##));
+        h.baked().expect("baked").refuse();
+        h.frames(3);
+        assert!(h.baked().is_none());
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        h.frames(3);
+        assert!(h.baked().is_some(), "it may have left what cut it");
+    }
+
+    #[test]
+    fn stopping_or_taking_over_a_loop_takes_it_back() {
+        for (name, stop) in [
+            ("cancel", "a:cancel()"),
+            ("pause", "a:pause()"),
+            ("seek", "a:seek(100)"),
+            ("restart", "a:restart()"),
+            (
+                "a new animation",
+                r##"anime.animate("#box", { opacity = 0.2, duration = 100 })"##,
+            ),
+            ("speed", "a.speed = 2"),
+        ] {
+            let h = Harness::playing(&format!(
+                r##"local a = anime.animate("#box", {{ {PULSE} }})
+                ui.after(40, function() {stop} end)"##
+            ));
+            assert!(h.baked().is_some(), "{name}: baked first");
+            // (`ui.after` runs in real time.)
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            h.frames(10);
+            assert!(h.baked().is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn reduced_motion_ending_a_loop_ends_its_layer() {
+        // As apps follow it: the preference changing cancels their loop.
+        let mut h = Harness::playing(&format!(
+            r##"local a = anime.animate("#box", {{ {PULSE} }})
+            ui.effect(function()
+                if ui.prefers.reduced_motion:get() then a:cancel() end
+            end)"##
+        ));
+        assert!(h.baked().is_some());
+        h.ui.theme()
+            .set_system_preferences(zgx::theme::SystemPreferences {
+                reduced_motion: true,
+                increased_contrast: false,
+                reduced_transparency: false,
+            });
+        h.run_ms(50.);
+        assert!(h.baked().is_none());
+    }
 }

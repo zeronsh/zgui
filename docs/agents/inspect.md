@@ -88,12 +88,39 @@ A tree line is `@n #id role "name or text" ="value" x,y wxh` and flags (`focused
 
 A module's states are named `module.luau::name`; give the name alone when only one module has it.
 
-A hidden, minimized or covered window draws no frames (macOS stops a covered window's refreshes): `frames` says so first, and a `replay` is refused rather than answering "0 frames", since its events would only wait for the window. Keep the window in front and uncovered while measuring.
+A hidden, minimized or covered window draws no frames (macOS stops a covered window's refreshes): `frames` says so first, and a `replay` is refused rather than answering "0 frames", since its events would only wait for the window. Keep the window in front and uncovered while measuring. For a test session that shouldn't need the screen to itself, `ZGX_RENDER_WHEN_COVERED=1` in the app's environment keeps a covered window drawing, so input and hot reloads don't stall; it isn't for measuring what a person sees, and it's never on by default, since a window nobody can see does no work. On Windows it changes nothing: the system isn't asked, so a covered window draws anyway ([Limitations](../windows.md#limitations)).
+
+## What it holds
+
+```sh
+zgx inspect memory                    # JSON: a line for each holder
+zgx inspect memory --human            # a table
+```
+
+What the running app holds, measured when asked, with nothing to build or switch on: compare two answers and the line that grew says what to look at. A line is `{"area","name","n","bytes"}`, with `n` (entries) and `bytes` where the holder can tell:
+
+| Area | Lines |
+| --- | --- |
+| `process` | `footprint` (macOS, what Activity Monitor shows), `resident` (Linux) or `private` (Windows) |
+| `heap` | mimalloc's memory committed, at its peak and in use (the gap is what it keeps for later); or the system allocator's in use and free |
+| `gpu` | the glyph atlas, image textures, layers (allocated, and `layers live`: what their content takes of that), canvases, SVGs, vertex buffers, and the device's allocations where wgpu counts them |
+| `gpu layer` | each isolated layer, largest first: `@n #id`, its content's pixels, its scale, its live MiB, and whether it is transformed or parked; its bytes are what its texture allocates |
+| `text` | shaped nodes, prepared lines, measures, shaped runs, rasterized glyphs and outlines |
+| `scene` | nodes mounted, nodes removed and not yet freed, slots |
+| `devtools` | the frame log and the effect names it keeps (`--inspect` only) |
+| `luau` | each VM's heap, as it stands (no collection) |
+| `images` | decoded pictures and SVGs a node shows, and those cached for when one does again |
+
+The areas overlap: `heap` holds `text`, `scene`, `luau` and `images`, and much of `gpu` is in the `process` line only. An area's lines add up; areas don't.
 
 ## Acting
 
 ```sh
 zgx inspect click '"Send"'
+zgx inspect hover '#row'                               # the pointer there: what shows on hover
+zgx inspect right-click '#row'                         # its context menu opens; its items are nodes to click
+zgx inspect drag '#card' '#done'                       # from one to another
+zgx inspect drag '#slider' 340,120                     # or to a point, window points
 zgx inspect type '#composer' 'Write me a function'     # clicks it, then types
 zgx inspect key Enter                                  # Escape, Tab, cmd+k, alt+ArrowDown, shift+Tab, F5…
 zgx inspect scroll '#transcript' 400                   # points; down is positive
@@ -105,7 +132,29 @@ zgx inspect wait '#spinner' --gone
 zgx inspect sleep 500                                  # let the app run
 ```
 
+`hover`, `right-click` and `drag` take a target, whose middle they use, or `x,y` in window points. `drag` presses, moves past the drag threshold and on in steps, as a hand does, so what lies between sees it pass (`on_drag_over`), then releases. Everything happens within the window: a drag can't leave it, so `on_drag_outside` and other apps' drops need a real one.
+
 `cmd` is Command on macOS and Control elsewhere, as commands' keys are. A key goes where focus is: `type` or `click` an input first. After an action the interface is laid out again before the next command reads it, so `click` then `tree` shows the result; for what takes time (a fetch, a streamed reply, an animation), `wait` on what it will show rather than sleeping.
+
+## Popovers, menus and other popups
+
+A popover's, menu's, select's, date picker's, tooltip's, context menu's or modal's panel is in `tree` under the node that opens it, and targets reach inside it like anywhere else. A closed panel's content is kept, unseen: `find` lists it, marked `hidden`, and an action at it (`click`, `hover`, `scroll`, `snapshot`) fails with `doesn't show`, rather than landing on whatever is under it.
+
+Open it first, wait for it, then act inside:
+
+```sh
+zgx inspect click '#more'                 # the trigger
+zgx inspect wait '#share'                 # the panel shows a frame later
+zgx inspect click 'role:menuitem "Share"' # a submenu opens the same way
+zgx inspect click '#copy-link'
+zgx inspect right-click '#row' && zgx inspect wait 'role:menuitem "Cut"'
+zgx inspect hover '#save' && zgx inspect wait '"Save the file"'   # a tooltip, after its delay
+zgx inspect key Escape                    # closes the innermost
+```
+
+A select's options are `menuitemradio`, as AppKit's pop-up button has them; a combobox's are `option`; a date picker's month is a `grid`.
+
+On macOS a popup is a window of its own and may lie past the main window's edge. Its boxes are in the main window's points all the same, so clicks and targets reach it. `snapshot` pictures it from its own surface, and `memory` counts its renderers as `gpu popup windows`. A popup opens in the scene first and gets its window at the next frame, so a reading taken between the two says `popup windows not yet drawn`.
 
 ## Gestures: record once, replay
 

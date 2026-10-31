@@ -140,3 +140,36 @@ fn entering_read_only_cancels_composition_once_and_preserves_undo_history() {
     editor.set_read_only(false);
     assert!(!ui.scene.borrow().contains(editor.node));
 }
+
+#[test]
+fn a_field_with_nothing_to_undo_hands_the_keys_on() {
+    let mut ui = Ui::new(400., 300.);
+    let value = ui.signal("abc".to_owned());
+    let editor = ui.text_input(ui.root(), "Editor", value.clone(), 240., true);
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(editor.node));
+    let command = Modifiers {
+        control: !cfg!(target_os = "macos"),
+        meta: cfg!(target_os = "macos"),
+        ..Default::default()
+    };
+    let key = |k: &str, shift: bool| InputEvent::KeyDown {
+        key: Key::Character(k.into()),
+        modifiers: Modifiers { shift, ..command },
+        repeat: false,
+    };
+    // Nothing done yet: undo and redo are the app's.
+    assert!(!ui.dispatch(key("z", false)).default_prevented);
+    assert!(!ui.dispatch(key("z", true)).default_prevented);
+    assert!(!ui.dispatch(key("y", false)).default_prevented);
+    ui.dispatch(InputEvent::Text("d".into()));
+    assert_eq!(value.get(), "abcd");
+    // A step to undo: the field's.
+    assert!(ui.dispatch(key("z", false)).default_prevented);
+    assert_eq!(value.get(), "abc");
+    // Nothing more to undo, one to redo.
+    assert!(!ui.dispatch(key("z", false)).default_prevented);
+    assert!(ui.dispatch(key("z", true)).default_prevented);
+    assert_eq!(value.get(), "abcd");
+    assert!(!ui.dispatch(key("y", false)).default_prevented);
+}

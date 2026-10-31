@@ -1,0 +1,158 @@
+{
+ "from": {
+  "version": "0.1.5",
+  "commit": "d493d20a"
+ },
+ "to": {
+  "version": "0.1.6",
+  "commit": "02319c0e",
+  "released": "e077e952"
+ },
+ "unit": "million instructions",
+ "how": "scripts/perf/gate.py: exact instruction counts under cachegrind, Linux arm64 (gate.md; x86 in gate-x86.md, from CI's perf job on probe PR #986); Luau scenes the median of 3 heap placements",
+ "scenes_fields": [
+  "from",
+  "to",
+  "change: the gate's own, from unrounded counts"
+ ],
+ "notes": {
+  "mount": "one Luau VM sets up in 1.53 M instructions, against 3.83 M at 0.1.5 (vm_bench)"
+ },
+ "scenes": {
+  "heavy-both": [
+   998.4,
+   998.1,
+   -0.0003
+  ],
+  "heavy-stream": [
+   950.3,
+   950.0,
+   -0.0003
+  ],
+  "heavy-scroll": [
+   75.2,
+   75.2,
+   -0.0002
+  ],
+  "heavy-stream-at": [
+   965.7,
+   965.4,
+   -0.0003
+  ],
+  "lab-stream": [
+   431.4,
+   431.4,
+   -0.0
+  ],
+  "lab-scroll": [
+   66.1,
+   66.1,
+   -0.0002
+  ],
+  "animate": [
+   276.2,
+   276.2,
+   -0.0
+  ],
+  "micro-state": [
+   56.2,
+   56.2,
+   0.0
+  ],
+  "micro-vscroll-fixed": [
+   45.9,
+   45.9,
+   -0.0002
+  ],
+  "micro-vscroll-variable": [
+   82.0,
+   82.0,
+   -0.0004
+  ],
+  "micro-state-luau": [
+   79.5,
+   77.1,
+   -0.0298
+  ],
+  "micro-vscroll-fixed-luau": [
+   62.9,
+   60.7,
+   -0.0356
+  ],
+  "micro-vscroll-variable-luau": [
+   126.7,
+   124.3,
+   -0.0195
+  ],
+  "mount": [
+   302.2,
+   297.1,
+   -0.0195
+  ],
+  "script-update": [
+   1416.6,
+   1404.4,
+   -0.0086
+  ],
+  "anime": [
+   2949.7,
+   2948.1,
+   -0.0006
+  ],
+  "script-layout": [
+   2820.3,
+   2817.5,
+   -0.001
+  ],
+  "list-state": [
+   822.8,
+   819.5,
+   -0.004
+  ],
+  "style": [
+   1246.7,
+   1246.7,
+   -0.0
+  ],
+  "widgets": [
+   137.9,
+   137.9,
+   0.0
+  ],
+  "app-mail": [
+   286.5,
+   286.0,
+   -0.0012
+  ],
+  "app-chat": [
+   47.8,
+   46.4,
+   -0.029
+  ],
+  "app-dashboard": [
+   169.3,
+   166.9,
+   -0.0146
+  ],
+  "app-dashboard-sort": [
+   112.5,
+   110.2,
+   -0.0207
+  ],
+  "app-sketch": [
+   45.7,
+   44.3,
+   -0.031
+  ],
+  "app-code": [
+   94.3,
+   91.7,
+   -0.0275
+  ],
+  "app-code-search": [
+   83.3,
+   80.8,
+   -0.0305
+  ]
+ }
+}

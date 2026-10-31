@@ -165,7 +165,8 @@ impl Source {
 struct Shaped {
     node: NodeId,
     source: Source,
-    width: u32,
+    /// Its box's width and the width it wraps at, by their bits.
+    width: u64,
     revision: u64,
     layout: Rc<dyn TextLayout>,
 }
@@ -209,7 +210,7 @@ pub(crate) struct State {
     /// The region last pressed in: what select-all selects.
     active_root: Option<NodeId>,
     /// The window is in the background: highlights take the inactive colour.
-    inactive: bool,
+    pub(crate) inactive: bool,
     /// Bumped by every change of selection.
     revision: u64,
     /// A press in this dispatch went to a selectable region.
@@ -409,12 +410,14 @@ impl Palette {
     }
 }
 
-/// A region's own highlight colours (`View::selection_color`,
-/// `selected_text_color`), over the theme's, in either window state.
+/// A region's own highlight look (`View::selection_color`,
+/// `selected_text_color`, `selection_radius`), over the theme's, in either
+/// window state.
 #[derive(Default)]
 pub(crate) struct SelectionStyle {
     pub(crate) background: Option<Box<dyn FnMut() -> Color>>,
     pub(crate) text: Option<Box<dyn FnMut() -> Color>>,
+    pub(crate) radius: Option<Box<dyn FnMut() -> f32>>,
 }
 
 /// Make `root` a selectable region (`View::selectable(true)`).
@@ -455,6 +458,9 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
         };
         if let Some(background) = &mut style.background {
             colors.background = [background(); 2];
+        }
+        if let Some(radius) = &mut style.radius {
+            colors.radius = radius().max(0.);
         }
         if let Some(color) = &mut style.text {
             colors.text = [text(color()); 2];
@@ -880,11 +886,14 @@ impl Ui {
     pub(crate) fn selection_layout(&self, scene: &Scene, id: NodeId) -> Option<Rc<dyn TextLayout>> {
         let source = Source::of(scene, id)?;
         let width = scene.layout_bounds(id).width;
+        // Its box's width, and the width it wraps at in it (balanced).
+        let widths =
+            (u64::from(width.to_bits()) << 32) | u64::from(scene.text_wrap(id, width).0.to_bits());
         let revision = scene.text_shaper_revision();
         let mut state = self.selection_state().borrow_mut();
         if let Some(index) = state.layouts.iter().position(|s| s.node == id) {
             let kept = &state.layouts[index];
-            if kept.width == width.to_bits() && kept.revision == revision && kept.source == source {
+            if kept.width == widths && kept.revision == revision && kept.source == source {
                 return Some(kept.layout.clone());
             }
             state.layouts.remove(index);
@@ -898,7 +907,7 @@ impl Ui {
         state.layouts.push(Shaped {
             node: id,
             source,
-            width: width.to_bits(),
+            width: widths,
             revision,
             layout: layout.clone(),
         });
@@ -1199,6 +1208,8 @@ impl Ui {
     /// Keep highlights on the text as it is laid out again, and drop a
     /// selection whose text is gone. Frame preparation calls this; it
     /// returns at once unless a selection shows and the scene changed.
+    /// (Inlined: a second, cold caller would outline it from every frame.)
+    #[inline(always)]
     pub(crate) fn sync_selection(&self) {
         let synced = {
             let state = self.selection_state().borrow();
@@ -1943,6 +1954,11 @@ impl Ui {
     /// The window was activated or sent to the back: selections show the
     /// active or inactive colour.
     pub fn set_window_active(&self, active: bool) {
+        if let Some(window_active) = self.window_active_observed()
+            && window_active.with_untracked(|was| *was != active)
+        {
+            window_active.set(active);
+        }
         let changed = {
             let mut state = self.selection_state().borrow_mut();
             let changed = state.inactive == active;
@@ -2391,16 +2407,9 @@ fn stamp(scene: &Scene, id: NodeId) -> Option<(u32, u32, usize, usize, u64)> {
 }
 
 fn shape(scene: &Scene, id: NodeId, width: f32) -> Option<Rc<dyn TextLayout>> {
-    // Renderers lay text out at its box's width, wrapping or not.
-    Some(match scene.kind(id) {
-        NodeKind::Text {
-            text, font_size, ..
-        } => scene
-            .shape_text_with_font(text, *font_size, Some(width), scene.font(id))
-            .into(),
-        NodeKind::RichText { text } => scene.shape_rich_text(text, Some(width)).into(),
-        _ => return None,
-    })
+    // As renderers lay it out: at its box's width (narrower, balanced),
+    // wrapping or not.
+    scene.shape_node_text(id, width).map(Rc::from)
 }
 
 /// The list item whose marker `id` is: text hidden from assistive

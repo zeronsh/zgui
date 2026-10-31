@@ -571,6 +571,28 @@ impl EventProcessor {
             }
 
             self.dnd.source_window = Some(source_window);
+            // zgx patch: the files are where the drag is (ZGX_PATCH 12), as
+            // the window hears no motion while the source holds the pointer.
+            let packed = xev.data.get_long(2);
+            let (x, y) = ((packed >> 16) as i16, (packed & 0xffff) as i16);
+            let point = wt
+                .xconn
+                .xcb_connection()
+                .translate_coordinates(wt.root, window, x, y)
+                .ok()
+                .and_then(|cookie| cookie.reply().ok())
+                .map(|reply| (reply.dst_x as f64, reply.dst_y as f64));
+            if let Some(point) = point.filter(|point| self.dnd.file_point != Some(*point)) {
+                self.dnd.file_point = Some(point);
+                let event = Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::CursorMoved {
+                        device_id: mkdid(util::VIRTUAL_CORE_POINTER),
+                        position: (point.0, point.1).into(),
+                    },
+                };
+                callback(&self.target, event);
+            }
             if self.dnd.result.is_none() {
                 let time = if version >= 1 {
                     xev.data.get_long(3) as xproto::Timestamp
@@ -644,9 +666,18 @@ impl EventProcessor {
                 }
                 return;
             }
+            let pointed = self.dnd.file_point.is_some();
             self.dnd.reset();
             let event = Event::WindowEvent { window_id, event: WindowEvent::HoveredFileCancelled };
             callback(&self.target, event);
+            // zgx patch: the drag, and the pointer with it, left.
+            if pointed {
+                let event = Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::CursorLeft { device_id: mkdid(util::VIRTUAL_CORE_POINTER) },
+                };
+                callback(&self.target, event);
+            }
         }
     }
 

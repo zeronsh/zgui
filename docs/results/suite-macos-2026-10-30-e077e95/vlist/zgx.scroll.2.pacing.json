@@ -1,0 +1,14 @@
+{
+ "framework": "zgx",
+ "mode": "scroll",
+ "repeat": 2,
+ "display_hz": 120,
+ "frames": 497,
+ "frames_per_second": 62.125,
+ "interval_p50_ms": 16.638,
+ "interval_p95_ms": 17.39,
+ "interval_p99_ms": 17.743,
+ "interval_max_ms": 18.519,
+ "long_intervals": 0,
+ "long_interval_fraction": 0.0
+}

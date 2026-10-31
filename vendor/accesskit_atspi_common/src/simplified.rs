@@ -743,6 +743,14 @@ impl Event {
                         detail2: 0,
                         data: None,
                     },
+                    // zgx patch: no AT-SPI event; the unix adapter calls the object.
+                    ObjectEvent::Embedded { bus, .. } => Self {
+                        kind: "zgx:embedded".into(),
+                        source,
+                        detail1: 0,
+                        detail2: 0,
+                        data: Some(EventData::String(bus)),
+                    },
                 }
             }
             EventEnum::Window {

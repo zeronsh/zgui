@@ -1,0 +1,47 @@
+name: zgx
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  # Types, best practice, accessibility and the app's own tests: the four
+  # checks `zgx new` left clean.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ZGX_VERSION: "{{version}}"
+      LUAU_LSP_VERSION: "1.70.1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux packages (to build zgx-run)
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            cmake pkg-config libdbus-1-dev libfontconfig1-dev libwayland-dev libxcb1-dev \
+            libxkbcommon-dev libxrandr-dev
+      # zgx and zgx-run at the version that wrote the app, built once and
+      # kept until it changes.
+      - uses: actions/cache@v4
+        id: tools
+        with:
+          path: ~/.cargo/bin/zgx*
+          key: zgx-${{ runner.os }}-${{ env.ZGX_VERSION }}
+      - name: Install zgx and zgx-run
+        if: steps.tools.outputs.cache-hit != 'true'
+        env:
+          LUAU_CXXFLAGS: -DNDEBUG
+        run: |
+          cargo install --locked --version "$ZGX_VERSION" zgx-run
+          cargo install --locked --version "$ZGX_VERSION" zgx-script --bin zgx
+      - name: Install luau-lsp (for zgx check)
+        run: |
+          dir="$RUNNER_TEMP/luau-lsp"
+          curl -fsSL "https://github.com/JohnnyMorganz/luau-lsp/releases/download/$LUAU_LSP_VERSION/luau-lsp-linux-x86_64.zip" -o "$dir.zip"
+          unzip -q "$dir.zip" -d "$dir"
+          echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
+      - run: zgx check .
+      - run: zgx lint .
+      - run: zgx audit --human .
+      - run: zgx test .

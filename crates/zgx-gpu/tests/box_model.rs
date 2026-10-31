@@ -182,3 +182,66 @@ fn an_absolute_box_sits_in_its_relative_ancestors_corner() {
         assert_eq!(pixel(&p, 145, 125), DARK, "{case} outside it");
     }
 }
+
+/// A blurred inset shadow: darkest at the box's edge, half its colour on the
+/// hole's, gone well inside, even all round and cut to the corners; an offset
+/// moves it, and a sharp one is as it was.
+#[test]
+fn an_inset_shadow_blurs_into_the_box() {
+    use std::sync::Arc;
+    use zgx::decoration::Decoration;
+    let render = |inset: BoxShadow| {
+        let mut scene = Scene::new(140., 140.);
+        scene.append(
+            scene.root(),
+            NodeKind::Quad(QuadStyle {
+                fill: Color(255, 255, 255, 255),
+                radius: 20.,
+                decoration: Some(Arc::new(Decoration {
+                    inset_shadows: Some(Arc::from([inset])),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+            Style {
+                width: Some(100.),
+                height: Some(100.),
+                margin: Insets {
+                    left: 20.,
+                    top: 20.,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let mut gpu = GpuRenderer::new(140, 140).unwrap();
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap();
+        gpu.readback().unwrap()
+    };
+    let grey = |pixels: &[u8], x: usize, y: usize| pixels[(y * 140 + x) * 4 + 1];
+    let shadow = |blur_radius: f32, x: f32, y: f32| BoxShadow {
+        color: Color(0, 0, 0, 255),
+        offset: Transform { x, y },
+        blur_radius,
+        spread: 0.,
+    };
+    let soft = render(shadow(6., 0., 0.));
+    // Half on the edge, lightening inward, the same on all four sides.
+    let edge = grey(&soft, 70, 20);
+    assert!((110..=145).contains(&edge), "half on its edge: {edge}");
+    assert!(grey(&soft, 70, 26) > edge + 40, "lighter inward");
+    assert!(grey(&soft, 70, 70) >= 250, "clear in the middle");
+    for (x, y) in [(70, 119), (20, 70), (119, 70)] {
+        assert!(grey(&soft, x, y).abs_diff(edge) <= 6, "even at {x},{y}");
+    }
+    // Cut to the rounded corners: outside them, what is behind.
+    assert_eq!(grey(&soft, 22, 22), 0, "the page behind is clear");
+    // Moved down: darker at the top, clearer at the bottom.
+    let moved = render(shadow(6., 0., 10.));
+    assert!(grey(&moved, 70, 22) < grey(&soft, 70, 22));
+    assert!(grey(&moved, 70, 117) > grey(&soft, 70, 117));
+    // Sharp, as before: all its colour within the offset, none past it.
+    let sharp = render(shadow(0., 0., 8.));
+    assert!(grey(&sharp, 70, 24) < 10 && grey(&sharp, 70, 32) > 245);
+}

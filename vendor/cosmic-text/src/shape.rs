@@ -4,8 +4,9 @@
 
 use crate::fallback::FontFallbackIter;
 use crate::{
-    math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics, DecorationSpan,
-    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, Hinting,
+    math, Align, Attrs, AttrsList, AttrsOwned, CacheKeyFlags, Color, DecorationMetrics,
+    DecorationSpan, Ellipsize, EllipsizeHeightLimit, Family, Font, FontFeatures, FontSystem,
+    GlyphDecorationData, Hinting,
     LayoutGlyph, LayoutLine, Metrics, Wrap,
 };
 #[cfg(not(feature = "std"))]
@@ -101,6 +102,10 @@ pub struct ShapeBuffer {
 
     /// Buffer for shape words.
     words: Vec<ShapeWord>,
+
+    /// zgx: the hyphenation of the line about to be laid out
+    /// (`ShapeLine::hyphenate`), taken by its layout: nothing a line keeps.
+    hyphenation: Option<Box<Hyphenation>>,
 
     /// Buffers for visual lines.
     visual_lines: Vec<VisualLine>,
@@ -299,6 +304,184 @@ fn shape_fallback(
     missing
 }
 
+/// zgx: the scripts of `run` (text not all ASCII) besides Common, Latin
+/// and Inherited, added to `scripts`; whether a cluster in it asks for
+/// emoji presentation (U+FE0F after it, or a keycap's U+20E3, both
+/// Inherited).
+///
+/// Han goes as the line's attributes say (`FontFeatures::HAN`, from its
+/// kana or hangul): a Japanese line's kanji in a Japanese font, not the
+/// system language's Chinese one.
+#[inline(never)]
+fn run_scripts(run: &str, scripts: &mut Vec<Script>, attrs_list: &AttrsList, start: usize) -> bool {
+    let mut emoji = false;
+    for c in run.chars() {
+        match c.script() {
+            Script::Inherited if matches!(c, '\u{FE0F}' | '\u{20E3}') => emoji = true,
+            Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
+            script => {
+                let script = match script {
+                    Script::Han => match attrs_list.get_span(start).font_features.han() {
+                        HAN_JAPANESE => Script::Hiragana,
+                        HAN_KOREAN => Script::Hangul,
+                        _ => script,
+                    },
+                    _ => script,
+                };
+                if !scripts.contains(&script) {
+                    scripts.push(script);
+                }
+            }
+        }
+    }
+    emoji
+}
+
+/// zgx: `attrs_list` with `han`, what language a line's Han characters
+/// are in (`FontFeatures::HAN`), on its defaults and each span; none for
+/// `HAN_NONE`, as for most text.
+#[inline(never)]
+fn hinted(attrs_list: &AttrsList, han: u32) -> Option<AttrsList> {
+    if han == HAN_NONE {
+        return None;
+    }
+    let with = |attrs: &AttrsOwned| {
+        let mut features = attrs.font_features.clone();
+        features.set(FontFeatures::HAN, han);
+        AttrsOwned::new(&attrs.as_attrs().font_features(features))
+    };
+    let mut list = AttrsList::new(&with(attrs_list.defaults_owned()).as_attrs());
+    for (range, attrs) in attrs_list.spans_iter() {
+        list.add_span(range.clone(), &with(attrs).as_attrs());
+    }
+    Some(list)
+}
+
+/// zgx: how a line not all ASCII is built (`line_kind`).
+enum LineKind {
+    /// Again, with attributes saying what language its Han characters are
+    /// in (`hinted`).
+    Hinted,
+    /// As one left-to-right span, as ASCII is: nothing in it is right to
+    /// left, a bidi control or a paragraph separator.
+    LeftToRight,
+    /// By the bidi analysis.
+    Bidi,
+}
+
+/// zgx: how `line` (not all ASCII) is built, by one look at its bytes
+/// (`classify`).
+#[inline(never)]
+fn line_kind(attrs_list: &AttrsList, line: &str) -> LineKind {
+    let found = classify(line.as_bytes());
+    if found & MAY_HINT != 0 && wants_hint(attrs_list, line) {
+        LineKind::Hinted
+    } else if found & MAY_RTL == 0 {
+        LineKind::LeftToRight
+    } else {
+        LineKind::Bidi
+    }
+}
+
+/// zgx: `classify` found what may need the bidi analysis.
+const MAY_RTL: u8 = 1;
+/// zgx: `classify` found what may be kana or hangul (`han_hint`).
+const MAY_HINT: u8 = 2;
+
+/// zgx: what a line not all ASCII may hold, by its bytes: `MAY_RTL` where
+/// it may need the bidi analysis (a right-to-left letter or number, a bidi
+/// control, a paragraph separator: U+0580–U+08FF, U+F000–U+FFFF,
+/// U+10000–U+10FFF, U+1E000–U+1EFFF, LRM, RLM, the embeddings and isolates,
+/// U+2029, NEL, line breaks), and `MAY_HINT` where kana or hangul may say
+/// what language its Han characters are in (U+1000–U+1FFF, U+3000–U+3FFF,
+/// U+A000–U+DFFF, U+F000–U+FFFF). Erring only toward finding.
+#[inline(never)]
+fn classify(line: &[u8]) -> u8 {
+    let mut found = 0;
+    for (i, &b) in line.iter().enumerate() {
+        let next = |n: usize| line.get(i + n).copied().unwrap_or(0);
+        found |= match b {
+            b'\n' | b'\r' | 0x1C..=0x1E | 0xD6..=0xDF => MAY_RTL,
+            0xC2 if next(1) == 0x85 => MAY_RTL,
+            0xE0 if matches!(next(1), 0xA0..=0xA3) => MAY_RTL,
+            0xE2 => match (next(1), next(2)) {
+                (0x80, 0x8E | 0x8F | 0xA9..=0xAE) | (0x81, 0xA6..=0xA9) => MAY_RTL,
+                _ => 0,
+            },
+            0xEF => MAY_RTL | MAY_HINT,
+            0xF0 if matches!(next(1), 0x90 | 0x9E) => MAY_RTL,
+            0xE1 | 0xE3 | 0xEA..=0xED => MAY_HINT,
+            _ => 0,
+        };
+        if found == MAY_RTL | MAY_HINT {
+            break;
+        }
+    }
+    found
+}
+
+/// zgx: whether `line` (not all ASCII) is to be built with attributes
+/// saying what language its Han characters are in (`hinted`): it has kana
+/// or hangul, and `attrs_list` doesn't say so already.
+#[inline(never)]
+fn wants_hint(attrs_list: &AttrsList, line: &str) -> bool {
+    attrs_list.defaults_owned().font_features.han() == HAN_NONE && han_hint(line) != HAN_NONE
+}
+
+/// zgx: no kana or hangul in the line (`FontFeatures::HAN`).
+const HAN_NONE: u32 = 0;
+/// zgx: the line has kana: its Han characters are Japanese.
+const HAN_JAPANESE: u32 = 1;
+/// zgx: the line has hangul: its Han characters are Korean.
+const HAN_KOREAN: u32 = 2;
+/// zgx: an app's language says what language Han characters are in, the
+/// line's kana or hangul not (`FontSystem::set_language`): their fallback
+/// fonts are its, as for a line with neither.
+const HAN_BY_LANGUAGE: u32 = 3;
+
+/// zgx: the language `line`'s Han characters are in, by its first kana
+/// (Japanese) or hangul (Korean), as browsers guess a text's when nothing
+/// names it. A line without the lead bytes of either (U+1000–U+1FFF,
+/// U+3000–U+FFFF less U+F000's private use, near enough) is passed by a
+/// byte at a time, as the punctuation, Latin, Hebrew, Arabic and emoji of
+/// most text are.
+#[inline(never)]
+fn han_hint(line: &str) -> u32 {
+    let lead = |b: u8| b == 0xE1 || (0xE3..=0xEF).contains(&b);
+    let any = line
+        .as_bytes()
+        .chunks(32)
+        .any(|chunk| chunk.iter().fold(false, |any, &b| any | lead(b)));
+    if !any {
+        return HAN_NONE;
+    }
+    for c in line.chars() {
+        match c {
+            '\u{3040}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF66}'..='\u{FF9F}' => {
+                return HAN_JAPANESE;
+            }
+            '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}' => {
+                return HAN_KOREAN;
+            }
+            _ => {}
+        }
+    }
+    HAN_NONE
+}
+
+/// zgx: the clusters of `glyphs` asking for emoji presentation, added to
+/// `missing` (`shape_run`).
+#[cold]
+#[inline(never)]
+fn emoji_presentation_missing(line: &str, glyphs: &[ShapeGlyph], missing: &mut Vec<usize>) {
+    for glyph in glyphs {
+        let cluster = line.get(glyph.start..glyph.end).unwrap_or_default();
+        if cluster.contains(['\u{FE0F}', '\u{20E3}']) && !missing.contains(&glyph.start) {
+            missing.push(glyph.start);
+        }
+    }
+}
+
 /// zgx patch: out of line, so the word cache's path through `Shaping::run`
 /// keeps its code whatever shaping a new run adds.
 #[inline(never)]
@@ -317,18 +500,10 @@ fn shape_run(
         scripts.clear();
         scripts
     };
-    // zgx patch: ASCII is all Common or Latin; only other text is looked up.
+    // zgx patch: ASCII is all Common or Latin; only other text is looked up,
+    // and whether a cluster asks for emoji presentation with it.
     let run = &line[start_run..end_run];
-    for c in run.chars().filter(|_| !run.is_ascii()) {
-        match c.script() {
-            Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
-            script => {
-                if !scripts.contains(&script) {
-                    scripts.push(script);
-                }
-            }
-        }
-    }
+    let emoji = !run.is_ascii() && run_scripts(run, &mut scripts, attrs_list, start_run);
 
     log::trace!("      Run {:?}: '{}'", &scripts, &line[start_run..end_run],);
 
@@ -347,7 +522,17 @@ fn shape_run(
         attrs.optical,
     );
 
+    // zgx patch: whether the search has given its first face. Monospace's
+    // gives its family's face whatever the word, but weighs every
+    // fixed-width face against the word's characters as it does, for the
+    // faces it gives next: with that face kept, it is done only when a
+    // character is missing from it.
+    let mut searched = true;
     let font = match kept {
+        Some(font) if attrs.family == Family::Monospace => {
+            searched = false;
+            font
+        }
         Some(font) => {
             font_iter.pass_default();
             font
@@ -362,7 +547,9 @@ fn shape_run(
                 no_font();
                 return;
             };
-            if attrs.family != Family::Monospace && font_iter.gave_default() {
+            if font_iter.gave_default()
+                && (attrs.family != Family::Monospace || font_iter.is_default_face(&font))
+            {
                 font_iter.font_system().keep_first_font(&attrs, &fonts, &font);
             }
             font
@@ -386,9 +573,21 @@ fn shape_run(
             scratch, glyphs, &font, line, attrs_list, start_run, end_run, span_rtl,
         )
     };
+    // zgx: a cluster asking for emoji presentation is missing from a font
+    // without color glyphs, so the fallback finds the emoji font, as browsers
+    // do: Segoe UI has `1` and the keycap mark, and drew 1️⃣ in black. With
+    // no emoji font, it keeps what it had.
+    if emoji && !font.is_color() {
+        emoji_presentation_missing(line, &glyphs[glyph_start..], &mut missing);
+    }
 
     //TODO: improve performance!
     while !missing.is_empty() {
+        if !searched {
+            searched = true;
+            // The kept face again, the search now where it would be.
+            let _ = font_iter.next();
+        }
         let Some(font) = font_iter.next() else {
             break;
         };
@@ -399,7 +598,7 @@ fn shape_run(
         );
         let mut fb_glyphs = Vec::new();
         let scratch = font_iter.shape_caches();
-        let fb_missing = shape_fallback(
+        let mut fb_missing = shape_fallback(
             scratch,
             &mut fb_glyphs,
             &font,
@@ -409,6 +608,9 @@ fn shape_run(
             end_run,
             span_rtl,
         );
+        if emoji && !font.is_color() {
+            emoji_presentation_missing(line, &fb_glyphs, &mut fb_missing);
+        }
 
         // Insert all matching glyphs
         let mut fb_i = 0;
@@ -616,10 +818,9 @@ fn no_font() {
     });
 }
 
-/// zgx patch: `attrs`' font matches, and the face a family other than
-/// monospace (which looks at each word's characters) gives first, if a run
-/// with these attributes found it. Out of line: the word cache's path
-/// through `Shaping::run` stays as it was.
+/// zgx patch: `attrs`' font matches, and the face their family gives
+/// first, if a run with these attributes found it. Out of line: the word
+/// cache's path through `Shaping::run` stays as it was.
 #[inline(never)]
 fn font_matches(
     font_system: &mut FontSystem,
@@ -628,10 +829,7 @@ fn font_matches(
     alloc::sync::Arc<Vec<crate::font::FontMatchKey>>,
     Option<alloc::sync::Arc<Font>>,
 ) {
-    match (attrs.family != Family::Monospace)
-        .then(|| font_system.first_font(attrs))
-        .flatten()
-    {
+    match font_system.first_font(attrs) {
         Some((fonts, font)) => (fonts, Some(font)),
         None => (font_system.get_font_matches(attrs), None),
     }
@@ -900,6 +1098,9 @@ fn decoration_metrics(font: &Font) -> (DecorationMetrics, DecorationMetrics, f32
 
 /// span index used in `VlRange` to indicate this range is the ellipsis.
 const ELLIPSIS_SPAN: usize = usize::MAX;
+/// zgx: span index used in `VlRange` for a hyphen ending a line where a word
+/// breaks (`ShapeWord::hyphens`, `ShapeWord::soft_hyphen`).
+const HYPHEN_SPAN: usize = usize::MAX - 1;
 
 fn shape_ellipsis(
     font_system: &mut FontSystem,
@@ -1391,6 +1592,41 @@ pub struct ShapeLine {
     ellipsis_span: Option<ShapeSpan>,
 }
 
+/// zgx: where a line's words may break with a hyphen, found for one layout
+/// (`ShapeLine::hyphenate`), for a line with runs that hyphenate
+/// (`FontFeatures::HYPHENS`) and points in them.
+#[derive(Clone, Debug)]
+struct Hyphenation {
+    /// By (span, word): the glyphs a line may break before, a hyphen drawn
+    /// after the part on it. Sorted.
+    points: Vec<((usize, usize), Vec<u16>)>,
+    /// The (span, word)s ending with a soft hyphen (U+00AD), shown as a
+    /// hyphen where a line breaks after one. Sorted.
+    soft: Vec<(usize, usize)>,
+    /// The hyphen, in the line's first span's attributes.
+    span: ShapeSpan,
+}
+
+impl Hyphenation {
+    /// The glyphs word `word` of span `span` may break before.
+    fn points(&self, span: usize, word: usize) -> &[u16] {
+        match self.points.binary_search_by_key(&(span, word), |(key, _)| *key) {
+            Ok(at) => &self.points[at].1,
+            Err(_) => &[],
+        }
+    }
+
+    /// Whether word `word` of span `span` ends with a soft hyphen.
+    fn soft(&self, span: usize, word: usize) -> bool {
+        self.soft.binary_search(&(span, word)).is_ok()
+    }
+
+    /// The hyphen's width in the given font size.
+    fn width(&self, font_size: f32) -> f32 {
+        self.span.words.iter().map(|w| w.width(font_size)).sum()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 struct WordGlyphPos {
     word: usize,
@@ -1466,6 +1702,8 @@ struct VisualLine {
     spaces: u32,
     w: f32,
     ellipsized: bool,
+    /// zgx: where the line's text breaks, if it ends with a hyphen there.
+    hyphen_at: Option<usize>,
     /// Byte range (start, end) of the original line text that was replaced by the ellipsis.
     /// Only set when `ellipsized` is true.
     elided_byte_range: Option<(usize, usize)>,
@@ -1478,6 +1716,7 @@ impl VisualLine {
         self.w = 0.;
         self.ellipsized = false;
         self.elided_byte_range = None;
+        self.hyphen_at = None;
     }
 }
 
@@ -1519,6 +1758,36 @@ impl ShapeLine {
     /// # Panics
     ///
     /// Will panic if `line` contains multiple paragraphs that do not have matching direction
+    /// zgx: `build`, with `attrs_list` saying what language the line's Han
+    /// characters are in (`hinted`).
+    #[cold]
+    #[inline(never)]
+    fn build_hinted(
+        &mut self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+        tab_width: u16,
+    ) {
+        // An app's Chinese, Japanese or Korean language says what language
+        // Han characters are in, whatever the line's kana say
+        // (`FontSystem::set_language`).
+        let han = if font_system.han_by_language() {
+            HAN_BY_LANGUAGE
+        } else {
+            han_hint(line)
+        };
+        let hinted = hinted(attrs_list, han);
+        self.build(
+            font_system,
+            line,
+            hinted.as_ref().unwrap_or(attrs_list),
+            shaping,
+            tab_width,
+        );
+    }
+
     pub fn build(
         &mut self,
         font_system: &mut FontSystem,
@@ -1526,6 +1795,58 @@ impl ShapeLine {
         attrs_list: &AttrsList,
         shaping: Shaping,
         tab_width: u16,
+    ) {
+        // zgx patch: ASCII without paragraph separators is one left-to-right
+        // paragraph at one level, as the bidi analysis would find: one span.
+        // Any other line goes apart (`build_mixed`), so ASCII's path has
+        // none of the analysis or what else a line beyond it may need.
+        let simple = line
+            .bytes()
+            .all(|b| b.is_ascii() && !matches!(b, b'\n' | b'\r' | 0x1C..=0x1E));
+        if simple {
+            self.build_spans(font_system, line, attrs_list, shaping, tab_width, None);
+        } else {
+            self.build_mixed(font_system, line, attrs_list, shaping, tab_width);
+        }
+    }
+
+    /// zgx: `build` for a line not all ASCII, as `line_kind` says: again
+    /// with attributes saying what language its Han characters are in, as
+    /// one left-to-right span without the bidi analysis, or by the analysis.
+    #[inline(never)]
+    fn build_mixed(
+        &mut self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+        tab_width: u16,
+    ) {
+        match line_kind(attrs_list, line) {
+            LineKind::Hinted => self.build_hinted(font_system, line, attrs_list, shaping, tab_width),
+            LineKind::LeftToRight => {
+                self.build_spans(font_system, line, attrs_list, shaping, tab_width, None);
+            }
+            LineKind::Bidi => {
+                let bidi = unicode_bidi::BidiInfo::new(line, None);
+                self.build_spans(font_system, line, attrs_list, shaping, tab_width, Some(bidi));
+            }
+        }
+    }
+
+    /// zgx: `build`'s spans and their tab stops, by `bidi`'s levels, or as
+    /// one left-to-right span without it (ASCII, and a line `line_kind`
+    /// finds nothing right to left in). Inlined into each caller: `build`'s
+    /// copy for ASCII, whose `bidi` is none, keeps none of the analysis.
+    #[inline(always)]
+    fn build_spans(
+        &mut self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+        tab_width: u16,
+        bidi: Option<unicode_bidi::BidiInfo<'_>>,
     ) {
         // Clear stale ellipsis span so it gets recomputed with the current attrs.
         // Without this, reusing a ShapeLine from a previous text (via Cached::Unused)
@@ -1543,16 +1864,6 @@ impl ShapeLine {
         cached_spans.clear();
         cached_spans.extend(spans.drain(..).rev());
 
-        // zgx patch: ASCII without paragraph separators is one left-to-right
-        // paragraph at one level, as the bidi analysis would find: one span.
-        let simple = line
-            .bytes()
-            .all(|b| b.is_ascii() && !matches!(b, b'\n' | b'\r' | 0x1C..=0x1E));
-        let bidi = if simple {
-            None
-        } else {
-            Some(unicode_bidi::BidiInfo::new(line, None))
-        };
         let rtl = match &bidi {
             Some(bidi) if !bidi.paragraphs.is_empty() => bidi.paragraphs[0].level.is_rtl(),
             _ => false,
@@ -1560,7 +1871,7 @@ impl ShapeLine {
 
         log::trace!("Line {}: '{}'", if rtl { "RTL" } else { "LTR" }, line);
 
-        if simple && !line.is_empty() {
+        if bidi.is_none() && !line.is_empty() {
             let mut span = cached_spans.pop().unwrap_or_else(ShapeSpan::empty);
             span.build(
                 font_system,
@@ -1653,6 +1964,91 @@ impl ShapeLine {
         {
             font_system.shape_buffer.run_key_line = 0;
         }
+    }
+
+    /// zgx: where the words of `line` (the text this was shaped from) may
+    /// break with a hyphen, and the hyphen, for the layout that follows
+    /// (`ShapeBuffer::hyphenation`): the points the font system's hyphenator
+    /// gives the words of runs that hyphenate, and the words ending with a
+    /// soft hyphen. Nothing is kept on the line. Whether any were found.
+    #[cold]
+    #[inline(never)]
+    pub fn hyphenate(
+        &self,
+        font_system: &mut FontSystem,
+        line: &str,
+        attrs_list: &AttrsList,
+        shaping: Shaping,
+    ) -> bool {
+        if !attrs_list.defaults_owned().font_features.hyphens()
+            && !attrs_list.spans_iter().any(|(_, attrs)| attrs.font_features.hyphens())
+        {
+            return false;
+        }
+        let mut points = Vec::new();
+        let mut soft = Vec::new();
+        for (span_index, span) in self.spans.iter().enumerate() {
+            if span.level.is_rtl() {
+                continue;
+            }
+            for (word_index, word) in span.words.iter().enumerate() {
+                let (Some(first), Some(last)) = (word.glyphs.first(), word.glyphs.last()) else {
+                    continue;
+                };
+                if word.blank || !attrs_list.get_span(first.start).font_features.hyphens() {
+                    continue;
+                }
+                let (start, end) = (first.start, last.end);
+                let Some(text) = line.get(start..end) else {
+                    continue;
+                };
+                if text.ends_with('\u{AD}') {
+                    soft.push((span_index, word_index));
+                }
+                let mut glyphs = Vec::new();
+                for point in font_system.hyphenate(text).unwrap_or_default() {
+                    let at = start + point;
+                    if let Some(glyph) = word.glyphs.iter().position(|glyph| glyph.start == at) {
+                        if glyph > 0 {
+                            glyphs.push(glyph as u16);
+                        }
+                    }
+                }
+                if !glyphs.is_empty() {
+                    points.push(((span_index, word_index), glyphs));
+                }
+            }
+        }
+        if points.is_empty() && soft.is_empty() {
+            return false;
+        }
+        // The hyphen, in its first span's attributes as the ellipsis is:
+        // U+2010, or `-` where the font lacks it.
+        let attrs = if attrs_list.spans.is_empty() {
+            attrs_list.defaults()
+        } else {
+            attrs_list.get_span(0)
+        };
+        let shape = |text: &str, font_system: &mut FontSystem| {
+            let attrs_list = AttrsList::new(&attrs);
+            let level = unicode_bidi::Level::ltr();
+            ShapeWord::new(font_system, text, &attrs_list, 0..text.len(), level, false, shaping)
+                .glyphs
+        };
+        let mut glyphs = shape("\u{2010}", font_system);
+        if glyphs.is_empty() || glyphs.iter().all(|glyph| glyph.glyph_id == 0) {
+            glyphs = shape("-", font_system);
+        }
+        let span = ShapeSpan {
+            level: unicode_bidi::Level::ltr(),
+            words: vec![ShapeWord {
+                blank: false,
+                glyphs,
+            }],
+            decoration_spans: Vec::new(),
+        };
+        font_system.shape_buffer.hyphenation = Some(Box::new(Hyphenation { points, soft, span }));
+        true
     }
 
     /// zgx patch: the ellipsis is shaped when a layout ellipsizes
@@ -2343,6 +2739,49 @@ impl ShapeLine {
         }
     }
 
+    /// zgx: end `line` with a hyphen at byte `at`, the text breaking there.
+    fn add_hyphen(&self, line: &mut VisualLine, level: unicode_bidi::Level, at: usize, w: f32) {
+        line.ranges.push(VlRange {
+            span: HYPHEN_SPAN,
+            start: WordGlyphPos::ZERO,
+            end: WordGlyphPos::new(1, 0),
+            level,
+        });
+        line.w += w;
+        line.hyphen_at = Some(at);
+    }
+
+    /// zgx: where `word`, from glyph `from`, breaks with a hyphen so that the
+    /// part and the hyphen fit in `room`: the glyph it breaks before, and the
+    /// part's width.
+    fn hyphen_split(
+        &self,
+        word: &ShapeWord,
+        points: &[u16],
+        from: usize,
+        room: f32,
+        font_size: f32,
+    ) -> Option<(usize, f32)> {
+        let mut best = None;
+        let mut width = 0.;
+        let mut at = from;
+        for &point in points {
+            let point = usize::from(point);
+            if point <= from {
+                continue;
+            }
+            while at < point {
+                width += word.glyphs[at].width(font_size);
+                at += 1;
+            }
+            if width > room {
+                break;
+            }
+            best = Some((point, width));
+        }
+        best
+    }
+
     fn byte_range_of_vlrange(&self, r: &VlRange) -> Option<(usize, usize)> {
         debug_assert_ne!(r.span, ELLIPSIS_SPAN);
         let words = self.get_span_words(r.span);
@@ -2543,6 +2982,8 @@ impl ShapeLine {
         // For each visual line a list of  (span index,  and range of words in that span)
         // Note that a BiDi visual line could have multiple spans or parts of them
         // let mut vl_range_of_spans = Vec::with_capacity(1);
+        // zgx: this line's hyphenation, if `hyphenate` found any.
+        let hyphenation = scratch.hyphenation.take();
         let mut visual_lines = mem::take(&mut scratch.visual_lines);
         let mut cached_visual_lines = mem::take(&mut scratch.cached_visual_lines);
         cached_visual_lines.clear();
@@ -2632,6 +3073,13 @@ impl ShapeLine {
                 width_opt,
                 ellipsize,
             ) {
+                // zgx: words break with hyphens in a layout without ellipsis.
+                let hyphens = hyphenation
+                    .as_deref()
+                    .filter(|_| matches!(ellipsize, Ellipsize::None));
+                let hyphenating = hyphens.is_some();
+                let hyphen_w = hyphens.map_or(0., |h| h.width(font_size));
+                let points = |span: usize, word: usize| hyphens.map_or(&[][..], |h| h.points(span, word));
                 'outer: for (span_index, span) in self.spans.iter().enumerate() {
                     let mut word_range_width = 0.;
                     let mut width_before_last_blank = 0.;
@@ -2842,6 +3290,57 @@ impl ShapeLine {
                                     width_before_last_blank = word_range_width;
                                 }
                                 word_range_width += word_width;
+                            } else if hyphenating
+                                && !points(span_index, i).is_empty()
+                                && self
+                                    .hyphen_split(
+                                        word,
+                                        points(span_index, i),
+                                        0,
+                                        width_opt.unwrap_or(f32::INFINITY)
+                                            - (current_visual_line.w + word_range_width)
+                                            - hyphen_w,
+                                        font_size,
+                                    )
+                                    .is_some()
+                            {
+                                // zgx: the word breaks with a hyphen where a part fits,
+                                // again on each line while the rest doesn't.
+                                let width = width_opt.unwrap_or(f32::INFINITY);
+                                let mut from = 0;
+                                let mut rest = word_width;
+                                while let Some((split, part)) = self.hyphen_split(
+                                    word,
+                                    points(span_index, i),
+                                    from,
+                                    width - (current_visual_line.w + word_range_width) - hyphen_w,
+                                    font_size,
+                                ) {
+                                    self.add_to_visual_line(
+                                        &mut current_visual_line,
+                                        span_index,
+                                        fitting_start,
+                                        WordGlyphPos::new(i, split),
+                                        word_range_width + part,
+                                        number_of_blanks,
+                                    );
+                                    let at = word.glyphs[split].start;
+                                    self.add_hyphen(&mut current_visual_line, span.level, at, hyphen_w);
+                                    visual_lines.push(current_visual_line);
+                                    current_visual_line =
+                                        cached_visual_lines.pop().unwrap_or_default();
+                                    number_of_blanks = 0;
+                                    total_line_count += 1;
+                                    total_line_height += line_height;
+                                    fitting_start = WordGlyphPos::new(i, split);
+                                    word_range_width = 0.;
+                                    rest -= part;
+                                    from = split;
+                                    if rest <= width {
+                                        break;
+                                    }
+                                }
+                                word_range_width = rest;
                             } else if wrap == Wrap::Glyph
                             // Make sure that the word is able to fit on it's own line, if not, fall back to Glyph wrapping.
                             || (wrap == Wrap::WordOrGlyph && word_width > width_opt.unwrap_or(f32::INFINITY))
@@ -2954,6 +3453,17 @@ impl ShapeLine {
                                             word_range_width,
                                             number_of_blanks,
                                         );
+                                        // zgx: broken after a soft hyphen: a hyphen shows.
+                                        if i > 0 && hyphens.is_some_and(|h| h.soft(span_index, i - 1)) {
+                                            if let Some(last) = span.words[i - 1].glyphs.last() {
+                                                self.add_hyphen(
+                                                    &mut current_visual_line,
+                                                    span.level,
+                                                    last.end,
+                                                    hyphen_w,
+                                                );
+                                            }
+                                        }
                                     }
                                 }
 
@@ -3103,8 +3613,12 @@ impl ShapeLine {
                                  max_descent: &mut f32| {
                 for r in visual_line.ranges[range.clone()].iter() {
                     let is_ellipsis = r.span == ELLIPSIS_SPAN;
-                    let span_words = self.get_span_words(r.span);
-                    let deco_spans: &[(Range<usize>, GlyphDecorationData)] = if is_ellipsis {
+                    let is_hyphen = r.span == HYPHEN_SPAN;
+                    let span_words = match &hyphenation {
+                        Some(hyphenation) if is_hyphen => &hyphenation.span.words,
+                        _ => self.get_span_words(r.span),
+                    };
+                    let deco_spans: &[(Range<usize>, GlyphDecorationData)] = if is_ellipsis || is_hyphen {
                         &[]
                     } else {
                         &self.spans[r.span].decoration_spans
@@ -3193,6 +3707,13 @@ impl ShapeLine {
                                     };
                                     layout_glyph.start = boundary;
                                     layout_glyph.end = boundary;
+                                }
+                            }
+                            // zgx: a hyphen is at the break, holding no text.
+                            if is_hyphen {
+                                if let Some(at) = visual_line.hyphen_at {
+                                    layout_glyph.start = at;
+                                    layout_glyph.end = at;
                                 }
                             }
                             glyphs.push(layout_glyph);
@@ -3309,5 +3830,47 @@ impl ShapeLine {
         scratch.cached_visual_lines = cached_visual_lines;
         scratch.glyph_sets = cached_glyph_sets;
         scratch.order = order;
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::{classify, MAY_HINT, MAY_RTL};
+    use unicode_bidi::{bidi_class, BidiClass};
+
+    /// Every character the bidi analysis treats otherwise than a left-to-right
+    /// paragraph's is found (`MAY_RTL`), and every kana and hangul is
+    /// (`MAY_HINT`): skipping the analysis, or the hint, is never wrong.
+    #[test]
+    fn classify_finds_every_character_that_needs_the_analysis_or_hints() {
+        let mut bytes = [0u8; 4];
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let encoded = c.encode_utf8(&mut bytes).as_bytes();
+            let found = classify(encoded);
+            let needs = matches!(
+                bidi_class(c),
+                BidiClass::R
+                    | BidiClass::AL
+                    | BidiClass::AN
+                    | BidiClass::B
+                    | BidiClass::LRE
+                    | BidiClass::RLE
+                    | BidiClass::LRO
+                    | BidiClass::RLO
+                    | BidiClass::PDF
+                    | BidiClass::LRI
+                    | BidiClass::RLI
+                    | BidiClass::FSI
+                    | BidiClass::PDI
+            );
+            assert!(!needs || found & MAY_RTL != 0, "{c:?} U+{:04X}", c as u32);
+            let hints = matches!(c,
+                '\u{3040}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF66}'..='\u{FF9F}'
+                | '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}');
+            assert!(!hints || found & MAY_HINT != 0, "{c:?} U+{:04X}", c as u32);
+        }
+        // Text of left-to-right scripts and common punctuation passes.
+        assert_eq!(classify("Résumé — naïve… ·×".as_bytes()), 0);
+        assert_eq!(classify("Привет, мир! Γειά σου".as_bytes()), 0);
     }
 }

@@ -119,12 +119,32 @@ with a main menu activates (here with 2 displays). So a flip sends one
   doesn't matter, and `setMainMenu(nil)` afterwards doesn't remove them. The
   GPUI Fast of the earlier comparisons had no menu (3 contexts). It has one
   since #692 but presents without commits, so it never pays.
+- **Measured (window 39, M5 Max, 2026-10-29).** zgx, GPUI Fast and Rune each
+  have 11 contexts. zgx makes 58 commits a second of its own (the tile
+  flip), and the other two none, besides the ~20 a second AppKit makes in
+  each. Running zgx without a main menu, or as an accessory, leaves 3
+  contexts and saves 0.36 and 0.42 points, against 0.35 predicted. Any main
+  menu adds the 8, from an empty bar to ten menus, lazily filled or not, and
+  activation alone adds none. A commit from a background thread's own
+  transaction reaches all 11 too.
 - **No layer property changes it,** and no commit can be scoped to one
-  context. What escapes it is a present without a commit. A `CAMetalLayer`
+  context. Paired against tiles as they are (window 39, net of a −0.20
+  control): flipping one tile over a shown one instead of two, flipping
+  `opacity` instead of `hidden`, and handing over 3.5 ms before the refresh
+  instead of 2.0 all move the window server by nothing; the first costs
+  14–21 mW more GPU. What escapes it is a present without a commit. A `CAMetalLayer`
   drawable is one image-queue ping: with a pool of three it costs the window
   server −0.3 ± 0.2 against tiles in heavy `stream`. With two the pool is
-  always full, which costs +4.4. At 60 Hz it has so far paced worse than tiles
-  (p99 24.5 against 19 to 23 ms, 0.8% long frames). The video layer also
+  always full, which costs +4.4. With today's pool of two, drawables for
+  every frame at 60 Hz (window 40, heavy and lab) cost the window server
+  3.5 to 3.9 points more than tiles and the app 0.7 to 1.3 more, and lab
+  scroll showed about 11% of frames a refresh late. That is the full pool: a
+  pool of three (window 41, same scenes) costs the window server 0.24 to
+  0.40 points *less* than tiles, the fan-out it escapes, but the app 0.65
+  to 0.85 points more (5 to 32% more instructions a frame), with GPU and
+  memory level and an occasional run of late frames. A trade, so 60 Hz
+  stays on tiles; these frames ran off the drawables' display link, so a
+  60 Hz path on it might narrow the app's side. The video layer also
   enqueues without a commit, but it keeps a third surface, wakes a CoreMedia
   thread and costs app CPU (+9.5 to 11.6 MB and +16 to 23% CPU at full rate),
   which is too high a price for 0.45 points.
@@ -155,13 +175,21 @@ cost the GPU about 150 mW less and the window server 5.7 points less, for
 about 4.7 points more of the app's CPU (animate, M1 Max: GPU 206 against
 358 mW, window server 31.7% against 37.4, app CPU 18.0% against 13.3). On
 an M5 Max, tiles cost less at full rate (the window server's CPU 1.3 points
-and the app's 0.8 lower, for 4–7 mW more GPU). At 60 Hz, drawables trade
-0.5 points of window-server CPU for 0.6 of the app's.
+and the app's 0.8 lower, for 4–7 mW more GPU). At 60 Hz they cost more of
+both (above), and frames below the display's rate stay on tiles.
 
 Drawables are paced by the view's own display link and kept in phase
 (skipping a tick when frames start to wait a refresh for a drawable), from
 a pool of two. Their frame shows 16 ms after it starts, against 27–32 before
 (M5 Max).
+
+**Colour matching.** Surfaces are tagged sRGB and the window server
+matches them to the display: on the M5 Max's P3 panel that is about 22 mW
+of GPU in heavy `both` (untagged, colours wrong, as the bound), and no
+window-server CPU. Converting to Display P3 in the frame's own pass instead
+(framebuffer fetch over each damaged region, exact to a level) costs 5 mW
+more than leaving it to the window server (window 40), so surfaces stay
+sRGB.
 
 ## The heavy dashboard's malloc fragmentation (macOS)
 

@@ -59,7 +59,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_MENUCHAR, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCALCSIZE,
     WM_NCCREATE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_PAINT, WM_POINTERDOWN, WM_POINTERUP,
     WM_POINTERUPDATE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SETTINGCHANGE,
-    WM_SIZE, WM_SIZING, WM_SYSCOMMAND, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TOUCH, WM_WINDOWPOSCHANGED,
+    WM_SIZE, WM_SIZING, WM_SYSCOMMAND, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_TOUCH,
+    WM_WINDOWPOSCHANGED,
     WM_WINDOWPOSCHANGING, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_POPUP, WS_VISIBLE,
 };
@@ -1355,9 +1356,28 @@ unsafe fn public_window_callback_inner(
             result = ProcResult::Value(0);
         },
 
+        // zgx patch: `occlusion`'s timer, the one way its verdicts are given.
+        WM_TIMER if wparam == super::occlusion::TIMER => {
+            let hidden = super::occlusion::hidden(window);
+            let change = userdata.window_state_lock().occlusion.settle(hidden);
+            if userdata.window_state_lock().occlusion.occluded() {
+                super::occlusion::watch(window);
+            } else {
+                super::occlusion::unwatch(window);
+            }
+            if let Some(occluded) = change {
+                userdata.send_event(Event::WindowEvent {
+                    window_id: RootWindowId(WindowId(window)),
+                    event: WindowEvent::Occluded(occluded),
+                });
+            }
+            result = ProcResult::Value(0);
+        },
+
         WM_DESTROY => {
             use crate::event::WindowEvent::Destroyed;
             unsafe { RevokeDragDrop(window) };
+            super::occlusion::unwatch(window);
             userdata.send_event(Event::WindowEvent {
                 window_id: RootWindowId(WindowId(window)),
                 event: Destroyed,

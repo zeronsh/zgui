@@ -7,6 +7,8 @@ on_click: (Handler | Action)?
 on_press: (((e: PointerEvent) -> ()) | Action)?
 on_release: (((e: PointerEvent) -> ()) | Action)?
 on_aux_click: (((e: AuxClickEvent) -> ()) | Action)?
+on_double_click: (((e: PointerEvent) -> ()) | Action)?
+on_navigate: (((e: NavigateEvent) -> ()) | Action)?
 on_hover: (((inside: boolean) -> ()) | Action)?
 on_pointer_move: (((e: PointerEvent) -> ()) | Action)?
 on_key: (((e: KeyEvent) -> boolean?) | Action)?
@@ -41,6 +43,10 @@ on_drag_spring: ((payload: any) -> boolean?)?
 | `on_press` | `{ x, y, local_x, local_y, clicks, shift, ctrl, alt, meta, cmd }` | the primary button goes down on the node or anything in it; `clicks` counts presses in a row (2 for a double click's second, 3 for a triple's, and on past it) |
 | `on_release` | the same | the primary button comes up |
 | `on_aux_click` | `{ button, x, y, local_x, local_y, shift, ctrl, alt, meta, cmd }` (`button`: `"middle"`, or the platform's number for another extra button) | the middle button (or another beyond the primary and secondary) goes down and comes back up on the node or anything in it, the pointer not leaving it in between, as the DOM's `auxclick`: a tab closing on a middle click, a link opening in the background. The innermost node with `on_aux_click` takes it. The secondary button opens `context_menu` |
+| `on_double_click` | `{ x, y, local_x, local_y, shift, ctrl, alt, meta, cmd }` | the primary button is clicked twice on one spot within the system's double-click time, as the DOM's `dblclick`: heard as the second is let go, after its `on_click`; the innermost node with one takes it |
+| `on_navigate` | `{ direction }` (`"back"` or `"forward"`) | the platform's gesture for a step back or forward is made over it: on macOS, a trackpad's swipe between pages (two fingers across, or three, as the system's Trackpad setting has it), as Safari goes back and forward. A two-finger swipe navigates only where it starts: where nothing under the fingers scrolls that way (each scroll view at its edge), so a carousel in the middle of its content still scrolls; with no `on_navigate` under it, it scrolls and stretches as before. The nearest node with `on_navigate` takes it. `ui.router`'s view goes back and forward on it |
+| `on_file_drop` | the dropped files, each a `File` (`{ path, name, size, type }`), then `{ x, y, local_x, local_y }` | files are dropped on it from outside the window (Finder, Explorer, a file manager), as react-dropzone's `onDrop`. The innermost node with `on_file_drop` takes them. Send them with `ui.fetch`'s `file` or `multipart` ([the network](state.md#the-clipboard-and-files)) |
+| `on_file_hover` | `true`, then `false` | files dragged from outside the window come over it or anything in it, then leave it, are dropped or the drag ends (react-dropzone's `isDragActive`): a drop zone's highlight, or on the window's root, a "Drop files to upload" overlay |
 | `on_hover` | `true`, then `false` | once when the pointer comes inside the node or anything in it, once when it is outside all of them (the DOM's `mouseenter` and `mouseleave`); leaving the window, the window going to the back, and the pointer moving onto a page or a terminal count as leaving |
 | `on_pointer_move` | `{ x, y, local_x, local_y }` | the pointer moves over it (or anywhere, while it holds the pointer) |
 | `on_key` | `{ key, code, shift, ctrl, alt, meta, cmd, repeat, editing }` (`code`: the physical key, as the DOM's `KeyboardEvent.code`, `"KeyA"`, `"Digit1"`; `editing`: a text field holds focus, so a bare-key shortcut gives way) | a key goes down while it, or a node inside it, has focus. Return `true` to consume the key: the default action and the ancestors' handlers do not see it |
@@ -63,6 +69,21 @@ on_drag_spring: ((payload: any) -> boolean?)?
 | `on_drag_leave` | the payload | the drag leaves it |
 | `on_drop` | the payload, `{ x, y, local_x, local_y, w, h }` | an accepted drag is released over it |
 | `on_drag_spring` | the payload; returns `false` to decline | spring-loading: an accepted drag has rested on it for the system's delay (macOS's setting, 0.5 s by default; never where it is turned off), or Space was pressed while it is over it. Open what it stands for, as a tab shows or a folder opens; once per stay (moving within it does not start the delay again, leaving does) |
+
+Which points a field is in, under `zoom` or any transform:
+
+| Field | Points |
+| --- | --- |
+| `x`, `y` (every pointer event, `on_drag_outside`) | the window's |
+| `local_x`, `local_y` | the node's own box, from its top-left corner as laid out: through every zoom and transform around it, its own included, as hit testing maps a pointer. They stay in `0` to its width and height while the pointer is on it |
+| `dx`, `dy` (`on_wheel`) | the node's own: a zoomed box's content moves by them as far as the wheel says on screen, as a scroll view's does |
+| `scale` (`on_pinch`) | a ratio, no points |
+| `grab_x`, `grab_y` (`on_drag_outside`) | the window's, from the corner where the source shows: what to subtract from `x`, `y` to keep a preview under the grab |
+| `w`, `h` (`on_resize`, `on_drag_over`) | the node's own |
+| a ref's `x`, `y`, `width`, `height` | as laid out, before any zoom or transform: neither the window's nor the box's own under a zoom |
+| `ui.window_rect(el)` | the window's: where it shows, through every zoom and transform (CSS's `getBoundingClientRect`), to place something at it in window points |
+
+A draggable (`anime.createDraggable`) moves its `x` and `y` in its parent's points, so it stays under the pointer in a zoomed box.
 
 `cmd` is the platform's command key, as `cmd` in a command's keys: Command (`meta`) on macOS, Ctrl (`ctrl`) elsewhere; test it for a shortcut (`e.cmd and e.key == "z"`) rather than `meta or ctrl`, which takes Super+Z on Linux and Ctrl+Z on macOS. `x` and `y` are in points from the window's top left, `local_x` and `local_y` from the node's, `w` and `h` its size. Key names are the character typed (`"a"`, `"A"`, `"/"`), `" "` for Space, `"F1"` to `"F35"`, or one of `"Tab"`, `"Enter"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"ArrowRight"`, `"ArrowUp"`, `"ArrowDown"`, `"Home"`, `"End"`, `"PageUp"`, `"PageDown"`, `"Insert"`.
 

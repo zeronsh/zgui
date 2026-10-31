@@ -106,6 +106,14 @@ pub(crate) struct State {
     bounced: bool,
     /// The view the gesture stretches (or springs back).
     active: Option<Weak<Elastic>>,
+    /// Swipes between pages are on (`Ui::set_navigation_swipes`).
+    pub(crate) swipes: bool,
+    /// The gesture's first scroll is still to come: only it starts a swipe.
+    first: bool,
+    /// The gesture became a swipe between pages: its scrolls go nowhere.
+    swiping: bool,
+    /// A swipe the host has yet to hear of (`Ui::take_navigation_swipe`).
+    pub(crate) asked: bool,
 }
 
 /// `root`'s scroll view stretches: its translation adds `shown`.
@@ -156,15 +164,21 @@ pub(crate) fn gesture(ui: &Ui, phase: ScrollGesture) {
                 state.fingers = true;
                 state.momentum = false;
                 state.bounced = false;
+                state.first = true;
+                state.swiping = false;
+                // A swipe a gesture's last scroll asked for, too late to track.
+                state.asked = false;
                 false
             }
             ScrollGesture::Ended => {
                 state.fingers = false;
+                state.first = false;
                 true
             }
             ScrollGesture::MomentumBegan => {
                 state.momentum = true;
                 state.bounced = false;
+                state.first = false;
                 false
             }
             ScrollGesture::MomentumEnded => {
@@ -190,6 +204,10 @@ pub(crate) fn before_scroll(ui: &Ui, event: InputEvent) -> Option<InputEvent> {
     else {
         return Some(event);
     };
+    // A swipe between pages' gesture scrolls nothing.
+    if ui.elastic_state().borrow().swiping {
+        return None;
+    }
     let Some(view) = active(ui).filter(|view| view.stretched() && view.spring.get().is_none())
     else {
         return Some(event);
@@ -228,9 +246,13 @@ pub(crate) fn after_scroll(ui: &Ui, event: &InputEvent, result: &DispatchResult)
     else {
         return;
     };
-    let (fingers, momentum) = {
-        let state = ui.elastic_state().borrow();
-        (state.fingers, state.momentum)
+    let (fingers, momentum, first) = {
+        let mut state = ui.elastic_state().borrow_mut();
+        (
+            state.fingers,
+            state.momentum,
+            std::mem::take(&mut state.first),
+        )
     };
     if result.default_prevented || !(fingers || momentum) {
         return;
@@ -238,6 +260,11 @@ pub(crate) fn after_scroll(ui: &Ui, event: &InputEvent, result: &DispatchResult)
     let horizontal = delta_x.abs() > delta_y.abs();
     let delta = if horizontal { delta_x } else { delta_y };
     if delta == 0. || !delta.is_finite() {
+        return;
+    }
+    // A gesture starting across where nothing scrolls that way, over a view
+    // that navigates: the platform's swipe between pages, not a stretch.
+    if first && fingers && horizontal && swipe(ui, result.target) {
         return;
     }
     let now = Instant::now();
@@ -293,6 +320,21 @@ pub(crate) fn after_scroll(ui: &Ui, event: &InputEvent, result: &DispatchResult)
     }
     view.push(delta);
     ui.elastic_state().borrow_mut().active = Some(Rc::downgrade(&view));
+}
+
+/// Whether the gesture over `target` becomes a swipe between pages
+/// (`Ui::set_navigation_swipes`): it does where a view takes navigation.
+fn swipe(ui: &Ui, target: Option<NodeId>) -> bool {
+    if !ui.elastic_state().borrow().swipes {
+        return false;
+    }
+    let navigates = target.is_some_and(|target| ui.input.navigates(&ui.scene.borrow(), target));
+    if navigates {
+        let mut state = ui.elastic_state().borrow_mut();
+        state.swiping = true;
+        state.asked = true;
+    }
+    navigates
 }
 
 /// When the stretched view next steps back. Nothing stretched, nothing.

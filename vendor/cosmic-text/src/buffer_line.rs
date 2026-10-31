@@ -265,6 +265,11 @@ impl BufferLine {
             if !matches!(ellipsize, Ellipsize::None) {
                 shape.ensure_ellipsis(font_system, &self.attrs_list, self.shaping);
             }
+            // zgx: where words may break with a hyphen, for this layout
+            // alone, only once a text has asked: other text pays one test.
+            if font_system.hyphenates() && matches!(ellipsize, Ellipsize::None) {
+                shape.hyphenate(font_system, &self.text, &self.attrs_list, self.shaping);
+            }
             shape.layout_to_buffer(
                 &mut font_system.shape_buffer,
                 font_size,

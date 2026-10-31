@@ -677,6 +677,7 @@ impl Ui {
             theme.color_untracked(tok::FIND_MATCH),
             theme.color_untracked(tok::FIND_CURRENT),
         );
+        let radius = theme.number_untracked(tok::MARK_RADIUS);
         let Some((folded, current, marked, editors_marked, bar)) =
             self.storage.find.borrow().as_ref().map(|s| {
                 (
@@ -761,23 +762,28 @@ impl Ui {
                     };
                     let bounds = scene.layout_bounds(node);
                     let frame = Rect::new(0., 0., bounds.width, bounds.height);
-                    ranges
-                        .into_iter()
-                        .flat_map(|range| {
-                            let color = if current_text.as_ref() == Some(&(node, range.clone())) {
-                                current_color
-                            } else {
-                                matched
-                            };
-                            layout
-                                .selection(range)
-                                .into_iter()
-                                .filter_map(move |r| r.intersection(frame))
-                                .map(move |rect| TextMark { rect, color })
-                        })
-                        .collect::<Vec<_>>()
+                    // Each match one shape, over the lines it runs on.
+                    let mut marks = Vec::new();
+                    let mut ends = Vec::new();
+                    for range in ranges {
+                        let color = if current_text.as_ref() == Some(&(node, range.clone())) {
+                            current_color
+                        } else {
+                            matched
+                        };
+                        marks.extend(
+                            (layout.selection(range).into_iter())
+                                .filter_map(|r| r.intersection(frame))
+                                .map(|rect| TextMark { rect, color }),
+                        );
+                        ends.push(marks.len());
+                    }
+                    (marks, ends)
                 };
-                self.scene.borrow_mut().set_text_marks(node, marks);
+                let (marks, ends) = marks;
+                self.scene
+                    .borrow_mut()
+                    .set_text_mark_shapes(node, marks, ends, radius);
                 now_marked.push(node);
             }
             for node in &now_editors {

@@ -15,6 +15,25 @@ fn scripts(name: &str, files: &[(&str, &str)]) -> PathBuf {
     }
     dir
 }
+/// `from` copied to `to`, its generated `.zgx` left out; `to`.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> PathBuf {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (path, name) = (entry.path(), entry.file_name());
+        if name == ".zgx" {
+            continue;
+        }
+        match path.is_dir() {
+            true => {
+                copy_dir(&path, &to.join(&name));
+            }
+            false => {
+                std::fs::copy(&path, to.join(&name)).unwrap();
+            }
+        }
+    }
+    to.to_path_buf()
+}
 fn installed() -> bool {
     let found = zgx_script::check::find_luau_lsp().is_some();
     if !found {
@@ -82,6 +101,48 @@ fn clean_scripts_pass_and_misspelled_properties_fail() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Unknown members of the globals are errors: nothing in their declarations
+/// may turn them to `never` (a function intersected with a table, as
+/// `ui.window` was), which would quiet every lookup on them.
+#[test]
+fn an_unknown_member_of_ui_or_anime_or_ui_window_fails() {
+    if !installed() {
+        return;
+    }
+    for (name, code) in [
+        ("ui", "print(ui.untrack)\nreturn ui.text { \"hi\" }\n"),
+        ("anime", "print(anime.nope)\nreturn ui.text { \"hi\" }\n"),
+        (
+            "window",
+            "print(ui.window.nope)\nreturn ui.text { \"hi\" }\n",
+        ),
+    ] {
+        let dir = scripts(&format!("unknown-{name}"), &[("app.luau", code)]);
+        let out = zgx().arg("check").arg(&dir).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(!out.status.success(), "{name}: {text}");
+        assert!(text.contains("not found"), "{name}: {text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// `ui.window` still takes its options, and reads its fields.
+#[test]
+fn ui_window_is_called_and_read() {
+    if !installed() {
+        return;
+    }
+    let code = "local open = ui.state(\"open\", false)\n\
+        ui.window { id = \"settings\", title = \"Settings\", width = 300, open = open, ui.text { \"hi\" } }\n\
+        local tall = ui.window.size:get().height > 400\n\
+        return ui.text { tostring(tall) }\n";
+    let dir = scripts("window-api", &[("app.luau", code)]);
+    let out = zgx().arg("check").arg(&dir).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn without_luau_lsp_it_says_how_to_install_it() {
     let dir = scripts("missing", &[("app.luau", "return ui.text { \"hi\" }\n")]);
@@ -116,9 +177,16 @@ fn every_shipped_example_passes_in_strict_mode() {
         return;
     }
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Copies: `zgx check` writes each directory's `.zgx/types.d.luau`, and a
+    // test writes nothing into the repository (the terminal's has none
+    // tracked, and the staleness test below reads the tracked ones).
+    let copies = scripts("examples", &[]);
     let examples = [
-        manifest.join("examples"),
-        manifest.join("../zgx-desktop/examples/terminal"),
+        copy_dir(&manifest.join("examples"), &copies.join("examples")),
+        copy_dir(
+            &manifest.join("../zgx-desktop/examples/terminal"),
+            &copies.join("terminal"),
+        ),
     ];
     // Strict where no `.luaurc` picks a mode; the terminal's says strict.
     let out = zgx().arg("check").args(&examples).output().unwrap();
@@ -134,6 +202,7 @@ fn every_shipped_example_passes_in_strict_mode() {
         .and_then(|n| n.parse().ok())
         .unwrap_or_default();
     assert!(files >= 25, "{stderr}");
+    std::fs::remove_dir_all(copies).unwrap();
 }
 
 #[test]
@@ -195,20 +264,26 @@ fn a_reload_writes_the_types_of_the_whole_app() {
 fn the_examples_types_files_are_what_zgx_types_writes() {
     // Committed for editors; a change to zgx's own definitions regenerates
     // them (`zgx types <dir>`), or every run of an example rewrites them.
-    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.ends_with(".zgx/types.d.luau") {
-                out.push(path);
-            } else if path.is_dir() && !path.ends_with("target") {
-                walk(&path, out);
-            }
-        }
-    }
+    // The tracked ones only: an untracked one (an editor's, a host's) is
+    // no one's to keep current.
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut files = Vec::new();
-    walk(&crates, &mut files);
-    assert!(!files.is_empty());
+    let Ok(listed) = Command::new("git")
+        .args(["ls-files", "-z", "--", "*/.zgx/types.d.luau"])
+        .current_dir(&crates)
+        .output()
+    else {
+        eprintln!("skipped: no git to list the tracked types files");
+        return;
+    };
+    let files: Vec<PathBuf> = String::from_utf8_lossy(&listed.stdout)
+        .split('\0')
+        .filter(|name| !name.is_empty())
+        .map(|name| crates.join(name))
+        .collect();
+    if !listed.status.success() || files.is_empty() {
+        eprintln!("skipped: not in the repository");
+        return;
+    }
     for file in files {
         let dir = file.parent().and_then(|zgx| zgx.parent()).unwrap();
         let sources: Vec<_> = zgx_script::check::scripts(dir)
@@ -262,5 +337,34 @@ fn a_misspelled_route_or_param_is_a_type_error() {
     assert!(!stdout.contains("app.luau"), "{stdout}");
     assert!(stdout.contains("name.luau:2:"), "{stdout}");
     assert!(stdout.contains("param.luau:2:"), "{stdout}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A module requiring `@app/…`, required by an app.luau that doesn't: the
+/// alias reaches it too (luau-lsp checks a module with each script that
+/// requires it).
+#[test]
+fn a_component_requiring_at_app_checks_when_the_app_does_not() {
+    if !installed() {
+        return;
+    }
+    let dir = scripts(
+        "at-app",
+        &[
+            (
+                "app.luau",
+                "local Card = require(\"./card\")\nreturn Card()\n",
+            ),
+            ("theme.luau", "return { card = \"$surface.raised\" }\n"),
+            (
+                "card.luau",
+                "local theme = require(\"@app/theme\")\n\
+                 return function()\n\treturn ui.div { bg = theme.card }\nend\n",
+            ),
+        ],
+    );
+    let out = zgx().arg("check").arg(&dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
     std::fs::remove_dir_all(dir).unwrap();
 }

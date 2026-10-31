@@ -28,6 +28,16 @@ impl NodeAccessibleInterface {
     fn map_error(&self) -> impl '_ + FnOnce(accesskit_atspi_common::Error) -> fdo::Error {
         |error| crate::util::map_error_from_node(&self.node, error)
     }
+
+    /// zgx patch: the other process's object this node embeds, if any
+    /// (`accesskit_atspi_common::EMBED`).
+    fn embedded(&self) -> fdo::Result<Option<OwnedObjectAddress>> {
+        Ok(self
+            .node
+            .embedded()
+            .map_err(self.map_error())?
+            .and_then(|(bus, path)| OwnedObjectAddress::foreign(&bus, &path)))
+    }
 }
 
 #[interface(name = "org.a11y.atspi.Accessible")]
@@ -58,7 +68,9 @@ impl NodeAccessibleInterface {
 
     #[zbus(property)]
     fn child_count(&self) -> fdo::Result<i32> {
-        self.node.child_count().map_err(self.map_error())
+        // zgx patch: and the other process's object it embeds, last.
+        let embedded = self.embedded()?.is_some() as i32;
+        Ok(self.node.child_count().map_err(self.map_error())? + embedded)
     }
 
     #[zbus(property)]
@@ -83,11 +95,19 @@ impl NodeAccessibleInterface {
                 adapter: self.node.adapter_id(),
                 node: child,
             });
+        // zgx patch: the embedded object is the last child.
+        if child.is_none()
+            && let Some(embedded) = self.embedded()?
+            && usize::try_from(self.node.child_count().map_err(self.map_error())?).ok() == Some(index)
+        {
+            return Ok((embedded,));
+        }
         Ok(super::optional_object_address(&self.bus_name, child))
     }
 
     fn get_children(&self) -> fdo::Result<Vec<OwnedObjectAddress>> {
-        self.node
+        let mut children: Vec<OwnedObjectAddress> = self
+            .node
             .map_children(|child| {
                 ObjectId::Node {
                     adapter: self.node.adapter_id(),
@@ -95,7 +115,10 @@ impl NodeAccessibleInterface {
                 }
                 .to_address(self.bus_name.inner())
             })
-            .map_err(self.map_error())
+            .map_err(self.map_error())?;
+        // zgx patch: and the other process's object it embeds, last.
+        children.extend(self.embedded()?);
+        Ok(children)
     }
 
     fn get_index_in_parent(&self) -> fdo::Result<i32> {

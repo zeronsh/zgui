@@ -21,6 +21,9 @@ A PNG or JPEG, decoded once per `src` and kept while a node shows it. Of those n
 | `src` | `Reactive<string>`, or a `Bitmap` | required | a path (from the script's directory) or an absolute one; `"host:<name>"`, an image the app made (`ScriptHost::image`), following each one it replaces it with; a `Bitmap` shown as it is (`ui.bitmap`, a pasted image from `ui.clipboard.read_image()`); a state or function (of a path or a `Bitmap`) swaps the image |
 | `fallback` | `Node` | none | shown in the image's place while a remote one (`https://…`) loads, and if it fails (a failed picture is logged, not a script error): an avatar's initials |
 | `fit` | `"fill" \| "contain" \| "cover" \| "none" \| "scale_down"` | `"fill"` | how the pixels fill the box (CSS `object-fit`) |
+| `image_rendering` | `"auto" \| "pixelated"` | `"auto"` | how its pixels are sampled drawn larger or smaller (CSS's `image-rendering`): `"pixelated"`, each point the nearest pixel, its edges hard: pixel art, a magnified screenshot, a QR code |
+| `object_position` | `{ x, y }` | `{ 0.5, 0.5 }` | where the pixels lie in the box where they don't fill it (CSS `object-position`): fractions of the room to spare, so `{ 0.5, 0 }` keeps a portrait's top under `fit = "cover"` |
+| `decode` | `"auto" \| "sync" \| "async"` | `"auto"` | when a PNG or JPEG file decodes, as HTML's `decoding`: with `"auto"` a picture up to 256 by 256 pixels decodes as it is first drawn, so an icon is in its first frame, and a larger one off the main thread, showing a frame or so later; `"sync"` decodes it as drawn whatever its size (that frame waits); `"async"` always off the main thread. It is the file's: images showing one file share its decoded picture, so the last to say wins |
 | `dither` | `number` | none | drawn dithered as Zeron dithers its wallpapers, in dots this many points square on the screen's grid: each dot takes the colour at its centre, lit to that colour's full value where its brightest channel passes a 4x4 Bayer threshold, else dimmed to 8%. A vivid two-level dot picture of the image's own hues, worked out on the GPU as the image draws (one sample and a compare a pixel), so it follows the image as it moves, scales or crossfades, with nothing precomputed |
 | `characters` | `number` | none | drawn as characters, as an ASCII art generator draws a photo: the screen in cells of a 5 by 7 pixel font (each font pixel this many points, a cell 6 by 8 of them), each cell a glyph of ` .-+xXS80#@` picked by the brightness at its centre and lit in that colour at full value, over the image a little dimmed. On the GPU as it draws, with no texture of glyphs |
 | `label` | `string` | `""` | its accessible name |
@@ -62,6 +65,10 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 | `c:stroke(path, paint, width?, opts?)` | strokes a path; `opts` as `line`'s, and `draw = t` (or `{ start, end }`) strokes only that fraction of it, as anime.js draws lines |
 | `c:clip(path)` | clips what follows to the path, until `c:restore()` |
 | `c:restore()` | ends the last clip |
+| `c:text(text, x, y, opts?)` | a line of text at (`x`, `y`). `opts`: `size` (12), `color` (`"$text.primary"`), `weight`, `italic`, `tabular`, `font`, `align` (`"start"`, `"center"`, `"end"`: where `x` falls across it), `baseline` (`"top"`, `"middle"`, `"bottom"`: where `y` falls down it) |
+| `c:measure_text(text, opts?)` | its width and height, for placing what goes around it: `local w = c:measure_text(label, { size = 11 })` |
+
+Text on a canvas is shaped and drawn as any text is: sharp at any zoom, in the theme's fonts with their fallbacks, and following `view`. It sits over the canvas's shapes whatever order they were drawn in, so a shape drawn after it doesn't cover it, and `c:clip` doesn't cut it. Assistive technology doesn't read it: give the canvas a `label` that says what it shows (`label = "Requests, now 5,400, up 1.4%"`), and offer a chart's numbers as text or a table where they matter.
 
 `paint` is a [color](properties.md) or a brush from `ui.linear(x1, y1, x2, y2, { colors })`, its colors spread evenly from (`x1`, `y1`) to (`x2`, `y2`). A color may name a theme token (`"$accent"`, `"$surface.raised"`), resolved in the canvas's theme while `draw` runs: the drawing follows it as it follows state, so a theme change draws it again. `ui.linear` called inside `draw` takes tokens too.
 
@@ -156,7 +163,7 @@ return ui.column {
 
 ## Gotchas
 
-- `ui.image` needs `src`; `code` is the SVG's (an image with only `code` fails to load). A missing or undecodable file shows the error in the window and an empty image.
+- `ui.image` needs `src`; `code` is the SVG's (an image with only `code` fails to load). A missing or undecodable file shows the error in the window, at the script line naming it, and an empty image. An empty `src` (`""`, a picture not chosen yet) shows nothing and is no error, as the web's is, for images, SVGs and `bg_image`.
 - Images and SVGs are decoded once per `src` and shared by every node showing it. Ones no node shows stay only while they fit the image cache's budget, the most recently shown first. A host that watches its scripts (`ScriptHost::watch`) also watches these files: saving an edited image reloads the scripts, state kept, and they show the new one.
 - An image is as large as its pixels in points unless sized; give it a `w` and `h` (or `aspect` and one of them).
 - `draw` runs again only for its size and the state it read; reading state through `peek` (or outside `draw`) does not redraw it. Keep it cheap: it runs in the script for every change it follows.

@@ -222,6 +222,30 @@ fn the_inspector_names_nodes_by_the_script_line_that_made_them() {
     assert_eq!(inspector.overlay(), None);
 }
 
+/// A panic while reloading shows as a script error does, and the next save
+/// reloads: hot reload outlives it.
+#[test]
+fn a_panic_in_a_reload_is_reported_and_the_next_save_reloads() {
+    let path = temp_script("reload-panic", APP);
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::new(runtime, &path);
+        host.action("boom", |_| panic!("boom in a reload"));
+        host
+    });
+    h.settle();
+    rewrite(&path, "ui.invoke(\"boom\")\nreturn ui.text { \"never\" }\n");
+    assert!(h.host.reload_if_changed());
+    h.settle();
+    let error = h.host.error().get().unwrap_or_default();
+    assert!(error.contains("boom in a reload"), "{error}");
+    rewrite(&path, &APP.replace("Count:", "Total:"));
+    assert!(h.host.reload_if_changed());
+    h.settle();
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    assert_eq!(h.text("label"), "Total: 0");
+}
+
 /// Watching, a reload follows a save without waiting out the poll: the
 /// kernel says when a file changes (macOS), in place or replaced.
 #[cfg(target_os = "macos")]

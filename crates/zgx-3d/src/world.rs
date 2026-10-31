@@ -95,7 +95,7 @@ pub enum Light {
 }
 /// Point lights a frame shades with (the nearest the camera's target, past
 /// this many).
-pub const POINT_LIGHTS: usize = 4;
+pub const POINT_LIGHTS: usize = 8;
 
 /// How the scene is seen.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -161,6 +161,81 @@ impl Camera {
 pub struct ObjectId {
     index: u32,
     generation: u32,
+}
+/// How light passes through a mesh (`World::set_transmission`): glass,
+/// water, thin plastic. What is behind it shows through, bent by its index
+/// of refraction, blurred by its roughness and tinted by its colour, and
+/// in a volume by how far the light goes through it. How much passes and
+/// how thick it is can vary across it by maps (`Map::Transmission`,
+/// `Map::Thickness`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transmission {
+    pub(crate) factor: f32,
+    pub(crate) ior: f32,
+    pub(crate) thickness: f32,
+    pub(crate) attenuation: [f32; 3],
+    pub(crate) distance: f32,
+}
+impl Transmission {
+    /// `factor` of the light reaching it passing through (0 to 1), a thin
+    /// wall of glass's index of refraction (1.5).
+    pub fn new(factor: f32) -> Self {
+        Self {
+            factor: factor.clamp(0., 1.),
+            ior: 1.5,
+            thickness: 0.,
+            attenuation: [1.; 3],
+            distance: f32::INFINITY,
+        }
+    }
+    /// Its index of refraction: how far light bends entering it (water
+    /// 1.33, glass 1.5, diamond 2.4).
+    pub fn ior(mut self, ior: f32) -> Self {
+        self.ior = ior.max(1.);
+        self
+    }
+    /// A volume `thickness` deep (in its mesh's units, 0 a thin wall),
+    /// light passing through it falling to `color` (linear) every
+    /// `distance` it goes (glTF's `KHR_materials_volume`).
+    pub fn volume(mut self, thickness: f32, color: [f32; 3], distance: f32) -> Self {
+        self.thickness = thickness.max(0.);
+        self.attenuation = color.map(|c| c.clamp(1e-4, 1.));
+        self.distance = if distance > 0. {
+            distance
+        } else {
+            f32::INFINITY
+        };
+        self
+    }
+    /// Its numbers, for a binding to be found by.
+    pub(crate) fn numbers(&self) -> [u32; 7] {
+        let [r, g, b] = self.attenuation.map(f32::to_bits);
+        let (f, i, t, d) = (self.factor, self.ior, self.thickness, self.distance);
+        [f.to_bits(), i.to_bits(), t.to_bits(), d.to_bits(), r, g, b]
+    }
+}
+/// A point light's cone (`World::set_spot`): it shines along `direction`,
+/// fully within `inner` radians of it, fading to nothing at `outer`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub(crate) direction: Vec3,
+    pub(crate) inner: f32,
+    pub(crate) outer: f32,
+}
+impl Spot {
+    /// Shining along `direction`, fully within `inner` radians of it and
+    /// fading to nothing at `outer` (glTF's `innerConeAngle` and
+    /// `outerConeAngle`).
+    pub fn new(direction: impl Into<Vec3>, inner: f32, outer: f32) -> Self {
+        let outer = outer.max(1e-3);
+        Self {
+            direction: direction.into(),
+            inner: inner.clamp(0., outer),
+            outer,
+        }
+    }
 }
 /// A light of a world (`World::add_light`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -258,52 +333,428 @@ pub(crate) struct Inner {
     pub(crate) background: Option<[f32; 4]>,
     /// Whether the sun casts shadows (`World::set_shadows`).
     pub(crate) shadows: bool,
-    /// Objects' textures (`World::set_map`), by index and map, with the
+    /// The light around it (`World::set_environment`).
+    pub(crate) environment: Option<crate::Environment>,
+    /// How lit colours map to the display (`World::set_tone_mapping`).
+    pub(crate) tone_mapping: ToneMapping,
+    /// Stops of exposure (`World::set_exposure`): light times 2 to it.
+    pub(crate) exposure: f32,
+    /// Samples a pixel (`World::set_samples`): 4 or 1.
+    pub(crate) samples: u32,
+    /// Objects' textures (`World::set_map`), by index, in `Map::ALL`'s order,
+    /// with the generation they were set for.
+    textures: ByIndex<(u32, [Option<crate::Texture>; crate::texture::MAPS])>,
+    /// Skinned objects' skins (`World::set_skin`), by index, with the
     /// generation they were set for.
-    textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
+    skins: ByIndex<(u32, Skin)>,
+    /// Objects' morph weights (`World::set_morph_weights`), by index, with
+    /// the generation they were set for.
+    morph_weights: ByIndex<(u32, Vec<f32>)>,
+    /// What few meshes have: their maps' placements
+    /// (`World::set_map_placement`), transmission
+    /// (`World::set_transmission`) and its maps, by index, with the generation they were
+    /// set for. One table, so a mesh's frame looks once.
+    extras: ByIndex<(u32, Extras)>,
+    /// Meshes' surfaces (`World::set_double_sided`, `set_alpha_cutoff`), by
+    /// index, with the generation they were set for: most have none.
+    surfaces: ByIndex<(u32, Surface)>,
+    /// Lights placed in an object's frame (`World::set_light_parent`), by
+    /// light index, with the generation they were set for.
+    light_parents: ByIndex<(u32, ObjectId)>,
+    /// Point lights' cones (`World::set_spot`), by light index.
+    spots: ByIndex<(u32, Spot)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
+/// How a world's lit colours are brought into the display's range
+/// (`World::set_tone_mapping`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToneMapping {
+    /// Khronos's PBR Neutral: colours as the material says up to bright
+    /// highlights, which roll off to white. Best for products and anything
+    /// whose colour must read true.
+    #[default]
+    Neutral,
+    /// The filmic curve of ACES (Stephen Hill's fit to its reference
+    /// transform): more contrast, saturated colours desaturating toward
+    /// white as they brighten, as film does.
+    Aces,
+    /// None: colours clamped to the display's range, as lit.
+    Linear,
+}
+
+/// How a mesh's faces show, beyond its material.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Surface {
+    /// Its back faces draw as well.
+    pub(crate) double_sided: bool,
+    /// Where its base colour's alpha is under this, it isn't there.
+    pub(crate) alpha_cutoff: Option<f32>,
+}
+
+/// Hashes an object's index: it's small and ours, and these tables are read
+/// for every mesh, every frame, where SipHash costs more than the meshes.
+#[derive(Default)]
+struct IndexHasher(u64);
+impl std::hash::Hasher for IndexHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u32(u32::from(byte));
+        }
+    }
+    fn write_u32(&mut self, index: u32) {
+        self.0 = (self.0 ^ u64::from(index)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+/// A table by object index.
+type ByIndex<V> = std::collections::HashMap<u32, V, std::hash::BuildHasherDefault<IndexHasher>>;
+/// A frame's poses: every skinned mesh's joints and morphing mesh's
+/// weights, one after another, kept for the next frame to fill again.
+#[derive(Default)]
+pub(crate) struct Poses {
+    joints: Vec<Mat4>,
+    weights: Vec<[f32; 2]>,
+    matrices: Vec<Option<Option<Mat4>>>,
+    posed: Vec<Posed>,
+}
+/// A posed mesh: its place in a frame's list, and where its joints and
+/// weights are.
+struct Posed {
+    at: usize,
+    joints: Option<std::ops::Range<usize>>,
+    weights: Option<std::ops::Range<usize>>,
+}
+/// What few meshes have, kept apart (see `Inner::extras`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Extras {
+    /// Its maps' placements: all as they are if it has none.
+    placements: Placements,
+    pub(crate) transmission: Option<Transmission>,
+    /// Its maps of light passing through (`Map::Transmission`'s,
+    /// `Map::Thickness`'s).
+    pub(crate) glass_maps: [Option<crate::Texture>; crate::texture::GLASS_MAPS],
+}
+impl Extras {
+    /// Its maps' placements, if any is set.
+    pub(crate) fn placement(&self) -> Option<&Placements> {
+        (self.placements != Placements::default()).then_some(&self.placements)
+    }
+}
+/// A mesh's maps' placements, by `Map::ALL`'s order.
+type Placements = [crate::MapPlacement; crate::texture::MAPS];
 /// What a frame draws: each visible mesh with its world matrix.
 pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
     pub(crate) material: &'a Material,
     /// Its textures, by `Map::ALL`'s order.
     pub(crate) maps: [Option<&'a crate::Texture>; crate::texture::MAPS],
+    /// A skinned mesh's joints' matrices (each joint's place in the world
+    /// times its inverse bind): its vertices are placed by these, and its
+    /// `matrix` is the identity.
+    pub(crate) palette: Option<&'a [Mat4]>,
+    /// A morphing mesh's targets at any weight: `[target, weight]`s. `None`
+    /// at rest (it draws as any mesh).
+    pub(crate) morph: Option<&'a [[f32; 2]]>,
+    pub(crate) surface: Surface,
+    /// Its placements and transmission, if it has either.
+    pub(crate) extras: Option<&'a Extras>,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
     pub(crate) fn lights(&self) -> impl Iterator<Item = &Light> {
         self.lights.iter().filter_map(|slot| slot.value.as_ref())
     }
+    /// Each light as it shines now, in the world's frame, with its cone if
+    /// it has one; a light under an object gone or hidden shines nothing.
+    pub(crate) fn for_each_light(&self, mut f: impl FnMut(Light, Option<Spot>)) {
+        let placed = !self.light_parents.is_empty();
+        let mut memo = if placed {
+            vec![None; self.objects.len()]
+        } else {
+            Vec::new()
+        };
+        for (index, slot) in self.lights.iter().enumerate() {
+            let Some(light) = slot.value else {
+                continue;
+            };
+            fn of<V: Copy>(table: &ByIndex<(u32, V)>, index: usize, generation: u32) -> Option<V> {
+                let (set_for, value) = table.get(&(index as u32))?;
+                (*set_for == generation).then_some(*value)
+            }
+            let spot = if self.spots.is_empty() {
+                None
+            } else {
+                of(&self.spots, index, slot.generation)
+            };
+            let parent = placed.then(|| of(&self.light_parents, index, slot.generation));
+            let Some(parent) = parent.flatten() else {
+                f(light, spot);
+                continue;
+            };
+            let Some(matrix) = self
+                .live(parent.index, parent.generation)
+                .and_then(|at| world_matrix(self, at, &mut memo, 0))
+            else {
+                continue;
+            };
+            let turned = |d: Vec3| {
+                let c = &matrix.columns;
+                let along = |r: usize| c[0][r] * d.x + c[1][r] * d.y + c[2][r] * d.z;
+                crate::vec3(along(0), along(1), along(2)).normalized()
+            };
+            let light = match light {
+                Light::Directional {
+                    direction,
+                    color,
+                    intensity,
+                } => Light::Directional {
+                    direction: turned(direction),
+                    color,
+                    intensity,
+                },
+                Light::Point {
+                    position,
+                    color,
+                    intensity,
+                    range,
+                } => Light::Point {
+                    position: matrix.project(position),
+                    color,
+                    intensity,
+                    range,
+                },
+                hemisphere => hemisphere,
+            };
+            let spot = spot.map(|spot| Spot {
+                direction: turned(spot.direction),
+                ..spot
+            });
+            f(light, spot);
+        }
+    }
     /// Every visible mesh with its world matrix, its ancestors' applied.
     fn world_of(&self, index: usize) -> Option<Mat4> {
         let mut memo = vec![None; self.objects.len()];
         world_matrix(self, index, &mut memo, 0)
     }
-    pub(crate) fn drawn(&self) -> Vec<Drawn<'_>> {
-        let mut matrices: Vec<Option<Option<Mat4>>> = vec![None; self.objects.len()];
-        let mut out = Vec::new();
+    /// Every visible mesh into `out` (emptied first), their poses into
+    /// `poses`: a frame's lists, kept to be filled again by the next.
+    // Apart from the renderer: inlined there, its loop compiled to whatever
+    // the rest of the frame left room for.
+    #[inline(never)]
+    pub(crate) fn drawn_into<'a>(&'a self, poses: &'a mut Poses, out: &mut Vec<Drawn<'a>>) {
+        out.clear();
+        out.reserve(self.objects.len());
+        let Poses {
+            joints,
+            weights,
+            matrices,
+            posed,
+        } = poses;
+        joints.clear();
+        weights.clear();
+        posed.clear();
+        matrices.clear();
+        matrices.resize(self.objects.len(), None);
         for index in 0..self.objects.len() {
             if let Some(object) = &self.objects[index].value
                 && let Some(geometry) = &object.geometry
-                && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
+                && let Some(matrix) = world_matrix(self, index, matrices, 0)
             {
                 let generation = self.objects[index].generation;
+                let (from_joint, from_weight) = (joints.len(), weights.len());
+                let skinned = self.palette_into(index, generation, geometry, matrices, joints);
+                let morphing = self.morphing_into(index, generation, geometry, weights);
+                if skinned || morphing {
+                    posed.push(Posed {
+                        at: out.len(),
+                        joints: skinned.then_some(from_joint..joints.len()),
+                        weights: morphing.then_some(from_weight..weights.len()),
+                    });
+                }
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
-                    maps: crate::Map::ALL.map(|map| {
-                        self.textures
-                            .get(&(index as u32, map))
-                            .filter(|(set_for, _)| *set_for == generation)
-                            .map(|(_, texture)| texture)
-                    }),
-                    matrix,
+                    maps: self.maps(index, generation),
+                    matrix: if skinned { Mat4::IDENTITY } else { matrix },
+                    palette: None,
+                    morph: None,
+                    surface: self.surface(index, generation),
+                    extras: self.extras(index, generation),
                 });
             }
         }
-        out
+        let poses: &'a Poses = poses;
+        for posed in &poses.posed {
+            let drawn = &mut out[posed.at];
+            drawn.palette = posed.joints.clone().map(|range| &poses.joints[range]);
+            drawn.morph = posed.weights.clone().map(|range| &poses.weights[range]);
+        }
+    }
+    /// Whether any object has a skin or morph weights.
+    pub(crate) fn posing(&self) -> bool {
+        !(self.skins.is_empty() && self.morph_weights.is_empty())
+    }
+    /// Whether any object is double-sided or cut out.
+    pub(crate) fn has_surfaces(&self) -> bool {
+        !self.surfaces.is_empty()
+    }
+    /// Whether any mesh lets light through.
+    pub(crate) fn transmits(&self) -> bool {
+        self.extras.values().any(|(_, e)| e.transmission.is_some())
+    }
+    /// Object `index`'s extras, if it has any (no lookup in a world with
+    /// none).
+    fn extras(&self, index: usize, generation: u32) -> Option<&Extras> {
+        if self.extras.is_empty() {
+            return None;
+        }
+        let (set_for, extras) = self.extras.get(&(index as u32))?;
+        (*set_for == generation).then_some(extras)
+    }
+    /// Object `index`'s extras to change, made if it has none (others set
+    /// for an object gone from its place, cleared).
+    fn extras_mut(&mut self, index: u32, generation: u32) -> &mut Extras {
+        let (set_for, extras) = self
+            .extras
+            .entry(index)
+            .or_insert((generation, Extras::default()));
+        if *set_for != generation {
+            *set_for = generation;
+            *extras = Extras::default();
+        }
+        extras
+    }
+    /// Object `id`'s `i`th map of light passing through (`Map::glass`), and
+    /// whether that changed it. Rare: out of `set_map`'s code.
+    #[cold]
+    #[inline(never)]
+    fn set_glass_map(&mut self, id: ObjectId, i: usize, texture: Option<crate::Texture>) -> bool {
+        let id_of = texture.as_ref().map(crate::Texture::id);
+        let extras = self.extras_mut(id.index, id.generation);
+        let before = std::mem::replace(&mut extras.glass_maps[i], texture);
+        self.tidy_extras(id.index);
+        before.as_ref().map(crate::Texture::id) != id_of
+    }
+    /// Its extras dropped if nothing is left in them.
+    fn tidy_extras(&mut self, index: u32) {
+        if self
+            .extras
+            .get(&index)
+            .is_some_and(|(_, e)| *e == Extras::default())
+        {
+            self.extras.remove(&index);
+        }
+    }
+    /// Object `index`'s textures.
+    fn maps(
+        &self,
+        index: usize,
+        generation: u32,
+    ) -> [Option<&crate::Texture>; crate::texture::MAPS] {
+        match self.textures.get(&(index as u32)) {
+            Some((set_for, maps)) if *set_for == generation => maps.each_ref().map(Option::as_ref),
+            _ => [None; crate::texture::MAPS],
+        }
+    }
+    /// Object `index`'s maps' placements, if any is set (no lookup in a
+    /// world with none set).
+    fn placement(&self, index: usize, generation: u32) -> Option<&Placements> {
+        self.extras(index, generation)?.placement()
+    }
+    /// Object `index`'s surface (no lookup in a world with none set).
+    fn surface(&self, index: usize, generation: u32) -> Surface {
+        if self.surfaces.is_empty() {
+            return Surface::default();
+        }
+        self.surfaces
+            .get(&(index as u32))
+            .filter(|(set_for, _)| *set_for == generation)
+            .map_or(Surface::default(), |(_, surface)| *surface)
+    }
+    /// Object `index`'s targets at any weight, as `[target, weight]`s, if
+    /// it is a morphing geometry away from its rest.
+    pub(crate) fn morphing(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+    ) -> Option<Vec<[f32; 2]>> {
+        let mut active = Vec::new();
+        self.morphing_into(index, generation, geometry, &mut active)
+            .then_some(active)
+    }
+    /// As `morphing`, onto the end of `out`: whether it added any.
+    fn morphing_into(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+        out: &mut Vec<[f32; 2]>,
+    ) -> bool {
+        let Some(morphs) = geometry.morphs() else {
+            return false;
+        };
+        let Some((_, weights)) = self
+            .morph_weights
+            .get(&(index as u32))
+            .filter(|(set_for, _)| *set_for == generation)
+        else {
+            return false;
+        };
+        let from = out.len();
+        let active = weights
+            .iter()
+            .take(morphs.targets())
+            .enumerate()
+            .filter(|(_, weight)| weight.is_finite() && **weight != 0.)
+            .map(|(target, &weight)| [target as f32, weight]);
+        out.extend(active);
+        out.len() > from
+    }
+    /// Object `index`'s joints' matrices, if it is a skinned geometry with a
+    /// skin: a joint gone or hidden places its vertices where it was bound.
+    pub(crate) fn palette(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+        matrices: &mut [Option<Option<Mat4>>],
+    ) -> Option<Vec<Mat4>> {
+        let mut palette = Vec::new();
+        self.palette_into(index, generation, geometry, matrices, &mut palette)
+            .then_some(palette)
+    }
+    /// As `palette`, onto the end of `out`: whether it is skinned.
+    fn palette_into(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+        matrices: &mut [Option<Option<Mat4>>],
+        out: &mut Vec<Mat4>,
+    ) -> bool {
+        if geometry.skin().is_none() {
+            return false;
+        }
+        let Some((_, skin)) = self
+            .skins
+            .get(&(index as u32))
+            .filter(|(set_for, _)| *set_for == generation)
+        else {
+            return false;
+        };
+        let joints = skin.joints.iter().zip(&skin.inverse_binds);
+        out.extend(joints.map(|(joint, inverse_bind)| {
+            self.live(joint.index, joint.generation)
+                .and_then(|at| world_matrix(self, at, matrices, 0))
+                .map_or(Mat4::IDENTITY, |placed| placed * *inverse_bind)
+        }));
+        true
     }
     /// The nearest visible mesh the world segment `from` to `to` meets, and
     /// where along it (0 to 1).
@@ -315,7 +766,21 @@ impl Inner {
             if let Some(object) = &slot.value
                 && let Some(geometry) = &object.geometry
                 && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
-                && let Some(t) = crate::pick::meet(geometry, matrix, from, to)
+                && let Some(t) = match (
+                    self.palette(index, slot.generation, geometry, &mut matrices),
+                    self.morphing(index, slot.generation, geometry),
+                ) {
+                    (None, None) => crate::pick::meet(geometry, matrix, from, to),
+                    // Posed as drawn.
+                    (palette, morph) => crate::pick::meet_posed(
+                        geometry,
+                        matrix,
+                        palette.as_deref(),
+                        morph.as_deref(),
+                        from,
+                        to,
+                    ),
+                }
                 && nearest.is_none_or(|(_, n)| t < n)
             {
                 let id = ObjectId {
@@ -360,6 +825,30 @@ fn world_matrix(
     found
 }
 
+/// What moves a skinned mesh (`World::set_skin`): its joints, objects whose
+/// places in the world bend it, and for each the inverse of its place when
+/// the mesh was bound to it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Skin {
+    joints: Vec<ObjectId>,
+    inverse_binds: Vec<Mat4>,
+}
+/// The most joints a skin may have.
+pub const MAX_JOINTS: usize = 256;
+impl Skin {
+    /// `joints`, each with its inverse bind matrix. Fails unless there is
+    /// one of each, at most `MAX_JOINTS`.
+    pub fn new(joints: Vec<ObjectId>, inverse_binds: Vec<Mat4>) -> Result<Self, &'static str> {
+        if joints.len() != inverse_binds.len() || joints.len() > MAX_JOINTS {
+            return Err("a skin has an inverse bind matrix a joint, at most 256 joints");
+        }
+        Ok(Self {
+            joints,
+            inverse_binds,
+        })
+    }
+}
+
 /// A 3D scene shown by a GPU view (`view`): change it and the view draws a
 /// frame, before the window's next; leave it and it draws nothing. Clones
 /// share it.
@@ -395,11 +884,26 @@ impl World {
             camera: Camera::default(),
             background: None,
             shadows: false,
+            environment: None,
+            tone_mapping: ToneMapping::Neutral,
+            exposure: 0.,
+            samples: 4,
             textures: Default::default(),
+            skins: Default::default(),
+            morph_weights: Default::default(),
+            extras: Default::default(),
+            light_parents: Default::default(),
+            spots: Default::default(),
+            surfaces: Default::default(),
             revision: 0,
         }));
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
         Self { inner, view }
+    }
+    /// What draws it, for `world_bench` to draw it with no view.
+    #[doc(hidden)]
+    pub fn viewport(&self) -> impl zgx_gpu::viewport::Viewport + use<> {
+        crate::render::Renderer::new(Rc::downgrade(&self.inner))
     }
     /// The GPU view drawing it: show it with `zgx::compose::gpu_view`.
     pub fn view(&self) -> &zgx::gpu_view::GpuView {
@@ -432,7 +936,11 @@ impl World {
             Some(slot) if slot.generation == id.generation && slot.value.is_some() => {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
-                inner.textures.retain(|(index, _), _| *index != id.index);
+                inner.textures.remove(&id.index);
+                inner.skins.remove(&id.index);
+                inner.morph_weights.remove(&id.index);
+                inner.surfaces.remove(&id.index);
+                inner.extras.remove(&id.index);
                 true
             }
             _ => false,
@@ -456,15 +964,38 @@ impl World {
             if inner.live(id.index, id.generation).is_none() {
                 return false;
             }
-            let key = (id.index, map);
-            let before = inner.textures.get(&key).map(|(_, t)| t.id());
-            match texture {
-                Some(texture) => {
-                    let changed = before != Some(texture.id());
-                    inner.textures.insert(key, (id.generation, texture));
+            if let Some(i) = map.glass() {
+                return inner.set_glass_map(id, i, texture);
+            }
+            let (_, maps) = inner
+                .textures
+                .entry(id.index)
+                .or_insert((id.generation, Default::default()));
+            let id_of = |texture: &Option<crate::Texture>| texture.as_ref().map(crate::Texture::id);
+            let changed = id_of(&maps[map as usize]) != id_of(&texture);
+            maps[map as usize] = texture;
+            if maps.iter().all(Option::is_none) {
+                inner.textures.remove(&id.index);
+            }
+            changed
+        });
+    }
+    /// Object `id`'s skin: what moves its skinned geometry
+    /// (`Geometry::with_skin`), each vertex placed by its joints (`None`:
+    /// as its own place says, in the pose it was bound in).
+    pub fn set_skin(&self, id: ObjectId, skin: Option<Skin>) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let before = inner.skins.get(&id.index).map(|(_, s)| s.clone());
+            match skin {
+                Some(skin) => {
+                    let changed = before.as_ref() != Some(&skin);
+                    inner.skins.insert(id.index, (id.generation, skin));
                     changed
                 }
-                None => inner.textures.remove(&key).is_some(),
+                None => inner.skins.remove(&id.index).is_some(),
             }
         });
     }
@@ -472,11 +1003,11 @@ impl World {
     pub fn map(&self, id: ObjectId, map: crate::Map) -> Option<crate::Texture> {
         let inner = self.inner.borrow();
         inner.live(id.index, id.generation)?;
-        inner
-            .textures
-            .get(&(id.index, map))
-            .filter(|(set_for, _)| *set_for == id.generation)
-            .map(|(_, texture)| texture.clone())
+        if let Some(i) = map.glass() {
+            let extras = inner.extras(id.index as usize, id.generation)?;
+            return extras.glass_maps[i].clone();
+        }
+        inner.maps(id.index as usize, id.generation)[map as usize].cloned()
     }
     /// Change object `id` with `f` (nothing if it is gone). The view draws a
     /// frame only if the object changed.
@@ -534,9 +1065,67 @@ impl World {
             Some(slot) if slot.generation == id.generation && slot.value.is_some() => {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
+                inner.light_parents.remove(&id.index);
+                inner.spots.remove(&id.index);
                 true
             }
             _ => false,
+        });
+    }
+    /// Whether light `id` is still in the world.
+    fn light_live(inner: &Inner, id: LightId) -> bool {
+        inner
+            .lights
+            .get(id.index as usize)
+            .is_some_and(|slot| slot.generation == id.generation && slot.value.is_some())
+    }
+    /// Light `id` placed in object `parent`'s frame, following it as it
+    /// moves, turns and scales (`None`: the world's). Under an object gone
+    /// or hidden, it shines nothing.
+    pub fn set_light_parent(&self, id: LightId, parent: Option<ObjectId>) {
+        self.change(|inner| {
+            if !Self::light_live(inner, id) {
+                return false;
+            }
+            let before = inner
+                .light_parents
+                .get(&id.index)
+                .filter(|(set_for, _)| *set_for == id.generation)
+                .map(|(_, parent)| *parent);
+            match parent {
+                Some(parent) => {
+                    inner
+                        .light_parents
+                        .insert(id.index, (id.generation, parent));
+                }
+                None => {
+                    inner.light_parents.remove(&id.index);
+                }
+            }
+            before != parent
+        });
+    }
+    /// Point light `id` shone as a spot, along `spot`'s direction in its
+    /// frame (`None`: all round). Other lights ignore it.
+    pub fn set_spot(&self, id: LightId, spot: Option<Spot>) {
+        self.change(|inner| {
+            if !Self::light_live(inner, id) {
+                return false;
+            }
+            let before = inner
+                .spots
+                .get(&id.index)
+                .filter(|(set_for, _)| *set_for == id.generation)
+                .map(|(_, spot)| *spot);
+            match spot {
+                Some(spot) => {
+                    inner.spots.insert(id.index, (id.generation, spot));
+                }
+                None => {
+                    inner.spots.remove(&id.index);
+                }
+            }
+            before != spot
         });
     }
     /// How it is seen.
@@ -563,6 +1152,181 @@ impl World {
     /// shadows are on.
     pub fn set_shadows(&self, on: bool) {
         self.change(|inner| std::mem::replace(&mut inner.shadows, on) != on);
+    }
+    /// Where object `id`'s `map` sits, if it was placed.
+    pub fn map_placement(&self, id: ObjectId, map: crate::Map) -> Option<crate::MapPlacement> {
+        let inner = self.inner.borrow();
+        inner.live(id.index, id.generation)?;
+        if map.glass().is_some() {
+            return None;
+        }
+        let placed = inner.placement(id.index as usize, id.generation)?[map as usize];
+        (placed != crate::MapPlacement::default()).then_some(placed)
+    }
+    /// Where object `id`'s `map` sits on it (`None`: its first texture
+    /// coordinates as they are, repeating). A mesh whose maps read anywhere
+    /// else draws with a pipeline of its own, a wrap alone only with another
+    /// sampler; others pay nothing. Maps of light passing through
+    /// (`Map::Transmission`, `Map::Thickness`) aren't placed: nothing
+    /// changes.
+    pub fn set_map_placement(
+        &self,
+        id: ObjectId,
+        map: crate::Map,
+        placement: Option<crate::MapPlacement>,
+    ) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() || map.glass().is_some() {
+                return false;
+            }
+            let placement = placement.unwrap_or_default();
+            let placements = &mut inner.extras_mut(id.index, id.generation).placements;
+            let before = std::mem::replace(&mut placements[map as usize], placement);
+            inner.tidy_extras(id.index);
+            before != placement
+        });
+    }
+    /// Light passing through object `id` (`None`: none, as most): what is
+    /// behind it shows through. A world with such a mesh draws its others
+    /// a second time each frame, into a picture of what is behind; one
+    /// with none pays nothing.
+    pub fn set_transmission(&self, id: ObjectId, transmission: Option<Transmission>) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let extras = inner.extras_mut(id.index, id.generation);
+            let before = std::mem::replace(&mut extras.transmission, transmission);
+            inner.tidy_extras(id.index);
+            before != transmission
+        });
+    }
+    /// Object `id`'s transmission, if light passes through it.
+    pub fn transmission(&self, id: ObjectId) -> Option<Transmission> {
+        let inner = self.inner.borrow();
+        inner.live(id.index, id.generation)?;
+        inner.extras(id.index as usize, id.generation)?.transmission
+    }
+    /// Whether object `id`'s back faces draw too, lit as their other side
+    /// is (a leaf, a sheet, an open shell). Off by default: a closed shape
+    /// needs them no more than its inside shows.
+    pub fn set_double_sided(&self, id: ObjectId, on: bool) {
+        self.change_surface(id, |surface| surface.double_sided = on);
+    }
+    /// Cut object `id` out by its base colour texture's alpha: where that
+    /// is under `cutoff` (0 to 1) nothing draws, not even in its shadow, and
+    /// elsewhere it's opaque (leaves, hair, a fence). `None` (the default)
+    /// doesn't. Needs a base colour texture (`World::set_texture`): without
+    /// one it has no alpha to cut by, and draws whole.
+    pub fn set_alpha_cutoff(&self, id: ObjectId, cutoff: Option<f32>) {
+        let cutoff = cutoff.filter(|c| c.is_finite());
+        self.change_surface(id, |surface| surface.alpha_cutoff = cutoff);
+    }
+    fn change_surface(&self, id: ObjectId, f: impl FnOnce(&mut Surface)) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let entry = inner
+                .surfaces
+                .entry(id.index)
+                .or_insert((id.generation, Surface::default()));
+            if entry.0 != id.generation {
+                *entry = (id.generation, Surface::default());
+            }
+            let before = entry.1;
+            f(&mut entry.1);
+            entry.1 != before
+        });
+    }
+    /// How much of each morph target object `id`'s geometry blends in
+    /// (`Geometry::with_morph_targets`), by target: 0 none, 1 all of it,
+    /// past those further (targets without one stay at 0). A frame is drawn
+    /// if they changed.
+    pub fn set_morph_weights(&self, id: ObjectId, weights: &[f32]) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let entry = inner
+                .morph_weights
+                .entry(id.index)
+                .or_insert((id.generation, Vec::new()));
+            if entry.0 == id.generation && entry.1 == weights {
+                return false;
+            }
+            // Into its list: set a frame, a new one each time was an
+            // allocation a mesh a frame.
+            entry.0 = id.generation;
+            entry.1.clear();
+            entry.1.extend_from_slice(weights);
+            true
+        });
+    }
+    /// Target `target`'s weight of object `id` alone.
+    pub fn set_morph_weight(&self, id: ObjectId, target: usize, weight: f32) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let entry = inner
+                .morph_weights
+                .entry(id.index)
+                .or_insert((id.generation, Vec::new()));
+            if entry.0 != id.generation {
+                *entry = (id.generation, Vec::new());
+            }
+            if entry.1.len() <= target {
+                entry.1.resize(target + 1, 0.);
+            } else if entry.1[target] == weight {
+                return false;
+            }
+            entry.1[target] = weight;
+            true
+        });
+    }
+    /// The light all around the scene (image-based light): reflected by
+    /// every lit surface, sharp in polished metal and blurred in rough, its
+    /// diffuse part lighting surfaces by how they face it. It takes the
+    /// place of hemisphere lights; suns and point lights still add theirs.
+    /// `None` (the default) has none: the scene costs what it did. Its cube
+    /// (128 texels a side, five levels, 0.5 MB) is uploaded with the first
+    /// frame drawing it.
+    pub fn set_environment(&self, environment: Option<crate::Environment>) {
+        self.change(|inner| {
+            let changed = inner.environment != environment;
+            inner.environment = environment;
+            changed
+        });
+    }
+    /// How lit colours, which may be brighter than the display shows, are
+    /// brought into its range (unlit meshes and the background are shown as
+    /// they are). `Neutral` by default.
+    pub fn set_tone_mapping(&self, tone_mapping: ToneMapping) {
+        self.change(|inner| {
+            std::mem::replace(&mut inner.tone_mapping, tone_mapping) != tone_mapping
+        });
+    }
+    /// How bright the scene is exposed, in stops: each one doubles the light
+    /// before tone mapping (−1 halves it). 0 by default.
+    pub fn set_exposure(&self, stops: f32) {
+        let stops = if stops.is_finite() {
+            stops.clamp(-16., 16.)
+        } else {
+            0.
+        };
+        self.change(|inner| std::mem::replace(&mut inner.exposure, stops) != stops);
+    }
+    /// Samples a pixel: 4 (the default) smooths the edges of meshes
+    /// (multisampling) and the highlights of curves finer than the pixels
+    /// (their roughness widened where the normal turns fast, about 1% of
+    /// the GPU's work), 1 draws them hard, its colour and depth targets a
+    /// quarter of the memory and the GPU's work less. Other counts take
+    /// the nearer: 2 or more 4, else 1. Changing it makes its pipelines
+    /// again with the next frame.
+    pub fn set_samples(&self, samples: u32) {
+        let samples = if samples >= 2 { 4 } else { 1 };
+        self.change(|inner| std::mem::replace(&mut inner.samples, samples) != samples);
     }
     /// Object `id`'s matrix in the world, its ancestors' applied; `None` if
     /// it is gone, hidden or under a hidden one.

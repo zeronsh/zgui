@@ -1,0 +1,6 @@
+{
+  "title": "Tasks",
+  "add": "Add",
+  "clear": "Clear done",
+  "new": { "label": "New task", "placeholder": "What needs doing?" }
+}

@@ -231,7 +231,7 @@ impl Observer {
 
 /// Links `clip`'s playback to the scroll, once its container and target
 /// are mounted.
-pub(crate) fn link(lua: &Lua, engine: &Rc<Engine>, clip: Rc<Clip>, params: Rc<ScrollParams>) {
+pub(crate) fn link(engine: &Rc<Engine>, clip: Rc<Clip>, params: Rc<ScrollParams>) {
     let observer = Rc::new(Observer {
         clip: clip.clone(),
         params: params.clone(),
@@ -241,11 +241,7 @@ pub(crate) fn link(lua: &Lua, engine: &Rc<Engine>, clip: Rc<Clip>, params: Rc<Sc
         shown: Cell::new(0.),
         smoothing: Cell::new(false),
     });
-    let (lua, weak_engine, linked) = (
-        lua.clone(),
-        Rc::downgrade(engine),
-        Rc::new(RefCell::new(None)),
-    );
+    let (weak_engine, linked) = (Rc::downgrade(engine), Rc::new(RefCell::new(None)));
     let keep = linked.clone();
     engine.defer(Rc::new(move || {
         let (Some(engine), Some(vm)) = (weak_engine.upgrade(), observer.owner.upgrade()) else {
@@ -255,7 +251,7 @@ pub(crate) fn link(lua: &Lua, engine: &Rc<Engine>, clip: Rc<Clip>, params: Rc<Sc
             return true;
         }
         let ctx = super::build::Ctx {
-            lua: lua.clone(),
+            lua: vm.lua.clone(),
             vm,
             engine: engine.clone(),
         };

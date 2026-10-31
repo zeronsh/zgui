@@ -102,6 +102,21 @@ impl Font {
         self.optical
     }
 
+    /// zgx: whether it has color glyphs (`COLR`, `CBDT` or `sbix`), as an
+    /// emoji font does. Looked up when asked, which only text asking for
+    /// emoji presentation does.
+    pub fn is_color(&self) -> bool {
+        #[cfg(feature = "swash")]
+        {
+            let font = self.as_swash();
+            [b"COLR", b"CBDT", b"sbix"]
+                .iter()
+                .any(|tag| swash::TableProvider::table_by_tag(&font, swash::tag_from_bytes(tag)).is_some())
+        }
+        #[cfg(not(feature = "swash"))]
+        false
+    }
+
     pub(crate) fn shaper_instance(&self) -> &harfrust::ShaperInstance {
         &self.harfrust.borrow_owner().shaper_instance
     }
@@ -169,6 +184,13 @@ impl Font {
                 .location([(Tag::new(b"wght"), weight.0 as f32)])
         };
         let metrics = font_ref.metrics(Size::unscaled(), &location);
+        // zgx patch: a face without units per em (a bitmap-only font such
+        // as macOS's GB18030Bitmap, which has no `head` table) lays every
+        // glyph out infinitely wide: it can't be shaped, so it is no font
+        // (fallback passes it by).
+        if metrics.units_per_em == 0 {
+            return None;
+        }
 
         let monospace_fallback = if cfg!(feature = "monospace_fallback") {
             (|| {

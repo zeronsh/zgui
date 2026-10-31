@@ -242,7 +242,9 @@ $form.Add_Shown({ [Console]::WriteLine("SOURCE_READY") })
 
 def check_file_drop(examples):
     """A file dragged in from another process (OLE drag and drop, as from
-    Explorer) onto drag_drop's drop zone."""
+    Explorer) onto drag_drop's drop zone. The app last sees the pointer over
+    a card, outside the zone: an OLE drag sends it no mouse moves, so the
+    file must drop where the drag lets go, not where the pointer was."""
     with tempfile.TemporaryDirectory(prefix="zgx-drop-") as directory:
         dropped = pathlib.Path(directory, "dropped.txt")
         dropped.write_text("zgx")
@@ -252,6 +254,10 @@ def check_file_drop(examples):
             window = win.wait_window(proc)
             time.sleep(1)
             win.activate(window)
+            # Last seen over the Red card: a drop at the stale pointer misses.
+            scale = win.dpi(window) / 96
+            win.move(window, 70 * scale, 110 * scale)
+            time.sleep(0.3)
             source = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command",
                                        DRAG_SOURCE], stdout=subprocess.PIPE, text=True,
                                       env=dict(os.environ, ZGX_DRAG_FILE=str(dropped)))
@@ -260,7 +266,6 @@ def check_file_drop(examples):
             form = wait_for(lambda: next((w for w in win.windows_of(source.pid)
                                           if win.title(w) == "zgx drag source"), None), "its window")
             win.activate(form)
-            scale = win.dpi(window) / 96
             win.drag(form, (60, 40), win.to_client(form, *win.to_screen(window, 190 * scale, 240 * scale)),
                      steps=24, delay=0.03)
             drop = wait_for(lambda: next((l for l in lines if l.startswith("FILE_DROP")), None), "the drop")

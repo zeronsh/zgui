@@ -58,6 +58,72 @@ pub(crate) fn meet(geometry: &Geometry, matrix: Mat4, from: Vec3, to: Vec3) -> O
     nearest
 }
 
+/// `meet` for a geometry in a pose: blended by `morph` and skinned by
+/// `palette` (its joints' matrices) here, as the renderer does it, the
+/// segment met in the world. Unskinned, `matrix` places it.
+pub(crate) fn meet_posed(
+    geometry: &Geometry,
+    matrix: Mat4,
+    palette: Option<&[Mat4]>,
+    morph: Option<&[[f32; 2]]>,
+    from: Vec3,
+    to: Vec3,
+) -> Option<f32> {
+    let along = to - from;
+    let skin = geometry.skin().filter(|_| palette.is_some());
+    let morphs = geometry.morphs().filter(|_| morph.is_some());
+    let posed: Vec<Vec3> = geometry
+        .vertices()
+        .iter()
+        .enumerate()
+        .map(|(index, vertex)| {
+            // Blended, then moved by its joints, or else its object.
+            let mut p = Vec3::from(vertex.position);
+            if let Some(morphs) = morphs {
+                for &[target, weight] in morph.unwrap_or_default() {
+                    let [x, y, z, _] = morphs.deltas()[morphs.at(index, target as usize)];
+                    p = p + Vec3::from([x, y, z]) * weight;
+                }
+            }
+            match skin {
+                Some(skin) => {
+                    let influence = &skin[index];
+                    influence
+                        .joints
+                        .iter()
+                        .zip(influence.weights)
+                        .filter(|(_, w)| *w > 0.)
+                        .fold(Vec3::ZERO, |sum, (&joint, weight)| {
+                            let matrix = palette
+                                .and_then(|palette| palette.get(usize::from(joint)))
+                                .copied()
+                                .unwrap_or_default();
+                            sum + matrix.project(p) * weight
+                        })
+                }
+                None => matrix.project(p),
+            }
+        })
+        .collect();
+    let (low, high) = posed.iter().fold(
+        (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3])),
+        |(low, high), &p| (low.min(p), high.max(p)),
+    );
+    if !through_box(from, along, low, high) {
+        return None;
+    }
+    let mut nearest: Option<f32> = None;
+    for &[a, b, c] in geometry.indices().as_chunks::<3>().0 {
+        let corner = |i: u32| posed[i as usize];
+        if let Some(t) = triangle_t(from, along, corner(a), corner(b), corner(c))
+            && nearest.is_none_or(|n| t < n)
+        {
+            nearest = Some(t);
+        }
+    }
+    nearest
+}
+
 /// Whether the segment meets the box `low` to `high` (slabs).
 fn through_box(start: Vec3, along: Vec3, low: Vec3, high: Vec3) -> bool {
     let (mut enter, mut leave) = (0_f32, 1_f32);

@@ -1,0 +1,19 @@
+{
+	"title": "{{title}}",
+	"width": 720,
+	"height": 520,
+	"min_width": 420,
+	"min_height": 320,
+	"app_id": "{{name}}",
+	"expose": {
+		"shared": { "tasks": "read", "focus": "write" },
+		"actions": ["complete"],
+		"hooks": { "#tasks": "override" }
+	},
+	"plugins": {
+		"focus": {
+			"path": "plugins/focus",
+			"allow": ["shared:tasks", "shared:focus", "action:complete", "override:#tasks"]
+		}
+	}
+}

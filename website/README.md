@@ -83,6 +83,16 @@ so colour is never the only cue (zgx in its green, the rest in grey).
 `/llms.txt` lists every page; `/llms-full.txt` is all of them in one file;
 any page's Markdown is at its URL plus `.md` (`/devtools/targets.md`).
 
+`/api/mcp` serves the same pages over MCP (streamable HTTP), with Fumadocs'
+`list_pages`, `get_page` and `search` tools. It's `functions/api/mcp.ts`, a
+Cloudflare Pages Function and the only route that runs on demand: the site
+stays Astro's static output, with no adapter, and wrangler sends only that path
+to the Function. A Function can't read Astro's content, so
+`scripts/build-mcp.mjs` hands it the built pages and search index as text; the
+build fails if they pass the budget for a Function's size (3 MiB compressed on
+Cloudflare's free plan). `npm run check:mcp` drives it with a real MCP client in
+`wrangler pages dev`, or at a URL given after `--`.
+
 ## Checking the design
 
 ```sh

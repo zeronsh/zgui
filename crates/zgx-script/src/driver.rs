@@ -7,7 +7,8 @@
 //! Targets:
 //! - `#send`: the node with that id (a script's `id = "send"`);
 //! - `"Send"`: the node labelled or reading so (its accessible name, or its
-//!   text), the outermost of a labelled node and its own text;
+//!   text), the outermost of a labelled node and its own text; `~"Sen"` the
+//!   same with that anywhere in it;
 //! - `role:button`: by role, ARIA's names (`button`, `textbox`, `option`…);
 //! - `@12`: a node by its number, as [`tree`] shows it (stable while the
 //!   node lives);
@@ -18,11 +19,11 @@
 //!   (`#messages row 3`), and `[2]` picks the second of several matches.
 //!
 //! A target matching more than one node is an error naming them: an
-//! action never picks one silently. Nodes hidden from layout (`hidden`, or
-//! inside something hidden) match too, but where exactly one match shows,
-//! the target names it: a person can reach only that one. A modal's,
-//! popover's or menu's panel is under the node that owns it, wherever the
-//! scene puts it.
+//! action never picks one silently. Nodes that don't show (`hidden`, inside
+//! something hidden, or in a closed panel, kept but transparent) match too,
+//! but where exactly one match shows, the target names it: a person can
+//! reach only that one. A modal's, popover's or menu's panel is under the
+//! node that owns it, wherever the scene puts it.
 use std::{collections::HashMap, fmt::Write as _};
 use zgx::{
     compose::ViewHandle,
@@ -32,6 +33,14 @@ use zgx::{
     widgets::Ui,
 };
 
+/// A node's role as ARIA names it, its checkable menu items told apart.
+pub fn semantic_role_name(semantic: &zgx::semantics::SemanticNode) -> &'static str {
+    match (semantic.role, semantic.checked, semantic.radio) {
+        (Role::MenuItem, Some(_), true) => "menuitemradio",
+        (Role::MenuItem, Some(_), false) => "menuitemcheckbox",
+        (role, ..) => role_name(role),
+    }
+}
 /// What a node is to assistive technology, as ARIA names it.
 pub fn role_name(role: Role) -> &'static str {
     match role {
@@ -85,6 +94,8 @@ struct Part {
     id: Option<String>,
     hook: Option<String>,
     text: Option<String>,
+    /// `~"part"`: what its label or text holds, anywhere in it.
+    holding: Option<String>,
     role: Option<String>,
     number: Option<u32>,
     row: Option<usize>,
@@ -109,6 +120,12 @@ pub fn parse(text: &str) -> Result<Target, String> {
                     .find('"')
                     .ok_or_else(|| format!("`{text}`: an unclosed quote"))?;
                 part.text = Some(after[..end].to_string());
+                rest = after[end + 1..].trim_start();
+            } else if let Some(after) = rest.strip_prefix("~\"") {
+                let end = after
+                    .find('"')
+                    .ok_or_else(|| format!("`{text}`: an unclosed quote"))?;
+                part.holding = Some(after[..end].to_string());
                 rest = after[end + 1..].trim_start();
             } else if let Some(after) = rest.strip_prefix('#') {
                 let end = after
@@ -195,7 +212,11 @@ impl Static {
                 "`{text}`: a plugin's target is one element, without `>>`"
             ));
         };
-        if part.number.is_some() || part.row.is_some() || part.nth.is_some() {
+        if part.number.is_some()
+            || part.row.is_some()
+            || part.nth.is_some()
+            || part.holding.is_some()
+        {
             return Err(format!(
                 "`{text}`: a plugin's target is matched as the interface is built: \
                  an id, `hook:`, `role:` or a name, not `@n`, `row` or `[n]`"
@@ -307,7 +328,7 @@ fn describe(ui: &Ui, node: NodeId) -> String {
     let semantics = ui.semantics.borrow();
     let mut out = format!("@{}", number(node));
     if let Some(s) = semantics.get(node) {
-        let _ = write!(out, " {}", role_name(s.role));
+        let _ = write!(out, " {}", semantic_role_name(s));
         if !s.label.is_empty() {
             let _ = write!(out, " {:?}", clip(&s.label, 40));
         }
@@ -316,10 +337,19 @@ fn describe(ui: &Ui, node: NodeId) -> String {
     }
     let b = scene.bounds(node);
     let _ = write!(out, " {}", rect(b));
-    if !scene.layout_visible(node) {
+    if !shows(&scene, node) {
         out.push_str(" hidden");
     }
     out
+}
+
+/// Whether `node` shows: laid out, and neither it nor what holds it is
+/// transparent (a closed panel's content is kept, unseen and out of reach).
+pub fn shows(scene: &Scene, node: NodeId) -> bool {
+    scene.layout_visible(node)
+        && std::iter::once(node)
+            .chain(scene.ancestors(node))
+            .all(|node| scene.effects(node).opacity > 0.)
 }
 
 /// The nodes `target` names: all of them (an action wants one).
@@ -356,13 +386,24 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
                     continue;
                 }
                 if let Some(role) = &part.role
-                    && semantics.get(node).map(|s| role_name(s.role)) != Some(role.as_str())
+                    && !semantics.get(node).is_some_and(|s| {
+                        // `role:menuitem` finds them all, as ARIA's roles
+                        // are kinds of it.
+                        role_name(s.role) == role || semantic_role_name(s) == role
+                    })
                 {
                     continue;
                 }
                 if let Some(text) = &part.text {
                     let labelled = semantics.get(node).is_some_and(|s| &s.label == text);
                     let reads = own_text(&scene, node).is_some_and(|t| &t == text);
+                    if !labelled && !reads {
+                        continue;
+                    }
+                }
+                if let Some(part) = &part.holding {
+                    let labelled = semantics.get(node).is_some_and(|s| s.label.contains(part));
+                    let reads = own_text(&scene, node).is_some_and(|t| t.contains(part));
                     if !labelled && !reads {
                         continue;
                     }
@@ -374,7 +415,7 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
         }
         // A labelled node and the text inside it that reads the same are
         // one thing: the outermost stands for both.
-        if part.text.is_some() {
+        if part.text.is_some() || part.holding.is_some() {
             let all = found.clone();
             found.retain(|n| {
                 std::iter::successors(logical.parent(*n), |a| logical.parent(*a))
@@ -416,7 +457,7 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
 fn describe_with(scene: &Scene, semantics: &zgx::semantics::Semantics, node: NodeId) -> String {
     let mut out = format!("@{}", number(node));
     if let Some(s) = semantics.get(node) {
-        let _ = write!(out, " {}", role_name(s.role));
+        let _ = write!(out, " {}", semantic_role_name(s));
     }
     let _ = write!(out, " {}", rect(scene.bounds(node)));
     out
@@ -435,6 +476,9 @@ fn show_part(part: &Part) -> String {
     }
     if let Some(text) = &part.text {
         out.push(format!("{text:?}"));
+    }
+    if let Some(text) = &part.holding {
+        out.push(format!("~{text:?}"));
     }
     if let Some(n) = part.number {
         out.push(format!("@{n}"));
@@ -456,10 +500,7 @@ pub fn find(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, String
             // Only one of them shows: that is the one a person means.
             let shown: Vec<NodeId> = {
                 let scene = ui.scene.borrow();
-                many.iter()
-                    .copied()
-                    .filter(|n| scene.layout_visible(*n))
-                    .collect()
+                many.iter().copied().filter(|n| shows(&scene, *n)).collect()
             };
             if let [one] = shown[..] {
                 return Ok(one);
@@ -474,6 +515,89 @@ pub fn find(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, String
             message.push_str("\nnarrow it (a role, `>>`, `[n]`, or `@n`)");
             Err(message)
         }
+    }
+}
+
+/// `find`, for an action: what `target` names, if a person can reach it. A
+/// click at something closed would land on what is under it and say nothing.
+pub fn find_shown(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, String> {
+    let node = find(ui, handle, target)?;
+    match shows(&ui.scene.borrow(), node) {
+        true => Ok(node),
+        false => Err(format!(
+            "`{target}` doesn't show: {} (open what holds it first)",
+            describe(ui, node)
+        )),
+    }
+}
+
+/// The node `target` names and the part of it a person could press: inside
+/// every clip around it and on top there. An error names the clip that hides
+/// it, or the node that covers it, rather than acting on what is under the
+/// point instead.
+pub fn reach(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<(NodeId, Rect), String> {
+    // A node as an error names it: its id, if it has one, then as
+    // `describe`; without one, the nearest node around it with an id too
+    // (a scroll's clip is a box inside the one its id names).
+    let named = |node: NodeId| {
+        let ids = handle.ids();
+        let id_of = |node: NodeId| ids.iter().find(|(n, _)| *n == node).map(|(_, id)| id);
+        match id_of(node) {
+            Some(id) => format!("#{id} {}", describe(ui, node)),
+            None => {
+                let around = ui.scene.borrow().ancestors(node).find_map(id_of).cloned();
+                match around {
+                    Some(id) => format!("{} in #{id}", describe(ui, node)),
+                    None => describe(ui, node),
+                }
+            }
+        }
+    };
+    let node = find_shown(ui, handle, target)?;
+    let scene = ui.scene.borrow();
+    let Some(shown) = scene.visible_bounds(node) else {
+        let bounds = scene.bounds(node);
+        let clipper = scene.ancestors(node).find(|&a| {
+            let (x, y) = scene.clips(a);
+            (x || y)
+                && scene
+                    .visible_bounds(a)
+                    .and_then(|v| v.intersection(bounds))
+                    .is_none()
+        });
+        drop(scene);
+        return Err(match clipper {
+            Some(clipper) => format!(
+                "`{target}` is outside {}'s clip: scroll it into view first",
+                named(clipper)
+            ),
+            None => format!("`{target}` doesn't show: {}", describe(ui, node)),
+        });
+    };
+    // Where it takes clicks: where an animation is taking it, with
+    // `hit = "target"`.
+    let off = scene.hit_offset(node);
+    let (x, y) = middle(Rect::new(
+        shown.x + off.x,
+        shown.y + off.y,
+        shown.width,
+        shown.height,
+    ));
+    // What a press there lands on, as input finds it: nothing that listens
+    // is nothing in the way.
+    let hit = ui.input.pointer_target(&scene, x, y);
+    let reached = hit.is_none_or(|hit| {
+        hit == node
+            || scene.ancestors(hit).any(|a| a == node)
+            || scene.ancestors(node).any(|a| a == hit)
+    });
+    drop(scene);
+    match hit {
+        Some(hit) if !reached => Err(format!(
+            "`{target}` is covered at {x:.0},{y:.0} by {}",
+            named(hit)
+        )),
+        _ => Ok((node, shown)),
     }
 }
 
@@ -520,12 +644,78 @@ pub fn parse_keys(text: &str) -> Result<(Key, Modifiers), String> {
     Ok((key, modifiers))
 }
 
-/// Press and release the primary button at the middle of `bounds`.
+/// A pointer event as a window delivers one, with the keys held (none):
+/// only such presses are counted (a double click's `clicks`), so a test's
+/// can't differ from a person's.
+fn pointer(ui: &mut Ui, event: InputEvent) {
+    ui.dispatch_with_modifiers(event, Modifiers::default());
+}
+/// Press and release the primary button at the middle of `bounds`, a click
+/// of its own: a next one starts its count afresh, however soon it comes.
 pub fn click_at(ui: &mut Ui, bounds: Rect) {
-    let (x, y) = (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.);
+    let (x, y) = middle(bounds);
     let button = PointerButton::Primary;
-    ui.dispatch(InputEvent::PointerDown { x, y, button });
-    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    pointer(ui, InputEvent::PointerDown { x, y, button });
+    pointer(ui, InputEvent::PointerUp { x, y, button });
+    ui.input.forget_clicks();
+}
+/// Press and release the primary button twice at a box's middle, as a
+/// double click.
+pub fn double_click_at(ui: &mut Ui, bounds: Rect) {
+    let (x, y) = middle(bounds);
+    let button = PointerButton::Primary;
+    for _ in 0..2 {
+        pointer(ui, InputEvent::PointerDown { x, y, button });
+        pointer(ui, InputEvent::PointerUp { x, y, button });
+    }
+    ui.input.forget_clicks();
+}
+/// A box's middle.
+pub fn middle(bounds: Rect) -> (f32, f32) {
+    (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.)
+}
+/// Move the pointer to `(x, y)`: what is there hovers, what was left stops.
+pub fn hover_at(ui: &mut Ui, (x, y): (f32, f32)) {
+    ui.dispatch(InputEvent::PointerMove { x, y });
+}
+/// Move to `(x, y)` and click the context button there.
+pub fn right_click_at(ui: &mut Ui, (x, y): (f32, f32)) {
+    let button = PointerButton::Secondary;
+    pointer(ui, InputEvent::PointerMove { x, y });
+    pointer(ui, InputEvent::PointerDown { x, y, button });
+    pointer(ui, InputEvent::PointerUp { x, y, button });
+    ui.input.forget_clicks();
+}
+/// Drag with the primary button from one point to another: pressed there,
+/// moved past the drag threshold, on to `to` in steps, as a hand moves
+/// (what lies between sees the drag pass), and released.
+pub fn drag_between(ui: &mut Ui, from: (f32, f32), to: (f32, f32)) {
+    /// Moves on the way, past the first.
+    const STEPS: u16 = 8;
+    let (x, y) = from;
+    let button = PointerButton::Primary;
+    pointer(ui, InputEvent::PointerMove { x, y });
+    pointer(ui, InputEvent::PointerDown { x, y, button });
+    pointer(
+        ui,
+        InputEvent::PointerMove {
+            x: x + 16.,
+            y: y + 8.,
+        },
+    );
+    for step in 1..=STEPS {
+        let part = f32::from(step) / f32::from(STEPS);
+        pointer(
+            ui,
+            InputEvent::PointerMove {
+                x: x + (to.0 - x) * part,
+                y: y + (to.1 - y) * part,
+            },
+        );
+    }
+    let (x, y) = to;
+    pointer(ui, InputEvent::PointerUp { x, y, button });
+    ui.input.forget_clicks();
 }
 /// Click `node`, then type `text` into what has focus.
 pub fn type_into(ui: &mut Ui, node: NodeId, text: &str) {
@@ -610,6 +800,8 @@ pub struct Line {
     pub value: Option<String>,
     /// Its box, in window points.
     pub bounds: Rect,
+    /// It doesn't show (`shows`): hidden, or in a closed panel.
+    pub hidden: bool,
     /// It has the keyboard focus.
     pub focused: bool,
     /// It is disabled.
@@ -641,7 +833,7 @@ pub fn tree(
     while let Some((node, depth)) = stack.pop() {
         let s = semantics.get(node);
         let role = s
-            .map(|s| role_name(s.role))
+            .map(semantic_role_name)
             .filter(|r| *r != "group" || options.all);
         let label = s.map(|s| s.label.clone()).filter(|l| !l.is_empty());
         let text = label.or_else(|| own_text(&scene, node));
@@ -661,6 +853,7 @@ pub fn tree(
                         .filter(|s| s.role != Role::Label)
                         .and_then(|s| s.value.clone()),
                     bounds: scene.bounds(node),
+                    hidden: !shows(&scene, node),
                     focused: focused == Some(node),
                     disabled: s.is_some_and(|s| s.disabled),
                     checked: s.and_then(|s| s.checked),
@@ -752,6 +945,9 @@ pub fn tree_text(lines: &[Line], hidden: usize) -> String {
             let _ = write!(out, " ={:?}", clip(value, 40));
         }
         let _ = write!(out, " {}", rect(line.bounds));
+        if line.hidden {
+            out.push_str(" hidden");
+        }
         if line.focused {
             out.push_str(" focused");
         }
@@ -795,7 +991,7 @@ pub fn node(
         }
     }
     if let Some(s) = semantics.get(node) {
-        out.push(("role".into(), role_name(s.role).into()));
+        out.push(("role".into(), semantic_role_name(s).into()));
         if !s.label.is_empty() {
             out.push(("name".into(), s.label.clone()));
         }
@@ -828,10 +1024,30 @@ pub fn node(
         out.push(("focused".into(), "yes".into()));
     }
     out.push(("box".into(), rect(scene.bounds(node))));
+    // Where it takes clicks, if an animation is taking it elsewhere
+    // (`hit = "target"`).
+    let off = scene.hit_offset(node);
+    if off != zgx::scene::Transform::default() {
+        let b = scene.bounds(node);
+        let at = Rect::new(b.x + off.x, b.y + off.y, b.width, b.height);
+        out.push(("hit box".into(), rect(at)));
+    }
     // Its own text, else the first inside (a text's box).
     if let Some(text) = first_text(&scene, node) {
         out.push(("text".into(), clip(&text, 400)));
     }
     out.push(("children".into(), scene.children(node).len().to_string()));
     out
+}
+
+/// Drags from `from` onto `to` with the primary button: pressed near
+/// `from`'s top left, past the drag threshold, then released over `to`'s
+/// middle (its upper half: a reorderable row drops above it).
+pub fn drag(ui: &mut Ui, from: Rect, to: Rect) {
+    let start = (
+        from.x + from.width.min(12.),
+        from.y + from.height.min(12.) / 2.,
+    );
+    let end = (to.x + to.width / 2., to.y + to.height / 3.);
+    drag_between(ui, start, end);
 }

@@ -1,10 +1,15 @@
 //! A page served from a scheme of the app's own, with a script injected
-//! before the page's and a navigation policy (WKWebView on macOS, WebView2 on Windows).
+//! before the page's and a navigation policy (WKWebView on macOS, WebView2
+//! on Windows, WebKitGTK on Linux).
 //!
 //! `cargo run -p zgx-desktop --example web_view_schemes`
 //! `-- --fixture`: checks each against the live page, prints `FIXTURE`
 //! lines and exits (non-zero on failure).
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::{Duration, Instant},
+};
 use zgx::{
     compose::prelude::*,
     web_view::{
@@ -68,16 +73,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 },
             );
-            web.set_navigation_policy(|request| !request.url.contains("blocked"));
+            // Whether the policy was asked about the blocked page (the fixture's).
+            let refused = Rc::new(Cell::new(false));
+            let asked = refused.clone();
+            web.set_navigation_policy(move |request| {
+                let blocked = request.url.contains("blocked");
+                asked.set(asked.get() || blocked);
+                !blocked
+            });
             web.load_url("demo://site.one/");
             if fixture {
-                run_fixture(cx, web.clone());
+                run_fixture(cx, web.clone(), refused);
             }
             cx.render(column().grow().child(web_view(&web).grow()));
         })
 }
 
-fn run_fixture(cx: &mut zgx_desktop::WindowContext, web: WebView) {
+/// Whether `done` came within `seconds`: each check waits for what it reads,
+/// not a fixed time (two seconds once passed on CI with nothing loaded, and
+/// every check failed). All together they stay under the probe's minute.
+async fn within(seconds: u64, done: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while !done() {
+        if Instant::now() > deadline {
+            return false;
+        }
+        zgx::timer::sleep(Duration::from_millis(50)).await;
+    }
+    true
+}
+
+fn run_fixture(cx: &mut zgx_desktop::WindowContext, web: WebView, refused: Rc<Cell<bool>>) {
     let failures = Rc::new(RefCell::new(0_u32));
     let check = {
         let failures = failures.clone();
@@ -93,32 +119,49 @@ fn run_fixture(cx: &mut zgx_desktop::WindowContext, web: WebView) {
     };
     let failed_loads = Rc::new(RefCell::new(Vec::<String>::new()));
     let senders = Rc::new(RefCell::new(Vec::<(String, bool)>::new()));
+    let finished = Rc::new(RefCell::new(Vec::<String>::new()));
+    // Every event and when it came, printed if a check fails.
+    let events = Rc::new(RefCell::new(Vec::<String>::new()));
+    let started = Instant::now();
     let subscription = {
-        let (failed_loads, senders) = (failed_loads.clone(), senders.clone());
-        web.on_event(move |event| match event {
-            WebViewEvent::NavigationFailed { url, .. } => {
-                failed_loads.borrow_mut().push(url.clone());
+        let (failed_loads, senders, finished, events) = (
+            failed_loads.clone(),
+            senders.clone(),
+            finished.clone(),
+            events.clone(),
+        );
+        web.on_event(move |event| {
+            events
+                .borrow_mut()
+                .push(format!("{:.2}s {event:?}", started.elapsed().as_secs_f64()));
+            match event {
+                WebViewEvent::NavigationFinished { url } => finished.borrow_mut().push(url.clone()),
+                WebViewEvent::NavigationFailed { url, .. } => {
+                    failed_loads.borrow_mut().push(url.clone());
+                }
+                WebViewEvent::Message {
+                    origin, main_frame, ..
+                } => senders.borrow_mut().push((origin.clone(), *main_frame)),
+                _ => {}
             }
-            WebViewEvent::Message {
-                origin, main_frame, ..
-            } => senders.borrow_mut().push((origin.clone(), *main_frame)),
-            _ => {}
         })
     };
     cx.tasks.spawn(async move {
         let _subscription = subscription;
-        zgx::timer::sleep(Duration::from_secs(2)).await;
-        let (sender, receiver) = std::sync::mpsc::channel();
+        within(20, || {
+            finished.borrow().iter().any(|url| url.contains("site.one"))
+        })
+        .await;
+        let reply = Rc::new(RefCell::new(None));
+        let answer = reply.clone();
         web.evaluate_js(
             "document.getElementById('facts').textContent",
-            move |result| {
-                let _ = sender.send(result);
-            },
+            move |result| *answer.borrow_mut() = Some(result),
         );
-        zgx::timer::sleep(Duration::from_millis(300)).await;
-        let facts = receiver
-            .try_recv()
-            .ok()
+        within(5, || reply.borrow().is_some()).await;
+        let facts = reply
+            .borrow_mut()
+            .take()
             .and_then(Result::ok)
             .unwrap_or_default();
         check(
@@ -136,6 +179,7 @@ fn run_fixture(cx: &mut zgx_desktop::WindowContext, web: WebView) {
             "script ran before the page's",
             facts.clone(),
         );
+        within(5, || !senders.borrow().is_empty()).await;
         check(
             senders
                 .borrow()
@@ -146,19 +190,21 @@ fn run_fixture(cx: &mut zgx_desktop::WindowContext, web: WebView) {
         );
 
         web.load_url("demo://blocked.example/");
-        zgx::timer::sleep(Duration::from_millis(800)).await;
+        let asked = within(5, || refused.get()).await;
         check(
-            web.url().contains("site.one"),
+            asked && within(5, || web.url().contains("site.one")).await,
             "policy cancels a navigation",
             web.url(),
         );
 
         web.load_url("demo://site.one/missing");
-        zgx::timer::sleep(Duration::from_millis(800)).await;
-        let failed = failed_loads
-            .borrow()
-            .iter()
-            .any(|url| url.ends_with("/missing"));
+        let failed = within(10, || {
+            failed_loads
+                .borrow()
+                .iter()
+                .any(|url| url.ends_with("/missing"))
+        })
+        .await;
         check(
             failed,
             "a dropped responder fails the load",
@@ -166,6 +212,13 @@ fn run_fixture(cx: &mut zgx_desktop::WindowContext, web: WebView) {
         );
 
         let failures = *failures.borrow();
+        if failures > 0 {
+            println!("FIXTURE events: {:?}", events.borrow());
+            println!(
+                "FIXTURE state: {:?}",
+                web.state().with_untracked(Clone::clone)
+            );
+        }
         println!("FIXTURE {failures} failures");
         std::process::exit(if failures == 0 { 0 } else { 1 });
     });

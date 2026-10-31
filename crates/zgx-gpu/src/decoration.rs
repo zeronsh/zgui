@@ -142,29 +142,141 @@ pub fn canvas(style: &QuadStyle, width: f32, height: f32) -> Result<Canvas, GpuE
             ));
         }
         let ring = ring.build().unwrap();
-        match detail.border_style {
-            BorderStyle::Solid => {
-                canvas.fill_rule(ring, style.border_color, FillRule::EvenOdd);
-            }
-            BorderStyle::Dashed { length, gap } => {
-                if !length.is_finite() || !gap.is_finite() || length <= 0. || gap <= 0. {
-                    return Err(GpuError("invalid dashed border".into()));
-                }
-                canvas
-                    .clip(ring, FillRule::EvenOdd)
-                    .stroke(
-                        outer,
-                        style.border_color,
-                        Stroke {
-                            width: maximum * 2.,
-                            dash: vec![length, gap],
-                            ..Default::default()
-                        },
-                    )
-                    .restore();
-            }
-        }
+        let frame = (Rect::new(0., 0., width, height), radius);
+        styled_ring(
+            &mut canvas,
+            ring,
+            frame,
+            maximum,
+            detail.border_style,
+            style.border_color,
+        )?;
     }
+    Ok(canvas)
+}
+/// A ring inside `outer` (rounded by its radii), `width` wide at most, drawn
+/// solid, dashed (its ring stroked along `outer`, cut to the ring) or dotted
+/// (`BorderStyle::DOTTED`: round dots `width` across along its middle,
+/// spaced evenly all round), in `color`. `ring` is its area.
+fn styled_ring(
+    canvas: &mut Canvas,
+    ring: Path,
+    (outer, radius): (Rect, [(f32, f32); 4]),
+    width: f32,
+    style: BorderStyle,
+    color: zgx::scene::Color,
+) -> Result<(), GpuError> {
+    let BorderStyle::Dashed { length, gap } = style else {
+        canvas.fill_rule(ring, color, FillRule::EvenOdd);
+        return Ok(());
+    };
+    if !length.is_finite()
+        || !gap.is_finite()
+        || length < 0.
+        || gap < 0.
+        || length > 0. && gap <= 0.
+    {
+        return Err(GpuError("invalid dashed border".into()));
+    }
+    if length > 0. {
+        canvas
+            .clip(ring, FillRule::EvenOdd)
+            .stroke(
+                rounded(outer, radius),
+                color,
+                Stroke {
+                    width: width * 2.,
+                    dash: vec![length, gap],
+                    ..Default::default()
+                },
+            )
+            .restore();
+        return Ok(());
+    }
+    // Dots on its middle line: the box inset by half the width, its corners
+    // as much less round. As many as fit at their pitch, then spread evenly.
+    let half = width / 2.;
+    let middle = Rect::new(
+        outer.x + half,
+        outer.y + half,
+        (outer.width - width).max(0.),
+        (outer.height - width).max(0.),
+    );
+    let corners = radius.map(|(x, y)| ((x - half).max(0.), (y - half).max(0.)));
+    let around = perimeter(middle, corners);
+    let pitch = width + if gap > 0. { gap } else { width };
+    if around <= 0. || pitch <= 0. {
+        return Ok(());
+    }
+    let dots = (around / pitch).round().max(1.);
+    canvas.stroke(
+        rounded(middle, corners),
+        color,
+        Stroke {
+            width,
+            cap: LineCap::Round,
+            dash: vec![0., around / dots],
+            ..Default::default()
+        },
+    );
+    Ok(())
+}
+/// How far round `rect` rounded by `radius` it is: its sides less the
+/// corners, and each corner a quarter of an ellipse (Ramanujan's).
+fn perimeter(rect: Rect, radius: [(f32, f32); 4]) -> f32 {
+    let sides = 2. * (rect.width + rect.height) - radius.iter().map(|(x, y)| x + y).sum::<f32>();
+    let quarter = |(a, b): (f32, f32)| {
+        std::f32::consts::FRAC_PI_4 * (3. * (a + b) - ((3. * a + b) * (a + 3. * b)).sqrt())
+    };
+    sides + radius.into_iter().map(quarter).sum::<f32>()
+}
+/// A dashed or dotted outline (`Scene::outline_style`) of a box of `style`
+/// `width` by `height`, on a canvas the size of the outline's outer box
+/// (`Outline::outer`), at its origin: a ring of the outline's width, its
+/// corners the box's radii grown by its offset and width (square ones stay
+/// square), as `outline_quad` draws a solid one.
+pub fn outline_canvas(
+    style: &QuadStyle,
+    outline: &zgx::scene::Outline,
+    outline_style: BorderStyle,
+    width: f32,
+    height: f32,
+) -> Result<Canvas, GpuError> {
+    let grown = outline.offset + outline.width;
+    let outer = Rect::new(0., 0., width + 2. * grown, height + 2. * grown);
+    if !(outer.width.is_finite() && outer.height.is_finite())
+        || outer.width <= 0.
+        || outer.height <= 0.
+    {
+        return Err(GpuError("invalid outline".into()));
+    }
+    let corners = shadow_corners(style, width, height, 0.).map(|radius| {
+        let radius = if radius > 0. {
+            (radius + grown).max(0.)
+        } else {
+            0.
+        };
+        (radius, radius)
+    });
+    let w = outline.width.min(outer.width / 2.).min(outer.height / 2.);
+    let inner = Rect::new(w, w, outer.width - 2. * w, outer.height - 2. * w);
+    let mut ring = Path::builder();
+    ring.append(&rounded(outer, corners));
+    if inner.width > 0. && inner.height > 0. {
+        ring.append(&rounded(
+            inner,
+            corners.map(|(x, y)| ((x - w).max(0.), (y - w).max(0.))),
+        ));
+    }
+    let mut canvas = Canvas::new();
+    styled_ring(
+        &mut canvas,
+        ring.build().unwrap(),
+        (outer, corners),
+        w,
+        outline_style,
+        outline.color,
+    )?;
     Ok(canvas)
 }
 /// How much of a box shadow covers a point at signed `distance` from its

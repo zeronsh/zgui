@@ -170,10 +170,38 @@ pub struct FontFeatures {
 }
 
 impl FontFeatures {
+    /// zgx: the tag that asks for hyphenation: words may break at their
+    /// hyphenation points, a hyphen drawn where they do (CSS's `hyphens:
+    /// auto`), from `FontSystem::set_hyphenator`'s. No font can have it:
+    /// OpenType's registered tags are lowercase letters and digits, its
+    /// vendors' private ones uppercase letters, neither with an underscore.
+    pub const HYPHENS: FeatureTag = FeatureTag::new(b"_hyp");
+
+    /// zgx: the language a line's Han characters are in, by its own kana
+    /// (1, Japanese) or hangul (2, Korean), or by an app's language (3,
+    /// `FontSystem::set_language`): `ShapeLine::build` sets it on
+    /// such a line's copy of its attributes, so its Han characters take that
+    /// language's fallback fonts and the run cache keeps its runs apart. No
+    /// font can have it, as `HYPHENS`.
+    pub const HAN: FeatureTag = FeatureTag::new(b"_han");
+
     pub const fn new() -> Self {
         Self {
             features: Vec::new(),
         }
+    }
+
+    /// zgx: the language these say their Han characters are in (`HAN`): 0
+    /// none, 1 Japanese, 2 Korean.
+    pub fn han(&self) -> u32 {
+        (self.features.iter())
+            .find(|feature| feature.tag == Self::HAN)
+            .map_or(0, |feature| feature.value)
+    }
+
+    /// zgx: whether these ask for hyphenation (`HYPHENS`).
+    pub fn hyphens(&self) -> bool {
+        (self.features.iter()).any(|feature| feature.tag == Self::HYPHENS && feature.value != 0)
     }
 
     pub fn set(&mut self, tag: FeatureTag, value: u32) -> &mut Self {

@@ -64,6 +64,7 @@ impl Open {
         if let (Some(node), Some(mut ui)) = (self.node.take(), self.ui.upgrade())
             && ui.scene.borrow().contains(node)
         {
+            ui.remove_portal(node);
             ui.remove(node);
         }
     }
@@ -127,12 +128,14 @@ pub(crate) fn mount(
         let Some(mut ui) = weak.upgrade() else {
             return;
         };
-        let origin = ui.scene.borrow().bounds(node);
+        // Hung in the window, where the box shows.
+        let origin = ui.scene.borrow().transformed_bounds(node);
+        let (local_x, local_y) = ui.scene.borrow().local_point(node, x, y);
         let event = ContextMenuEvent {
             x,
             y,
-            local_x: x - origin.x,
-            local_y: y - origin.y,
+            local_x,
+            local_y,
         };
         let items = build(&event);
         if items.is_empty() {
@@ -166,6 +169,8 @@ pub(crate) fn mount(
         };
         let root = ui.root();
         let mounted = crate::compose::mount(&mut ui, root, view, environment.clone());
+        // Mounted at the root, it is its element's: devtools find it there.
+        ui.add_portal(node, mounted);
         current.node.set(Some(mounted));
     });
     ui.retain(node, binding);

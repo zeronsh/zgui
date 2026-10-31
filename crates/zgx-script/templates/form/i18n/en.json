@@ -1,0 +1,9 @@
+{
+  "title": "Profile",
+  "fields": { "name": "Name", "email": "Email", "theme": "Theme" },
+  "errors": { "name": "A name is required", "email": "That is not an email address" },
+  "save": "Save",
+  "saving": "Saving…",
+  "revert": "Revert",
+  "saved": "Profile saved"
+}

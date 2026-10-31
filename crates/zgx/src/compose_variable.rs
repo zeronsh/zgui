@@ -98,7 +98,7 @@ impl VariableHeights {
         self.index.borrow().row_at(offset)
     }
 }
-struct Anchor {
+struct Anchor<K> {
     revision: u64,
     length: usize,
     position: f32,
@@ -107,6 +107,9 @@ struct Anchor {
     /// the row starts lower, in view).
     within: f32,
     at_end: bool,
+    /// The anchor row's key: rows added or removed above it move it by as
+    /// many, and it is found there by its key.
+    key: Option<K>,
 }
 
 /// Mount only visible variable-height keyed rows and an overscan margin.
@@ -297,14 +300,19 @@ struct Entry {
     at: Option<(u32, u32, u32)>,
 }
 fn row_style(width: f32, height: f32, measured: bool) -> crate::scene::Style {
+    // A row's root fills its width, as a block does.
     if measured {
         crate::scene::Style {
             width: Some(width),
             min_height: Some(1.),
+            align: crate::scene::Align::Stretch,
             ..Default::default()
         }
     } else {
-        crate::widgets::fixed(width, height)
+        crate::scene::Style {
+            align: crate::scene::Align::Stretch,
+            ..crate::widgets::fixed(width, height)
+        }
     }
 }
 fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
@@ -326,7 +334,8 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let crate::compose::ListOptions {
                 scrollbar,
                 keyboard_navigation,
-                end,
+                contain,
+                edges,
             } = options;
             *mounted_in.borrow_mut() = Some((ui.runtime.clone(), environment.clone()));
             if measured {
@@ -337,14 +346,18 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             }
             let size = ui.observe_content_size(root);
             let extent = ui.signal(0.0_f32);
-            if let Some(end) = end {
-                crate::compose::watch_end(
+            // A list that loads earlier pages (`on_start`) keeps its rows
+            // in view where they are as they come in above: it alone tracks
+            // its anchor row's key.
+            let keeps_place = edges.as_ref().is_some_and(|edges| edges.watches_start());
+            if let Some(edges) = edges {
+                crate::compose::watch_edges(
                     ui,
                     root,
                     offset.clone(),
                     size.clone(),
                     extent.clone(),
-                    end,
+                    *edges,
                 );
             }
             // Clip rows to the allocated content box, keeping root padding clear.
@@ -387,6 +400,9 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     if before != after {
                         wheel_offset.set(after);
                         cx.scrolled(false);
+                    } else if contain && delta_y != 0. {
+                        // At its edge, contained: taken all the same.
+                        cx.scrolled(false);
                     }
                 }
             });
@@ -421,7 +437,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             // shows, the position it was put at, the focus then, and whether
             // focus goes with it (the keyboard's, not a scroll's).
             let mut pending_reveal: Option<(usize, RowAlign, f32, Option<NodeId>, bool)> = None;
-            let mut anchor: Option<Anchor> = None;
+            let mut anchor: Option<Anchor<K>> = None;
             ui.bind(root, move || {
                 heights.revision.get();
                 mounted_revision.get();
@@ -462,6 +478,25 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     }
                 }
                 let revision = heights.revision.get();
+                // Rows added or removed above the anchor row: it is as many
+                // rows on, and the view stays on it if its key is there
+                // (asked before the index is borrowed: `key` is the app's).
+                let moved = match &anchor {
+                    Some(previous)
+                        if previous.revision != revision
+                            && requested == previous.position
+                            && previous.key.is_some() =>
+                    {
+                        let length = heights.index.borrow().count();
+                        let shifted =
+                            previous.index as i64 + length as i64 - previous.length as i64;
+                        (length != previous.length
+                            && (0..length as i64).contains(&shifted)
+                            && previous.key.as_ref() == Some(&key(shifted as usize)))
+                        .then_some(shifted as usize)
+                    }
+                    _ => None,
+                };
                 let pending_target = pending_reveal
                     .filter(|(_, _, expected, focus, _)| {
                         expected.to_bits() == requested.to_bits()
@@ -496,11 +531,12 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         position = limit;
                     } else if let Some(previous) = &anchor
                         && previous.revision != revision
-                        && previous.length == length
                         && requested == previous.position
-                        && let Some(row_height) = model.row_height(previous.index)
+                        && let Some(index) =
+                            moved.or((previous.length == length).then_some(previous.index))
+                        && let Some(row_height) = model.row_height(index)
                     {
-                        let top = model.row_offset(previous.index);
+                        let top = model.row_offset(index);
                         let bottom = (top as f64 + row_height as f64).min(f32::MAX as f64) as f32;
                         // Clamp the final coordinate, too: adding a sub-height
                         // intra-row offset can round up to the following row.
@@ -593,6 +629,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             index,
                             within: (position - model.row_offset(index)).max(0.),
                             at_end: limit - position <= 0.5,
+                            key: None,
                         }),
                         None if length == 0 => Some(Anchor {
                             revision,
@@ -601,6 +638,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             index: 0,
                             within: 0.,
                             at_end: true,
+                            key: None,
                         }),
                         None => None,
                     };
@@ -657,6 +695,26 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         anchor.within = anchor.position - top;
                     }
                     anchor
+                });
+                // Its row's key, kept by a list that keeps its place: the
+                // last pass's while the row is the same (most passes), else
+                // the row's among those shown, which run in order from the
+                // first.
+                let next_anchor = next_anchor.map(|mut next| {
+                    if !keeps_place {
+                        return next;
+                    }
+                    let kept = anchor.as_mut().and_then(|previous| {
+                        (previous.index == next.index && previous.length == next.length)
+                            .then(|| previous.key.take())
+                            .flatten()
+                    });
+                    next.key = kept.or_else(|| {
+                        let first = keys.first()?.1;
+                        let (key, index, ..) = keys.get(next.index.checked_sub(first)?)?;
+                        (*index == next.index).then(|| key.clone())
+                    });
+                    next
                 });
                 let Some(mut ui) = weak.upgrade() else {
                     return;

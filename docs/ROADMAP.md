@@ -46,7 +46,11 @@ Primary platforms: **Linux and macOS**, per user preference. Windows remains a p
 
 [The team example](../crates/zgx-script/examples/team) (a list loaded from an API, a form checked as it is typed in a modal, a removal confirmed) was written to find what building a real app in Luau lacks. Fixed with it: `ui.resource` (data with loading, error and status states, loads keyed by the state they read, a stale answer dropped), a modal's or popover's `build` (its content new each time it opens, as React's conditionally rendered dialog), `ui.on_mount` outside components, `TestApp::shown`, `Value::record` (a map in any order; `Value::Map` must be sorted), option lists typed as plain lists, a fetcher in `zgx-run` (a networked Luau app needs no Rust host for its transport), and `ui.form` with controls' `field` (checks as typed, Enter submitting, the first wrong field focused, errors heard by assistive technology as `aria-invalid`).
 
+[The channels example](../crates/zgx-script/examples/channels) (a real-time team chat) was written the same way, against React with useWebSocket, react-virtuoso, tiptap's mentions and react-dropzone. Fixed with it, each a primitive: `ui.socket` and zgx-run's WebSocket connector, `ui.sleep`, a popover at an editor's caret and an editor's active descendant, files dropped from the system with their size and type, file and multipart uploads with progress, a list's `on_start` and `at_end` and its place kept as rows come in above, the window's active and shown states, system notifications with their clicks, and the app icon's badge. The mentions, emoji picker, presence and optimistic sends are the example's own Luau.
+
 [The settings example](../crates/zgx-script/examples/settings) (a profile loaded from an API, a form saved with an Undo toast, a switch saving at once and going back if refused) was written the way a React developer would, to find what still costs more. Fixed with it: `ui.form { values }` (a form filled from what is loaded and following it, an edited field keeping what was typed), `dirty` on a form and its fields, the form handed to `submit` and `on_success` (no forward declaration typed `Form?`), controlled checkboxes, sliders, steppers, segmented controls and selects (`value = function` with `on_change`), `reset` and `response.json` typed so a record fits without a cast, `TestApp::fill`, handlers that await (`ui.async`, cancelled with their owner), optimistic writes (`ui.optimistic`, safe when calls overlap), and errors a script branches on, as JavaScript's `catch` gets the error object (`ui.try`'s `UiError`: its `kind`, an HTTP failure's `status` and `body`, a raised value kept, still text where text goes). Tasks cancel (`ui.task` returns a handle; resources, forms and `ui.async` cancel their own), and a cancelled fetch stops its request (an action's host work goes on, its answer dropped).
+
+[The inbox example](../crates/zgx-script/examples/inbox) (a list searched as it is typed and loaded page by page, a thread view, settings as a modal route, folders dragged into order, routing with back, forward and deep links, the signed-in user and theme as context) was the second, bigger app written that way. Fixed with it: `ui.router` (named routes, history, the platform's back and forward input, deep links), overlays controlled by a function with `on_close` (a modal route), `ui.paged` and a list's `on_end` (pages loaded as the list's end comes in reach), `ui.debounced`, `ui.each`'s `reorder` (by drag and Alt+arrows, heard by a reader), and `TestApp::drag` and `scroll`. A node at opacity 0 takes no pointer, unlike CSS, which is documented rather than changed. Its routing, paging and reordering went from about 340 lines to 240.
 
 ## Quality and performance
 
@@ -66,6 +70,19 @@ Platform-specific behavior is not considered validated merely because it compile
 0.1.x stays additive (cargo-semver-checks clean). Changes that need a break wait
 here, to land together:
 
+- [ ] `Brush` and `Background` `#[non_exhaustive]`, with radial, conic and
+  repeating gradients as brushes: a canvas can't fill with `radial` until then,
+  and it holds three stops as a shader's uniforms.
+- [ ] `Background::Image` with a position and a repeat (CSS's
+  `background-position` and `-repeat`): it is public and exhaustive, so a box's
+  `bg_image` stays centred and whole until then.
+- [ ] Hyphenation as a `FontStyle` field (`hyphens`), with `Styled::hyphens`
+  and Luau's `hyphens = "auto"`, rather than `FontFeatures::HYPHENS` (#1167):
+  `FontStyle` is exhaustive, so 0.1 carries it as a private feature tag that
+  replaces with the rest when a text sets features of its own. Resolve it in
+  the cold style path, so a node without it pays nothing.
+- [ ] Deprecate `Styled::blur`: it is the backdrop blur, where Luau's `blur` is
+  the content blur. `backdrop_blur` and `filter_blur` say which.
 - [ ] Named keys outside `Key`'s vocabulary. The desktop host drops every
   winit `NamedKey` outside Tab, Enter, Space, Escape, the editing and
   navigation keys, Insert, ContextMenu and F1–F35: media (play/pause, next,
@@ -84,12 +101,26 @@ here, to land together:
   `Kana`), and so do the docs and lint. Each backend has a mapping test. Until
   then, a key's physical code binds it where the layout gives it a `Key`
   (`KeyBinding::code`, added in 0.1.6).
+- [ ] `zgx::switches::ALL` becomes a slice (`&[&Switch]`). An array's length is
+  part of its type, so each new switch is a change of type: 0.1.7's
+  `BAKED_LOOPS` took it from `[&Switch; 3]` to `[&Switch; 4]`.
 - [ ] zgx-3d's `Material` and `Object` become `#[non_exhaustive]`, made by
   builders (`Material::rgb(..).with(..)`, `Object::mesh(..).at(..)` already
   are), so later fields are additive. They're public structs of public fields
   today (`Material` is `Copy`), so a field is a major change. Then a mesh's
   texture moves onto its `Material`: in 0.1.x textures come in as the
   world's, per object, so nothing breaks.
+
+- [ ] An editor's tab width (`tab_width`, CSS's `tab-size`). Text is shaped
+  from `(text, size, width, &FontStyle)` alone (`FontTextShaper::shape`), and
+  every cosmic-text `Buffer` zgx-gpu builds (layout, raster, rich text, an
+  editor's lines) keeps cosmic-text's 8. `FontStyle` is a struct of public
+  fields made by literals outside zgx, so a field is a major change; carried
+  beside it instead, the width would thread through every shaping call and
+  its cache. Design: `FontStyle` becomes `#[non_exhaustive]` (made with
+  `..FontStyle::default()` or builders) and gains `tab_width`, inherited as
+  `tab-size` is; `View::tab_width` and Luau's `tab_width` set it, and each
+  `Buffer` takes it (`Buffer::set_tab_width`).
 
 ## Remaining validation and refinement
 

@@ -84,6 +84,24 @@ pub(crate) use macos::{
     PopupHost, content_origin, enabled, popup_screens, server_move, warm, window_at, window_number,
 };
 
+/// One line of a memory report for the popups' renderers, however a
+/// backend holds them: each has textures of its own.
+#[allow(dead_code)]
+fn report_popups<'a>(
+    renderers: impl Iterator<Item = &'a zgx_gpu::GpuRenderer>,
+    report: &mut zgx::memory::Report,
+) {
+    let (mut count, mut bytes) = (0, 0);
+    for renderer in renderers {
+        let mut own = zgx::memory::Report::default();
+        renderer.memory(&mut own);
+        let held = own.lines.iter().filter(|line| line.area == "gpu");
+        bytes += held.filter_map(|line| line.bytes).sum::<usize>();
+        count += 1;
+    }
+    report.add("gpu", "popup windows", Some(count), Some(bytes));
+}
+
 #[cfg(windows)]
 mod win32;
 #[cfg(windows)]
@@ -194,6 +212,7 @@ mod other {
         pub fn showing(&self) -> bool {
             false
         }
+        pub fn memory(&self, _: &mut zgx::memory::Report) {}
         #[allow(clippy::too_many_arguments)]
         pub fn update(
             &mut self,
@@ -1240,15 +1259,20 @@ mod macos {
     }
 
     /// A window's shown popups.
+    /// What each popup last showed, for `Ui::snapshot`: its root, its
+    /// surface, the surface's scale and where it lies in the scene.
+    pub(crate) type PopupFrames = Rc<RefCell<Vec<(NodeId, zgx_gpu::ShownFrame, f32, Rect)>>>;
     pub(crate) struct PopupHost {
         shown: Vec<(NodeId, Panel)>,
         send: Sink,
+        frames: PopupFrames,
     }
     impl PopupHost {
         pub fn new(send: impl Fn(PopupInput) + 'static) -> Self {
             Self {
                 shown: Vec::new(),
                 send: Rc::new(send),
+                frames: PopupFrames::default(),
             }
         }
         /// Whether any popup shows.
@@ -1291,6 +1315,9 @@ mod macos {
                 .filter(|root| Some(**root) != unshown)
                 .filter_map(|root| scene.popup_bounds(*root).map(|bounds| (*root, bounds)))
                 .collect();
+            self.frames
+                .borrow_mut()
+                .retain(|frame| wanted.iter().any(|(root, _)| *root == frame.0));
             let mut index = 0;
             while index < self.shown.len() {
                 if wanted.iter().any(|(root, _)| *root == self.shown[index].0) {
@@ -1368,7 +1395,7 @@ mod macos {
                 if changed || resized {
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
                     let renderer = panel.renderer.as_mut().expect("made above");
-                    let drawn = crate::contain::run(
+                    let drawn = crate::contain::run_frame(
                         &mut panel.fault,
                         revision,
                         std::time::Instant::now(),
@@ -1379,6 +1406,9 @@ mod macos {
                             renderer.render(scene, &[])
                         },
                     );
+                    for issue in renderer.take_issues() {
+                        crate::contain::queue_issue(issue);
+                    }
                     if let Some(drawn) = drawn {
                         drawn?;
                     }
@@ -1412,7 +1442,15 @@ mod macos {
                 // The frame and where it shows change together.
                 CATransaction::begin();
                 CATransaction::setDisableActions(true);
-                panel.renderer.as_mut().expect("made above").present()?;
+                let renderer = panel.renderer.as_mut().expect("made above");
+                renderer.present()?;
+                // What it shows now, for `Ui::snapshot`.
+                let mut frames = self.frames.borrow_mut();
+                frames.retain(|shown| shown.0 != root);
+                if let Some(shown) = renderer.shown_frame() {
+                    frames.push((root, shown, panel.scale, rect));
+                }
+                drop(frames);
                 panel.back(material, frame);
                 panel.place(&parent, &content, frame);
                 if panel.preview.is_none() {
@@ -1543,7 +1581,18 @@ mod macos {
             }
         }
         /// Hide every popup (the window closes or goes away).
+        pub fn frames(&self) -> PopupFrames {
+            self.frames.clone()
+        }
+        pub fn memory(&self, report: &mut zgx::memory::Report) {
+            let renderers = self.shown.iter();
+            super::report_popups(
+                renderers.filter_map(|(_, panel)| panel.renderer.as_ref()),
+                report,
+            );
+        }
         pub fn hide_all(&mut self, _: &winit::window::Window) {
+            self.frames.borrow_mut().clear();
             for (_, panel) in self.shown.drain(..) {
                 release(panel);
             }
@@ -2357,7 +2406,7 @@ mod x11 {
                 if new || full || resized || popup.revision != Some(revision) {
                     popup.revision = Some(revision);
                     zgx_gpu::present_log::log(|| format!("popup draw {root:?}"));
-                    let drawn = crate::contain::run(
+                    let drawn = crate::contain::run_frame(
                         &mut popup.fault,
                         revision,
                         std::time::Instant::now(),
@@ -2368,6 +2417,9 @@ mod x11 {
                             renderer.render(scene, &[])
                         },
                     );
+                    for issue in renderer.take_issues() {
+                        crate::contain::queue_issue(issue);
+                    }
                     if let Some(drawn) = drawn {
                         drawn?;
                         renderer.present()?;
@@ -2443,6 +2495,10 @@ mod x11 {
             _: &zgx::input::DragState,
             _: Option<(f32, f32)>,
         ) {
+        }
+        pub fn memory(&self, report: &mut zgx::memory::Report) {
+            let renderers = self.shown.iter().filter_map(|(_, p)| p.renderer.as_ref());
+            super::report_popups(renderers.chain(self.wayland.renderers()), report);
         }
         pub fn hide_all(&mut self, parent: &Window) {
             for (_, popup) in self.shown.drain(..) {

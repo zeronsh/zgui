@@ -13,7 +13,7 @@ use crate::{Vm, element::Element};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    future::poll_fn,
+    future::{Future, poll_fn},
     rc::{Rc, Weak},
     task::{Poll, Waker},
     time::Instant,
@@ -274,6 +274,12 @@ pub(crate) struct Clip {
     /// Some track waits to take its property (`Track::deferred`): checked
     /// once a frame, so the other clips' frames do no more for it.
     deferring: Cell<bool>,
+    /// Played by the compositor (`consider_baking`): the engine leaves it
+    /// alone while the renderer does.
+    #[cfg(target_os = "macos")]
+    baked: RefCell<Option<Rc<zgx::scene::BakedLoop>>>,
+    #[cfg(target_os = "macos")]
+    baking: Cell<Baking>,
 }
 
 /// A script line that makes animations, and how many times in a row its
@@ -285,6 +291,24 @@ pub(crate) struct Site {
 }
 /// Replacements in a row before a site's restarts are reported.
 const RESTARTS: u32 = 20;
+
+/// The most frames a loop bakes.
+#[cfg(target_os = "macos")]
+const MOST_BAKED: usize = 300;
+/// How long after the renderer refused a loop it is offered again (it may
+/// have scrolled out of a fade's band).
+#[cfg(target_os = "macos")]
+const OFFER_AGAIN: std::time::Duration = std::time::Duration::from_secs(2);
+/// What `consider_baking` knows of a clip.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, PartialEq)]
+enum Baking {
+    /// Not looked at yet.
+    Unknown,
+    /// A loop that can bake, from this moment.
+    From(std::time::Instant),
+    Never,
+}
 
 impl Clip {
     pub fn new(
@@ -314,6 +338,10 @@ impl Clip {
             keep: RefCell::default(),
             site: RefCell::default(),
             deferring: Cell::new(false),
+            #[cfg(target_os = "macos")]
+            baked: RefCell::new(None),
+            #[cfg(target_os = "macos")]
+            baking: Cell::new(Baking::Unknown),
         })
     }
     pub fn engine(&self) -> Option<Rc<Engine>> {
@@ -387,17 +415,187 @@ impl Clip {
         }
     }
 
+    /// Bakes this clip if it can and its scene's renderer plays loops.
+    #[cfg(target_os = "macos")]
+    fn consider_baking(self: &Rc<Self>) {
+        if self.baking.get() == Baking::Unknown {
+            self.baking.set(match self.can_bake() {
+                true => Baking::From(std::time::Instant::now()),
+                false => Baking::Never,
+            });
+        }
+        let Baking::From(from) = self.baking.get() else {
+            return;
+        };
+        if std::time::Instant::now() < from || !zgx::switches::BAKED_LOOPS.on() || !self.can_bake()
+        {
+            return;
+        }
+        let first = self.tracks.borrow().first().map(|t| t.target.clone());
+        if let Some(Target::Element(element)) = first
+            && element.read(|scene, _| scene.plays_loops()) == Some(true)
+        {
+            self.bake(&element);
+        }
+    }
+    /// An endless loop of a lone element's opacity and shader time, at a
+    /// fixed frame rate, with no script watching it and always showing.
+    #[cfg(target_os = "macos")]
+    fn can_bake(&self) -> bool {
+        let timing = self.timing.borrow();
+        let plain = timing.loops.is_infinite()
+            && timing.iteration.is_finite()
+            && timing.iteration > 0.
+            && timing.delay == 0.
+            && timing.speed == 1.
+            && !timing.reversed
+            && timing.playback_ease.is_none()
+            && timing.frame_rate.is_some_and(|fps| fps > 0.);
+        let callbacks = self.callbacks.borrow();
+        let unwatched = callbacks.before_update.is_none()
+            && callbacks.update.is_none()
+            && callbacks.render.is_none()
+            && callbacks.loop_.is_none()
+            && self.marks.borrow().is_empty();
+        let tracks = self.tracks.borrow();
+        let Some(first) = tracks.first() else {
+            return false;
+        };
+        plain
+            && unwatched
+            && tracks.iter().all(|t| {
+                t.target.same(&first.target)
+                    && matches!(t.target, Target::Element(_))
+                    && matches!(t.key, Key::Opacity | Key::Shader(0))
+            })
+    }
+    /// One period of the loop, sampled as `render` would: (opacity, shader
+    /// time) at each frame. `None` past `MOST_BAKED`, or if it ever hides
+    /// (an item at opacity 0 isn't drawn, so nothing would place its layer).
+    #[cfg(target_os = "macos")]
+    fn sampled(&self, element: &Element) -> Option<Vec<(f32, f32)>> {
+        let timing = self.timing.borrow();
+        let fps = timing.frame_rate?;
+        let cycle = timing.iteration + timing.loop_delay;
+        let period = cycle * if timing.alternate { 2. } else { 1. };
+        let count = (period / 1000. * fps).round() as usize;
+        if !(2..=MOST_BAKED).contains(&count) {
+            return None;
+        }
+        let vm = self.owner.upgrade();
+        let tracks = self.tracks.borrow();
+        let frames: Vec<(f32, f32)> = (0..count)
+            .map(|frame| {
+                let local = frame as f64 * 1000. / fps;
+                let index = (local / cycle).floor();
+                let mut t = (local - index * cycle).min(timing.iteration);
+                if timing.alternate && index % 2. == 1. {
+                    t = timing.iteration - t;
+                }
+                let (mut opacity, mut time) = (element.opacity(), 0.);
+                for track in tracks.iter() {
+                    let Some(value) = track.at(t, vm.as_deref()).and_then(|v| v.num()) else {
+                        continue;
+                    };
+                    match track.key {
+                        Key::Opacity => opacity = value as f32,
+                        _ => time = value as f32,
+                    }
+                }
+                (opacity, time)
+            })
+            .collect();
+        frames
+            .iter()
+            .all(|(opacity, _)| *opacity > 0.)
+            .then_some(frames)
+    }
+    #[cfg(target_os = "macos")]
+    fn bake(self: &Rc<Self>, element: &Rc<Element>) {
+        let Some(frames) = self.sampled(element) else {
+            self.baking.set(Baking::Never);
+            return;
+        };
+        let Some(fps) = self.timing.borrow().frame_rate else {
+            return;
+        };
+        let engine = self.engine.clone();
+        let baked = Rc::new(zgx::scene::BakedLoop::new(
+            frames,
+            fps as f32,
+            Box::new(move || {
+                if let Some(engine) = engine.upgrade() {
+                    engine.wake();
+                }
+            }),
+        ));
+        element.set_bake(Some(baked.clone()));
+        *self.baked.borrow_mut() = Some(baked);
+        if let Some(engine) = self.engine() {
+            // Its first frame, which a frame rate's wait may not have come
+            // to: it has begun, and holds its properties for what replaces it.
+            let time = self.state.borrow().time;
+            self.render(time, &engine, false);
+            engine.queue_element(element);
+        }
+    }
+    /// Takes the loop back from the renderer, at the time it has reached.
+    /// `again`: when to offer it once more, if ever.
+    #[cfg(target_os = "macos")]
+    fn unbake(self: &Rc<Self>, again: Option<std::time::Duration>) {
+        let Some(baked) = self.baked.borrow_mut().take() else {
+            return;
+        };
+        self.baking.set(match again {
+            Some(after) => Baking::From(std::time::Instant::now() + after),
+            None => Baking::Never,
+        });
+        {
+            let mut s = self.state.borrow_mut();
+            s.time += baked.started.elapsed().as_secs_f64() * 1000.;
+        }
+        let first = self.tracks.borrow().first().map(|t| t.target.clone());
+        if let Some(Target::Element(element)) = first {
+            element.set_bake(None);
+            if let Some(engine) = self.engine() {
+                engine.queue_element(&element);
+                engine.flush();
+            }
+        }
+    }
+    /// Whether the engine ticks it: playing, and not playing baked.
+    fn ticks(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.baked.borrow().as_ref().is_some_and(|b| !b.refused()) {
+            return false;
+        }
+        self.is_playing()
+    }
     /// Advances by `dt` ms of engine time and renders.
     fn advance(self: &Rc<Self>, dt: f64, engine: &Engine) {
+        #[cfg(target_os = "macos")]
         {
+            let refused = self.baked.borrow().as_ref().map(|baked| baked.refused());
+            match refused {
+                Some(false) => return,
+                Some(true) => self.unbake(Some(OFFER_AGAIN)),
+                None => {}
+            }
+        }
+        let first = {
             let mut s = self.state.borrow_mut();
             if !s.advanced && s.provisional {
                 s.built = false;
                 s.provisional = false;
             }
-            s.advanced = true;
-        }
+            !std::mem::replace(&mut s.advanced, true)
+        };
+        // A clip's first frame moves it a frame at most, however long the
+        // engine waited before it (a long frame, a slowed engine).
+        let dt = if first { dt.min(FIRST_STEP) } else { dt };
         self.ensure_built();
+        #[cfg(target_os = "macos")]
+        self.consider_baking();
         let (speed, frame_rate, total) = {
             let t = self.timing.borrow();
             (t.speed, t.frame_rate, t.total())
@@ -597,6 +795,45 @@ impl Clip {
             }
         }
         self.deferring.set(deferring);
+        drop(tracks);
+        if crate::element::any_hit() {
+            self.note_hit_goals();
+        }
+    }
+    /// Where its tracks take elements that hit at their target (`hit =
+    /// "target"`): each property at its last value. Apart, after the
+    /// tracks are claimed, so that an app with none reads one flag.
+    #[cold]
+    #[inline(never)]
+    fn note_hit_goals(&self) {
+        for track in self.tracks.borrow().iter() {
+            if let Target::Element(e) = &track.target
+                && e.hits_at_target()
+            {
+                let goal = track.segs.last().and_then(|seg| seg.to.num());
+                e.anime_goal(&track.key, goal.map(|goal| goal as f32));
+            }
+        }
+    }
+    /// Its tracks let go mid-way: the elements that hit at their target
+    /// take hits where they stopped, for each property it still held.
+    #[cold]
+    #[inline(never)]
+    fn drop_hit_goals(&self) {
+        for track in self.tracks.borrow().iter() {
+            if let Target::Element(e) = &track.target
+                && e.hits_at_target()
+            {
+                let held = e
+                    .owners
+                    .borrow()
+                    .iter()
+                    .any(|(key, owner)| *key == track.key && owner.clip == self.id);
+                if held {
+                    e.anime_goal(&track.key, None);
+                }
+            }
+        }
     }
 
     /// Its deferred tracks whose tween starts by clip time `t` take their
@@ -615,6 +852,10 @@ impl Clip {
                 && let Some(first) = track.segs.first_mut()
             {
                 first.from = track.target.read(&track.key);
+                // As `build` does: no perspective yet is no distance to come from.
+                if track.key == Key::Perspective && first.from == V::Num(0.) {
+                    first.from = first.to.clone();
+                }
             }
             engine.claim(track, self);
         }
@@ -674,6 +915,8 @@ impl Clip {
         self.start();
     }
     pub fn pause(self: &Rc<Self>) {
+        #[cfg(target_os = "macos")]
+        self.unbake(None);
         let was = std::mem::replace(&mut self.state.borrow_mut().paused, true);
         if !was {
             self.queue(Event::Pause);
@@ -683,6 +926,8 @@ impl Clip {
         }
     }
     pub fn reverse(self: &Rc<Self>) {
+        #[cfg(target_os = "macos")]
+        self.unbake(None);
         {
             let mut s = self.state.borrow_mut();
             s.backwards = true;
@@ -703,6 +948,8 @@ impl Clip {
         self.start();
     }
     pub fn restart(self: &Rc<Self>) {
+        #[cfg(target_os = "macos")]
+        self.unbake(None);
         {
             let mut s = self.state.borrow_mut();
             s.time = 0.;
@@ -729,6 +976,8 @@ impl Clip {
         self.seek(0.);
     }
     pub fn seek(self: &Rc<Self>, time: f64) {
+        #[cfg(target_os = "macos")]
+        self.unbake(None);
         let total = self.total();
         let time = time.clamp(0., total.min(f64::MAX));
         self.state.borrow_mut().time = time;
@@ -740,6 +989,8 @@ impl Clip {
         }
     }
     pub fn complete(self: &Rc<Self>) {
+        #[cfg(target_os = "macos")]
+        self.unbake(None);
         let total = self.total();
         if total.is_finite() {
             self.state.borrow_mut().time = total;
@@ -792,7 +1043,12 @@ impl Clip {
             s.paused = true;
             s.playing = false;
         }
+        #[cfg(target_os = "macos")]
+        self.unbake(None);
         if let Some(engine) = self.engine() {
+            if crate::element::any_hit() {
+                self.drop_hit_goals();
+            }
             for track in self.tracks.borrow().iter() {
                 engine.release(&track.target, &track.key, self.id);
             }
@@ -837,6 +1093,10 @@ impl Clip {
     }
     pub fn set_speed(&self, speed: f64) {
         self.timing.borrow_mut().speed = speed.max(0.);
+        #[cfg(target_os = "macos")]
+        if let Some(baked) = &*self.baked.borrow() {
+            baked.refuse();
+        }
     }
 
     /// Hands the clip to the engine's playing list.
@@ -901,6 +1161,8 @@ impl Notify {
 
 /// How often an engine whose loops all sit unseen looks again (Hz).
 const UNSEEN_RATE: f64 = 4.;
+/// The most a clip's first frame advances it (ms): one 60 Hz frame.
+const FIRST_STEP: f64 = 1000. / 60.;
 
 pub(crate) struct Engine {
     pub runtime: Runtime,
@@ -993,6 +1255,9 @@ impl Engine {
             clips.push(clip.clone());
         }
         drop(clips);
+        // Something may now be seen: the engine looks every frame again
+        // (the next tick says whether it still need not).
+        self.unseen.set(false);
         self.wake.notify();
     }
     pub fn wake(&self) {
@@ -1010,7 +1275,7 @@ impl Engine {
             return Some(UNSEEN_RATE);
         }
         let mut rate: Option<f64> = None;
-        for clip in self.clips.borrow().iter().filter(|c| c.is_playing()) {
+        for clip in self.clips.borrow().iter().filter(|c| c.ticks()) {
             let cap = clip.timing.borrow().frame_rate.filter(|f| *f > 0.)?;
             // Slowing a clip down only makes its values change less often,
             // so its cap stays an upper bound.
@@ -1020,8 +1285,7 @@ impl Engine {
     }
     pub fn is_active(&self) -> bool {
         !self.paused.get()
-            && (!self.tickers.borrow().is_empty()
-                || self.clips.borrow().iter().any(|c| c.is_playing()))
+            && (!self.tickers.borrow().is_empty() || self.clips.borrow().iter().any(|c| c.ticks()))
     }
     /// Keeps `clip` while its script lives.
     pub(crate) fn hold(&self, clip: Rc<Clip>) {
@@ -1127,6 +1391,30 @@ impl Engine {
                     (a, b) => a.or(b),
                 };
                 let frame = match rate {
+                    // Only unseen loops play: a clip starting ends the wait,
+                    // and runs from the next frame.
+                    Some(hz) if self.unseen.get() => {
+                        let mut next = std::pin::pin!(frames.next().max_rate(hz));
+                        let woke = poll_fn(|cx| {
+                            if let Poll::Ready(frame) = next.as_mut().poll(cx) {
+                                return Poll::Ready(Some(frame));
+                            }
+                            if self.wake.pending.replace(false) {
+                                return Poll::Ready(None);
+                            }
+                            *self.wake.waker.borrow_mut() = Some(cx.waker().clone());
+                            Poll::Pending
+                        })
+                        .await;
+                        match woke {
+                            Some(frame) => frame,
+                            None => {
+                                // Nothing advanced meanwhile: no time to make up.
+                                last = None;
+                                continue;
+                            }
+                        }
+                    }
                     Some(hz) => frames.next().max_rate(hz).await,
                     None => frames.next().await,
                 };
@@ -1380,6 +1668,13 @@ impl Engine {
             return;
         }
         self.put(&track.target, &track.key, &value, track.unit.as_deref());
+    }
+    /// Queues `element` for the next flush.
+    #[cfg(target_os = "macos")]
+    fn queue_element(&self, element: &Rc<Element>) {
+        if element.queue() {
+            self.dirty.borrow_mut().push(element.clone());
+        }
     }
     fn put(&self, target: &Target, key: &Key, value: &V, unit: Option<&str>) {
         if target.write(key, value, unit)

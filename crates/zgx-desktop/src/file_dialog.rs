@@ -144,8 +144,8 @@ pub struct FileDialogs {
     cancellations: Rc<RefCell<Vec<Weak<Cancel>>>>,
 }
 impl FileDialogs {
-    /// The window they belong to, while it is open.
-    #[cfg(target_os = "macos")]
+    /// The window they belong to, while it is open: dialogs' parent, and
+    /// what a notification's click brings forward.
     pub(crate) fn window(&self) -> Option<std::sync::Arc<Window>> {
         self.native.borrow().as_ref()?.upgrade()
     }
