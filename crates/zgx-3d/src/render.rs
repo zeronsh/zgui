@@ -1425,7 +1425,12 @@ fn map_set(d: &crate::world::Drawn) -> [u64; MAPS] {
             let id = map.as_ref().map_or(0, crate::Texture::id);
             (key ^ id).wrapping_mul(0x0100_0000_01b3)
         });
-        maps[0] = (maps[0] ^ key) | 1;
+        // Mixed in whole (a bit set over it made two textures whose ids
+        // differ in that bit alone one binding), and never all 0.
+        maps[0] ^= key;
+        if maps == [0; MAPS] {
+            maps[0] = 1;
+        }
     }
     maps
 }

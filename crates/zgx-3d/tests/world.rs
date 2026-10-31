@@ -592,6 +592,44 @@ fn maps_vary_how_much_passes_through_and_how_deep() {
 }
 
 #[test]
+fn glass_meshes_alike_but_for_their_textures_draw_their_own() {
+    // Two textures whose ids differ in their lowest bit alone (made in
+    // pairs until a pair's are: other tests make textures too).
+    let pixel = |rgb: [u8; 3]| Texture::from_rgba8(1, 1, vec![rgb[0], rgb[1], rgb[2], 255]);
+    let (red, blue) = loop {
+        let red = pixel([255, 0, 0]).unwrap();
+        if red.id() % 2 == 1 {
+            continue;
+        }
+        let blue = pixel([0, 0, 255]).unwrap();
+        if red.id() ^ 1 == blue.id() {
+            break (red, blue);
+        }
+    };
+    // Side by side, unlit, letting a little light through alike.
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, left) = one(facing_square(), white);
+    let right = world.add(Object::mesh(facing_square(), white));
+    world.set_transform(left, Transform::at([-1., 0., 0.]));
+    world.set_transform(right, Transform::at([1., 0., 0.]));
+    for (pane, texture) in [(left, red), (right, blue)] {
+        world.set_texture(pane, Some(texture));
+        world.set_transmission(pane, Some(Transmission::new(0.5)));
+    }
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let (left, right) = (window.pixel(25, 50), window.pixel(75, 50));
+    assert!(left[0] > 200 && left[2] < 40, "red on the left: {left:?}");
+    assert!(
+        right[2] > 200 && right[0] < 40,
+        "blue on the right: {right:?}"
+    );
+}
+
+#[test]
 fn a_glass_tints_what_shows_through_by_its_colour() {
     // Yellow glass over red: red passes; cyan glass: nothing does.
     let shown = |color| {
