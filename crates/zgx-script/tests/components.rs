@@ -569,6 +569,44 @@ fn a_textarea_scrolls_to_a_line_and_says_which_is_on_top() {
 }
 
 #[test]
+fn a_fields_undo_and_text_position_answer_a_script() {
+    let mut h = Harness::inline(
+        r#"local note = ui.state("note", "hello world")
+        local said = ui.state("said", "")
+        local box = ui.ref()
+        local function report(what: string)
+            local el = box:peek()
+            said:set(`{what} undo={ui.editor.can_undo(el)} redo={ui.editor.can_redo(el)}`)
+        end
+        ui.command { id = "undo", title = "u", run = function() report(tostring(ui.editor.undo(box:peek()))) end }
+        ui.command { id = "redo", title = "r", run = function() report(tostring(ui.editor.redo(box:peek()))) end }
+        ui.command { id = "at", title = "a", run = function()
+            local el = box:peek()
+            said:set(tostring(ui.editor.offset_at(el, el.x + 2, el.y + 12)))
+        end }
+        return ui.column {
+            ui.textarea { id = "note", ref = box, label = "Note", w = 300, h = 80, value = note },
+            ui.div { id = "plain", ref = ui.ref(), w = 10, h = 10 },
+            ui.text { id = "said", "{said}" },
+            ui.text { id = "shown", "{note}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    assert!(h.host.run_command("undo"));
+    assert_eq!(h.text("said"), "false undo=false redo=false");
+    h.type_text("note", "!");
+    assert_eq!(h.text("shown"), "hello world!");
+    assert!(h.host.run_command("undo"));
+    assert_eq!(h.text("said"), "true undo=false redo=true");
+    assert_eq!(h.text("shown"), "hello world", "its state follows");
+    assert!(h.host.run_command("redo"));
+    assert_eq!(h.text("said"), "true undo=true redo=false");
+    assert_eq!(h.text("shown"), "hello world!");
+    assert!(h.host.run_command("at"));
+    assert_eq!(h.text("said"), "0", "the line's start");
+}
+
+#[test]
 fn a_combobox_suggests_from_a_computed_and_chooses() {
     let mut h = Harness::inline(
         r#"local query = ui.state("query", "")

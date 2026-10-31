@@ -1048,6 +1048,14 @@ impl TextEditor {
         self.replace("", None);
         value
     }
+    /// Whether there is a step to undo.
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    /// Whether there is an undone step to redo.
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
     /// Undo the last step, restoring the selection from before it. False
     /// when there is none.
     pub fn undo(&mut self) -> bool {
