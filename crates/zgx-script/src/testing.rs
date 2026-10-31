@@ -338,6 +338,7 @@ impl TestApp {
     /// own; None while it is closed. Each call mounts its content anew, as a
     /// window opening does.
     pub fn window(&self, id: &str) -> Option<TestApp> {
+        let id = self.window_id(id).ok().flatten()?;
         let window = self
             .host
             .windows()
@@ -350,7 +351,7 @@ impl TestApp {
             window.width as f32,
             window.height as f32,
         );
-        let view = self.host.window_view(id);
+        let view = self.host.window_view(&id);
         let view = match &self.desktop {
             Some(desktop) => provide(zgx::platform::PlatformService(desktop.clone()), view),
             None => view,
@@ -378,6 +379,28 @@ impl TestApp {
         app.ui.prepare_frame();
         app.settle();
         Some(app)
+    }
+
+    /// The window `name` names: a `ui.window`'s id, or an item's key in
+    /// `ui.windows` (its window's id is its group's and the key, which a
+    /// test can't know). None if none does; why not if two groups hold it.
+    pub(crate) fn window_id(&self, name: &str) -> Result<Option<String>, String> {
+        self.host.windows().with_untracked(|list| {
+            if list.iter().any(|w| w.id == name) {
+                return Ok(Some(name.to_owned()));
+            }
+            let mut items = list.iter().filter(|w| {
+                w.id.split_once(':')
+                    .is_some_and(|(group, key)| group.starts_with("windows") && key == name)
+            });
+            match (items.next(), items.next()) {
+                (Some(one), None) => Ok(Some(one.id.clone())),
+                (Some(_), Some(_)) => Err(format!(
+                    "two lists' windows hold an item `{name}`: give their keys apart"
+                )),
+                (None, _) => Ok(None),
+            }
+        })
     }
 
     /// Run what is ready (handlers' tasks, settled host calls) until
