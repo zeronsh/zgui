@@ -12802,6 +12802,55 @@ fn image_effect_quad(
 }
 /// The image effects' module: the quad shader (draw.wgsl), whose vertex
 /// stage, clip regions and shading they share, and image_effects.wgsl.
+/// Every shader module the renderer compiles (scratch backport for checking
+/// v0.1.6 under optimized FXC).
+#[doc(hidden)]
+pub fn shader_modules() -> Vec<(&'static str, String)> {
+    let present = |srgb: bool, post_alpha: bool| {
+        format!(
+            "const OUTPUT_SRGB:bool={srgb};\nconst POST_ALPHA:bool={post_alpha};\n{}",
+            include_str!("blit.wgsl")
+        )
+    };
+    vec![
+        ("draw", include_str!("draw.wgsl").to_owned()),
+        ("polyline", polyline_source()),
+        ("image effects", image_effect_source()),
+        ("blend", blend_source()),
+        (
+            "fill",
+            fill_source(
+                "fn fill(input:FillInput)->vec4<f32> { return vec4(input.p/input.size,input.time,1.); }",
+            ),
+        ),
+        (
+            "layer shader",
+            filter_source("fn layer(input:LayerInput)->vec4<f32> { return input.color; }"),
+        ),
+        ("blur", include_str!("blur.wgsl").to_owned()),
+        (
+            "blur, dual-source",
+            format!(
+                "enable dual_source_blending;\n{}\n{BLUR_MIX}",
+                include_str!("blur.wgsl")
+            ),
+        ),
+        ("effects", include_str!("effects.wgsl").to_owned()),
+        ("copy both", include_str!("copy_both.wgsl").to_owned()),
+        ("copy offset", include_str!("copy_offset.wgsl").to_owned()),
+        (
+            "texture upload",
+            include_str!("texture_upload.wgsl").to_owned(),
+        ),
+        (
+            "native surface",
+            include_str!("native_surface.wgsl").to_owned(),
+        ),
+        ("present", present(false, false)),
+        ("present, sRGB, alpha after", present(true, true)),
+    ]
+}
+
 pub(crate) fn image_effect_source() -> String {
     format!(
         "{}\n{}",

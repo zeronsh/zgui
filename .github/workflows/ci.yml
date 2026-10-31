@@ -391,3 +391,7 @@ jobs:
       # D3D shader compiler alone gets wrong (coarse derivatives, #38), and
       # the device on DXGI's first low-power adapter (`adapter`, #217).
       - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --locked
+      # Probe (not for merge): v0.1.6's shaders under optimized FXC.
+      - run: cargo test -p zgx-gpu --test every_shader --locked -- --nocapture
+        env:
+          LOCALAPPDATA: ${{ runner.temp }}\\zgx-cold
