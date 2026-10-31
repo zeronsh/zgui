@@ -795,6 +795,45 @@ impl Clip {
             }
         }
         self.deferring.set(deferring);
+        drop(tracks);
+        if crate::element::any_hit() {
+            self.note_hit_goals();
+        }
+    }
+    /// Where its tracks take elements that hit at their target (`hit =
+    /// "target"`): each property at its last value. Apart, after the
+    /// tracks are claimed, so that an app with none reads one flag.
+    #[cold]
+    #[inline(never)]
+    fn note_hit_goals(&self) {
+        for track in self.tracks.borrow().iter() {
+            if let Target::Element(e) = &track.target
+                && e.hits_at_target()
+            {
+                let goal = track.segs.last().and_then(|seg| seg.to.num());
+                e.anime_goal(&track.key, goal.map(|goal| goal as f32));
+            }
+        }
+    }
+    /// Its tracks let go mid-way: the elements that hit at their target
+    /// take hits where they stopped, for each property it still held.
+    #[cold]
+    #[inline(never)]
+    fn drop_hit_goals(&self) {
+        for track in self.tracks.borrow().iter() {
+            if let Target::Element(e) = &track.target
+                && e.hits_at_target()
+            {
+                let held = e
+                    .owners
+                    .borrow()
+                    .iter()
+                    .any(|(key, owner)| *key == track.key && owner.clip == self.id);
+                if held {
+                    e.anime_goal(&track.key, None);
+                }
+            }
+        }
     }
 
     /// Its deferred tracks whose tween starts by clip time `t` take their
@@ -1007,6 +1046,9 @@ impl Clip {
         #[cfg(target_os = "macos")]
         self.unbake(None);
         if let Some(engine) = self.engine() {
+            if crate::element::any_hit() {
+                self.drop_hit_goals();
+            }
             for track in self.tracks.borrow().iter() {
                 engine.release(&track.target, &track.key, self.id);
             }

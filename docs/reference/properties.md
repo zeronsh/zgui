@@ -99,9 +99,9 @@ return ui.row {
 
 Clicking one spot as fast as you like removes the photos in order, though none has finished sliding.
 
-- Where it's going: `x`, `y`, `scale`, `rotate`, `skew` and `opacity` bound to `ui.tween` or `ui.spring` use the state they follow; a layout animation (`each`'s `animate`, `layout = "position"`) uses the place layout gave it; an absolute element's `left` and `top` in points use their goal. Going to opacity 0, it takes no clicks.
+- Where it's going: `x`, `y`, `scale`, `rotate`, `skew` and `opacity` bound to `ui.tween` or `ui.spring` use the state they follow, and animated by `anime` its last value; a layout animation (`each`'s `animate`, `layout = "position"`) uses the place layout gave it; an absolute element's `left` and `top` in points use their goal. Going to opacity 0, it takes no clicks.
 - **`w` and `h` animating aren't laid out at their goal:** its children take clicks where they show inside it. Animate `scale`, or let a layout animation size it, to hit at the end size.
-- `anime` animations aren't followed yet: an element `anime` moves takes clicks where its style puts it.
+- An `anime` animation of those properties takes it to its last value from the frame it starts. Cancelled or removed mid-way, it takes clicks where it stopped; paused, where it's going. An additive (`composition = "add"`) animation isn't followed.
 - Painting, scroll copies and `zgx inspect`'s `box` stay where it shows; `zgx inspect` adds a `hit box` while they differ. `zgx test` clicks by id land where it takes clicks.
 - Assistive technology reads it where it's going, so a screen reader's highlight jumps ahead of the motion.
 - Elements without `hit = "target"` hit where they show, as before.

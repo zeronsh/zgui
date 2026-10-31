@@ -2004,7 +2004,7 @@ export type NodeProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: ("target" | "shown")?,
@@ -2366,7 +2366,7 @@ export type Props = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -2946,7 +2946,7 @@ export type ContainerProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -3308,7 +3308,7 @@ export type ScrollProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -3681,7 +3681,7 @@ export type TextProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -4042,7 +4042,7 @@ export type MarkdownViewProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -4459,7 +4459,7 @@ export type RichProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -4814,7 +4814,7 @@ export type ImageProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -5179,7 +5179,7 @@ export type SvgProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -5639,7 +5639,7 @@ export type Scene3DProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -6017,7 +6017,7 @@ export type CanvasProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -6404,7 +6404,7 @@ export type CheckboxProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -6769,7 +6769,7 @@ export type InputProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -7235,7 +7235,7 @@ export type ProgressProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -7591,7 +7591,7 @@ export type SliderProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -7962,7 +7962,7 @@ export type SegmentedProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -8329,7 +8329,7 @@ export type StepperProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -8697,7 +8697,7 @@ export type DisclosureProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -9062,7 +9062,7 @@ export type AccordionProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -9415,7 +9415,7 @@ export type SectionProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -9779,7 +9779,7 @@ export type SeparatorProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -10140,7 +10140,7 @@ export type TabsProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -10522,7 +10522,7 @@ export type TreeProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -10901,7 +10901,7 @@ export type DataGridProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -11276,7 +11276,7 @@ export type CalendarProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -11644,7 +11644,7 @@ export type DatePickerProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -12010,7 +12010,7 @@ export type TimeFieldProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -12375,7 +12375,7 @@ export type ComboboxProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -12748,7 +12748,7 @@ export type CommandPaletteProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -13109,7 +13109,7 @@ export type SelectProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -13477,7 +13477,7 @@ export type SplitProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -13850,7 +13850,7 @@ export type ListProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -14285,7 +14285,7 @@ export type LayerProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -14646,7 +14646,7 @@ export type ModalProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -15025,7 +15025,7 @@ export type PopoverProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -15410,7 +15410,7 @@ export type MenuItemProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -15774,7 +15774,7 @@ export type SubmenuProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -16141,7 +16141,7 @@ export type WebViewProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -16516,7 +16516,7 @@ export type TerminalProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -16872,7 +16872,7 @@ export type SlotProps = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -17272,7 +17272,7 @@ export type EachOptions = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
@@ -17643,7 +17643,7 @@ export type PresenceOptions = {
 	-- descendants with handlers still take it. A state or function follows.
 	pointer_events: Props_pointer_events,
 	-- "target": while `x`, `y`, `scale`, `rotate` or `opacity` animate
-	-- (`ui.tween`, `ui.spring`) or a layout animation moves it, it and what
+	-- (`ui.tween`, `ui.spring`, `anime`) or a layout animation moves it, it and what
 	-- it holds take clicks and hover where they're going, not where they
 	-- show. "shown" (the default) hits where it shows.
 	hit: Props_hit,
