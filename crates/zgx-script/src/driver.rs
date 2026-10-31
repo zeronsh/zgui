@@ -531,6 +531,68 @@ pub fn find_shown(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<NodeId, 
     }
 }
 
+/// The node `target` names and the part of it a person could press: inside
+/// every clip around it and on top there. An error names the clip that hides
+/// it, or the node that covers it, rather than acting on what is under the
+/// point instead.
+pub fn reach(ui: &Ui, handle: &ViewHandle, target: &str) -> Result<(NodeId, Rect), String> {
+    // A node as an error names it: its id, if it has one, then as
+    // `describe`; without one, the nearest node around it with an id too
+    // (a scroll's clip is a box inside the one its id names).
+    let named = |node: NodeId| {
+        let ids = handle.ids();
+        let id_of = |node: NodeId| ids.iter().find(|(n, _)| *n == node).map(|(_, id)| id);
+        match id_of(node) {
+            Some(id) => format!("#{id} {}", describe(ui, node)),
+            None => {
+                let around = ui.scene.borrow().ancestors(node).find_map(id_of).cloned();
+                match around {
+                    Some(id) => format!("{} in #{id}", describe(ui, node)),
+                    None => describe(ui, node),
+                }
+            }
+        }
+    };
+    let node = find_shown(ui, handle, target)?;
+    let scene = ui.scene.borrow();
+    let Some(shown) = scene.visible_bounds(node) else {
+        let bounds = scene.bounds(node);
+        let clipper = scene.ancestors(node).find(|&a| {
+            let (x, y) = scene.clips(a);
+            (x || y)
+                && scene
+                    .visible_bounds(a)
+                    .and_then(|v| v.intersection(bounds))
+                    .is_none()
+        });
+        drop(scene);
+        return Err(match clipper {
+            Some(clipper) => format!(
+                "`{target}` is outside {}'s clip: scroll it into view first",
+                named(clipper)
+            ),
+            None => format!("`{target}` doesn't show: {}", describe(ui, node)),
+        });
+    };
+    let (x, y) = middle(shown);
+    // What a press there lands on, as input finds it: nothing that listens
+    // is nothing in the way.
+    let hit = ui.input.pointer_target(&scene, x, y);
+    let reached = hit.is_none_or(|hit| {
+        hit == node
+            || scene.ancestors(hit).any(|a| a == node)
+            || scene.ancestors(node).any(|a| a == hit)
+    });
+    drop(scene);
+    match hit {
+        Some(hit) if !reached => Err(format!(
+            "`{target}` is covered at {x:.0},{y:.0} by {}",
+            named(hit)
+        )),
+        _ => Ok((node, shown)),
+    }
+}
+
 /// A key and its modifiers as text: `Enter`, `cmd+shift+k`, `alt+ArrowDown`.
 /// `cmd` is Command on macOS and Control elsewhere, as commands' keys are.
 pub fn parse_keys(text: &str) -> Result<(Key, Modifiers), String> {

@@ -765,3 +765,47 @@ return ui.column {
     assert_eq!(found.lines().count(), 2, "{found}");
     assert_eq!(found.matches(" hidden").count(), 1, "{found}");
 }
+
+#[test]
+fn an_action_names_the_clip_or_the_node_in_its_way() {
+    let app = TestApp::new(|runtime| {
+        ScriptHost::inline(
+            runtime,
+            "app",
+            r##"
+local said = ui.state("said", "")
+return ui.column {
+    ui.scroll { id = "list", h = 100, w = 200,
+        ui.button { id = "near", h = 40, "Near", on_click = function() said:set("near") end },
+        ui.div { h = 300 },
+        ui.button { id = "far", h = 40, "Far", on_click = function() said:set("far") end },
+    },
+    ui.overlay { w = 200, h = 40,
+        ui.button { id = "under", "Under", on_click = function() said:set("under") end },
+        ui.div { id = "lid", w = 200, h = 40, bg = "#000", on_click = function() end },
+    },
+}
+"##,
+        )
+    });
+    let session = Session::new(&app.ui, app.handle.clone(), &app.host, None);
+    let clipped = error(&ask(&app, &session, r##"{"cmd":"click","target":"#far"}"##));
+    assert!(clipped.contains("in #list's clip"), "{clipped}");
+    assert!(clipped.contains("clip"), "{clipped}");
+    let covered = error(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"hover","target":"#under"}"##,
+    ));
+    assert!(covered.contains("covered"), "{covered}");
+    assert!(covered.contains("#lid"), "{covered}");
+    text(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"click","target":"#near"}"##,
+    ));
+    assert_eq!(
+        text(&ask(&app, &session, r#"{"cmd":"state","name":"said"}"#)),
+        "said = \"near\""
+    );
+}

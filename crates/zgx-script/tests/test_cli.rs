@@ -442,6 +442,55 @@ return ui.column {
 }
 
 #[test]
+fn an_action_says_what_hides_or_covers_its_target() {
+    let dir = app(
+        "reach",
+        &[(
+            "reach.test.luau",
+            r##"
+test("a clipped target, a covered one, and one in reach", function()
+    local app = mount("reach.luau")
+    local ok, message = pcall(function() app:click("#far") end)
+    expect(ok).to_be(false)
+    expect(tostring(message)).to_contain("outside")
+    expect(tostring(message)).to_contain("in #list's clip")
+    ok, message = pcall(function() app:click("#under") end)
+    expect(ok).to_be(false)
+    expect(tostring(message)).to_contain("covered")
+    expect(tostring(message)).to_contain("#lid")
+    app:click("#near")
+    expect(app:text("#said")).to_be("near")
+    app:scroll("#list", 400)
+    app:click("#far")
+    expect(app:text("#said")).to_be("far")
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("reach.luau"),
+        r##"
+local said = ui.state("said", "")
+return ui.column {
+    ui.scroll { id = "list", h = 100, w = 200,
+        ui.button { id = "near", h = 40, "Near", on_click = function() said:set("near") end },
+        ui.div { h = 300 },
+        ui.button { id = "far", h = 40, "Far", on_click = function() said:set("far") end },
+    },
+    ui.overlay { w = 200, h = 40,
+        ui.button { id = "under", "Under", on_click = function() said:set("under") end },
+        ui.div { id = "lid", w = 200, h = 40, bg = "#000", on_click = function() end },
+    },
+    ui.text { id = "said", "{said}" },
+}
+"##,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+}
+
+#[test]
 fn passing_tests_drive_the_app_by_devtools_targets() {
     let dir = app(
         "pass",

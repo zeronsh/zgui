@@ -1369,8 +1369,9 @@ impl InputDispatcher {
         let hit = self.hit_target(&scene.borrow(), x, y);
         self.set_hover(scene, hit);
     }
-    /// What a press at `x, y` lands on, as dispatch finds it.
-    pub(crate) fn pointer_target(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
+    /// What a press at `x, y` lands on, as dispatch finds it: the nearest
+    /// node with listeners under it, past pass-through and empty overlays.
+    pub fn pointer_target(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
         self.hit_target(scene, x, y)
     }
     /// What a primary press at `x, y` would focus, as dispatch finds it:
