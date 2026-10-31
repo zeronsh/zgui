@@ -126,6 +126,8 @@ struct Engine {
     polling: Cell<bool>,
     poll_task: RefCell<Option<TaskToken>>,
     exited: Cell<bool>,
+    /// How many times the session was read (`reads`).
+    reads: Cell<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -190,6 +192,7 @@ impl EngineTerminal {
             polling: Cell::new(false),
             poll_task: RefCell::new(None),
             exited: Cell::new(false),
+            reads: Cell::new(0),
         });
         crate::front::register(Arc::downgrade(&engine.wake));
         let wake = engine.wake.clone();
@@ -238,8 +241,24 @@ impl Engine {
         *self.wake.lock().unwrap() = Some(wake);
         let weak = Rc::downgrade(self);
         let task = self.runner.borrow().spawn(Box::pin(async move {
+            // Read at most once a refresh: output arriving faster (a
+            // program printing as fast as it can, in ConPTY's small chunks
+            // a thousand times a second) waits for the next read, all of it
+            // read and drawn at once. Output after a pause (a key's echo)
+            // is read as it arrives.
+            let mut read_at: Option<std::time::Instant> = None;
             while woken.recv().await.is_some() {
+                let interval = {
+                    let Some(engine) = weak.upgrade() else { return };
+                    engine.refresh_interval()
+                };
+                if let Some(next) = read_at.map(|at| at + interval)
+                    && std::time::Instant::now() < next
+                {
+                    zgx::timer::sleep_until(next).await;
+                }
                 let Some(engine) = weak.upgrade() else { return };
+                read_at = Some(std::time::Instant::now());
                 engine.refresh();
             }
         }));
@@ -250,11 +269,22 @@ impl Engine {
         self.refresh();
     }
 
+    /// The refresh period of the display the terminal shows on (60 Hz
+    /// while it shows nowhere).
+    fn refresh_interval(&self) -> std::time::Duration {
+        self.root
+            .borrow()
+            .as_ref()
+            .and_then(NodeHandle::refresh_interval)
+            .unwrap_or(std::time::Duration::from_nanos(16_666_667))
+    }
+
     /// Read what the session reported and draw what changed.
     fn refresh(self: &Rc<Self>) {
         let Some(events) = self.with_session(Session::take_events) else {
             return;
         };
+        self.reads.set(self.reads.get() + 1);
         let term = self.controller();
         // The app said what is in front may have changed.
         let changes = crate::front::changes();
@@ -1592,4 +1622,18 @@ fn news_view(engine: &Rc<Engine>) -> View {
 pub fn is_engine_drawn(term: &Terminal) -> bool {
     term.backend()
         .is_some_and(|backend| backend.as_any().is::<EngineTerminal>())
+}
+
+/// How many times an engine-drawn terminal read its session's output and
+/// state (for tests: at most once a refresh while output streams).
+#[doc(hidden)]
+pub fn reads(term: &Terminal) -> u64 {
+    term.backend()
+        .and_then(|backend| {
+            backend
+                .as_any()
+                .downcast_ref::<EngineTerminal>()
+                .map(|engine| engine.0.reads.get())
+        })
+        .unwrap_or(0)
 }

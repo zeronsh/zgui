@@ -6659,6 +6659,12 @@ impl NodeHandle {
             .upgrade()
             .is_some_and(|ui| ui.assistive_technology())
     }
+    /// The refresh period of the display the UI shows on
+    /// (`Ui::refresh_interval`), while the UI exists: how often what arrives
+    /// from elsewhere (a program's output) is worth reading for a frame.
+    pub fn refresh_interval(&self) -> Option<std::time::Duration> {
+        self.ui.upgrade().map(|ui| ui.refresh_interval())
+    }
     /// Whether the node is still in the scene.
     pub fn is_mounted(&self) -> bool {
         self.ui

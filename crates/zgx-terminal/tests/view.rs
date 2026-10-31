@@ -109,6 +109,38 @@ fn output_shows_in_rows_and_reports_reach_the_controller() {
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn streaming_output_is_read_at_most_once_a_refresh() {
+    let mut app = Harness::new();
+    // Three hundred lines, each its own chunk a millisecond or two apart:
+    // far more often than a refresh.
+    let term = Terminal::new(
+        &app.ui.runtime,
+        session(
+            "i=1; while [ $i -le 300 ]; do echo \"line $i\"; i=$((i+1)); sleep 0.001; done; sleep 30",
+        ),
+    );
+    let renderer = zgx::terminal::TerminalRenderer::new(zgx_terminal::terminal_view);
+    app.mount(provide(
+        renderer,
+        zgx::terminal::terminal(&term).w(600.).h(300.),
+    ));
+    app.until("line 1", |app| !lines_shown(app).is_empty());
+    let (start, before) = (Instant::now(), zgx_terminal::reads(&term));
+    app.until("line 300", |app| {
+        lines_shown(app).last().is_some_and(|last| last.0 == 300)
+    });
+    let reads = zgx_terminal::reads(&term) - before;
+    let refreshes = start.elapsed().as_secs_f64() / app.ui.refresh_interval().as_secs_f64();
+    // The harness looks every 5 ms: read at each look, that would be about
+    // three times as many.
+    assert!(
+        (reads as f64) <= refreshes + 2.,
+        "{reads} reads in {refreshes:.1} refreshes"
+    );
+}
+
 /// Every `line N` shown, with the top of its box on screen, in the order
 /// the scene paints them (which assistive technology reads).
 #[cfg(unix)]
