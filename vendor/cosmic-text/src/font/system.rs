@@ -1,4 +1,4 @@
-use crate::{Attrs, Font, FontMatchAttrs, HashMap, ShapeBuffer};
+use crate::{Attrs, Family, FamilyOwned, Font, FontMatchAttrs, HashMap, ShapeBuffer};
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
@@ -190,6 +190,9 @@ pub struct FontSystem {
     /// shaped with, newest last (`FontSystem::first_font`).
     first_font: Vec<FirstFont>,
 
+    /// zgx patch: the faces `query_face` found, by family, weight and style.
+    face_queries: Vec<(FamilyOwned, fontdb::Weight, fontdb::Style, Option<fontdb::ID>)>,
+
     /// zgx: where a word may break with a hyphen (`FontFeatures::HYPHENS`).
     hyphenator: Option<Hyphenator>,
 
@@ -347,6 +350,7 @@ impl FontSystem {
             font_cache: HashMap::default(),
             font_matches_cache: HashMap::default(),
             first_font: Vec::new(),
+            face_queries: Vec::new(),
             hyphenator: None,
             weight_axes: HashMap::default(),
             font_codepoint_support_info_cache: HashMap::default(),
@@ -396,7 +400,41 @@ impl FontSystem {
     pub fn db_mut(&mut self) -> &mut fontdb::Database {
         self.font_matches_cache.clear();
         self.first_font.clear();
+        self.face_queries.clear();
         &mut self.db
+    }
+
+    /// zgx patch: the face `db().query` gives for one family at a weight
+    /// and style, found once: a query reads every installed face's names
+    /// (hundreds on macOS, more on Windows), and a text with fallback
+    /// families asks for each family's face whenever it is laid out anew.
+    /// Forgotten when the database can change (`db_mut`).
+    pub fn query_face(
+        &mut self,
+        family: Family<'_>,
+        weight: fontdb::Weight,
+        style: fontdb::Style,
+    ) -> Option<fontdb::ID> {
+        if let Some((.., id)) = self
+            .face_queries
+            .iter()
+            .find(|(f, w, s, _)| *w == weight && *s == style && f.as_family() == family)
+        {
+            return *id;
+        }
+        let id = self.db.query(&fontdb::Query {
+            families: &[family],
+            weight,
+            style,
+            ..Default::default()
+        });
+        // An app's few text styles; more are asked for again.
+        if self.face_queries.len() == 64 {
+            self.face_queries.clear();
+        }
+        self.face_queries
+            .push((FamilyOwned::new(family), weight, style, id));
+        id
     }
 
     /// Consume this [`FontSystem`] and return the locale and database.

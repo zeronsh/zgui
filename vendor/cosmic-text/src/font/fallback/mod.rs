@@ -238,6 +238,17 @@ impl<'a> FontFallbackIter<'a> {
             && !self.end
     }
 
+    /// zgx patch: whether `font`, which `next` gave first, is its default
+    /// family's face. Monospace without a face of its own gives the
+    /// fixed-width face with most of the word's characters instead, which
+    /// depends on the word.
+    pub(crate) fn is_default_face(&self, font: &Font) -> bool {
+        self.default_i == 1
+            && self
+                .default_font_match_key()
+                .is_some_and(|key| key.id == font.id())
+    }
+
     /// zgx patch: as `next` leaves it after giving its default family's
     /// face (`gave_default`), that face known already.
     pub(crate) fn pass_default(&mut self) {

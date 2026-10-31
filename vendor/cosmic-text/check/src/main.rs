@@ -4,7 +4,9 @@
 //! upstream shaping every run afresh (no word cache: the patched one, kept
 //! however long, must not change what is drawn);
 //! `cargo run --release -- bench` times shaping a streaming transcript, as
-//! zgx's lab workload does, with each.
+//! zgx's lab workload does, with each (`-- bench mono`: a terminal's
+//! monospaced lines); `-- kept` checks only that fonts the
+//! patch keeps (`first_font`) lay out as with nothing kept.
 //!
 //!     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml
 use std::{
@@ -14,13 +16,16 @@ use std::{
 
 /// Every laid-out glyph of `text`, as comparable lines.
 macro_rules! layout {
-    ($ct:ident, $fonts:expr, $text:expr, $width:expr, $wrap:expr) => {{
+    ($ct:ident, $fonts:expr, $text:expr, $width:expr, $wrap:expr) => {
+        layout!($ct, $fonts, $text, $width, $wrap, SansSerif)
+    };
+    ($ct:ident, $fonts:expr, $text:expr, $width:expr, $wrap:expr, $family:ident) => {{
         use $ct::*;
         let wrap = [Wrap::None, Wrap::Word, Wrap::Glyph, Wrap::WordOrGlyph][$wrap];
         let mut buffer = Buffer::new($fonts, Metrics::new(14., 18.));
         buffer.set_wrap(wrap);
         buffer.set_size(Some($width), None);
-        let attrs = Attrs::new().family(Family::SansSerif);
+        let attrs = Attrs::new().family(Family::$family);
         buffer.set_text($text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll($fonts, false);
         let mut out = Vec::new();
@@ -116,6 +121,53 @@ macro_rules! bench {
     }};
 }
 
+/// A font system with monospace an installed face, as zgx sets it
+/// (cosmic-text names Noto Sans Mono, seldom installed), so the patch's
+/// monospaced runs keep it (`first_font`).
+macro_rules! monospaced {
+    ($ct:ident) => {{
+        let mut fonts = $ct::FontSystem::new();
+        let mono = ["Menlo", "DejaVu Sans Mono", "Cascadia Mono", "Consolas"]
+            .into_iter()
+            .find(|name| fonts.db().faces().any(|face| face.families.iter().any(|(family, _)| family == name)));
+        if let Some(mono) = mono {
+            fonts.db_mut().set_monospace_family(mono);
+        }
+        fonts
+    }};
+}
+fn monospaced() -> patched::FontSystem {
+    monospaced!(patched)
+}
+
+/// Shaping time for a terminal's tick: 24 new monospaced lines, each
+/// `line N of the stream` (new numbers, words seen before).
+macro_rules! bench_mono {
+    ($ct:ident, $ticks:expr) => {{
+        use $ct::*;
+        let mut fonts = monospaced!($ct);
+        let attrs = Attrs::new().family(Family::Monospace);
+        let started = Instant::now();
+        for tick in 0..$ticks {
+            for row in 0..24 {
+                let text = format!("line {} of the stream", tick * 24 + row);
+                let mut line = BufferLine::new(&text, LineEnding::None, AttrsList::new(&attrs), Shaping::Advanced);
+                line.shape(&mut fonts, 8);
+            }
+        }
+        started.elapsed().as_secs_f64() * 1e6 / $ticks as f64
+    }};
+}
+
+/// Whether upstream's layout is of infinite or no width where the patch's
+/// is finite: upstream divides by a face's units per em, 0 in macOS's
+/// GB18030Bitmap, which the patch passes by ("A font without units per em
+/// is no font" in ZGX_PATCH.md).
+fn upstream_divides_by_zero(upstream: &[String], patched: &[String]) -> bool {
+    let infinite = |lines: &[String]| lines.iter().any(|line| line.contains("NaN") || line.contains("inf"));
+    infinite(upstream) && !infinite(patched)
+}
+
 fn next(seed: &mut u64) -> u64 {
     *seed ^= *seed << 13;
     *seed ^= *seed >> 7;
@@ -124,6 +176,14 @@ fn next(seed: &mut u64) -> u64 {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("bench") && std::env::args().nth(2).as_deref() == Some("mono") {
+        for _ in 0..3 {
+            let upstream = bench_mono!(upstream, 2_000);
+            let patched = bench_mono!(patched, 2_000);
+            println!("monospaced shaping per tick: upstream {upstream:.1} µs, patched {patched:.1} µs");
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("bench") {
         // `bench patched`: only the patch, long enough to profile.
         if std::env::args().nth(2).as_deref() == Some("patched") {
@@ -158,16 +218,22 @@ fn main() {
             .collect();
         texts.push(text);
     }
+    // `kept`: only the patch with kept fonts against itself with none.
+    let kept_only = std::env::args().nth(1).as_deref() == Some("kept");
+    let plain: &[(f32, usize)] = if kept_only { &[] } else { &[(1e6, 0), (120., 1), (60., 2), (240., 3)] };
+    let spans: &[(f32, usize)] = if kept_only { &[] } else { &[(1e6, 0), (120., 1), (240., 3)] };
     let mut up = upstream::FontSystem::new();
     let mut pa = patched::FontSystem::new();
+    let (mut mono, mut fresh) = (monospaced(), monospaced());
     std::panic::set_hook(Box::new(|_| {}));
-    let (mut identical, mut rich, mut both_panicked) = (0, 0, 0);
+    let (mut identical, mut rich, mut kept, mut zero_upem, mut both_panicked) = (0, 0, 0, 0, 0);
     for (i, text) in texts.iter().enumerate() {
-        for (width, wrap) in [(1e6, 0), (120., 1), (60., 2), (240., 3)] {
+        for &(width, wrap) in plain {
             let a = catch_unwind(AssertUnwindSafe(|| layout!(upstream, &mut up, text, width, wrap)));
             let b = catch_unwind(AssertUnwindSafe(|| layout!(patched, &mut pa, text, width, wrap)));
             match (a, b) {
                 (Ok(a), Ok(b)) if a == b => identical += 1,
+                (Ok(a), Ok(b)) if upstream_divides_by_zero(&a, &b) => zero_upem += 1,
                 // Upstream panics on paragraphs of mixed direction in one line.
                 (Err(_), Err(_)) => {
                     both_panicked += 1;
@@ -192,11 +258,12 @@ fn main() {
             cuts.sort();
             cuts
         };
-        for (width, wrap) in [(1e6, 0), (120., 1), (240., 3)] {
+        for &(width, wrap) in spans {
             let a = catch_unwind(AssertUnwindSafe(|| layout_rich!(upstream, &mut up, text, cuts, width, wrap)));
             let b = catch_unwind(AssertUnwindSafe(|| layout_rich!(patched, &mut pa, text, cuts, width, wrap)));
             match (a, b) {
                 (Ok(a), Ok(b)) if a == b => rich += 1,
+                (Ok(a), Ok(b)) if upstream_divides_by_zero(&a, &b) => zero_upem += 1,
                 (Err(_), Err(_)) => {
                     both_panicked += 1;
                     up = upstream::FontSystem::new();
@@ -212,9 +279,43 @@ fn main() {
                 }
             }
         }
+        // With an installed monospace face, kept against nothing kept
+        // (upstream differs there where it divides by a face's zero units
+        // per em, which the patch passes by), whole lines monospaced and in
+        // spans.
+        for (width, wrap) in [(1e6, 0), (120., 1), (240., 3)] {
+            let a = catch_unwind(AssertUnwindSafe(|| {
+                fresh.db_mut();
+                fresh.shape_run_cache = Default::default();
+                (layout!(patched, &mut fresh, text, width, wrap, Monospace), layout_rich!(patched, &mut fresh, text, cuts, width, wrap))
+            }));
+            let b = catch_unwind(AssertUnwindSafe(|| {
+                (layout!(patched, &mut mono, text, width, wrap, Monospace), layout_rich!(patched, &mut mono, text, cuts, width, wrap))
+            }));
+            match (a, b) {
+                (Ok(a), Ok(b)) if a == b => kept += 1,
+                (Err(_), Err(_)) => {
+                    both_panicked += 1;
+                    fresh = monospaced();
+                    mono = monospaced();
+                }
+                (a, b) => {
+                    let _ = std::panic::take_hook();
+                    let first = match (&a, &b) {
+                        (Ok(a), Ok(b)) => a.0.iter().chain(&a.1).zip(b.0.iter().chain(&b.1)).find(|(x, y)| x != y).map(|(x, y)| format!("{x}\n  {y}")),
+                        _ => None,
+                    };
+                    panic!("monospaced text {i} {text:?} cut {cuts:?} (wrap {wrap}) differs as kept: {:?}", first.unwrap_or_else(|| format!("fresh panicked {}, kept panicked {}", a.is_err(), b.is_err())));
+                }
+            }
+        }
         if i % 4 == 3 {
             pa.shape_run_cache.trim(1);
+            mono.shape_run_cache.trim(1);
         }
     }
-    println!("{identical} identical layouts, {rich} of rich text; both panicked on {both_panicked}");
+    println!(
+        "{identical} identical layouts, {rich} of rich text, {kept} monospaced as with nothing kept; \
+         {zero_upem} upstream divided by zero units per em; both panicked on {both_panicked}"
+    );
 }

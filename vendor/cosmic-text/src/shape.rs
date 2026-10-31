@@ -377,7 +377,17 @@ fn shape_run(
         attrs.optical,
     );
 
+    // zgx patch: whether the search has given its first face. Monospace's
+    // gives its family's face whatever the word, but weighs every
+    // fixed-width face against the word's characters as it does, for the
+    // faces it gives next: with that face kept, it is done only when a
+    // character is missing from it.
+    let mut searched = true;
     let font = match kept {
+        Some(font) if attrs.family == Family::Monospace => {
+            searched = false;
+            font
+        }
         Some(font) => {
             font_iter.pass_default();
             font
@@ -392,7 +402,9 @@ fn shape_run(
                 no_font();
                 return;
             };
-            if attrs.family != Family::Monospace && font_iter.gave_default() {
+            if font_iter.gave_default()
+                && (attrs.family != Family::Monospace || font_iter.is_default_face(&font))
+            {
                 font_iter.font_system().keep_first_font(&attrs, &fonts, &font);
             }
             font
@@ -426,6 +438,11 @@ fn shape_run(
 
     //TODO: improve performance!
     while !missing.is_empty() {
+        if !searched {
+            searched = true;
+            // The kept face again, the search now where it would be.
+            let _ = font_iter.next();
+        }
         let Some(font) = font_iter.next() else {
             break;
         };
@@ -656,10 +673,9 @@ fn no_font() {
     });
 }
 
-/// zgx patch: `attrs`' font matches, and the face a family other than
-/// monospace (which looks at each word's characters) gives first, if a run
-/// with these attributes found it. Out of line: the word cache's path
-/// through `Shaping::run` stays as it was.
+/// zgx patch: `attrs`' font matches, and the face their family gives
+/// first, if a run with these attributes found it. Out of line: the word
+/// cache's path through `Shaping::run` stays as it was.
 #[inline(never)]
 fn font_matches(
     font_system: &mut FontSystem,
@@ -668,10 +684,7 @@ fn font_matches(
     alloc::sync::Arc<Vec<crate::font::FontMatchKey>>,
     Option<alloc::sync::Arc<Font>>,
 ) {
-    match (attrs.family != Family::Monospace)
-        .then(|| font_system.first_font(attrs))
-        .flatten()
-    {
+    match font_system.first_font(attrs) {
         Some((fonts, font)) => (fonts, Some(font)),
         None => (font_system.get_font_matches(attrs), None),
     }

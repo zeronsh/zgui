@@ -65,7 +65,7 @@ zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false }
 winit = "0.30.13"
 softbuffer = "0.4.8"
 fontdue = "0.9.3"
-cosmic-text = { package = "zgx-cosmic-text", version = "0.19.6", path = "../../vendor/cosmic-text" }
+cosmic-text = { package = "zgx-cosmic-text", version = "0.19.7", path = "../../vendor/cosmic-text" }
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 accesskit = "0.24.1"
 # The adapters' (through accesskit_winit), named for its `links` metadata:

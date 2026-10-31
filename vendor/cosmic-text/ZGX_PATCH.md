@@ -63,6 +63,18 @@ checked never to change what is drawn):
 
     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml
     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml -- bench
+    cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml -- bench mono
+    cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml -- kept
+
+A layout upstream makes infinitely wide or of no width, where this crate's
+is finite, is counted apart: upstream divides by a face's zero units per em
+("A font without units per em is no font", below). `kept` lays the texts
+out only with this crate, monospaced and with an installed monospace face,
+with fonts kept against nothing kept ("A run's first font is kept", below).
+On macOS the comparison with upstream now stops at rich text 120, a line of
+ASCII and controls with a tab, which this crate breaks into one more line
+than upstream at 120 pixels; it predates the monospace patch, and is not
+yet explained.
 
 15,076 layouts are identical, and so are 12,033 of the same texts in up
 to four spans of different weight, family, metadata and size, cut at
@@ -176,6 +188,29 @@ forgotten when the font matches are (`db_mut`, or the cache's limit).
 keeps its code. zgx-gpu's `first_font` test shapes texts in turn under
 changing families, weights, sizes and scripts, with characters only another
 font has, to the same glyphs from the same fonts as each alone.
+
+Monospace is kept too. With a face of its own, its search gives that face
+first whatever the word, but as it does it weighs every fixed-width face
+against the word's characters, for the faces it gives next. That cost was
+paid for every new word: each line a terminal printed scanned every
+installed face (a quarter of an engine-drawn terminal's CPU while output
+streamed on macOS, more with Windows' fonts). A kept monospace face is now
+used at once, and the search takes its first step only when a character is
+missing from it (`shape_run`'s `searched`), leaving it where a search from
+scratch would be. A face is kept only when it is the family's own
+(`FontFallbackIter::is_default_face`): without one, the search gives the
+fixed-width face with most of the word's characters, which depends on the
+word. The `first_font` test adds monospaced runs whose characters only a
+second fixed-width face or a proportional one has; `check/`'s `kept` mode
+(below) lays its texts out monospaced, whole and in spans, with an installed
+monospace face, kept against nothing kept: 11,307 layouts are identical on
+macOS (Menlo). Shaping a terminal's tick of 24 new lines (`-- bench mono`)
+takes 32 µs instead of 135 µs, and 1,100 µs upstream.
+
+`FontSystem::query_face` finds a family's face at a weight and style once,
+forgotten with the font matches (`db_mut`): zgx-gpu asks it for each
+fallback family of a text whenever the text is laid out anew, and a
+`fontdb` query reads every installed face's names.
 
 `ShapeRunCache::clear` empties the word cache at once. `trim` sweeps only
 every `TRIM_PERIOD` ages (above), so it cannot drop runs shaped with a font
