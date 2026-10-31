@@ -1006,10 +1006,9 @@ fn make_shadow_pipeline(gpu: &mut Gpu, device: &wgpu::Device, variant: Variant) 
         placed,
         ..Variant::default()
     };
-    let source = shader_source(variant);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("3D skinned, morphing or cut-out shadows"),
-        source: wgpu::ShaderSource::Wgsl(compact(source).into()),
+        source: wgpu::ShaderSource::Wgsl(wgsl(variant, 1).into()),
     });
     let group1 = match &gpu.placed_layout {
         Some(layout) if placed => layout,
@@ -1037,9 +1036,7 @@ fn make_shadow_pipeline(gpu: &mut Gpu, device: &wgpu::Device, variant: Variant) 
 fn make_main_pipelines(gpu: &mut Gpu, device: &wgpu::Device, variant: Variant) {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("3D mesh variant"),
-        source: wgpu::ShaderSource::Wgsl(
-            compact(antialiased(shader_source(variant), gpu.samples)).into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(wgsl(variant, gpu.samples).into()),
     });
     let group0 = match &gpu.environment_layout {
         Some((layout, _)) if variant.lit => layout,
@@ -1719,9 +1716,7 @@ impl Gpu {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat, samples: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
-            source: wgpu::ShaderSource::Wgsl(
-                compact(antialiased(shader_source(Variant::default()), samples)).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(wgsl(Variant::default(), samples).into()),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("3D frame"),
@@ -1880,20 +1875,22 @@ const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 const SECOND_UV_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![14 => Float32x2];
 const COLOR_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![15 => Float32x4];
 /// The shader, sampling textures or not, skinning or not, lit by an
-/// environment or not: its lines marked `//T ` are a textured pipeline's
-/// alone (its maps' bindings, samples and normal mapping), `//S ` a skinned
-/// one's (its joints), `//M ` a morphing one's (its targets), `//P ` either's
-/// (the frame's joints and weights), `//E ` an environment-lit one's (its
-/// cube and diffuse light), `//U ` a placed one's (its maps' placements and
-/// second coordinates), `//C ` a colored one's (its vertex colours), `//K ` a cut-out one's and `//N ` any other's,
-/// comments in others'. (A cut-out or placed one is textured; a line with
-/// two prefixes is for a variant with both.)
+/// environment or not, drawing `samples` a pixel: its lines marked `//T `
+/// are a textured pipeline's alone (its maps' bindings, samples and normal
+/// mapping), `//S ` a skinned one's (its joints), `//M ` a morphing one's
+/// (its targets), `//P ` either's (the frame's joints and weights), `//E `
+/// an environment-lit one's (its cube and diffuse light), `//U ` a placed
+/// one's (its maps' placements and second coordinates), `//C ` a colored
+/// one's (its vertex colours), `//G ` one light passes through's, `//K ` a
+/// cut-out one's and `//N ` any other's, and `//A ` a multisampled one's
+/// (geometric specular anti-aliasing). (A cut-out or placed one is
+/// textured; a line with two prefixes is for a variant with both.) Only
+/// its code is kept, without comments or others' lines: naga reads every
+/// byte of a shader, and most of these are others'.
 // Made with a pipeline, rarely: kept out of the frame's code.
 #[cold]
 #[inline(never)]
-fn shader_source(variant: Variant) -> String {
-    // A line's own prefixes, in one pass over the text (one `replace` a
-    // prefix copied all of it each time).
+fn wgsl(variant: Variant, samples: u32) -> String {
     let on = |tag: u8| match tag {
         b'T' => variant.textured,
         b'S' => variant.skinned,
@@ -1905,49 +1902,29 @@ fn shader_source(variant: Variant) -> String {
         b'G' => variant.transmitting,
         b'K' => variant.masked,
         b'N' => !variant.masked,
+        b'A' => samples > 1,
         _ => false,
     };
-    let mut source = String::with_capacity(SHADER.len());
-    for line in SHADER.lines() {
-        // Of its leading prefixes, those on go and those off stay (a line
-        // of two is for a variant with both).
+    // In one pass over the text, copying only what is kept (a pass each
+    // for the prefixes, the comments and the anti-aliasing copied it all
+    // three times).
+    let mut source = String::with_capacity(SHADER.len() / 2);
+    'lines: for line in SHADER.lines() {
         let mut rest = line;
         while let [b'/', b'/', tag, b' ', ..] = *rest.as_bytes() {
             if !on(tag) {
-                source.push_str(&rest[..4]);
+                continue 'lines;
             }
             rest = &rest[4..];
+        }
+        let code = rest.trim_start();
+        if code.is_empty() || code.starts_with("//") {
+            continue;
         }
         source.push_str(rest);
         source.push('\n');
     }
     source
-}
-/// `source` drawing `samples` a pixel: multisampled, its `//A ` lines
-/// (geometric specular anti-aliasing) are its own; at one sample they stay
-/// comments, and cost nothing.
-/// `source` without its comment lines: naga reads every byte of a shader,
-/// and a variant's are half other variants' lines, commented out.
-// Made with a pipeline, rarely: kept out of the frame's code.
-#[cold]
-#[inline(never)]
-fn compact(source: String) -> String {
-    let mut out = String::with_capacity(source.len() / 2);
-    for line in source.lines().filter(|l| !l.trim_start().starts_with("//")) {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-// Made with a pipeline, rarely: kept out of the frame's code.
-#[cold]
-#[inline(never)]
-fn antialiased(source: String, samples: u32) -> String {
-    if samples > 1 {
-        source.replace("//A ", "")
-    } else {
-        source
-    }
 }
 /// Group 1's layout: the maps, their sampler and, `placed`, their
 /// placements; `glass`, how light passes through and what is behind.
@@ -2857,7 +2834,7 @@ mod tests {
         let source = |change: fn(&mut Variant)| {
             let mut variant = Variant::default();
             change(&mut variant);
-            shader_source(variant)
+            wgsl(variant, 1)
         };
         let plain = source(|_| {});
         let textured = source(|v| v.textured = true);
@@ -2868,35 +2845,33 @@ mod tests {
             v.textured = true;
             v.masked = true;
         });
-        // In the plain shader every line naming a map, the joints or the
-        // environment's cube is a comment.
-        for line in plain.lines().filter(|l| {
-            l.contains("_texture")
-                || l.contains("@group(1)")
-                || l.contains("palette")
-                || l.contains("environment_cube")
-                || l.contains("morphs")
-                || l.contains("placements")
-                || l.contains("second_uv")
-                || l.contains("vertex_color")
-                || l.contains("behind")
-                || l.contains("glass.")
-        }) {
-            assert!(line.trim_start().starts_with("//"), "{line}");
+        // The plain shader names no map, joints or environment's cube.
+        for line in plain.lines() {
+            for name in [
+                "_texture",
+                "@group(1)",
+                "palette",
+                "environment_cube",
+                "morphs",
+                "placements",
+                "second_uv",
+                "vertex_color",
+                "behind",
+                "glass.",
+                "discard",
+            ] {
+                assert!(!line.contains(name), "{line}");
+            }
         }
         assert!(textured.contains("@group(1) @binding(2) var normal_texture"));
-        assert!(!textured.contains("//T") && textured.contains("//S"));
+        assert!(!textured.contains("palette") && !textured.contains("second_uv"));
         assert!(skinned.contains("var<storage, read> palette"));
-        assert!(!skinned.contains("//S") && skinned.contains("//T"));
+        assert!(!skinned.contains("normal_texture"));
         assert!(lit.contains("@group(0) @binding(3) var environment_cube: texture_cube<f32>"));
-        assert!(!lit.contains("//E") && lit.contains("//T"));
+        assert!(!lit.contains("normal_texture"));
         assert!(morphing.contains("var<storage, read> morphs"));
         assert!(morphing.contains("var<storage, read> palette"));
-        assert!(!morphing.contains("//M") && morphing.contains("//S"));
         assert!(masked.contains("discard;") && masked.contains("-> ShadowOut"));
-        for line in textured.lines().filter(|l| l.contains("second_uv")) {
-            assert!(line.trim_start().starts_with("//"), "{line}");
-        }
         let placed = source(|v| {
             v.textured = true;
             v.placed = true;
@@ -2904,42 +2879,42 @@ mod tests {
         assert!(placed.contains("var<uniform> placements"));
         let colored = source(|v| v.colored = true);
         assert!(colored.contains("@location(15) vertex_color: vec4<f32>"));
-        assert!(!colored.contains("//C") && colored.contains("//S"));
-        assert!(!placed.contains("//U") && placed.contains("//S"));
-        for line in plain.lines().filter(|l| l.contains("discard")) {
-            assert!(line.trim_start().starts_with("//"), "{line}");
-        }
+        let glass = source(|v| {
+            v.textured = true;
+            v.transmitting = true;
+        });
+        assert!(glass.contains("var thickness_texture: texture_2d<f32>"));
+        assert!(!textured.contains("thickness_texture"));
     }
 
     #[test]
     fn specular_anti_aliasing_is_a_multisampled_shaders_alone() {
-        let source = shader_source(Variant::default());
-        let (one, four) = (antialiased(source.clone(), 1), antialiased(source, 4));
-        for line in one.lines().filter(|l| l.contains("dpdx(facing)")) {
-            assert!(line.trim_start().starts_with("//"), "{line}");
-        }
+        let (one, four) = (wgsl(Variant::default(), 1), wgsl(Variant::default(), 4));
+        assert!(!one.contains("dpdx(facing)"));
         assert!(four.contains("\nlet turning_x = dpdx(facing);"));
     }
 
     #[test]
-    fn a_compact_shader_keeps_its_code_and_drops_its_comments() {
-        let skinned = shader_source(Variant {
+    fn a_shader_keeps_its_code_alone() {
+        let skinned = Variant {
             skinned: true,
             ..Variant::default()
-        });
-        let compact = compact(antialiased(skinned.clone(), 4));
-        assert!(compact.len() < skinned.len() / 2 + skinned.len() / 4);
-        assert!(compact.lines().all(|l| !l.trim_start().starts_with("//")));
-        assert!(compact.contains("var<storage, read> palette"));
-        assert!(compact.contains("fn fragment"));
-        // Antialiasing's lines, uncommented before, are kept.
-        let antialiased = antialiased(skinned, 4);
-        let code = |s: &str| {
-            let lines = s.lines().filter(|l| !l.trim_start().starts_with("//"));
-            lines.filter(|l| l.contains("dpdx")).count()
         };
-        assert!(code(&antialiased) > 0);
-        assert_eq!(code(&compact), code(&antialiased));
+        let code = wgsl(skinned, 4);
+        assert!(
+            code.len() < SHADER.len() / 2,
+            "{} {}",
+            code.len(),
+            SHADER.len()
+        );
+        assert!(code.lines().all(|l| {
+            let l = l.trim_start();
+            !l.is_empty() && !l.starts_with("//")
+        }));
+        assert!(code.contains("var<storage, read> palette"));
+        assert!(code.contains("fn fragment"));
+        // A line's prefixes go with it, those on and those off.
+        assert!(!code.contains("//S ") && !code.contains("//T "));
     }
 
     #[test]
