@@ -46,21 +46,57 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: 'DISK before: actions/checkout@v4'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'actions/checkout@v4'
       - uses: actions/checkout@v4
       # Room on the disk: this job's target/ reaches about 40 GB, more than
       # some runners have left after their image (two runs died of a full
       # disk on Oct 31). The image's toolchains it never runs (Android, .NET,
       # Haskell, Swift, CodeQL, PowerShell: about 28 GB) go while it builds.
+      - name: 'DISK before: sudo nohup rm -rf /usr/local/lib/android /usr/share/dotnet /'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'sudo nohup rm -rf /usr/local/lib/android /usr/share/dotnet /'
       - run: sudo nohup rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/share/powershell > /dev/null 2>&1 &
+      - name: 'DISK before: dtolnay/rust-toolchain@stable'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'dtolnay/rust-toolchain@stable'
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       # A fork changed without a version fails here, on its own pull request,
       # not at the release. A second or two: no build.
+      - name: 'DISK before: python3 scripts/check_forks.py --offline-ok'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'python3 scripts/check_forks.py --offline-ok'
       - run: python3 scripts/check_forks.py --offline-ok
       # Ubuntu mirrors are sometimes very slow; reuse last month's .debs.
+      - name: 'DISK before: echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"'
       - id: apt-key
         run: echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - name: 'DISK before: actions/cache/restore@v4'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'actions/cache/restore@v4'
       - uses: actions/cache/restore@v4
         id: apt-cache
         with:
@@ -69,6 +105,12 @@ jobs:
           # A changed package list still starts from the last month's .debs.
           restore-keys: apt-${{ runner.arch }}-
       # A stalled mirror fails fast and retries rather than holding the job.
+      - name: 'DISK before: Linux packages'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Linux packages'
       - name: Linux packages
         timeout-minutes: 10
         run: |
@@ -78,31 +120,79 @@ jobs:
           sudo apt-get update -qq $apt
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $apt $(grep -v '^#' .github/linux-packages.txt)
           mkdir -p ~/apt-archives && cp /var/cache/apt/archives/*.deb ~/apt-archives/
+      - name: 'DISK before: actions/cache/save@v4'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'actions/cache/save@v4'
       - uses: actions/cache/save@v4
         if: steps.apt-cache.outputs.cache-hit != 'true'
         with:
           path: ~/apt-archives
           key: ${{ steps.apt-cache.outputs.cache-primary-key }}
+      - name: 'DISK before: Swatinem/rust-cache@v2'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Swatinem/rust-cache@v2'
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: 'DISK before: Benchmark sampler failure evidence'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Benchmark sampler failure evidence'
       - name: Benchmark sampler failure evidence
         run: python3 scripts/test_compare.py -v
+      - name: 'DISK before: Which windows the Windows probes guard takes as their apps'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Which windows the Windows probes guard takes as their apps'
       - name: Which windows the Windows probes' guard takes as their app's
         run: python3 scripts/test_windows_guard.py -v
+      - name: 'DISK before: cargo fmt --all -- --check'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo fmt --all -- --check'
       - run: cargo fmt --all -- --check
       # Every Luau script in the repository (examples and probes too), as
       # stylua.toml and .styluaignore have them.
+      - name: 'DISK before: JohnnyMorganz/stylua-action@v4'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'JohnnyMorganz/stylua-action@v4'
       - uses: JohnnyMorganz/stylua-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
           args: --check .
+      - name: 'DISK before: cargo clippy --workspace --all-targets --features zgx-deskto'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo clippy --workspace --all-targets --features zgx-deskto'
       - run: cargo clippy --workspace --all-targets --features zgx-desktop/webkitgtk --locked -- -D warnings
       # Feature gating stays honest: the crates build without their defaults,
       # on the oldest Rust they claim (`rust-version`): a check this job
       # makes anyway, so the minimum costs only the toolchain's download.
+      - name: 'DISK before: No default features, on the minimum Rust'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'No default features, on the minimum Rust'
       - name: No default features, on the minimum Rust
         run: |
           msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
@@ -110,12 +200,30 @@ jobs:
           cargo "+$msrv" check -p zgx-components -p zgx-desktop -p zgx-script --no-default-features --locked
       # Lints too: code only a default feature uses (the component
       # library's) is left out with it, not left unused.
+      - name: 'DISK before: cargo clippy -p zgx-script --no-default-features --all-targe'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo clippy -p zgx-script --no-default-features --all-targe'
       - run: cargo clippy -p zgx-script --no-default-features --all-targets --locked -- -D warnings
       # zgx-script's best-practice lint over every example script.
+      - name: 'DISK before: Script lint'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Script lint'
       - name: Script lint
         run: cargo run -q -p zgx-script --bin zgx --locked -- lint crates/zgx-script/examples crates/zgx-desktop/examples
       # Every example script type checks (luau-lsp, the shipped ui/anime
       # types); zgx-script's check tests run with it too.
+      - name: 'DISK before: Script type check'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Script type check'
       - name: Script type check
         run: |
           dir="$RUNNER_TEMP/luau-lsp-1.70.1"
@@ -126,28 +234,82 @@ jobs:
           LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgx-script --bin zgx --locked -- check crates/zgx-script/examples crates/zgx-desktop/examples
       # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
       # and macOS jobs test without it).
+      - name: 'DISK before: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-wo'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-wo'
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
       # Terminal sessions on real ptys (openpty, ConPTY): exact cells, input, exits.
+      - name: 'DISK before: cargo test -p zgx-terminal --locked'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx-terminal --locked'
       - run: cargo test -p zgx-terminal --locked
       # zgx-script's tests with all its features, as an app built by zgx-run
       # has them (scene3d, i18n, gltf, inspect): ICU's plural rules change
       # what the i18n lint finds, and each feature may add lazy `ui`
       # modules (`lazy_ui::` checks each against what its maker sets).
+      - name: 'DISK before: cargo test -p zgx-script --all-features --locked'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx-script --all-features --locked'
       - run: cargo test -p zgx-script --all-features --locked
       # zgx audit over the Luau examples (zgx-run's own tests need sockets).
+      - name: 'DISK before: cargo test -p zgx-run --test audit --locked'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx-run --test audit --locked'
       - run: cargo test -p zgx-run --test audit --locked
       # Devtools tracing (zgx's `trace`, off by default; zgx-script's
       # `inspect` turns it on): what it keeps stays bounded. Quoted, as the
       # line below is.
+      - name: 'DISK before: cargo test -p zgx --features trace --lib --locked -- trace::'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx --features trace --lib --locked -- trace::'
       - run: "cargo test -p zgx --features trace --lib --locked -- trace::"
       # Words in Chinese, Japanese and Thai with `cjk-thai-words` off:
       # Unicode's word boundaries, as before the dictionaries.
       # Quoted: an unquoted `words:: ` would be read as a YAML key, and the
       # whole workflow would fail to load.
+      - name: 'DISK before: cargo test -p zgx --no-default-features --lib --test editor '
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx --no-default-features --lib --test editor '
       - run: "cargo test -p zgx --no-default-features --lib --test editor --test text --locked -- words:: chinese_japanese_or_thai"
+      - name: 'DISK before: cargo test --workspace --doc --locked'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test --workspace --doc --locked'
       - run: cargo test --workspace --doc --locked
+      - name: 'DISK before: cargo test -p zgx-3d --features gltf --doc --locked'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo test -p zgx-3d --features gltf --doc --locked'
       - run: cargo test -p zgx-3d --features gltf --doc --locked
       # The API docs build without a warning (a broken link, a name collision).
+      - name: 'DISK before: cargo doc --workspace --no-deps --locked'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'cargo doc --workspace --no-deps --locked'
       - run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
@@ -155,18 +317,42 @@ jobs:
       # can crash inside vkSetDebugUtilsObjectNameEXT. Keep debug/validation on.
       # The loader is built from pinned revisions, so it is kept between
       # runs until the script changes.
+      - name: 'DISK before: actions/cache@v4'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'actions/cache@v4'
       - uses: actions/cache@v4
         id: vulkan-loader
         if: ${{ !cancelled() }}
         with:
           path: ~/zgx-vulkan-loader/build/loader
           key: vulkan-loader-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_vulkan_loader.sh') }}
+      - name: 'DISK before: Build private patched Vulkan loader'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Build private patched Vulkan loader'
       - name: Build private patched Vulkan loader
         if: ${{ !cancelled() && steps.vulkan-loader.outputs.cache-hit != 'true' }}
         run: scripts/build_vulkan_loader.sh ~/zgx-vulkan-loader
+      - name: 'DISK before: Use the private Vulkan loader'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Use the private Vulkan loader'
       - name: Use the private Vulkan loader
         if: ${{ !cancelled() }}
         run: printf 'LD_LIBRARY_PATH=%s/zgx-vulkan-loader/build/loader\n' "$HOME" >> "$GITHUB_ENV"
+      - name: 'DISK before: Vulkan rendering and damage readback'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Vulkan rendering and damage readback'
       - name: Vulkan rendering and damage readback
         if: ${{ !cancelled() }}
         env:
@@ -176,6 +362,12 @@ jobs:
           cargo test -p zgx-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgx-vulkan-tests.log"
       # Its pixel tests pass without drawing where there's no GPU: here they
       # must have one (lavapipe).
+      - name: 'DISK before: 3D rendering'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: '3D rendering'
       - name: 3D rendering
         if: ${{ !cancelled() }}
         env:
@@ -184,9 +376,21 @@ jobs:
         run: cargo test -p zgx-3d --features gltf --locked
       # The test binaries built above aren't run again: their room goes to
       # the probes' fixtures, about 13 GB of examples.
+      - name: 'DISK before: Room for the fixtures'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Room for the fixtures'
       - name: Room for the fixtures
         if: ${{ !cancelled() }}
         run: find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete
+      - name: 'DISK before: Build native fixtures'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Build native fixtures'
       - name: Build native fixtures
         id: native-fixtures
         if: ${{ !cancelled() }}
@@ -204,10 +408,22 @@ jobs:
       # owns its display or compositor, so they run side by side, eight at
       # once on four cores (they mostly wait: 150 s at four, 80 at eight);
       # every probe runs and reports even after another fails.
+      - name: 'DISK before: Native Linux probes'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Native Linux probes'
       - name: Native Linux probes
         if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
         timeout-minutes: 15
         run: python3 scripts/linux_smokes.py --jobs 8
+      - name: 'DISK before: Preserve Vulkan and native window evidence'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'Preserve Vulkan and native window evidence'
       - name: Preserve Vulkan and native window evidence
         if: failure()
         continue-on-error: true
@@ -221,7 +437,14 @@ jobs:
   # Exact instruction counts (cachegrind) of the CPU-only headless scenes
   # against the PR's base, as a PR comment; more than +1% fails. On main,
   # against the commit before (no failure), which also keeps its cache.
+      - name: 'DISK before: END'
+        if: ${{ !cancelled() }}
+        run: |
+          echo "DISK $(df -BM --output=avail,used / | tail -1) | target $(du -sm target 2>/dev/null | cut -f1)M exe $(find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s/1048576}')M | $DISK_LABEL"
+        env:
+          DISK_LABEL: 'END'
   perf:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -333,6 +556,7 @@ jobs:
       - name: Gate
         run: exit "$status"
   macos:
+    if: false
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -402,6 +626,7 @@ jobs:
   # Compile everything and run the core unit tests; native Windows probes and
   # the GPU suite run on developer machines.
   windows:
+    if: false
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
