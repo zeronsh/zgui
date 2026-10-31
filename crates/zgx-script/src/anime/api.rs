@@ -780,6 +780,12 @@ fn utils_set(lua: &Lua, (targets_value, props): (mlua::Value, Table)) -> mlua::R
                 !taken
             });
         }
+        if let Target::Element(e) = &track.target
+            && e.hits_at_target()
+        {
+            let goal = track.segs.last().and_then(|seg| seg.to.num());
+            e.anime_goal(&track.key, goal.map(|goal| goal as f32));
+        }
         if let Some(last) = track.segs.last() {
             writes.push((
                 track.target.clone(),
@@ -1337,8 +1343,19 @@ impl Engine {
         }
         for target in targets {
             if let Target::Element(e) = target {
-                for (_, owner) in e.owners.borrow_mut().drain(..) {
-                    owner.track.set(true);
+                let keys: Vec<Key> = e
+                    .owners
+                    .borrow_mut()
+                    .drain(..)
+                    .map(|(key, owner)| {
+                        owner.track.set(true);
+                        key
+                    })
+                    .collect();
+                if e.hits_at_target() {
+                    for key in &keys {
+                        e.anime_goal(key, None);
+                    }
                 }
             }
         }

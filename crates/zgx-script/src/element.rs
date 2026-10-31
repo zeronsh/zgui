@@ -55,6 +55,42 @@ pub(crate) struct Animated {
 /// A node's literal translation and local transform.
 pub(crate) type BaseTransform = (Option<(f32, f32)>, Option<LocalTransform>);
 
+/// `hit = "target"`'s goals for an element (`Element::sync_hit`).
+#[derive(Clone, Default)]
+pub(crate) struct HitGoals {
+    /// Where its style is taking it.
+    style: zgx::scene::HitTarget,
+    /// Where `anime` animations are taking properties, each the last value
+    /// of the track that holds it.
+    anime: Vec<(crate::anime::Key, f32)>,
+}
+thread_local! {
+    /// `hit = "target"`'s goals, by element, for the few that ask
+    /// (`Element::mark_hit`): kept apart, so that no element grows or drops
+    /// anything more for them.
+    static HIT_GOALS: RefCell<Vec<(std::rc::Weak<Element>, HitGoals)>> =
+        const { RefCell::new(Vec::new()) };
+}
+/// Whether any element ever asked: what an animation reads first, all an
+/// app with none pays.
+static ANY_HIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether any element ever asked to hit at its target: what animations
+/// read before looking (`ANY_HIT`).
+#[inline(always)]
+pub(crate) fn any_hit() -> bool {
+    ANY_HIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// `f` on `element`'s goals, if it asked; those of elements gone go.
+fn with_goals<R>(element: &Element, f: impl FnOnce(&mut HitGoals) -> R) -> Option<R> {
+    HIT_GOALS.with(|goals| {
+        let mut goals = goals.borrow_mut();
+        goals.retain(|(held, _)| held.strong_count() > 0);
+        goals
+            .iter_mut()
+            .find(|(held, _)| std::ptr::eq(held.as_ptr(), element))
+            .map(|(_, goals)| f(goals))
+    })
+}
 pub(crate) struct Element {
     handle: OnceCell<NodeHandle>,
     pub id: Option<Rc<str>>,
@@ -399,6 +435,112 @@ impl Element {
     pub(crate) fn leave(&self) {
         if let Some(handle) = self.handle.get() {
             handle.leave();
+        }
+    }
+    /// Whether its node takes hits where it's going (`hit = "target"`).
+    /// One load an app with none pays (`ANY_HIT`); the look-up apart.
+    #[inline(always)]
+    pub(crate) fn hits_at_target(&self) -> bool {
+        ANY_HIT.load(std::sync::atomic::Ordering::Relaxed) && self.asked_hit()
+    }
+    #[cold]
+    #[inline(never)]
+    fn asked_hit(&self) -> bool {
+        with_goals(self, |_| ()).is_some()
+    }
+    /// Its node takes hits where it's going (`hit = "target"`): from now,
+    /// before it mounts and an animation in `on_mount` starts.
+    pub(crate) fn mark_hit(self: &Rc<Self>) {
+        ANY_HIT.store(true, std::sync::atomic::Ordering::Relaxed);
+        if with_goals(self, |_| ()).is_none() {
+            HIT_GOALS.with(|goals| {
+                goals
+                    .borrow_mut()
+                    .push((Rc::downgrade(self), HitGoals::default()))
+            });
+        }
+    }
+    /// Where its style is taking it (`hit = "target"`): with `anime`'s goals
+    /// over it, where it takes hits.
+    pub(crate) fn set_style_hit(&self, style: zgx::scene::HitTarget) {
+        if with_goals(self, |goals| goals.style = style).is_some() {
+            self.sync_hit();
+        }
+    }
+    /// Where an `anime` animation of `key` is taking it, or `None` once it
+    /// lets the property go. Nothing unless its node hits at its target.
+    pub(crate) fn anime_goal(&self, key: &crate::anime::Key, goal: Option<f32>) {
+        let held = with_goals(self, |goals| {
+            goals.anime.retain(|(k, _)| k != key);
+            if let Some(goal) = goal {
+                goals.anime.push((key.clone(), goal));
+            }
+        });
+        if held.is_some() {
+            self.sync_hit();
+        }
+    }
+    /// Its hit target: its style's goals, then `anime`'s over them.
+    fn sync_hit(&self) {
+        use crate::anime::Key;
+        let Some(target) = with_goals(self, |hit| hit.clone()).map(|hit| {
+            let mut target = hit.style;
+            // What `anime` wrote is shown over the style (`shown`): an
+            // animation let go of mid-way left it there.
+            let animated = self.animated.borrow();
+            if let Some((x, y)) = animated.translate {
+                target.translation = zgx::scene::Transform { x, y };
+            }
+            if animated.local.is_some() {
+                target.local = animated.local;
+            }
+            if let Some(opacity) = animated.opacity {
+                target.gone = opacity <= 0.;
+            }
+            drop(animated);
+            let mut local = target.local.unwrap_or_else(|| self.local());
+            let mut turned = false;
+            for (key, v) in &hit.anime {
+                turned |= matches!(
+                    key,
+                    Key::Scale
+                        | Key::ScaleX
+                        | Key::ScaleY
+                        | Key::Rotate
+                        | Key::RotateX
+                        | Key::RotateY
+                        | Key::Perspective
+                        | Key::Skew
+                        | Key::SkewX
+                        | Key::SkewY
+                );
+                match key {
+                    Key::X => target.translation.x = *v,
+                    Key::Y => target.translation.y = *v,
+                    Key::Opacity => target.gone = *v <= 0.,
+                    Key::Scale => local.scale = (*v, *v),
+                    Key::ScaleX => local.scale.0 = *v,
+                    Key::ScaleY => local.scale.1 = *v,
+                    Key::Rotate => local.rotate = *v,
+                    Key::RotateX => local.rotate_x = *v,
+                    Key::RotateY => local.rotate_y = *v,
+                    Key::Perspective => local.perspective = v.max(0.),
+                    Key::Skew => local.skew = (*v, *v),
+                    Key::SkewX => local.skew.0 = *v,
+                    Key::SkewY => local.skew.1 = *v,
+                    // A layout animation's offset: its target is layout's place.
+                    _ => {}
+                }
+            }
+            if turned {
+                target.local = Some(local);
+            }
+            target
+        }) else {
+            return;
+        };
+        if let (Some(scene), Some(node)) = (self.scene(), self.node()) {
+            scene.borrow_mut().set_hit_target(node, Some(target));
         }
     }
     pub fn read<R>(&self, f: impl FnOnce(&Scene, NodeId) -> R) -> Option<R> {

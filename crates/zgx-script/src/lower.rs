@@ -3519,7 +3519,7 @@ fn styled(
     }
     if let Some(layout) = &node.layout {
         if layout.hit {
-            view = hit_at_target(view, node, vm, low);
+            view = hit_at_target(view, node, vm, low, element.clone());
         }
         if node.sizes_layout() {
             view = layout_box(view, layout, vm, low);
@@ -6813,13 +6813,22 @@ const HIT_PROPS: &[Prop] = &[
 /// place layout gave it.
 #[cold]
 #[inline(never)]
-fn hit_at_target(view: View, node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
+fn hit_at_target(
+    view: View,
+    node: &Rc<Node>,
+    vm: &Rc<Vm>,
+    low: &Rc<Lowering>,
+    element: Option<Rc<Element>>,
+) -> View {
     let sources: Vec<(Prop, Source)> = node
         .props
         .iter()
         .filter(|(prop, _)| HIT_PROPS.contains(prop))
         .cloned()
         .collect();
+    if let Some(element) = &element {
+        element.mark_hit();
+    }
     let (vm, runtime) = (vm.clone(), low.runtime.clone());
     view.on_mount(move |handle| {
         let target = handle.clone();
@@ -6856,16 +6865,19 @@ fn hit_at_target(view: View, node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>) -
                         _ => None,
                     })
             });
+            let goal = zgx::scene::HitTarget {
+                translation: zgx::scene::Transform { x, y },
+                local,
+                gone,
+                inset,
+            };
+            // An element's `anime` goals go over its style's (`Element::sync_hit`).
+            if let Some(element) = &element {
+                element.set_style_hit(goal);
+                return;
+            }
             let Some(scene) = target.scene() else { return };
-            scene.borrow_mut().set_hit_target(
-                target.node(),
-                Some(zgx::scene::HitTarget {
-                    translation: zgx::scene::Transform { x, y },
-                    local,
-                    gone,
-                    inset,
-                }),
-            );
+            scene.borrow_mut().set_hit_target(target.node(), Some(goal));
         });
         handle.retain(effect);
     })
