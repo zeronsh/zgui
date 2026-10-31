@@ -1501,3 +1501,82 @@ fn meshes_placed_differently_draw_each_its_own_way() {
     assert!(is_red(colour_at(-1.5)) && is_blue(colour_at(-0.5)));
     assert!(is_blue(colour_at(0.5)) && is_red(colour_at(1.5)));
 }
+
+/// Pixels shadows darken on `shape` alone, lit by a sun going `sun`: none
+/// on a convex shape but acne.
+fn self_shadowed(shape: Geometry, sun: Vec3) -> Option<usize> {
+    let world = World::new();
+    world.add_light(Light::Directional {
+        direction: sun,
+        color: [1., 1., 1.],
+        intensity: 3.,
+    });
+    world.add(Object::mesh(shape, Material::rgb(0xffffff).with(0., 1.)));
+    world.set_camera(Camera::looking_at([0., 0., 3.], [0., 0., 0.]));
+    let mut window = Window::new(&world)?;
+    window.draw();
+    let unshadowed = window.gpu.readback().unwrap();
+    world.set_shadows(true);
+    window.draw();
+    let shadowed = window.gpu.readback().unwrap();
+    let darker = unshadowed.chunks(4).zip(shadowed.chunks(4));
+    Some(
+        darker
+            .filter(|(off, on)| off[0] > 20 && on[0] + 10 < off[0])
+            .count(),
+    )
+}
+
+#[test]
+fn a_coarse_curve_casts_no_shadow_on_itself() {
+    // Its flat faces fall behind its smooth normals where it turns from
+    // the sun: 71 pixels of acne here before.
+    let Some(acne) = self_shadowed(Geometry::sphere(1., 16), vec3(-0.5, -1., -0.4)) else {
+        return;
+    };
+    assert_eq!(acne, 0);
+    let smooth = self_shadowed(Geometry::sphere(1., 48), vec3(-1., 0., -0.2)).unwrap();
+    assert_eq!(smooth, 0);
+}
+
+#[test]
+fn a_shadow_starts_at_the_base_of_what_casts_it_however_low_the_sun() {
+    // A box on a floor, an unlit red to find it by; the floor beside its
+    // base, away from the sun, in shadow from its first pixel.
+    for sun in [vec3(1., -0.5, 0.), vec3(1., -0.18, 0.), vec3(1., -0.09, 0.)] {
+        let world = World::new();
+        world.set_shadows(true);
+        world.add_light(Light::Directional {
+            direction: sun,
+            color: [1., 1., 1.],
+            intensity: 3.,
+        });
+        world.add(Object::mesh(
+            Geometry::plane(8., 8.),
+            Material::rgb(0xffffff).with(0., 1.),
+        ));
+        let mut red = Material::rgb(0xff0000);
+        red.unlit = true;
+        let boxed = world.add(Object::mesh(Geometry::cuboid(0.6, 0.6, 0.6), red));
+        world.set_transform(boxed, Transform::at([-0.6, 0.3, 0.]));
+        world.set_camera(Camera::looking_at([0., 0.25, 3.], [0., 0.2, 0.]));
+        let Some(mut window) = Window::new(&world) else {
+            return;
+        };
+        window.draw();
+        let is_box = |p: [u8; 4]| p[0] > 200 && p[1] < 60;
+        let base = (0..100)
+            .rev()
+            .find(|&y| (0..100).any(|x| is_box(window.pixel(x, y))))
+            .unwrap();
+        let y = base - 1;
+        let edge = (0..100)
+            .rev()
+            .find(|&x| is_box(window.pixel(x, y)))
+            .unwrap();
+        let beside: Vec<u8> = (edge + 1..edge + 6)
+            .map(|x| window.pixel(x, y)[1])
+            .collect();
+        assert!(beside.iter().all(|&g| g < 20), "{sun:?}: {beside:?}");
+    }
+}

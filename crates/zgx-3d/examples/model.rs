@@ -96,10 +96,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Transform::default()
                 },
             );
-            world.add(Object::mesh(
+            // A hair below its base: a model with a floor of its own there
+            // (a backdrop, a stage) would fight it pixel by pixel.
+            let floor = world.add(Object::mesh(
                 Geometry::plane(6., 6.),
                 Material::rgb(0x2a313c).with(0., 0.9),
             ));
+            world.set_transform(floor, Transform::at([0., -0.002, 0.]));
             let lights = placed.lights().len();
             if lights == 0 {
                 world.add_light(Light::Directional {
