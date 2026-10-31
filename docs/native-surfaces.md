@@ -25,7 +25,7 @@ A web view (`zgx::web_view`, `ui.webview`) is the platform's own page, laid out 
 | Clip, rounded corners, opacity, transforms | yes | yes | yes |
 | zgx content over the page | overlay plane | overlay plane | ordinary paint |
 | Glass over the page | blurs the page | tint only | blurs the page |
-| Pixels per frame | none copied | none copied | two CPU copies of the damaged part |
+| Pixels per frame | none copied | none copied | three CPU copies of the damaged part ([below](#what-a-linux-page-frame-costs)) |
 | Keys, reserved shortcuts, fall-through | yes | yes | yes |
 | Input method | AppKit's | the Text Services Framework | the window's (XIM, text-input-v3), through a WebKit input method context of zgx's |
 | `<select>` popups | WebKit's | WebView2's | a zgx menu |
@@ -36,6 +36,35 @@ A web view (`zgx::web_view`, `ui.webview`) is the platform's own page, laid out 
 | Missing engine | — | placeholder | placeholder (the library is opened as the first page shows) |
 
 Linux's choice: Wayland cannot embed another client's surface, an X11 child window can't be faded or rounded smoothly or covered by translucent zgx content, and WPE WebKit isn't packaged on Ubuntu 24.04; drawing offscreen behaves the same on X11 and Wayland. See [the Linux notes](linux.md#web-views).
+
+## What a Linux page frame costs
+
+Each page frame takes three copies of its damaged part on the CPU:
+
+1. WebKit paints its buffer into zgx's cairo image surface (`gtk_widget_draw`, on GTK's thread).
+2. zgx copies the surface's rows into the frame it shares with the UI thread.
+3. The UI thread hands them to wgpu (`write_texture`), which copies them into its staging memory before the GPU's upload.
+
+Measured October 2026 on a WebGL page with full damage, at 1076 × 700 pixels (3.0 MB). The release `web_view` example ran in the zgx-linux container (arm64, 6 cores, no GPU), with WebKit drawing about 37 frames a second:
+
+| Copy | Thread | Per page frame |
+| --- | --- | --- |
+| WebKit's paint into the surface | GTK | 457–832 µs |
+| Into the shared frame | GTK | about 75 µs |
+| `write_texture` | UI | 108–129 µs |
+
+zgx's own copies (2 and 3) come to about 0.2 ms a frame at that size, roughly 0.6% of a core at 30 frames a second. That's a fifth or less of the path's cost. The rest is WebKit's paint, which GTK 3's public API cannot skip. So cutting them was left out:
+
+- Painting into the shared buffer directly needs two buffers. On a partial update, WebKit then repaints the previous frame's damage too, at about six times a copy's cost per pixel.
+- Painting into a mapped wgpu staging buffer would save copy 3 alone, for a ring of buffers passed between the threads.
+
+On a machine with a GPU, WebKit 2.52 renders into dma-bufs, and GTK 3's offscreen window reads them back (on GTK's thread) before copy 2. That readback is what zero-copy would remove, and only a Linux machine with a GPU can measure it; the container and CI's runners have none. The routes, as packaged on Ubuntu 24.04:
+
+- **WebKitGTK 4.1 on GTK 3 (today's):** the offscreen window gives zgx a cairo drawing and nothing else. WebKit's dma-bufs stay inside its private backing store.
+- **WebKitGTK 6.0 on GTK 4.14 (packaged):** WebKit hands GTK its frames as dma-buf textures. Whether GTK 4.14 lets an embedder read a texture's file descriptors still needs checking. GTK 4 has no offscreen window, so pages would need another host.
+- **WPE WebKit:** its `wpe_view_backend_exportable_fdo` API hands an embedder each frame as a dma-buf or EGLImage, the direct route into a wgpu texture. It isn't packaged on Ubuntu 24.04.
+
+Idle stays free: a static page costs no CPU once drawn (0.0% over 20 s). Memory (PSS) on that page: the app 177 MB, WebKit's web process 202 MB, its network process 23 MB.
 
 # Terminals
 
