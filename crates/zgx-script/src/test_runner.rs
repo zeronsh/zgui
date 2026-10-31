@@ -16,7 +16,7 @@ use crate::{
     ScriptHost, Value,
     testing::{FakeDesktop, TestApp},
 };
-use mlua::{Function, Lua, Table, UserData, UserDataMethods};
+use mlua::{AnyUserData, Function, Lua, Table, UserData, UserDataMethods};
 use std::{
     cell::{OnceCell, RefCell},
     path::{Path, PathBuf},
@@ -175,6 +175,8 @@ fn load(lua: &Lua, dir: &Path, file: &Path) -> mlua::Result<Vec<(String, Functio
                 app: Rc::new(RefCell::new(app)),
                 viewport,
                 files: Files::default(),
+                window: None,
+                windows: RefCell::default(),
             })
         })?,
     )?;
@@ -250,6 +252,10 @@ struct Mounted {
     /// The window's size, `ui.window.size` following it.
     viewport: Signal<(f32, f32)>,
     files: Files,
+    /// A window's (`app:window`): its id and the state it is open while.
+    window: Option<(String, Signal<Value>)>,
+    /// The windows `app:window` mounted, by id: the same one while open.
+    windows: RefCell<Vec<(String, AnyUserData)>>,
 }
 
 /// The files a test's dialogs answer with: a directory of the mount's own,
@@ -305,6 +311,15 @@ impl Drop for Files {
 }
 
 impl Mounted {
+    /// Its app, to act on or read; a window's only while it is open.
+    fn app(&self) -> mlua::Result<std::cell::RefMut<'_, TestApp>> {
+        if let Some((id, open)) = &self.window
+            && !open.with_untracked(Value::truthy)
+        {
+            return Err(mlua::Error::runtime(format!("window `{id}` is closed")));
+        }
+        Ok(self.app.borrow_mut())
+    }
     /// The fake desktop `mount` gave it.
     fn desktop(&self) -> Rc<FakeDesktop> {
         let desktop = self.app.borrow().desktop.clone();
@@ -326,21 +341,21 @@ impl Mounted {
 impl UserData for Mounted {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("click", |_, m, target: String| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let (_, bounds) = Self::reach(&mut app, &target)?;
             crate::driver::click_at(&mut app.ui, bounds);
             app.settle();
             Ok(())
         });
         methods.add_method("double_click", |_, m, target: String| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let (_, bounds) = Self::reach(&mut app, &target)?;
             crate::driver::double_click_at(&mut app.ui, bounds);
             app.settle();
             Ok(())
         });
         methods.add_method("type", |_, m, (target, text): (String, String)| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let (_, bounds) = Self::reach(&mut app, &target)?;
             crate::driver::click_at(&mut app.ui, bounds);
             app.ui.dispatch(zgx::input::InputEvent::Text(text));
@@ -350,7 +365,7 @@ impl UserData for Mounted {
         // A field's whole text replaced, as a person selecting it all and
         // typing does (a form's `dirty` and validation follow).
         methods.add_method("fill", |_, m, (target, text): (String, String)| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let (_, bounds) = Self::reach(&mut app, &target)?;
             let (all, modifiers) =
                 crate::driver::parse_keys("cmd+a").map_err(mlua::Error::runtime)?;
@@ -362,14 +377,14 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("hover", |_, m, target: String| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let (_, b) = Self::reach(&mut app, &target)?;
             crate::driver::hover_at(&mut app.ui, crate::driver::middle(b));
             app.settle();
             Ok(())
         });
         methods.add_method("drag", |_, m, (from, to): (String, String)| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             // What it is dragged from must be in reach; where it lands is
             // wherever its box lies (a drop under the preview, a list).
             let (_, from) = Self::reach(&mut app, &from)?;
@@ -380,7 +395,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("key", |_, m, keys: String| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let (key, modifiers) =
                 crate::driver::parse_keys(&keys).map_err(mlua::Error::runtime)?;
             crate::driver::press(&mut app.ui, key, modifiers);
@@ -388,14 +403,14 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("scroll", |_, m, (target, dy): (String, f32)| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let node = Self::node(&mut app, &target)?;
             crate::driver::scroll(&mut app.ui, node, dy);
             app.settle();
             Ok(())
         });
         methods.add_method("command", |_, m, id: String| {
-            let app = m.app.borrow();
+            let app = m.app()?;
             if !app.host.run_command(&id) {
                 return Err(mlua::Error::runtime(format!("no command `{id}`")));
             }
@@ -403,7 +418,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("text", |_, m, target: String| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let node = Self::node(&mut app, &target)?;
             if let Some(editor) = app.ui.editor(node) {
                 return Ok(editor.editor.borrow().text().into_owned());
@@ -414,7 +429,7 @@ impl UserData for Mounted {
         // Where a field's selection is, in bytes from 0, as `string.find`
         // counts them: nil for anything else.
         methods.add_method("selection", |_, m, target: String| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let node = Self::node(&mut app, &target)?;
             Ok(match app.ui.editor(node).map(|editor| editor.selection()) {
                 Some((anchor, focus)) => (Some(anchor), Some(focus)),
@@ -422,14 +437,14 @@ impl UserData for Mounted {
             })
         });
         methods.add_method("has", |_, m, target: String| {
-            let app = m.app.borrow();
+            let app = m.app()?;
             app.ui.prepare_frame();
             let target = crate::driver::parse(&target).map_err(mlua::Error::runtime)?;
             let found = crate::driver::find_all(&app.ui, &app.handle, &target);
             Ok(found.is_ok_and(|found| !found.is_empty()))
         });
         methods.add_method("count", |_, m, target: String| {
-            let app = m.app.borrow();
+            let app = m.app()?;
             app.ui.prepare_frame();
             let target = crate::driver::parse(&target).map_err(mlua::Error::runtime)?;
             let found = crate::driver::find_all(&app.ui, &app.handle, &target);
@@ -437,7 +452,7 @@ impl UserData for Mounted {
         });
         // The window's new size, laid out, as dragging its edge ends.
         methods.add_method("resize", |_, m, (width, height): (f32, f32)| {
-            let app = m.app.borrow();
+            let app = m.app()?;
             app.ui.scene.borrow_mut().resize(width, height);
             m.viewport.set((width, height));
             app.frames(1);
@@ -487,7 +502,7 @@ impl UserData for Mounted {
             Ok(())
         });
         methods.add_method("tree", |_, m, target: Option<String>| {
-            let mut app = m.app.borrow_mut();
+            let mut app = m.app()?;
             let Some(target) = target else {
                 return Ok(app.tree());
             };
@@ -497,7 +512,7 @@ impl UserData for Mounted {
             Ok(crate::driver::tree_text(&lines, hidden))
         });
         methods.add_method("frames", |_, m, n: Option<usize>| {
-            m.app.borrow().frames(n.unwrap_or(1));
+            m.app()?.frames(n.unwrap_or(1));
             Ok(())
         });
         // Until the target shows (holding `text`, if given), or is gone;
@@ -517,7 +532,7 @@ impl UserData for Mounted {
                 let parsed = crate::driver::parse(&target).map_err(mlua::Error::runtime)?;
                 let deadline =
                     Instant::now() + Duration::from_secs_f64(timeout.unwrap_or(5000.) / 1000.);
-                let app = m.app.borrow();
+                let app = m.app()?;
                 loop {
                     app.frame();
                     let found =
@@ -542,7 +557,7 @@ impl UserData for Mounted {
             },
         );
         methods.add_method("state", |_, m, name: String| {
-            let states = m.app.borrow().host.states();
+            let states = m.app()?.host.states();
             let suffix = format!("::{name}");
             let found = states.iter().find(|(n, _)| *n == name).or_else(|| {
                 let mut by_suffix = states.iter().filter(|(n, _)| n.ends_with(&suffix));
@@ -557,13 +572,64 @@ impl UserData for Mounted {
             }
         });
         methods.add_method("set_state", |_, m, (name, value): (String, Value)| {
-            let app = m.app.borrow();
+            let app = m.app()?;
             app.host
                 .set_state(&name, value)
                 .map_err(mlua::Error::runtime)?;
             app.settle();
             Ok(())
         });
-        methods.add_method("error", |_, m, ()| Ok(m.app.borrow().error()));
+        methods.add_method("error", |_, m, ()| Ok(m.app()?.error()));
+        // Another window the app declares (`ui.window`, `ui.windows`), with
+        // these same methods; nil while it is closed.
+        methods.add_method("window", |lua, m, id: String| {
+            let app = m.app()?;
+            let mut windows = m.windows.borrow_mut();
+            windows.retain(|(_, window)| {
+                window.borrow::<Mounted>().is_ok_and(|window| {
+                    window
+                        .window
+                        .as_ref()
+                        .is_some_and(|(_, open)| open.with_untracked(Value::truthy))
+                })
+            });
+            if let Some((_, window)) = windows.iter().find(|(open, _)| *open == id) {
+                return Ok(Some(window.clone()));
+            }
+            let Some((open, size)) = app.host.windows().with_untracked(|list| {
+                list.iter()
+                    .find(|window| window.id == id)
+                    .map(|w| (w.open.clone(), (w.width as f32, w.height as f32)))
+            }) else {
+                return Ok(None);
+            };
+            let Some(window) = app.window(&id) else {
+                return Ok(None);
+            };
+            let viewport = window.ui.runtime.signal(size);
+            let window = lua.create_userdata(Mounted {
+                dir: m.dir.clone(),
+                app: Rc::new(RefCell::new(window)),
+                viewport,
+                files: Files::default(),
+                window: Some((id.clone(), open)),
+                windows: RefCell::default(),
+            })?;
+            windows.push((id, window.clone()));
+            Ok(Some(window))
+        });
+        // The window closed, as a person closing it does.
+        methods.add_method("close", |_, m, ()| {
+            let Some((_, open)) = &m.window else {
+                return Err(mlua::Error::runtime(
+                    "`close` closes a window from `app:window`",
+                ));
+            };
+            if open.with_untracked(Value::truthy) {
+                open.set(Value::Bool(false));
+            }
+            m.app.borrow().settle();
+            Ok(())
+        });
     }
 }

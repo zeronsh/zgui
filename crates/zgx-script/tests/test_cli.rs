@@ -707,3 +707,62 @@ return ui.row {
     assert_eq!(code, Some(0), "{text}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn a_test_acts_in_the_apps_other_windows() {
+    let dir = app(
+        "window",
+        &[(
+            "window.test.luau",
+            r##"
+test("a window opened, acted in and closed", function()
+    local app = mount("windows.luau")
+    expect(app:window("detail")).to_be_nil()
+    app:click("#open")
+    local detail = app:window("detail")
+    expect(detail:text("#title")).to_be("Detail")
+    -- One app: what the window does, the main window shows.
+    detail:click("#add")
+    expect(app:text("#count")).to_be("1")
+    expect(detail:text("#count")).to_be("1")
+    -- The same window while it is open, its content mounted once.
+    expect(app:window("detail")).to_be(detail)
+    detail:close()
+    expect(app:state("detail")).to_be(false)
+    expect(app:window("detail")).to_be_nil()
+    local ok, message = pcall(function() detail:click("#add") end)
+    expect(ok).to_be(false)
+    expect(tostring(message)).to_contain("window `detail` is closed")
+    expect(app:window("nowhere")).to_be_nil()
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("windows.luau"),
+        r##"
+local detail = ui.state("detail", false)
+local count = ui.state("count", 0)
+ui.window {
+    id = "detail",
+    title = "Detail",
+    width = 300,
+    height = 200,
+    open = detail,
+    ui.column {
+        ui.text { id = "title", "Detail" },
+        ui.button { id = "add", "Add", on_click = ui.add(count, 1) },
+        ui.text { id = "count", "{count}" },
+    },
+}
+return ui.column {
+    ui.button { id = "open", "Open", on_click = function() detail:set(true) end },
+    ui.text { id = "count", "{count}" },
+}
+"##,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+    assert!(output.contains("1 passed"), "{output}");
+}

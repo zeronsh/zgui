@@ -68,6 +68,11 @@ declare extern type TestApp with
 	function set_state(self, name: string, value: any): ()
 	-- The script error showing, if any.
 	function error(self): string?
+	-- Another window the app declares (`ui.window`, or one of
+	-- `ui.windows`) by id, with these same methods; nil while it is closed.
+	function window(self, id: string): TestApp?
+	-- A window from `window` closed, as a person closing it does.
+	function close(self): ()
 end
 
 export type Expectation = {
