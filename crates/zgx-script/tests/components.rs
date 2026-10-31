@@ -683,7 +683,10 @@ fn a_torn_off_tab_leaves_its_state_and_tells_where() {
         return ui.column {
             ui.tabs { id = "docs", label = "Docs", w = 300, h = 120, items = docs, value = chosen,
                 reorderable = true,
-                on_tear_off = function(id: string, e) torn:set(`{id} {math.floor(e.grab_x)}`) end,
+                on_tear_off = function(id: string, e)
+                    torn:set(`{id} {math.floor(e.grab_x)}`)
+                    return id ~= "b"
+                end,
                 panel = function(id: string): Node return ui.text { id } end },
             ui.text { id = "left", function() return names(docs:get()) end },
             ui.text { id = "torn", "{torn}" },
@@ -705,6 +708,20 @@ fn a_torn_off_tab_leaves_its_state_and_tells_where() {
     h.frames(2);
     assert_eq!(h.text("left"), "b");
     assert_eq!(h.text("torn"), "a 10");
+    // `false` keeps it: told, it stays.
+    let tab = with_role(&mut h, Role::Tab)[0];
+    let b = h.ui.scene.borrow().bounds(tab);
+    let (x, y) = (b.x + 10., b.y + b.height / 2.);
+    h.ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerMove { x, y: y + 160. });
+    h.ui.input.end_drag_elsewhere(&h.ui.scene, false, true);
+    h.frames(2);
+    assert_eq!(h.text("left"), "b");
+    assert_eq!(h.text("torn"), "b 10");
 }
 
 #[test]

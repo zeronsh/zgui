@@ -1295,8 +1295,13 @@ pub(crate) fn view(
                             at.set("grab_y", event.grab_y)?;
                             Ok(at)
                         });
-                        if let Err(error) = at.and_then(|at| vm.call::<()>(&f, (id, at))) {
-                            vm.report(error);
+                        // `false` keeps the tab: anything else tears it off.
+                        match at.and_then(|at| vm.call::<mlua::Value>(&f, (id, at))) {
+                            Ok(said) => !matches!(said, mlua::Value::Boolean(false)),
+                            Err(error) => {
+                                vm.report(error);
+                                false
+                            }
                         }
                     });
                     told
