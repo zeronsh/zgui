@@ -351,6 +351,79 @@ fn a_plugin_shows_remote_images_only_with_the_fetch_grant() {
     }
 }
 
+#[test]
+fn a_plugin_shows_a_picked_file_and_no_other_outside_its_directory() {
+    // A file its host's grant let it pick is its to show; one it only names
+    // is not.
+    let outside = std::env::temp_dir().join(format!("zgx-picked-{}", std::process::id()));
+    std::fs::create_dir_all(&outside).unwrap();
+    // A red pixel.
+    let png: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2,
+        0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0,
+        3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    std::fs::write(outside.join("picked.png"), png).unwrap();
+    let named = outside.join("picked.png").display().to_string();
+    for (name, image) in [
+        ("picked", "folder:file(\"picked.png\"):await().path"),
+        ("named", &*format!("{named:?}")),
+    ] {
+        let entry = plugin(
+            &format!("viewer-{name}"),
+            &format!(
+                r#"local src = ui.state("src", nil :: string?)
+ui.contribute("bar", ui.column {{
+    ui.button {{ id = "go", w = 20, h = 20, "go", on_click = function()
+        ui.task(function()
+            local folder = ui.open_folder():await()
+            if folder then src:set({image}) end
+        end)
+    end }},
+    ui.show(function() return src:get() ~= nil end,
+        ui.image {{ id = "shown", src = function() return src:get() or "" end, w = 4, h = 4 }}),
+}})"#
+            ),
+        );
+        let mut h = Harness::with_desktop(|runtime| {
+            let host = ScriptHost::inline(runtime, "app", APP);
+            host.set_plugins(vec![Plugin {
+                name: format!("viewer-{name}"),
+                entry,
+                grants: vec![Capability::Folders],
+            }]);
+            host
+        });
+        h.desktop.clone().unwrap().pick_folder(&outside);
+        h.click("go");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while h.find("shown").is_none()
+            && h.host.error().get().is_none()
+            && std::time::Instant::now() < deadline
+        {
+            h.settle();
+            h.frames(1);
+        }
+        h.frames(2);
+        let error = h.host.error().get();
+        match name {
+            "picked" => {
+                assert!(
+                    h.find("shown").is_some(),
+                    "{error:?} {:?} {:?}",
+                    h.texts(),
+                    h.desktop.clone().unwrap().asked().len()
+                );
+                assert_eq!(error, None, "the picked file is its to show");
+            }
+            _ => {
+                let error = error.unwrap_or_default();
+                assert!(error.contains("directory or below"), "{error}");
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_plugin_requires_nothing_outside_its_directory_through_a_link() {

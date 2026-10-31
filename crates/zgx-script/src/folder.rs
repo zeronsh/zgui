@@ -96,6 +96,8 @@ struct Entry {
     folder: bool,
     size: u64,
     modified: f64,
+    /// Where it is, its links followed: what a `File` of it holds.
+    full: PathBuf,
 }
 /// What `folder:list` gives: `limit` entries at most, by path, each folder's
 /// before its contents. A link counts as what it leads to, is left out if
@@ -120,12 +122,14 @@ fn list(root: &Path, path: &str, recursive: bool, limit: usize) -> Result<Vec<En
                 continue;
             };
             let full = entry.path();
-            if link.is_symlink() {
+            let full = if link.is_symlink() {
                 match fs::canonicalize(&full) {
-                    Ok(leads) if leads.starts_with(root) => {}
+                    Ok(leads) if leads.starts_with(root) => leads,
                     _ => continue,
                 }
-            }
+            } else {
+                full
+            };
             let Ok(meta) = fs::metadata(&full) else {
                 continue;
             };
@@ -135,7 +139,7 @@ fn list(root: &Path, path: &str, recursive: bool, limit: usize) -> Result<Vec<En
                 format!("{prefix}/{name}")
             };
             if recursive && meta.is_dir() && !link.is_symlink() {
-                inner.push((full, relative.clone()));
+                inner.push((full.clone(), relative.clone()));
             }
             out.push(Entry {
                 name,
@@ -147,6 +151,7 @@ fn list(root: &Path, path: &str, recursive: bool, limit: usize) -> Result<Vec<En
                     .ok()
                     .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0., |at| at.as_secs_f64() * 1000.),
+                full,
             });
             if out.len() >= limit {
                 return Ok(out);
@@ -232,8 +237,19 @@ fn off_thread<T: Send + 'static>(
     Ok(PromiseUd(promise))
 }
 
-fn entry_value(entry: Entry) -> Value {
+/// An entry as a script reads it; with `picked`, a file's `File` too, which
+/// the script may then read, show and hand on as it does a dialog's.
+fn entry_value(entry: Entry, picked: Option<&crate::io::Picked>) -> Value {
+    let file = match picked {
+        Some(picked) if !entry.folder => {
+            let file = crate::io::file_value(&entry.full);
+            picked.borrow_mut().insert(entry.full);
+            file
+        }
+        _ => Value::Nil,
+    };
     Value::record([
+        ("file", file),
         ("name", Value::Str(entry.name.into())),
         ("path", Value::Str(entry.path.into())),
         (
@@ -250,27 +266,62 @@ impl UserData for FolderUd {
         fields.add_field_method_get("name", |_, folder| Ok(folder.0.name.clone()));
     }
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // `folder:list(path?, { recursive?, limit? })`.
+        // `folder:list(path?, { recursive?, limit?, files? })`.
         methods.add_method(
             "list",
             |lua, folder, (path, options): (Option<String>, Option<Table>)| {
                 let path = path.unwrap_or_default();
-                let (recursive, limit) = match &options {
+                let (recursive, limit, files) = match &options {
                     Some(options) => (
                         options.get::<Option<bool>>("recursive")?.unwrap_or(false),
                         options.get::<Option<usize>>("limit")?,
+                        options.get::<Option<bool>>("files")?.unwrap_or(false),
                     ),
-                    None => (false, None),
+                    None => (false, None, false),
                 };
+                let picked = files
+                    .then(|| crate::node::env(lua).map(|env| env.picked.clone()))
+                    .transpose()?;
                 let root = folder.0.root.clone();
                 off_thread(
                     lua,
                     format!("list {path}"),
                     move || list(&root, &path, recursive, limit.unwrap_or(LIST_LIMIT)),
-                    |entries| Value::List(entries.into_iter().map(entry_value).collect()),
+                    move |entries| {
+                        let picked = picked.as_ref();
+                        Value::List(
+                            entries
+                                .into_iter()
+                                .map(|e| entry_value(e, picked))
+                                .collect(),
+                        )
+                    },
                 )
             },
         );
+        // `folder:file(path)`: a file inside it as a `File`, which `ui.image`,
+        // `ui.read_file` and `drag_export` take as they do a dialog's.
+        methods.add_method("file", |lua, folder, path: String| {
+            let root = folder.0.root.clone();
+            let picked = crate::node::env(lua)?.picked.clone();
+            off_thread(
+                lua,
+                format!("file {path}"),
+                move || {
+                    let full = resolve(&root, &path, false)?;
+                    let meta = fs::metadata(&full).map_err(|error| failed(&path, error))?;
+                    if !meta.is_file() {
+                        return Err(Trouble::Failed(format!("{path}: not a file")));
+                    }
+                    Ok(full)
+                },
+                move |full| {
+                    let file = crate::io::file_value(&full);
+                    picked.borrow_mut().insert(full);
+                    file
+                },
+            )
+        });
         methods.add_method("read", |lua, folder, path: String| {
             let root = folder.0.root.clone();
             off_thread(

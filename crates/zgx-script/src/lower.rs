@@ -3813,6 +3813,14 @@ pub(crate) fn resolve_path(vm: &Vm, path: &str) -> Result<std::path::PathBuf, St
     if !plugin {
         return Ok(resolved);
     }
+    // A file its host's grant let it pick (a dialog's, a folder's).
+    let picked = vm
+        .lua
+        .app_data_ref::<crate::node::Env>()
+        .is_some_and(|env| env.picked.borrow().contains(&resolved));
+    if picked {
+        return Ok(resolved);
+    }
     let root = vm
         .base
         .as_ref()

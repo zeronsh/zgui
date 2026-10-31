@@ -662,13 +662,19 @@ export type FolderEntry = {
 	read kind: "file" | "folder",
 	read size: number,
 	read modified: number,
+	-- With `list`'s `files`, a file's `File`.
+	read file: File?,
 }
 -- A folder the user picked (`ui.open_folder`). Paths are relative to it, with
 -- `/` between their parts; `..`, absolute paths and links leading out of it
 -- are refused (`kind` "denied"), and a handle can be kept in state.
 declare extern type Folder with
 	name: string
-	function list(self, path: string?, options: { recursive: boolean?, limit: number? }?): Promise<{ FolderEntry }>
+	-- With `files`, each file's entry has its `file` too.
+	function list(self, path: string?, options: { recursive: boolean?, limit: number?, files: boolean? }?): Promise<{ FolderEntry }>
+	-- A file inside it as a `File` (an absolute `path`), which `ui.image`,
+	-- `ui.read_file` and `drag_export` take as they do a dialog's.
+	function file(self, path: string): Promise<File>
 	function read(self, path: string): Promise<string>
 	-- The file replaced whole, its folders made.
 	function write(self, path: string, text: string): Promise<nil>
