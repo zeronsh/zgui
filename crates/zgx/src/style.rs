@@ -745,6 +745,8 @@ pub(crate) struct ColdStyles {
     pub(crate) image_rendering: Option<crate::image::ImageRendering>,
     /// `Styled::outline_style`.
     pub(crate) outline_style: Option<crate::decoration::BorderStyle>,
+    /// `Styled::mask_gradient`.
+    pub(crate) mask_gradient: Option<crate::decoration::Gradient>,
     /// `Styled::w_calc` and the like.
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
     /// `Styled::text_balance`.
@@ -944,6 +946,9 @@ impl RareStyles {
             }
             if theirs.outline_style.is_some() {
                 mine.outline_style = theirs.outline_style;
+            }
+            if theirs.mask_gradient.is_some() {
+                mine.mask_gradient = theirs.mask_gradient.clone();
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -2508,6 +2513,18 @@ pub trait Styled: Sized {
     /// shimmer, a progress fill) only composites it again.
     fn mask(mut self, image: std::sync::Arc<crate::image::ImageData>, size: (f32, f32)) -> Self {
         self.styles_mut().rare_mut().mask = Some(Some((image, size)));
+        self
+    }
+    /// Show the view and what it holds through `gradient`'s alpha over its
+    /// box, whatever size it's laid out at (CSS's `mask-image` with a
+    /// gradient; see `Gradient`): a list fading out at its bottom, a
+    /// vignette. In place of `mask`.
+    fn mask_gradient(mut self, gradient: crate::decoration::Gradient) -> Self {
+        self.styles_mut()
+            .rare_mut()
+            .cold
+            .get_or_insert_default()
+            .mask_gradient = Some(gradient);
         self
     }
     /// Mix the view with what lies beneath it by `mode`, as CSS

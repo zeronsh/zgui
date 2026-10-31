@@ -438,6 +438,43 @@ impl Scene {
             .copied()
             .unwrap_or_default()
     }
+    /// Show node `id`'s subtree through `gradient`'s alpha over its box, at
+    /// whatever size it is laid out (CSS's `mask-image` with a gradient),
+    /// in place of an image mask; `None`: no more mask. Its image is made at
+    /// the next flush, and again whenever the box's size changes.
+    pub fn set_mask_gradient(&mut self, id: NodeId, gradient: Option<crate::decoration::Gradient>) {
+        let held = self
+            .cold
+            .as_ref()
+            .and_then(|cold| cold.mask_gradients.get(&id))
+            .map(|(gradient, _)| gradient);
+        if !self.contains(id) || held == gradient.as_ref() {
+            return;
+        }
+        let had = held.is_some();
+        let maps = self.cold.get_or_insert_default();
+        match gradient {
+            // Made at the next flush, at the box's size then.
+            Some(gradient) => {
+                maps.mask_gradients.insert(id, (gradient, (-1., -1.)));
+            }
+            None => {
+                maps.mask_gradients.remove(&id);
+                if had {
+                    self.set_mask(id, None);
+                }
+            }
+        }
+        self.sync_cold(id);
+        self.invalidate(id, PAINTED);
+    }
+    /// Node `id`'s gradient mask (`set_mask_gradient`), if it has one.
+    pub fn mask_gradient(&self, id: NodeId) -> Option<&crate::decoration::Gradient> {
+        self.cold
+            .as_ref()
+            .and_then(|cold| cold.mask_gradients.get(&id))
+            .map(|(gradient, _)| gradient)
+    }
     /// Whether any node has text shadows.
     #[inline(always)]
     pub fn has_text_shadows(&self) -> bool {

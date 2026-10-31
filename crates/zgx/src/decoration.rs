@@ -211,6 +211,116 @@ impl From<[crate::canvas::GradientStop; 3]> for RadialStops {
         }
     }
 }
+impl RadialStops {
+    /// Its stops, from the centre out.
+    pub(crate) fn stops(&self) -> impl Iterator<Item = crate::canvas::GradientStop> {
+        [Some(self.first), self.middle, Some(self.last)]
+            .into_iter()
+            .flatten()
+    }
+}
+/// A linear or radial gradient over a node's box, at whatever size it is
+/// laid out. As a mask (`Scene::set_mask_gradient`, CSS's `mask-image`
+/// with a gradient) its alpha shows the subtree: where it's opaque the
+/// subtree shows, where it's transparent it doesn't, its colours aside.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Gradient {
+    /// Along `angle` (radians clockwise from left to right), its ends
+    /// spanning the box, as `Background::Linear` (CSS's `linear-gradient`).
+    Linear {
+        /// The direction, in radians clockwise from left to right.
+        angle: f32,
+        /// The alphas along it, in offset order.
+        stops: Arc<[crate::canvas::GradientStop]>,
+    },
+    /// An ellipse the box's shape about `center` (fractions of the box),
+    /// `radius` 1 reaching its farthest corner, as `Styled::bg_radial`
+    /// (CSS's `radial-gradient`): a vignette.
+    Radial {
+        /// Its middle, in fractions of the box.
+        center: (f32, f32),
+        /// How far it reaches: 1, the farthest corner.
+        radius: f32,
+        /// The alphas from the middle out.
+        stops: RadialStops,
+    },
+}
+impl Gradient {
+    /// Its alpha over a `width` by `height` box, one texel a point (at most
+    /// `MASK_TEXELS` a side, each then covering more), sampled at each
+    /// texel's middle: a mask image (`ImageMask`) of the box.
+    pub(crate) fn image(&self, width: f32, height: f32) -> Option<crate::image::ImageData> {
+        if !(width.is_finite() && height.is_finite()) || width <= 0. || height <= 0. {
+            return None;
+        }
+        let (columns, rows) = (
+            (width.ceil() as u32).clamp(1, MASK_TEXELS),
+            (height.ceil() as u32).clamp(1, MASK_TEXELS),
+        );
+        let stops: Vec<crate::canvas::GradientStop> = match self {
+            Self::Linear { stops, .. } => stops.to_vec(),
+            Self::Radial { stops, .. } => stops.stops().collect(),
+        };
+        let alpha = |t: f32| -> u8 {
+            let t = if t.is_finite() { t.clamp(0., 1.) } else { 0. };
+            let at = stops.iter().position(|stop| stop.offset >= t);
+            let a = match at {
+                None => stops.last().map_or(255., |stop| f32::from(stop.color.3)),
+                Some(0) => f32::from(stops[0].color.3),
+                Some(i) => {
+                    let (before, after) = (stops[i - 1], stops[i]);
+                    let span = after.offset - before.offset;
+                    let f = if span > 0. {
+                        (t - before.offset) / span
+                    } else {
+                        1.
+                    };
+                    f32::from(before.color.3)
+                        + (f32::from(after.color.3) - f32::from(before.color.3)) * f
+                }
+            };
+            a.round().clamp(0., 255.) as u8
+        };
+        let t: Box<dyn Fn(f32, f32) -> f32> = match *self {
+            Self::Linear { angle, .. } => {
+                let (sin, cos) = angle.sin_cos();
+                let half = (width * cos.abs() + height * sin.abs()) * 0.5;
+                Box::new(move |x, y| {
+                    let along = (x - width * 0.5) * cos + (y - height * 0.5) * sin;
+                    if half > 0. {
+                        along / (2. * half) + 0.5
+                    } else {
+                        0.
+                    }
+                })
+            }
+            Self::Radial { center, radius, .. } => {
+                // The farthest corner, in fractions of the box.
+                let far = [(0., 0.), (1., 0.), (0., 1.), (1., 1.)]
+                    .into_iter()
+                    .map(|(x, y): (f32, f32)| (x - center.0).hypot(y - center.1))
+                    .fold(0f32, f32::max);
+                let reach = radius * far;
+                Box::new(move |x, y| {
+                    let d = (x / width - center.0).hypot(y / height - center.1);
+                    if reach > 0. { d / reach } else { 1. }
+                })
+            }
+        };
+        let mut pixels = Vec::with_capacity((columns * rows * 4) as usize);
+        for row in 0..rows {
+            let y = (row as f32 + 0.5) * height / rows as f32;
+            for column in 0..columns {
+                let x = (column as f32 + 0.5) * width / columns as f32;
+                pixels.extend([255, 255, 255, alpha(t(x, y))]);
+            }
+        }
+        crate::image::ImageData::new(columns, rows, pixels).ok()
+    }
+}
+/// The most texels a gradient mask's image has a side (`Gradient::image`).
+const MASK_TEXELS: u32 = 512;
 /// `Styled::bg_radial`'s uniforms: `center` in fractions of the box, `radius`
 /// 1 for CSS's default.
 pub fn radial_uniforms(center: (f32, f32), radius: f32, stops: RadialStops) -> ShaderUniforms {
