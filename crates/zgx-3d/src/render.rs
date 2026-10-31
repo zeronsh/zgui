@@ -668,39 +668,7 @@ impl Viewport for Renderer {
                 {
                     continue;
                 }
-                let variant = Variant {
-                    textured: masked,
-                    skinned,
-                    morphing,
-                    masked,
-                    placed,
-                    ..Variant::default()
-                };
-                let source = shader_source(variant);
-                let shader = frame
-                    .device
-                    .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some("3D skinned, morphing or cut-out shadows"),
-                        source: wgpu::ShaderSource::Wgsl(compact(source).into()),
-                    });
-                let group1 = match &gpu.placed_layout {
-                    Some(layout) if placed => layout,
-                    _ if masked => &gpu.texture_layout,
-                    _ => &gpu.empty_layout,
-                };
-                let layouts = [
-                    Some(&gpu.shadow_layout),
-                    Some(group1),
-                    Some(&gpu.palette_layout),
-                    Some(&gpu.morph_layout),
-                ];
-                let count = match (skinned, morphing) {
-                    (_, true) => 4,
-                    (true, false) => 3,
-                    (false, false) => 2,
-                };
-                let pipeline = shadow_pipeline(frame.device, &shader, &layouts[..count], variant);
-                gpu.shadow_variants.insert(key, pipeline);
+                make_shadow_pipeline(gpu, frame.device, run.variant);
             }
         }
         if casting.is_some()
@@ -780,42 +748,7 @@ impl Viewport for Renderer {
             if variant == Variant::default() || gpu.variants.contains_key(&variant) {
                 continue;
             }
-            let shader = frame
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("3D mesh variant"),
-                    source: wgpu::ShaderSource::Wgsl(
-                        compact(antialiased(shader_source(variant), gpu.samples)).into(),
-                    ),
-                });
-            let group0 = match &gpu.environment_layout {
-                Some((layout, _)) if variant.lit => layout,
-                _ => &gpu.layout,
-            };
-            let group1 = match &gpu.placed_layout {
-                Some(layout) if variant.placed => layout,
-                _ if variant.textured => &gpu.texture_layout,
-                _ => &gpu.empty_layout,
-            };
-            let layouts = [
-                Some(group0),
-                Some(group1),
-                Some(&gpu.palette_layout),
-                Some(&gpu.morph_layout),
-            ];
-            let count = match (variant.skinned, variant.morphing) {
-                (_, true) => 4,
-                (true, false) => 3,
-                (false, false) => 2,
-            };
-            let pipelines = main_pipelines(
-                frame.device,
-                (gpu.format, gpu.samples),
-                &shader,
-                &layouts[..count],
-                variant,
-            );
-            gpu.variants.insert(variant, pipelines);
+            make_main_pipelines(gpu, frame.device, variant);
         }
         let (_, colour, depth_view) = gpu.targets.as_ref().unwrap();
         let clear = world
@@ -870,6 +803,9 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, frame_bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
+        // Each run sets only what differs from the run before: wgpu records
+        // and checks every call, the same pipeline or buffer again too.
+        let mut bound = Bound::default();
         for run in runs.iter() {
             let buffers = &gpu.geometries[&run.geometry];
             let maps = gpu.bindings.get(&run.maps).map(|(binding, _)| binding);
@@ -881,33 +817,33 @@ impl Viewport for Renderer {
                 .filter(|_| run.variant.skinned || run.variant.morphing);
             match gpu.variants.get(&run.variant) {
                 Some(pipelines) => {
-                    pass.set_pipeline(&pipelines[usize::from(run.glass)]);
-                    pass.set_bind_group(1, maps.unwrap_or(&gpu.empty_bind), &[]);
+                    bound.pipeline(&mut pass, &pipelines[usize::from(run.glass)]);
+                    bound.group(&mut pass, 1, maps.unwrap_or(&gpu.empty_bind));
                     if let Some((_, _, palette)) = palette {
-                        pass.set_bind_group(2, palette, &[]);
+                        bound.group(&mut pass, 2, palette);
                     }
                     if let Some(skin) = skin {
-                        pass.set_vertex_buffer(2, skin.slice(..));
+                        bound.vertices(&mut pass, 2, skin);
                     }
                     if let Some(uvs) = buffers.second_uvs.as_ref().filter(|_| run.variant.placed) {
                         let slot = 2 + u32::from(run.variant.skinned);
-                        pass.set_vertex_buffer(slot, uvs.slice(..));
+                        bound.vertices(&mut pass, slot, uvs);
                     }
                     if let Some(colors) = buffers.colors.as_ref().filter(|_| run.variant.colored) {
                         let Variant {
                             skinned, placed, ..
                         } = run.variant;
                         let slot = 2 + u32::from(skinned) + u32::from(placed);
-                        pass.set_vertex_buffer(slot, colors.slice(..));
+                        bound.vertices(&mut pass, slot, colors);
                     }
                     if let Some(morphs) = morphs {
-                        pass.set_bind_group(3, morphs, &[]);
+                        bound.group(&mut pass, 3, morphs);
                     }
                 }
-                None => pass.set_pipeline(&gpu.plain[usize::from(run.glass)]),
+                None => bound.pipeline(&mut pass, &gpu.plain[usize::from(run.glass)]),
             }
-            pass.set_vertex_buffer(0, buffers.vertices.slice(..));
-            pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
+            bound.vertices(&mut pass, 0, &buffers.vertices);
+            bound.indices(&mut pass, &buffers.indices);
             pass.draw_indexed(0..buffers.count, 0, run.instances.clone());
         }
         drop(pass);
@@ -978,6 +914,124 @@ fn morph_block(d: &crate::world::Drawn, palette: &mut Vec<[[f32; 4]; 4]>) {
     }
 }
 
+/// A skinned, morphing or cut-out shadow's pipeline for `variant`'s meshes.
+/// Made once, rarely: out of the frame's code.
+#[cold]
+#[inline(never)]
+fn make_shadow_pipeline(gpu: &mut Gpu, device: &wgpu::Device, variant: Variant) {
+    let Variant {
+        skinned,
+        morphing,
+        masked,
+        placed,
+        ..
+    } = variant;
+    let placed = masked && placed;
+    let key = (skinned, morphing, masked, placed);
+    let variant = Variant {
+        textured: masked,
+        skinned,
+        morphing,
+        masked,
+        placed,
+        ..Variant::default()
+    };
+    let source = shader_source(variant);
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("3D skinned, morphing or cut-out shadows"),
+        source: wgpu::ShaderSource::Wgsl(compact(source).into()),
+    });
+    let group1 = match &gpu.placed_layout {
+        Some(layout) if placed => layout,
+        _ if masked => &gpu.texture_layout,
+        _ => &gpu.empty_layout,
+    };
+    let layouts = [
+        Some(&gpu.shadow_layout),
+        Some(group1),
+        Some(&gpu.palette_layout),
+        Some(&gpu.morph_layout),
+    ];
+    let count = match (skinned, morphing) {
+        (_, true) => 4,
+        (true, false) => 3,
+        (false, false) => 2,
+    };
+    let pipeline = shadow_pipeline(device, &shader, &layouts[..count], variant);
+    gpu.shadow_variants.insert(key, pipeline);
+}
+/// `variant`'s pipelines, opaque and translucent. Made once, rarely: out
+/// of the frame's code.
+#[cold]
+#[inline(never)]
+fn make_main_pipelines(gpu: &mut Gpu, device: &wgpu::Device, variant: Variant) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("3D mesh variant"),
+        source: wgpu::ShaderSource::Wgsl(
+            compact(antialiased(shader_source(variant), gpu.samples)).into(),
+        ),
+    });
+    let group0 = match &gpu.environment_layout {
+        Some((layout, _)) if variant.lit => layout,
+        _ => &gpu.layout,
+    };
+    let group1 = match &gpu.placed_layout {
+        Some(layout) if variant.placed => layout,
+        _ if variant.textured => &gpu.texture_layout,
+        _ => &gpu.empty_layout,
+    };
+    let layouts = [
+        Some(group0),
+        Some(group1),
+        Some(&gpu.palette_layout),
+        Some(&gpu.morph_layout),
+    ];
+    let count = match (variant.skinned, variant.morphing) {
+        (_, true) => 4,
+        (true, false) => 3,
+        (false, false) => 2,
+    };
+    let pipelines = main_pipelines(
+        device,
+        (gpu.format, gpu.samples),
+        &shader,
+        &layouts[..count],
+        variant,
+    );
+    gpu.variants.insert(variant, pipelines);
+}
+/// What a pass has bound, by address, so a run sets only what differs from
+/// the run before (setting the same again changes nothing but costs wgpu a
+/// recorded and checked command).
+#[derive(Default)]
+struct Bound {
+    pipeline: Option<*const wgpu::RenderPipeline>,
+    groups: [Option<*const wgpu::BindGroup>; 4],
+    vertices: [Option<*const wgpu::Buffer>; 6],
+    indices: Option<*const wgpu::Buffer>,
+}
+impl Bound {
+    fn pipeline(&mut self, pass: &mut wgpu::RenderPass<'_>, pipeline: &wgpu::RenderPipeline) {
+        if self.pipeline.replace(pipeline) != Some(pipeline as *const _) {
+            pass.set_pipeline(pipeline);
+        }
+    }
+    fn group(&mut self, pass: &mut wgpu::RenderPass<'_>, index: u32, group: &wgpu::BindGroup) {
+        if self.groups[index as usize].replace(group) != Some(group as *const _) {
+            pass.set_bind_group(index, group, &[]);
+        }
+    }
+    fn vertices(&mut self, pass: &mut wgpu::RenderPass<'_>, slot: u32, buffer: &wgpu::Buffer) {
+        if self.vertices[slot as usize].replace(buffer) != Some(buffer as *const _) {
+            pass.set_vertex_buffer(slot, buffer.slice(..));
+        }
+    }
+    fn indices(&mut self, pass: &mut wgpu::RenderPass<'_>, buffer: &wgpu::Buffer) {
+        if self.indices.replace(buffer) != Some(buffer as *const _) {
+            pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+        }
+    }
+}
 /// Whether any of `d`'s maps reads other than its first coordinates as they
 /// are: those need the placed pipelines, a wrap alone only a sampler.
 fn placed(d: &crate::world::Drawn) -> bool {
