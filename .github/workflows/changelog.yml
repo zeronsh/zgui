@@ -1,0 +1,31 @@
+name: Changelog
+# An unreleased entry is a file of its own in changelog.d/ (scripts/changelog.py):
+# edits to CHANGELOG.md's Unreleased section conflicted pull request against pull
+# request. This fails one that makes such an edit (a release, which turns
+# Unreleased into a version's section, passes), and any malformed entry. A pull
+# request correcting an entry already there takes the changelog-edit label.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - "CHANGELOG.md"
+      - "changelog.d/**"
+      - "scripts/changelog.py"
+      - ".github/workflows/changelog.yml"
+permissions:
+  contents: read
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The pull request's own commits, against where they branched: main's
+      # newest commit would count other pull requests' edits as this one's.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'changelog-edit') }}
+        run: python3 scripts/changelog.py check --base "$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+      - if: ${{ contains(github.event.pull_request.labels.*.name, 'changelog-edit') }}
+        run: python3 scripts/changelog.py check
