@@ -12,7 +12,7 @@ zgx 0.1.6 is on crates.io (2026-10-29, tag `v0.1.6`; 0.1.0, the first, on 2026-1
 
 ## What is published
 
-zgx's crates: `zgx`, `zgx-components`, `zgx-gpu`, `zgx-3d`, `zgx-desktop`, `zgx-script`, `zgx-run` and `zgx-ghostty-sys` (its declarations only; its `link` feature builds Ghostty from a pinned source with Zig). Not published (`publish = false`): `zgx-demo` and `zgx-workload`, the benchmarks in `comparisons/`.
+zgx's crates: `zgx`, `zgx-components`, `zgx-gpu`, `zgx-3d`, `zgx-desktop`, `zgx-script`, `zgx-run`, `zgx-terminal` and `zgx-ghostty-sys` (its declarations only; its `link` feature builds Ghostty from a pinned source with Zig). Not published (`publish = false`): `zgx-demo` and `zgx-workload`, the benchmarks in `comparisons/`.
 
 And four forks, as zgx's own crates, published first:
 
@@ -75,7 +75,7 @@ Not automated, on purpose: publishing needs a crates.io token, and is done by ha
 1. The forks that changed since they were last published, their versions bumped, `zgx-harfrust` before `zgx-cosmic-text` (which depends on it): `cargo publish --manifest-path vendor/harfrust/Cargo.toml`, `vendor/cosmic-text`, `vendor/taffy`, `vendor/mlua --features luau`.
 2. The workspace: `cargo publish --workspace --locked` (it orders the crates itself).
 
-`cargo publish --workspace` can stop part way with cargo's own error "no packages ready to publish but … remain in plan … awaiting confirmation" (cargo 1.96, at 0.1.0 and again at 0.1.2, each time after `zgx-gpu`; 0.1.1 went through): what it uploaded is published (check crates.io), and the rest publish one at a time in dependency order, each once the one before is in the index (`curl https://index.crates.io/zg/x-/zgx-gpu`): `cargo publish -p zgx-script --locked`, then `zgx-desktop`, then `zgx-run`.
+`cargo publish --workspace` can stop part way with cargo's own error "no packages ready to publish but … remain in plan … awaiting confirmation" (cargo 1.96, at 0.1.0 and again at 0.1.2, each time after `zgx-gpu`; 0.1.1 went through): what it uploaded is published (check crates.io), and the rest publish one at a time in dependency order, each once the one before is in the index (`curl https://index.crates.io/zg/x-/zgx-gpu`): `cargo publish -p zgx-script --locked`, then `zgx-terminal` (before the desktop host, which depends on it), then `zgx-desktop`, then `zgx-run`.
 
 crates.io's index can stop taking new versions for everyone while uploads still succeed (2026-10-26, about four hours from 04:46 UTC; its status page said operational): the API lists the version, the index (`https://index.crates.io/zg/x-/<crate>?cb=<anything>`, past its cache) answers 404, and nothing depending on it publishes. Check that other crates' newest versions are missing too before blaming ours; a version bump doesn't help (zgx-harfrust 0.5.2 and 0.5.3 both waited). Wait, and go on once it answers.
 

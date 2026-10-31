@@ -688,8 +688,10 @@ runtime:
   does not dismiss its native dialog. A pending native dialog can retain its
   parent until dismissed. Backend failures can appear as cancellation.
 - Rendered application menus are supported; native Win32 menu bars are not.
-- Ghostty terminals and `NativeContent::Platform` views are macOS only; web
-  views need the `webview2` feature (see Web views).
+- Terminals are drawn by zgx with the `terminal` feature (ConPTY; see
+  [native surfaces](native-surfaces.md#terminals)); Ghostty terminals and
+  `NativeContent::Platform` views are macOS only; web views need the
+  `webview2` feature (see Web views).
 - The Linux benchmark sampler and the X11/Wayland smoke scripts do not run on
   Windows; Windows has its own (below).
 

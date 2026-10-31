@@ -184,7 +184,8 @@ jobs:
         # already compiled every one, as a test).
         run: |
           fixtures=$(python3 scripts/linux_smokes.py --fixtures)
-          cargo build -p zgx-desktop $fixtures --locked
+          # `terminal` for terminal_pane, the engine-drawn terminal's probe.
+          cargo build -p zgx-desktop --features terminal $fixtures --locked
           # Web views: the webkitgtk feature's probes (`web-view*`).
           cargo build -p zgx-desktop --example web_view_probe --example web_view_schemes --features webkitgtk --locked
           cargo build -p zgx-run --locked

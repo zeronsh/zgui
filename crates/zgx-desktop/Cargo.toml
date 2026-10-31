@@ -32,6 +32,10 @@ private-api = []
 # Terminals (`zgx::terminal`) as Ghostty surfaces: builds Ghostty with Zig
 # 0.16 (see crates/zgx-ghostty-sys). macOS only for now.
 ghostty = ["dep:zgx-ghostty-sys", "zgx-ghostty-sys/link", "dep:libc"]
+# Terminals (`zgx::terminal`) drawn by zgx on every platform: a pseudoterminal
+# (openpty, ConPTY) and its screen (zgx-terminal, alacritty_terminal). With
+# `ghostty` on macOS too, Ghostty draws them there.
+terminal = ["dep:zgx-terminal"]
 # The terminal example's interface compiled into it (build.rs), as it ships.
 terminal-bundle = ["dep:zgx-script"]
 # Web views (`zgx::web_view`) on Windows as WebView2 pages, in a
@@ -52,6 +56,7 @@ mimalloc = ["dep:mimalloc"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.6", default-features = false }
+zgx-terminal = { path = "../zgx-terminal", version = "0.1.6", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false }
 winit = "0.30.13"
@@ -133,6 +138,10 @@ required-features = ["ghostty"]
 [[example]]
 name = "web_view_probe"
 required-features = ["webkitgtk"]
+
+[[example]]
+name = "terminal_pane"
+required-features = ["terminal"]
 
 [build-dependencies]
 # `terminal-bundle`: compiles the terminal example's scripts (build.rs).
