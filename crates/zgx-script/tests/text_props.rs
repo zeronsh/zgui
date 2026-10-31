@@ -226,3 +226,45 @@ fn a_restyled_span_keeps_a_selection_across_it() {
     assert_eq!(h.ui.selected_text(), selected, "kept across the restyle");
     assert_eq!(h.error(), None);
 }
+
+/// `wrap = "balance"` balances a text's lines; a state switches it.
+#[test]
+fn wrap_balance_narrows_the_lines_and_follows_state() {
+    use zgx::scene::NodeKind;
+    let mut h = Harness::inline(
+        r##"local mode = ui.state("mode", "balance")
+        return ui.column {
+            w = 600,
+            ui.text {
+                "Balance this heading so that its words wrap more nicely",
+                id = "t",
+                w = 300,
+                text_size = 16,
+                wrap = mode,
+            },
+        }"##,
+    );
+    h.frames(1);
+    assert_eq!(h.error(), None);
+    let node = h.find("t").unwrap();
+    let text = {
+        let scene = h.ui.scene.borrow();
+        if matches!(scene.kind(node), NodeKind::Text { .. }) {
+            node
+        } else {
+            scene.children(node)[0]
+        }
+    };
+    let wrap = |h: &mut Harness| h.ui.scene.borrow().text_wrap(text, 300.).0;
+    assert!(wrap(&mut h) < 300.);
+    h.host
+        .set_state("mode", zgx_script::Value::Bool(true))
+        .unwrap();
+    h.frames(1);
+    assert_eq!(wrap(&mut h), 300., "plain wrapping");
+    h.host
+        .set_state("mode", zgx_script::Value::Str("balance".into()))
+        .unwrap();
+    h.frames(1);
+    assert!(wrap(&mut h) < 300., "balanced again");
+}

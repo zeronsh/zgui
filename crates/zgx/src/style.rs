@@ -737,6 +737,8 @@ pub(crate) struct ColdStyles {
     pub(crate) object_position: Option<(f32, f32)>,
     /// `Styled::w_calc` and the like.
     pub(crate) size_calcs: Option<std::sync::Arc<crate::size_calc::SizeCalcs>>,
+    /// `Styled::text_balance`.
+    pub(crate) text_balance: Option<bool>,
 }
 /// How an image sits in its box: `Styled::object_fit` and `object_position`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -912,6 +914,9 @@ impl RareStyles {
             }
             if theirs.object_position.is_some() {
                 mine.object_position = theirs.object_position;
+            }
+            if theirs.text_balance.is_some() {
+                mine.text_balance = theirs.text_balance;
             }
             if theirs.z.is_some() {
                 mine.z = theirs.z;
@@ -2489,6 +2494,17 @@ pub trait Styled: Sized {
     /// Inherited.
     fn text_wrap(mut self, value: bool) -> Self {
         self.styles_mut().fields_mut(bit::TEXT_WRAP).text_wrap = Some(value);
+        self
+    }
+    /// Wrap text with its lines balanced (CSS's `text-wrap: balance`): at
+    /// the narrowest width that keeps as many lines, so a heading's last line
+    /// isn't left short. For up to six lines; its box is as it was.
+    fn text_balance(mut self, balance: bool) -> Self {
+        if balance {
+            self.styles_mut().fields_mut(bit::TEXT_WRAP).text_wrap = Some(true);
+        }
+        let cold = self.styles_mut().rare_mut().cold.get_or_insert_default();
+        cold.text_balance = Some(balance);
         self
     }
     /// `w(width).h(height)`.

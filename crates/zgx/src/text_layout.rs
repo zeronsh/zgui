@@ -293,6 +293,73 @@ pub struct TextPosition {
 pub fn empty_line_width(line_height: f32) -> f32 {
     line_height * 0.25
 }
+/// A layout drawn `dx` to the right of its own origin: balanced text that is
+/// centred or right-aligned in its box (`Scene::text_wrap`).
+pub(crate) struct Inset {
+    inner: Box<dyn TextLayout>,
+    dx: f32,
+}
+impl Inset {
+    /// `layout`, moved `dx` right; itself if not moved.
+    pub(crate) fn around(layout: Box<dyn TextLayout>, dx: f32) -> Box<dyn TextLayout> {
+        if dx == 0. {
+            layout
+        } else {
+            Box::new(Self { inner: layout, dx })
+        }
+    }
+    fn moved(&self, rect: Rect) -> Rect {
+        Rect::new(rect.x + self.dx, rect.y, rect.width, rect.height)
+    }
+}
+impl TextLayout for Inset {
+    fn cache_weight(&self) -> Option<usize> {
+        self.inner.cache_weight()
+    }
+    fn size(&self) -> (f32, f32) {
+        let (width, height) = self.inner.size();
+        (width + self.dx, height)
+    }
+    fn hit_test(&self, x: f32, y: f32) -> usize {
+        self.inner.hit_test(x - self.dx, y)
+    }
+    fn caret(&self, byte_offset: usize) -> Rect {
+        self.moved(self.inner.caret(byte_offset))
+    }
+    fn selection(&self, range: Range<usize>) -> Vec<Rect> {
+        let rects = self.inner.selection(range);
+        rects.into_iter().map(|rect| self.moved(rect)).collect()
+    }
+    fn selection_within(&self, range: Range<usize>, top: f32, bottom: f32) -> Vec<Rect> {
+        let rects = self.inner.selection_within(range, top, bottom);
+        rects.into_iter().map(|rect| self.moved(rect)).collect()
+    }
+    fn hit_position(&self, x: f32, y: f32) -> TextPosition {
+        self.inner.hit_position(x - self.dx, y)
+    }
+    fn caret_position(&self, position: TextPosition) -> Rect {
+        self.moved(self.inner.caret_position(position))
+    }
+    fn line_carets(&self, text: &str) -> Option<Vec<LineCarets>> {
+        let mut lines = self.inner.line_carets(text)?;
+        for line in &mut lines {
+            for x in &mut line.carets {
+                *x += self.dx;
+            }
+        }
+        Some(lines)
+    }
+    fn carets_x(&self, offsets: &[usize]) -> Vec<f32> {
+        let xs = self.inner.carets_x(offsets);
+        xs.into_iter().map(|x| x + self.dx).collect()
+    }
+    fn visual_line_range(&self, position: TextPosition) -> (TextPosition, TextPosition) {
+        self.inner.visual_line_range(position)
+    }
+    fn visual_line_edge(&self, position: TextPosition, end: bool) -> TextPosition {
+        self.inner.visual_line_edge(position, end)
+    }
+}
 /// A visual line's carets (`TextLayout::line_carets`), in the layout's
 /// coordinates.
 #[derive(Clone, Debug, PartialEq)]

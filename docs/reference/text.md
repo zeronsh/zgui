@@ -40,7 +40,7 @@ Any [property](properties.md); these are the text ones (they also set the defaul
 | `italic` | `boolean` | `false` | |
 | `font` | `string` | the host's | `"mono"` (or `"monospace"`), `"sans"`, `"serif"`, or a family name |
 | `align` | `"start" \| "left" \| "center" \| "right"` | `"start"` | within the text's own box |
-| `wrap` | `boolean` | `false` | wrap at the box's width |
+| `wrap` | `boolean \| "balance"` | `false` | wrap at the box's width; `"balance"` balances the lines, as CSS's `text-wrap: balance` (see [properties](properties.md)) |
 | `lines` | `number` | none | at most this many lines |
 | `truncate` | `boolean` | `false` | end an overflowing line with "…" |
 | `line_height` | `number` | the font's | points |

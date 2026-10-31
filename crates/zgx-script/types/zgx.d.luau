@@ -1659,7 +1659,7 @@ export type Styles = {
 	italic: boolean?,
 	align: TextAlign?,
 	font: Font?,
-	wrap: boolean?,
+	wrap: (boolean | "balance")?,
 	truncate: boolean?,
 	lines: number?,
 	line_height: Num?,
@@ -1821,7 +1821,7 @@ export type StyleProps = {
 	italic: Reactive<boolean>?,
 	align: Reactive<TextAlign>?,
 	font: Reactive<Font>?,
-	wrap: Reactive<boolean>?,
+	wrap: Reactive<boolean | "balance">?,
 	truncate: Reactive<boolean>?,
 	lines: Reactive<number>?,
 	line_height: Reactive<Num>?,
@@ -2549,7 +2549,7 @@ export type Props_bold = Reactive<boolean>?
 export type Props_italic = Reactive<boolean>?
 export type Props_align = Reactive<TextAlign>?
 export type Props_font = Reactive<Font>?
-export type Props_wrap = Reactive<boolean>?
+export type Props_wrap = Reactive<boolean | "balance">?
 export type Props_truncate = Reactive<boolean>?
 export type Props_lines = Reactive<number>?
 export type Props_line_height = Reactive<Num>?
