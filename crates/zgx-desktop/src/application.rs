@@ -138,6 +138,9 @@ enum Event {
     /// A font was replaced (`WindowFactory::replace_font`): every window's
     /// text shapes and draws again.
     FontsReplaced,
+    /// Pixels a frame went without were decoded (`zgx::image::set_decoded_wake`):
+    /// windows that waited for them draw again whole.
+    ImagesDecoded,
     #[cfg(target_os = "linux")]
     NativeFiles(u64, crate::wayland_data::FileEvent),
     /// The desktop's appearance settings changed (`linux_appearance`).
@@ -1525,6 +1528,9 @@ struct Host {
     /// When to release animation-only renderer memory if nothing presents
     /// before then (see `GpuRenderer::trim`).
     trim_at: Option<std::time::Instant>,
+    /// When kept images' decoded pixels go, `TRIM_DELAY` past the last
+    /// upload, whether or not the window keeps presenting (an animated page).
+    release_images_at: Option<std::time::Instant>,
     /// `trim_at` is for the glyph atlas (`ATLAS_TRIM_DELAY`).
     trim_atlas: bool,
     /// When to save the window's frame (`frame_autosave`, Linux): once its
@@ -1670,6 +1676,14 @@ impl Host {
                 let _ = wake.send_event(Event::Wake(token));
             }
         });
+        // Kept images' pixels decoded off the main thread: the windows that
+        // went without them draw again (`Event::ImagesDecoded`).
+        {
+            let wake = proxy.clone();
+            zgx::image::set_decoded_wake(move || {
+                let _ = wake.send_event(Event::ImagesDecoded);
+            });
+        }
         let popups = crate::popup_window::PopupHost::new({
             let proxy = proxy.clone();
             move |input| {
@@ -1893,6 +1907,7 @@ impl Host {
             #[cfg(target_os = "macos")]
             refresh_frame: false,
             trim_at: None,
+            release_images_at: None,
             trim_atlas: false,
             frame_save_at: None,
             startup_trim: StartupTrim::Pending,
@@ -2570,6 +2585,9 @@ impl Host {
                     self.present_ready = false;
                     let now = std::time::Instant::now();
                     self.trim_at = Some(now + TRIM_DELAY);
+                    if renderer.take_images_uploaded() {
+                        self.release_images_at = Some(now + TRIM_DELAY);
+                    }
                     self.trim_atlas = false;
                     // Startup's garbage (shader compilation, first layout)
                     // is freed once, even if the window never goes idle.
@@ -5011,6 +5029,13 @@ impl Host {
             self.save_frame();
         }
         if self
+            .release_images_at
+            .is_some_and(|at| std::time::Instant::now() >= at)
+        {
+            self.release_images_at = None;
+            zgx::image::release_decoded();
+        }
+        if self
             .trim_at
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
@@ -6304,6 +6329,20 @@ impl WindowManager {
                     }
                 }
             }
+            Event::ImagesDecoded => {
+                for host in self.hosts.values_mut() {
+                    if host
+                        .renderer
+                        .as_mut()
+                        .is_some_and(|renderer| renderer.images_decoded())
+                    {
+                        host.force = true;
+                        if let Some(window) = &host.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+            }
             Event::FontsReplaced => {
                 for host in self.hosts.values_mut() {
                     if let Some(renderer) = &mut host.renderer {
@@ -6709,6 +6748,7 @@ impl WindowManager {
                     host.plane_retry,
                     host.touch.hold_deadline(),
                     host.trim_at,
+                    host.release_images_at,
                     host.frame_save_at,
                     host.accessibility_pacer.deadline(),
                     host.wheel_tape.borrow().deadline(),

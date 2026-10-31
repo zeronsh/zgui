@@ -121,7 +121,9 @@ impl Assets {
     fn keep_image(&self, src: String, image: Arc<ImageData>) {
         let bytes = match src.starts_with("host:") {
             true => 0,
-            false => image.width() as usize * image.height() as usize * 4,
+            // A kept file's bytes; its decoded pixels come and go
+            // (`decoded pixels held`).
+            false => image.bytes(),
         };
         let cached = Cached {
             value: image,
@@ -213,6 +215,12 @@ impl Assets {
     }
     pub(crate) fn memory(&self, report: &mut zgx::memory::Report) {
         Self::memory_of(&self.images.borrow(), "decoded", report);
+        report.add(
+            "images",
+            "decoded pixels held",
+            None,
+            Some(zgx::image::decoded_bytes()),
+        );
         Self::memory_of(&self.svgs.borrow(), "svg", report);
     }
     /// Keeps what a node shows (held elsewhere too), and of the rest the
@@ -3940,7 +3948,8 @@ fn remote_status(vm: &Rc<Vm>, low: &Lowering, src: &str, svg: bool) -> u8 {
                             .map(|svg| Decoded::Svg(Arc::new(svg)))
                             .map_err(|e| e.to_string())
                     } else {
-                        zgx_gpu::assets::decode_image(&bytes)
+                        // Its file kept, its pixels decoded as it is drawn.
+                        zgx_gpu::assets::decode_image_kept(Arc::from(bytes))
                             .map(Decoded::Image)
                             .map_err(|e| e.to_string())
                     });
@@ -4006,7 +4015,8 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
                 .map(|bytes| (path, bytes))
         })
         .and_then(|(path, bytes)| {
-            zgx_gpu::assets::decode_image(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+            zgx_gpu::assets::decode_image_kept(Arc::from(bytes))
+                .map_err(|e| format!("{}: {e}", path.display()))
         });
     match decoded {
         Ok(image) => {
@@ -5613,6 +5623,15 @@ fn lower_image(node: &Node, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
             .map(|(_, source)| resolve_owned(source))
     };
     let (dither, characters) = (prop(Prop::Dither), prop(Prop::Characters));
+    // When its file decodes (`ImageData::set_decoding`): as written.
+    let decoding = match prop(Prop::Decode)
+        .as_ref()
+        .and_then(|source| resolve(source, Ty::Str, None, vm))
+    {
+        Some(Lit::Str(mode)) if &*mode == "sync" => Some(zgx::image::Decoding::Sync),
+        Some(Lit::Str(mode)) if &*mode == "async" => Some(zgx::image::Decoding::Async),
+        _ => None,
+    };
     // The picture, as a view (made again each time it shows).
     let picture = {
         let (src, vm2, low2, label) = (resolve_owned(src), vm.clone(), low.clone(), label.clone());
@@ -5627,6 +5646,9 @@ fn lower_image(node: &Node, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                     }
                     None => placeholder(),
                 };
+                if let Some(decoding) = decoding {
+                    image.set_decoding(decoding);
+                }
                 let size = |source: &Option<Owned>| match source
                     .as_ref()
                     .and_then(|source| resolve(source, Ty::Num, None, &vm2))

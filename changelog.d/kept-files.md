@@ -1,0 +1,4 @@
+---
+section: changed
+---
+- **Pictures keep their files, not their pixels** (zgx, zgx-gpu, zgx-script): a script's `src` image is read for its size alone, decoded off the main thread when drawn, shrunk to the size it shows, and its pixels given back once uploaded (1.5 s on). A page of eight large photos: footprint 662 → 294 MB. A picture over 256 by 256 pixels shows a frame later than before; one up to that size (an icon) decodes as it is first drawn, in that frame, and `decode = "sync"` (HTML's `decoding`, `ImageData::set_decoding`) makes any picture wait rather than pop in. The image cache's budget counts files' bytes now; `ImageData::pixels` still gives all the pixels (decoded once and kept), and `pixels_at`, `keeps_file`, `bytes`, `set_decoding`, `zgx::image::Decoding` and `zgx::image::release_decoded` are new.

@@ -196,6 +196,8 @@ const IMAGE_TEXTURES: usize = 64 * 1024 * 1024;
 /// An image's texture: its bind group, bytes, texture and the size it
 /// holds (`fitted_size`; (0, 0): all of it).
 type ImageTexture = (wgpu::BindGroup, usize, Option<wgpu::Texture>, (u32, u32));
+/// A kept file's pixels aren't decoded yet (`ImageData::pixels_at`).
+const IMAGE_PENDING: &str = "an image's pixels are decoding";
 const IMAGE_COARSER: &str =
     "images past the budget of image textures are drawn at a lower resolution";
 /// The size a texture of a `width` by `height` image holds when drawn at
@@ -212,73 +214,7 @@ fn fitted_size(width: u32, height: u32, drawn: Option<(f32, f32)>) -> (u32, u32)
     let side = |v: u32| ((v as f32 * scale).ceil() as u32).clamp(1, v.max(1));
     (side(width), side(height))
 }
-/// Premultiplied RGBA `width` by `height` at half the size (rounding up),
-/// each texel the mean of the two by two it covers (an odd edge repeats).
-fn halve(pixels: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
-    let (w, h) = (width.div_ceil(2), height.div_ceil(2));
-    let mut out = vec![0u8; w as usize * h as usize * 4];
-    let at = |x: u32, y: u32| ((y.min(height - 1) * width + x.min(width - 1)) * 4) as usize;
-    for y in 0..h {
-        for x in 0..w {
-            let (a, b) = (at(2 * x, 2 * y), at(2 * x + 1, 2 * y));
-            let (c, d) = (at(2 * x, 2 * y + 1), at(2 * x + 1, 2 * y + 1));
-            let o = ((y * w + x) * 4) as usize;
-            for k in 0..4 {
-                let sum = u32::from(pixels[a + k])
-                    + u32::from(pixels[b + k])
-                    + u32::from(pixels[c + k])
-                    + u32::from(pixels[d + k]);
-                out[o + k] = ((sum + 2) / 4) as u8;
-            }
-        }
-    }
-    (out, w, h)
-}
-/// Premultiplied RGBA `width` by `height` at `to` (no larger), each texel
-/// the area-weighted mean of what it covers: from a halving at most twice
-/// its size, as sharp as a mip level, at any size.
-fn shrink(pixels: &[u8], width: u32, height: u32, to: (u32, u32)) -> Vec<u8> {
-    let (tw, th) = to;
-    // Each target texel's span along an axis: (first source texel, weights).
-    let spans = |from: u32, to: u32| -> Vec<(u32, Vec<f32>)> {
-        let step = from as f32 / to as f32;
-        (0..to)
-            .map(|t| {
-                let (start, end) = (t as f32 * step, (t + 1) as f32 * step);
-                let first = start.floor() as u32;
-                let last = (end.ceil() as u32).min(from);
-                let weights = (first..last)
-                    .map(|s| ((s + 1) as f32).min(end) - (s as f32).max(start))
-                    .collect();
-                (first, weights)
-            })
-            .collect()
-    };
-    let (xs, ys) = (spans(width, tw), spans(height, th));
-    let mut out = vec![0u8; tw as usize * th as usize * 4];
-    for (ty, (y0, wy)) in ys.iter().enumerate() {
-        for (tx, (x0, wx)) in xs.iter().enumerate() {
-            let mut sum = [0f32; 4];
-            let mut total = 0.;
-            for (dy, ky) in wy.iter().enumerate() {
-                let row = (y0 + dy as u32) * width;
-                for (dx, kx) in wx.iter().enumerate() {
-                    let at = ((row + x0 + dx as u32) * 4) as usize;
-                    let k = kx * ky;
-                    for c in 0..4 {
-                        sum[c] += pixels[at + c] as f32 * k;
-                    }
-                    total += k;
-                }
-            }
-            let o = (ty * tw as usize + tx) * 4;
-            for c in 0..4 {
-                out[o + c] = (sum[c] / total).round() as u8;
-            }
-        }
-    }
-    out
-}
+use zgx::image::resample::{halve, shrink};
 /// Why an image can have no texture: a frame goes on without it.
 const IMAGE_MISSES: [&str; 3] = [
     "the images one frame draws exceed the 64 MiB budget of image textures",
@@ -3635,6 +3571,10 @@ pub struct GpuRenderer {
     /// Image textures: each bound for the quads, its size in bytes, and,
     /// where the CPU wrote its texels, the texture (see `render_direct`).
     images: FxHashMap<u64, ImageTexture>,
+    /// A frame went without a kept file's pixels, decoding (`take_images_awaited`).
+    images_awaited: bool,
+    /// A kept file's pixels were uploaded (`take_images_uploaded`).
+    images_uploaded: bool,
     /// Images' own textures (`upload_image`), by the frame each was last
     /// drawn in (`image_frame`): past the textures' budget, the least
     /// recently drawn go, not drawn this frame, and come back when drawn.
@@ -4257,6 +4197,8 @@ impl GpuRenderer {
             visible_glyphs: Vec::new(),
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
+            images_awaited: false,
+            images_uploaded: false,
             image_drawn: FxHashMap::default(),
             image_frame: 0,
             views: None,
@@ -4745,6 +4687,27 @@ impl GpuRenderer {
             return true;
         }
         self.surface.is_some()
+    }
+    /// Whether a frame since the last call went without an image's pixels,
+    /// still decoding: the host draws again when they are
+    /// (`zgx::image::set_decoded_wake`).
+    pub fn take_images_awaited(&mut self) -> bool {
+        std::mem::take(&mut self.images_awaited)
+    }
+    /// Pixels a frame went without are decoded: whether it did, and if so,
+    /// the next frame draws all of the window again (a kept frame would
+    /// patch only what the scene changed, and the scene didn't).
+    pub fn images_decoded(&mut self) -> bool {
+        let awaited = self.take_images_awaited();
+        if awaited {
+            self.repaint_all();
+        }
+        awaited
+    }
+    /// Whether a kept file's pixels were uploaded since the last call: their
+    /// decoded copy may go (`zgx::image::release_decoded`).
+    pub fn take_images_uploaded(&mut self) -> bool {
+        std::mem::take(&mut self.images_uploaded)
     }
     /// What frames went on without since the last call (a layer past its
     /// budget, an image with no texture), each said once: a host hands
@@ -10313,6 +10276,8 @@ impl GpuRenderer {
         }
         match self.upload_image_at(image, size) {
             Ok(()) => {}
+            // Its pixels decoding: drawn once they are.
+            Err(error) if error.0 == IMAGE_PENDING => return Ok(false),
             Err(error) if IMAGE_MISSES.contains(&error.0.as_str()) => {
                 self.warn(&format!("{}: not drawn", error.0));
                 return Ok(false);
@@ -10341,6 +10306,19 @@ impl GpuRenderer {
         if let Some(frame) = image.gpu_frame() {
             return self.render_view(image, frame);
         }
+        // A kept file's pixels at the size it is drawn, decoded off this
+        // thread: until they are, it isn't drawn, and the host draws again
+        // once they are (`take_images_awaited`).
+        let source = match image.keeps_file() {
+            true => match image.pixels_at(wanted) {
+                Some(source) => Some(source),
+                None => {
+                    self.images_awaited = true;
+                    return Err(GpuError(IMAGE_PENDING.into()));
+                }
+            },
+            false => None,
+        };
         let budget = self.image_budget();
         let limit = self.device.limits().max_texture_dimension_2d;
         let (full_w, full_h) = (image.width().max(1), image.height().max(1));
@@ -10404,17 +10382,24 @@ impl GpuRenderer {
             return Err(GpuError(IMAGE_MISSES[2].into()));
         }
         let texture = sampled_texture(&self.device, self.unified, width, height, "image");
-        let mut pixels = image.pixels().to_vec();
-        for pixel in pixels.as_chunks_mut::<4>().0 {
-            let alpha = u16::from(pixel[3]);
-            for channel in &mut pixel[..3] {
-                *channel = ((u16::from(*channel) * alpha + 127) / 255) as u8;
+        let (mut pixels, (mut w, mut h)) = match &source {
+            // Premultiplied already, at least its size.
+            Some(source) => (source.pixels.to_vec(), (source.width, source.height)),
+            None => {
+                let mut pixels = image.pixels().to_vec();
+                for pixel in pixels.as_chunks_mut::<4>().0 {
+                    let alpha = u16::from(pixel[3]);
+                    for channel in &mut pixel[..3] {
+                        *channel = ((u16::from(*channel) * alpha + 127) / 255) as u8;
+                    }
+                }
+                (pixels, (full_w, full_h))
             }
-        }
+        };
+        drop(source);
         // Halved while still at least its size, averaging premultiplied
         // texels four to one (mip levels), then to its size exactly by area:
         // as sharp as it is drawn, without shimmer.
-        let (mut w, mut h) = (full_w, full_h);
         while w.div_ceil(2) >= width && h.div_ceil(2) >= height && (w, h) != (1, 1) {
             (pixels, w, h) = halve(&pixels, w, h);
         }
@@ -10422,6 +10407,8 @@ impl GpuRenderer {
             pixels = shrink(&pixels, w, h, (width, height));
         }
         self.write_texels(&texture, (0, 0, width, height), &mut pixels);
+        // Its decoded pixels may go now (`take_images_uploaded`).
+        self.images_uploaded |= image.keeps_file();
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image"),
             layout: &self.context.inner.texture_layout,

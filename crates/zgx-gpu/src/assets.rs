@@ -3,6 +3,40 @@ use crate::GpuError;
 use std::{io::Cursor, sync::Arc};
 use zgx::image::ImageData;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
+/// A PNG or JPEG keeping its file (`ImageData::kept`): only its header is
+/// read here; its pixels decode as `decode_image` does, off the main thread,
+/// when it is drawn, at the size it is drawn, and go once a renderer has
+/// them. The bytes are shared, not copied.
+pub fn decode_image_kept(bytes: Arc<[u8]>) -> Result<Arc<ImageData>, GpuError> {
+    if bytes.len() > MAX_BYTES {
+        return Err(GpuError("encoded image exceeds 64 MiB".into()));
+    }
+    let reader = image::ImageReader::new(Cursor::new(&bytes[..]))
+        .with_guessed_format()
+        .map_err(|e| GpuError(e.to_string()))?;
+    let format = reader.format();
+    let decodable = (cfg!(feature = "png") && format == Some(image::ImageFormat::Png))
+        || (cfg!(feature = "jpeg") && format == Some(image::ImageFormat::Jpeg));
+    // Others (a GIF, a format left out) decode now, as they always did.
+    if !decodable {
+        return decode_image(&bytes);
+    }
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|e| GpuError(e.to_string()))?;
+    if width > 8192 || height > 8192 || width as usize * height as usize * 4 > MAX_BYTES {
+        return Err(GpuError("decoded image exceeds 64 MiB".into()));
+    }
+    ImageData::kept(width, height, bytes, redecode)
+        .map(Arc::new)
+        .map_err(|e| GpuError(e.into()))
+}
+/// A kept file's pixels (`decode_image_kept`).
+fn redecode(bytes: &[u8]) -> Result<Arc<[u8]>, String> {
+    decode_image(bytes)
+        .map(|image| image.pixels_arc())
+        .map_err(|e| e.0)
+}
 /// Decode PNG/JPEG into immutable, straight-alpha RGBA8. No filesystem/network access.
 ///
 /// The image is decoded into its final buffer, allocated once: 8-bit RGB,
