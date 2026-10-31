@@ -766,3 +766,41 @@ return ui.column {
     assert_eq!(code, Some(0), "{output}");
     assert!(output.contains("1 passed"), "{output}");
 }
+
+#[test]
+fn a_second_mount_in_a_test_is_the_next_launch() {
+    let dir = app(
+        "relaunch",
+        &[(
+            "relaunch.test.luau",
+            r##"
+test("what a launch kept, the next finds", function()
+    local first = mount("kept.luau")
+    first:click("#add")
+    first:click("#add")
+    local again = mount("kept.luau")
+    expect(again:text("#count")).to_be("2")
+end)
+
+test("each test starts with nothing kept", function()
+    local app = mount("kept.luau")
+    expect(app:text("#count")).to_be("0")
+end)
+"##,
+        )],
+    );
+    std::fs::write(
+        dir.join("kept.luau"),
+        r##"
+local count = ui.persist("count", 0)
+return ui.column {
+    ui.button { id = "add", "Add", on_click = ui.add(count, 1) },
+    ui.text { id = "count", "{count}" },
+}
+"##,
+    )
+    .unwrap();
+    let (code, output) = run(&dir, &[]);
+    assert_eq!(code, Some(0), "{output}");
+    assert!(output.contains("2 passed"), "{output}");
+}
