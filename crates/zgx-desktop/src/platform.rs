@@ -108,7 +108,7 @@ impl Platform for Desktop {
     ) -> Vec<(std::ops::Range<usize>, String)> {
         spelling::substitutions(text, kinds)
     }
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(target_os = "macos")]
     fn correction(&self, text: &str, word: std::ops::Range<usize>) -> Option<String> {
         spelling::correction(text, word)
     }
@@ -519,65 +519,6 @@ mod spelling {
         with_checker(|checker| unsafe { checker.Ignore(&HSTRING::from(word)) });
     }
 
-    /// The checker's autocorrection for `word` in `text` (its language's
-    /// own pairs, "teh" for "the", and those added to it), where the person
-    /// has "Autocorrect misspelled words I type" on for their keyboard.
-    pub(super) fn correction(text: &str, word: Range<usize>) -> Option<String> {
-        autocorrects()
-            .then(|| replacement(text.get(word)?))
-            .flatten()
-    }
-
-    /// The checker's replacement for `word`, if it has one.
-    fn replacement(word: &str) -> Option<String> {
-        with_checker(|checker| {
-            // SAFETY: plain COM calls on a checker of this thread's, the
-            // string alive across them; the replacement is a NUL-terminated
-            // string the callee allocated with CoTaskMemAlloc, ours to free.
-            unsafe {
-                let checked = HSTRING::from(word);
-                let errors = checker.Check(&checked).ok()?;
-                let mut error = None;
-                while errors.Next(&mut error).is_ok() {
-                    let error = error.take()?;
-                    if !error
-                        .CorrectiveAction()
-                        .is_ok_and(|action| action == CORRECTIVE_ACTION_REPLACE)
-                    {
-                        continue;
-                    }
-                    let replacement = error.Replacement().ok()?;
-                    let text = replacement.to_string().ok();
-                    CoTaskMemFree(Some(replacement.0 as *const _));
-                    return text;
-                }
-                None
-            }
-        })
-        .flatten()
-    }
-
-    /// Whether the person has a hardware keyboard's autocorrection on
-    /// (Settings, Time & language, Typing): off unless they turned it on.
-    fn autocorrects() -> bool {
-        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
-        let mut on = 0u32;
-        let mut size = std::mem::size_of::<u32>() as u32;
-        // SAFETY: reads one DWORD into `on`, `size` its size.
-        let read = unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                windows::core::w!("Software\\Microsoft\\Input\\Settings"),
-                windows::core::w!("EnableHwkbAutocorrection"),
-                RRF_RT_REG_DWORD,
-                None,
-                Some((&raw mut on).cast()),
-                Some(&mut size),
-            )
-        };
-        read.is_ok() && on != 0
-    }
-
     #[cfg(test)]
     mod tests {
         #[test]
@@ -589,14 +530,6 @@ mod spelling {
                 "{found:?}"
             );
             assert!(super::guesses("quikc").iter().any(|g| g == "quick"));
-        }
-        #[test]
-        fn the_system_checker_replaces_what_it_autocorrects() {
-            // Its own pairs, whatever the person's setting (which gates
-            // `correction`, and is off unless they turned it on).
-            assert_eq!(super::replacement("teh").as_deref(), Some("the"));
-            assert_eq!(super::replacement("the"), None);
-            let _ = super::autocorrects();
         }
     }
 }

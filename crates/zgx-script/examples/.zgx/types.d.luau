@@ -6897,8 +6897,7 @@ export type InputProps = {
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Correct a misspelled word as it ends, and expand the person's text
 	-- replacements ("omw" to "On my way!"), as the system's own fields do
-	-- where the person has them on (macOS; Windows corrects). Undo puts
-	-- back what was typed.
+	-- where the person has them on (macOS). Undo puts back what was typed.
 	-- Not in a password field.
 	autocorrect: boolean?,
 	-- Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’,

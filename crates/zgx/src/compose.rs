@@ -1465,9 +1465,8 @@ impl View {
     }
     /// Correct a misspelled word as it ends, and expand the person's text
     /// replacements ("omw" to "On my way!"), as the system's own text
-    /// fields do, where the person has them on: macOS's `NSSpellChecker`
-    /// both, Windows' `ISpellChecker` its corrections (with "Autocorrect
-    /// misspelled words I type" on). Undo puts back what was typed. Off by default; a password field
+    /// fields do (macOS's `NSSpellChecker`), where the person has them on.
+    /// Undo puts back what was typed. Off by default; a password field
     /// never corrects. Only editor views take it.
     pub fn autocorrect(mut self, correct: bool) -> Self {
         self.set_mount_flag(AUTOCORRECT, correct);
@@ -1475,8 +1474,7 @@ impl View {
     }
     /// Curly quotes and dashes for straight ones as they are typed (“ ” ‘ ’
     /// for " and ', — for --), in the person's language, where the person
-    /// has the system's smart quotes and dashes on (macOS; Windows has no
-    /// such service). Undo puts back
+    /// has the system's smart quotes and dashes on (macOS). Undo puts back
     /// what was typed. Off by default, as code and data fields want it.
     /// Only editor views take it.
     pub fn smart_punctuation(mut self, smart: bool) -> Self {
