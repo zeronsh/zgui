@@ -6041,7 +6041,7 @@ impl Ui {
                                     Some(s.bounds(viewport).width.max(1.)),
                                     &font,
                                 );
-                                let to = e.move_visually(
+                                let to = e.move_visually_at(
                                     word,
                                     modifiers.shift,
                                     key == Key::ArrowLeft,
