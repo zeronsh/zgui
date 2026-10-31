@@ -2428,3 +2428,24 @@ pub fn rich_decorations_in<'a>(
     }
     output
 }
+
+#[cfg(test)]
+mod monospace_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn cjk_in_monospaced_text_takes_finite_room() {
+        // macOS's monospaced fallback for CJK found GB18030Bitmap, a font
+        // without units per em, and laid it out infinitely wide.
+        let mut fonts = FontSystem::new();
+        let font = zgx::text_layout::FontStyle {
+            family: zgx::text_layout::FontFamily::Monospace,
+            ..Default::default()
+        };
+        for text in ["中文", "a中b", "表示 ok"] {
+            let (width, height) = ShapedText::with_font(&mut fonts, text, 13., None, &font).size();
+            assert!(width.is_finite() && width > 0., "{text:?}: {width}");
+            assert!(height.is_finite() && height > 0., "{text:?}: {height}");
+        }
+    }
+}
