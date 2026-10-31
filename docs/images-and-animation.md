@@ -61,6 +61,21 @@ Not in 0.1.6: today's trade (heap held while an image shows) keeps scroll
 backs free of decodes. Each decode already holds about the image once
 (`assets::decode_image`: PNG 1.09, JPEG 1.36 images at its peak).
 
+## Textures: the size an image is drawn
+
+An image's texture holds it at the size it is drawn, in device pixels, not
+at its file's size: a 4000 by 3000 photo shown as a 300 by 420 card at 2x is
+a 1120 by 840 texture (3.8 MB, not 48). It is made from the decoded pixels
+halved as mip levels are, then brought to that size by area, so it is as
+sharp as it shows and doesn't shimmer. Drawn larger (zoomed, a window moved
+to a denser display, a `cover` crop enlarged), it is uploaded again at the
+new size; drawn smaller, it keeps the one it has.
+
+Image textures take at most four frames of the window's pixels, and at least
+64 MiB. Past that, images not drawn this frame give theirs back, least
+recently drawn first, and then what is drawn is held smaller (softer, said
+once in the window's issues) rather than left out.
+
 ## Image formats are features
 
 SVG, PNG, JPEG and GIF decoding are cargo features of `zgx-gpu`, `zgx-desktop`

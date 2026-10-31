@@ -503,7 +503,7 @@ impl GpuRenderer {
         }
         let bind = self.texture_bind(&view(&output), "effect atlas");
         self.images
-            .insert(EFFECT_ATLAS, (bind, 0, Some(output.clone())));
+            .insert(EFFECT_ATLAS, (bind, 0, Some(output.clone()), (0, 0)));
         let pipelines = self.effect_pipelines();
         let mask_layout = pipelines.mask_layout.clone();
         let blank_bind = self.mask_bind(&mask_layout, &view(&blank));
