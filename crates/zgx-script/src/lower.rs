@@ -3989,6 +3989,10 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
         remote_ready(vm, low, src, false);
         return None;
     }
+    // No picture yet (the web's `src=""`): nothing to show, nothing wrong.
+    if src.is_empty() {
+        return None;
+    }
     let decoded = resolve_path(vm, src)
         .and_then(|path| {
             low.assets
@@ -4031,6 +4035,13 @@ fn literal_site(vm: &Vm, src: &str) -> Option<String> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            // Not tools' files (`.zgx/types.d.luau`) nor declarations: no
+            // script line runs there.
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name.ends_with(".d.luau") {
+                continue;
+            }
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().is_some_and(|e| e == "luau" || e == "lua") {
@@ -4048,18 +4059,27 @@ fn literal_site(vm: &Vm, src: &str) -> Option<String> {
         Some(format!("{}:{}", name.display(), line + 1))
     })
 }
+/// An SVG of nothing: a remote one still arriving, an empty `src`, one
+/// that failed.
+fn no_svg() -> Arc<SvgData> {
+    thread_local! {
+        static NOTHING: Arc<SvgData> = Arc::new(
+            SvgData::new(&b"<svg xmlns='http://www.w3.org/2000/svg'/>"[..]).expect("empty svg"),
+        );
+    }
+    NOTHING.with(Clone::clone)
+}
 fn load_svg(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Arc<SvgData> {
     if let Some(svg) = low.assets.svg(src) {
         return svg;
     }
     if is_remote(src) {
         remote_ready(vm, low, src, true);
-        thread_local! {
-            static NOTHING: Arc<SvgData> = Arc::new(
-                SvgData::new(&b"<svg xmlns='http://www.w3.org/2000/svg'/>"[..]).expect("empty svg"),
-            );
-        }
-        return NOTHING.with(Clone::clone);
+        return no_svg();
+    }
+    // No picture yet, as an image's: nothing to show, nothing wrong.
+    if src.is_empty() {
+        return no_svg();
     }
     let bytes = match src.strip_prefix("code:") {
         Some(code) => Ok(code.as_bytes().to_vec()),
@@ -4078,9 +4098,7 @@ fn load_svg(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Arc<SvgData> {
         }
         Err(e) => {
             vm.report(mlua::Error::runtime(e));
-            Arc::new(
-                SvgData::new(&b"<svg xmlns='http://www.w3.org/2000/svg'/>"[..]).expect("empty svg"),
-            )
+            no_svg()
         }
     }
 }
