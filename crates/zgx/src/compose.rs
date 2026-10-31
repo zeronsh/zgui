@@ -68,8 +68,10 @@ impl TaskRunner {
             })
         })
     }
-    /// Run `future`; dropping the token cancels it.
-    pub(crate) fn spawn(&self, future: LocalFuture) -> TaskToken {
+    /// Run `future`; dropping the token cancels it. For work that outlives
+    /// the component starting it (a session reading its process's output
+    /// while no view shows it); [`Context::tasks`] ties work to a component.
+    pub fn spawn(&self, future: LocalFuture) -> TaskToken {
         (self.0)(future)
     }
 }

@@ -13,11 +13,15 @@
 //! }
 //! ```
 //!
-//! The terminal is the platform's own view (a Ghostty surface on macOS, with
-//! the desktop host's `ghostty` feature), placed like a web page: laid out,
-//! clipped, moved and faded as its node, with zgx content drawn over it (see
-//! [`crate::native_view`]). It renders, reads the keyboard (IME included) and
-//! the mouse itself. Without a backend the node shows a labelled placeholder.
+//! With the desktop host's `ghostty` feature on macOS, the terminal is the
+//! platform's own view (a Ghostty surface), placed like a web page: laid
+//! out, clipped, moved and faded as its node, with zgx content drawn over it
+//! (see [`crate::native_view`]). It renders, reads the keyboard (IME
+//! included) and the mouse itself. With the host's `terminal` feature (any
+//! platform), zgx draws it: a pseudoterminal's screen in the window's own
+//! text, keys through an input method at its cursor (`zgx-terminal`, given
+//! as a [`TerminalRenderer`]). Without either the node shows a labelled
+//! placeholder.
 //!
 //! The controller owns the session: unmounting hides the terminal and keeps
 //! its process running; mounting it again (another split, another tab)
@@ -491,8 +495,24 @@ impl Drop for Inner {
     }
 }
 
+/// What draws terminals in place of a platform view: the desktop host's
+/// engine-drawn terminal (its `terminal` feature), provided to the
+/// components a window mounts. [`terminal`] uses it where one is provided.
+#[derive(Clone)]
+pub struct TerminalRenderer(Rc<dyn Fn(&Terminal) -> View>);
+impl TerminalRenderer {
+    /// A renderer making each terminal's view with `view`.
+    pub fn new(view: impl Fn(&Terminal) -> View + 'static) -> Self {
+        Self(Rc::new(view))
+    }
+}
+
 /// Show `term` in a node laid out like any other: give it a size (or let it
 /// grow), round it, clip it, move and fade it.
 pub fn terminal(term: &Terminal) -> View {
-    crate::web_view::native_view(NativeContent::Terminal(term.clone()))
+    let term = term.clone();
+    crate::compose::component(move |cx| match cx.try_service::<TerminalRenderer>() {
+        Some(renderer) => (renderer.0)(&term),
+        None => crate::web_view::native_view(NativeContent::Terminal(term)),
+    })
 }
