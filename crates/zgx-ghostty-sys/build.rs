@@ -134,7 +134,16 @@ fn zig() -> PathBuf {
 fn cache_root() -> PathBuf {
     let dir = env::var_os("ZGX_GHOSTTY_CACHE").or_else(|| env::var_os("ZGUI_GHOSTTY_CACHE")); // rename-to-zgx: keep
     if let Some(dir) = dir {
-        return dir.into();
+        // Zig runs in Ghostty's source directory: a relative path would be
+        // read from there, and the library looked for here.
+        let dir = PathBuf::from(dir);
+        return if dir.is_relative() {
+            env::current_dir()
+                .expect("the build script's directory")
+                .join(dir)
+        } else {
+            dir
+        };
     }
     let home = env::var_os("HOME").expect("HOME is set");
     Path::new(&home).join("Library/Caches/zgx-ghostty")
