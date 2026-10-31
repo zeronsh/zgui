@@ -10,6 +10,9 @@
 //! Rules (each is also in [`RULES`]):
 //! - `untracked-get`: `state:get()` while an element is built. The interface
 //!   is built once, untracked, so the element shows the value it had then.
+//! - `list-row-get`: `state:get()` in a `ui.list`'s `row` builder, where the
+//!   list has `count` and no `data` or `key`: a row is built once per index,
+//!   so it keeps what it read then as the list changes under it.
 //! - `state-in-builder`: `ui.state` in a component, `each` row or `list` row.
 //!   Its key is the script's, so every instance shares one state.
 //! - `timer-interval`: `ui.every` faster than a display refresh.
@@ -97,6 +100,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "untracked-get",
         "state:get() while an element is built is read once",
+    ),
+    (
+        "list-row-get",
+        "state:get() in a positional ui.list's row is read once per index",
     ),
     (
         "state-in-builder",
@@ -893,6 +900,27 @@ impl Linter<'_> {
         (!hidden).then_some(marker)
     }
     /// The index of the bracket that closes the one opened at `at`.
+    /// Whether the table opened at `open` has one of `fields` at its own
+    /// level (`data = …`), not in a table or call inside it.
+    fn table_has(&self, open: usize, fields: &[&str]) -> bool {
+        let close = self.closing(open);
+        let mut depth = 0;
+        for j in open + 1..close {
+            let token = &self.tokens[j];
+            if token.kind == Kind::Punct {
+                match token.text.as_str() {
+                    "(" | "{" | "[" => depth += 1,
+                    ")" | "}" | "]" => depth -= 1,
+                    _ => {}
+                }
+                continue;
+            }
+            if depth == 0 && fields.contains(&token.text.as_str()) && self.is(j + 1, "=") {
+                return true;
+            }
+        }
+        false
+    }
     fn closing(&self, at: usize) -> usize {
         let mut depth = 0;
         for (j, token) in self.tokens.iter().enumerate().skip(at) {
@@ -1412,6 +1440,30 @@ impl Linter<'_> {
                     break;
                 }
             }
+        }
+        // `state:get()` straight in a positional `ui.list`'s `row`.
+        if self.is(at, ":")
+            && self.is(at + 1, "get")
+            && self.is(at + 2, "(")
+            && let Some(f) = function
+            && f > 0
+            && stack[f].key.as_deref() == Some("row")
+            && stack[f - 1].open == Open::Brace
+            && stack[f - 1].callee.as_deref() == Some("ui.list")
+            && !self.table_has(stack[f - 1].at, &["data", "key"])
+        {
+            let state = self.name(at.wrapping_sub(1)).unwrap_or("state").to_string();
+            self.report(
+                at - 1,
+                "list-row-get",
+                format!(
+                    "`{state}:get()` is read once, while a row is built, so the row shows the \
+                     value of that moment and never updates: a positional `ui.list` builds a \
+                     row once per index and keeps it as the list changes under it. Give the \
+                     list `data = {state}` and a `key`, so each row follows its item, or read \
+                     it in a function the row's elements take."
+                ),
+            );
         }
         // `zoom = ui.tween(…)` or `ui.spring(…)`, or `zoom` animated by `anime`.
         if self.is(at, "zoom") && self.is(at + 1, "=") && self.field(at + 2).is_some() {
@@ -2104,6 +2156,33 @@ end, { key = function(item) return item.id end })
             [
                 (5, "untracked-get".to_string()),
                 (8, "untracked-get".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_positional_list_rows_read_of_state_is_read_once() {
+        let source = r##"
+local files = ui.state("files", {})
+return ui.column {
+    ui.list { count = function() return #files:get() end, row = function(i)
+        local f = files:get()[i]
+        return ui.text { f.title, literal = true }
+    end },
+    ui.list { data = files, key = function(f) return f.id end, row = function(f)
+        return ui.text { files:get()[1].title, literal = true }
+    end },
+    ui.list { count = 3, row = function(i)
+        return ui.text { function() return files:get()[i].title end }
+    end },
+}
+"##;
+        // The keyed list's read is in an element: the read-once rule's.
+        assert_eq!(
+            rules(source),
+            [
+                (5, "list-row-get".to_string()),
+                (9, "untracked-get".to_string())
             ]
         );
     }
