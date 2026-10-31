@@ -3522,6 +3522,15 @@ impl GpuContext {
         font.replace_in(&mut self.inner.fonts.borrow_mut());
         self.inner.text_cache.borrow_mut().clear();
     }
+    /// Shape text as in `language` from now on (`None`: the system's), its
+    /// Han characters in that language's fonts
+    /// (`FontSystem::set_language`), and forget the text prepared before.
+    /// Each renderer then calls [`GpuRenderer::fonts_replaced`], and each
+    /// scene `Scene::fonts_replaced`, as after `replace_font`.
+    pub fn set_text_language(&self, language: Option<&str>) {
+        self.inner.fonts.borrow_mut().set_language(language);
+        self.inner.text_cache.borrow_mut().clear();
+    }
 }
 impl GpuError {
     /// The device was lost (`GpuContext::lost`): `reason` says why.

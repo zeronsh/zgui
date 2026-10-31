@@ -365,3 +365,61 @@ return ui.column {
     h.settle();
     assert_eq!(h.text("picked"), "g");
 }
+
+/// A platform that keeps the languages it was told text is in.
+#[derive(Default)]
+struct Languages(std::cell::RefCell<Vec<Option<String>>>);
+impl zgx::platform::Platform for Languages {
+    fn clipboard_text(&self) -> Option<String> {
+        None
+    }
+    fn set_clipboard_text(&self, _: String) -> bool {
+        false
+    }
+    fn set_text_language(&self, language: Option<&str>) {
+        self.0.borrow_mut().push(language.map(str::to_owned));
+    }
+    fn open_files(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn save_file(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[test]
+fn the_windows_text_takes_the_locale_shown_as_its_language() {
+    let code = COUNTER.replace(
+        "return ui.column {",
+        "ui.command { id = \"fr\", run = function() ui.locale:set(\"fr\") end }\nreturn ui.column {",
+    );
+    let path = app("language", &code, &[("en", EN), ("fr", FR)]);
+    zgx::i18n::set_system_languages(|| vec!["en-US".into()]);
+    let languages = std::rc::Rc::new(Languages::default());
+    let platform = zgx::platform::PlatformService(languages.clone());
+    let h = Harness::wrapped(
+        move |runtime| ScriptHost::new(runtime, path),
+        move |view| zgx::compose::provide(platform, view),
+    );
+    h.settle();
+    assert_eq!(
+        languages.0.borrow().last(),
+        Some(&Some("en".to_owned())),
+        "{:?}",
+        languages.0.borrow()
+    );
+    assert!(h.host.run_command("fr"));
+    h.settle();
+    assert_eq!(
+        languages.0.borrow().last(),
+        Some(&Some("fr".to_owned())),
+        "{:?}",
+        languages.0.borrow()
+    );
+}

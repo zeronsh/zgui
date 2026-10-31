@@ -6,6 +6,9 @@ use zgx::platform::{FilePicker, Pending, Platform};
 pub(crate) struct Desktop {
     pub(crate) clipboard: Rc<RefCell<Option<crate::clipboard::Clipboard>>>,
     pub(crate) dialogs: crate::FileDialogs,
+    /// The app's windows, for what applies to all of them (the language its
+    /// text is in); none where only the clipboard is asked of it.
+    pub(crate) windows: Option<crate::WindowFactory>,
 }
 
 impl Desktop {
@@ -106,6 +109,11 @@ impl Platform for Desktop {
         self.dialogs
             .window()
             .is_some_and(|window| crate::look_up::show(&window, text, baseline, size))
+    }
+    fn set_text_language(&self, language: Option<&str>) {
+        if let Some(windows) = &self.windows {
+            let _ = windows.set_text_language(language.map(str::to_owned));
+        }
     }
     fn open_url(&self, url: &str) -> bool {
         // The launcher runs detached: nothing waits on the browser.

@@ -17,6 +17,9 @@ pub(crate) struct Locales {
     set: RefCell<Option<Set>>,
     /// Keeps the script root running the way the locale does (`follow`).
     direction: RefCell<Option<zgx::reactive::Effect>>,
+    /// Keeps the windows' text in the locale's language
+    /// (`follow_language`).
+    language: RefCell<Option<zgx::reactive::Effect>>,
 }
 struct Set {
     i18n: I18n,
@@ -71,6 +74,28 @@ impl Locales {
             }
         });
         *self.direction.borrow_mut() = Some(effect);
+    }
+}
+
+impl Locales {
+    /// Shape the windows' text as in the locale shown, as it changes
+    /// (`Platform::set_text_language`): a Japanese locale's kanji in a
+    /// Japanese face. Replaces what an earlier view followed.
+    pub(crate) fn follow_language(
+        &self,
+        runtime: &zgx::reactive::Runtime,
+        platform: crate::io::SharedPlatform,
+    ) {
+        let Some(i18n) = self.handle() else {
+            return;
+        };
+        let effect = runtime.effect(move || {
+            let locale = i18n.current();
+            if let Some(platform) = &*platform.borrow() {
+                platform.0.set_text_language(Some(&locale));
+            }
+        });
+        *self.language.borrow_mut() = Some(effect);
     }
 }
 

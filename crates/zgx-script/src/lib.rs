@@ -2328,6 +2328,13 @@ impl ScriptHost {
                 current.map_or_else(div, |loaded| {
                     let mut view =
                         lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys();
+                    // With a catalog, the windows' text is in its locale's
+                    // language (Han takes its fonts).
+                    if host.locales.handle().is_some() {
+                        let locales = host.locales.clone();
+                        let (runtime, platform) = (host.runtime.clone(), host.platform.clone());
+                        view = view.on_mount(move |_| locales.follow_language(&runtime, platform));
+                    }
                     // With a catalog, the script runs the way its locale
                     // does, unless its root says which way (`dir`).
                     if host.locales.handle().is_some() && !loaded.root.sets_direction() {

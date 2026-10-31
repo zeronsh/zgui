@@ -178,7 +178,8 @@ impl FontFeatures {
     pub const HYPHENS: FeatureTag = FeatureTag::new(b"_hyp");
 
     /// zgx: the language a line's Han characters are in, by its own kana
-    /// (1, Japanese) or hangul (2, Korean): `ShapeLine::build` sets it on
+    /// (1, Japanese) or hangul (2, Korean), or by an app's language (3,
+    /// `FontSystem::set_language`): `ShapeLine::build` sets it on
     /// such a line's copy of its attributes, so its Han characters take that
     /// language's fallback fonts and the run cache keeps its runs apart. No
     /// font can have it, as `HYPHENS`.
