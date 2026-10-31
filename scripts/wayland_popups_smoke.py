@@ -266,6 +266,11 @@ def main():
             until("a choice", lambda: 'CHOSEN "Item' in said())
             chosen = [line for line in said().splitlines() if line.startswith("OPEN")][-1]
             checks["sway: tall menu's choice"] = chosen
+            # The window's release heard after the popup's enter (#1199): the
+            # order that closed this menu as it opened, now heard where it was.
+            # Counted on every run; the trace is kept on every run too.
+            crossed = said().count("window button at ")
+            checks["sway: tall: window buttons heard after a popup's move"] = crossed
             checks["sway: its last item, scrolled to, takes a click"] = 'CHOSEN "Item 60"' in chosen
             stop(app)
 
@@ -352,6 +357,8 @@ def main():
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
+        crossed = checks.get("sway: tall: window buttons heard after a popup's move", 0)
+        print(f"tall menu: {crossed} window button(s) heard after a popup's move (#1199's order)")
         print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, flipped at the output's "
               "edge, a submenu beside its flipped menu, a menu taller than the output cut to it and scrolled, "
               "a flipped popover's arrow facing its trigger, "
