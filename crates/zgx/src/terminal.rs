@@ -233,6 +233,44 @@ pub trait TerminalBackend {
 }
 
 type Listener = Rc<RefCell<dyn FnMut(&TerminalEvent)>>;
+type ClipboardReader = Rc<RefCell<dyn FnMut(ClipboardRead)>>;
+
+/// A program's request to read the clipboard (OSC 52), for the app to
+/// answer ([`Terminal::on_clipboard_read`]): [`allow`](Self::allow) gives
+/// the program the clipboard's text, [`deny`](Self::deny) (or dropping the
+/// request) an empty answer.
+pub struct ClipboardRead(Option<Box<dyn FnOnce(bool)>>);
+impl ClipboardRead {
+    /// A request answered by `answer` (the platform's side): `true` to give
+    /// the program the clipboard's text.
+    pub fn new(answer: impl FnOnce(bool) + 'static) -> Self {
+        Self(Some(Box::new(answer)))
+    }
+    /// Give the program the clipboard's text.
+    pub fn allow(mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(true);
+        }
+    }
+    /// Give the program nothing.
+    pub fn deny(mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(false);
+        }
+    }
+}
+impl Drop for ClipboardRead {
+    fn drop(&mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(false);
+        }
+    }
+}
+impl std::fmt::Debug for ClipboardRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClipboardRead")
+    }
+}
 struct Inner {
     id: u64,
     /// How it starts; settable until a platform terminal starts it.
@@ -248,6 +286,8 @@ struct Inner {
     queued: RefCell<Vec<TerminalCommand>>,
     listeners: RefCell<Vec<(u64, Listener)>>,
     next_listener: Cell<u64>,
+    /// What answers a program asking to read the clipboard (OSC 52).
+    clipboard_reader: RefCell<Option<ClipboardReader>>,
 }
 /// A terminal session's controller; clones share it.
 #[derive(Clone)]
@@ -309,6 +349,7 @@ impl Terminal {
             queued: RefCell::new(Vec::new()),
             listeners: RefCell::new(Vec::new()),
             next_listener: Cell::new(0),
+            clipboard_reader: RefCell::new(None),
         }))
     }
     /// Unique per controller in this thread.
@@ -426,6 +467,29 @@ impl Terminal {
     pub fn snapshot(&self, max_width: u32) -> Option<std::sync::Arc<crate::image::ImageData>> {
         let backend = self.0.backend.borrow().clone();
         backend.and_then(|backend| backend.snapshot(max_width.max(1)))
+    }
+    /// Answer programs asking to read the clipboard (OSC 52) with
+    /// `reader`: it gets each [`ClipboardRead`] and allows or denies it, at
+    /// once or after asking its user (a request dropped is denied). `None`
+    /// leaves them to the platform terminal: Ghostty asks with a dialog of
+    /// its own, the engine-drawn terminal denies them.
+    pub fn on_clipboard_read(&self, reader: Option<impl FnMut(ClipboardRead) + 'static>) {
+        *self.0.clipboard_reader.borrow_mut() =
+            reader.map(|reader| Rc::new(RefCell::new(reader)) as ClipboardReader);
+    }
+    /// Hand `request` to the app's reader (the platform's side); it comes
+    /// back when the app set none, for the platform to answer.
+    pub fn request_clipboard_read(&self, request: ClipboardRead) -> Option<ClipboardRead> {
+        let reader = self.0.clipboard_reader.borrow().clone();
+        match reader {
+            Some(reader) => {
+                if let Ok(mut reader) = reader.try_borrow_mut() {
+                    reader(request);
+                }
+                None
+            }
+            None => Some(request),
+        }
     }
     /// Call `listener` with each platform event, until the subscription drops.
     pub fn on_event(&self, listener: impl FnMut(&TerminalEvent) + 'static) -> TerminalSubscription {

@@ -175,6 +175,39 @@ fn reading_a_terminal_field_follows_that_field_alone() {
     h.settle();
     assert_ne!(h.text("runs"), before, "a title change reruns it");
 }
+#[test]
+fn a_script_answers_a_programs_clipboard_read() {
+    // `on_clipboard_read` gets the request; a press allows it later, as a
+    // prompt the app shows would.
+    let mut h = Harness::inline(
+        r##"local pending = nil
+        local asked = ui.state("asked", 0)
+        local term = ui.term("p1", {
+            command = "zsh",
+            on_clipboard_read = function(request)
+                pending = request
+                asked:set(asked:peek() + 1)
+            end,
+        })
+        return ui.column {
+            ui.terminal { term = term, w = 200, h = 100 },
+            ui.text { id = "asked", "{asked}" },
+            ui.button { id = "allow", w = 20, h = 20, on_click = function() pending:allow() end },
+        }"##,
+    );
+    let term = terminal(&mut h);
+    let answer = std::rc::Rc::new(std::cell::Cell::new(None));
+    let told = answer.clone();
+    let unanswered = term.request_clipboard_read(zgx::terminal::ClipboardRead::new(move |allow| {
+        told.set(Some(allow))
+    }));
+    assert!(unanswered.is_none(), "the script's handler takes it");
+    h.settle();
+    assert_eq!(h.text("asked"), "1");
+    assert_eq!(answer.get(), None, "not answered yet");
+    h.click("allow");
+    assert_eq!(answer.get(), Some(true));
+}
 struct NoBackend;
 impl zgx::terminal::TerminalBackend for NoBackend {
     fn run(&self, _: zgx::terminal::TerminalCommand) {}

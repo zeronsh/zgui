@@ -510,17 +510,56 @@ extern "C" fn confirm_read_clipboard(
         if view.ivars().surface.get().is_null() {
             return;
         }
-        let (title, detail) = match request {
-            g::GHOSTTY_CLIPBOARD_REQUEST_PASTE => (
+        let paste = request == g::GHOSTTY_CLIPBOARD_REQUEST_PASTE;
+        let preview: String = text.chars().take(400).collect();
+        // Completes the request (once): the text, or an empty answer.
+        let answered = view.clone();
+        let answer = move |allowed: bool| {
+            let reply =
+                CString::new(if allowed { text } else { String::new() }).unwrap_or_default();
+            // Read now: a dialog's modal loop runs the main queue, where the
+            // terminal may have closed and freed its surface meanwhile.
+            let surface = answered.ivars().surface.get();
+            if surface.is_null() {
+                return;
+            }
+            // SAFETY: the view's surface is non-null, so not yet freed
+            // (`free` nulls it first); main thread (the request, holding
+            // this, is the main thread's). `state` is the request Ghostty
+            // kept for confirmation, completed only here, once (the request
+            // answers once); `reply` is NUL-terminated and outlives the call.
+            unsafe {
+                g::ghostty_surface_complete_clipboard_request(
+                    surface,
+                    reply.as_ptr(),
+                    state as *mut c_void,
+                    true,
+                )
+            };
+        };
+        // A program reading the clipboard (OSC 52): the app's to answer when
+        // it says it does (`Terminal::on_clipboard_read`), else the dialog's.
+        let request = if paste {
+            Some(zgx::terminal::ClipboardRead::new(answer))
+        } else {
+            match view.ivars().term.upgrade() {
+                Some(term) => {
+                    term.request_clipboard_read(zgx::terminal::ClipboardRead::new(answer))
+                }
+                None => Some(zgx::terminal::ClipboardRead::new(answer)),
+            }
+        };
+        let Some(request) = request else { return };
+        let (title, detail) = match paste {
+            true => (
                 "Paste this text?",
                 "It may run commands as soon as it is pasted.",
             ),
-            _ => (
+            false => (
                 "Let the program read your clipboard?",
                 "A program in this terminal asked to read it.",
             ),
         };
-        let preview: String = text.chars().take(400).collect();
         let allowed = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Warning)
             .set_title(title)
@@ -531,25 +570,11 @@ extern "C" fn confirm_read_clipboard(
             ))
             .show()
             == rfd::MessageDialogResult::Custom("Allow".into());
-        let reply = CString::new(if allowed { text } else { String::new() }).unwrap_or_default();
-        // Read after the dialog: its modal loop runs the main queue, where
-        // the terminal may have closed and freed its surface meanwhile.
-        let surface = view.ivars().surface.get();
-        if surface.is_null() {
-            return;
+        if allowed {
+            request.allow();
+        } else {
+            request.deny();
         }
-        // SAFETY: the view's surface is non-null, so not yet freed (`free`
-        // nulls it first); main thread. `state` is the request Ghostty
-        // kept for confirmation, completed only here, once; `reply` is
-        // NUL-terminated and outlives the call.
-        unsafe {
-            g::ghostty_surface_complete_clipboard_request(
-                surface,
-                reply.as_ptr(),
-                state as *mut c_void,
-                true,
-            )
-        };
     });
 }
 

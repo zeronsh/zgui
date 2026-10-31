@@ -368,3 +368,42 @@ fn a_selection_is_the_primary_and_a_middle_click_pastes_it() {
         app.texts().iter().any(|t| t.starts_with("from elsewhere"))
     });
 }
+
+#[cfg(unix)]
+#[test]
+fn a_program_reads_the_clipboard_when_the_app_allows_it() {
+    for allow in [true, false] {
+        let mut app = Harness::new();
+        let selections = Rc::new(Selections::default());
+        *selections.clipboard.borrow_mut() = Some("secret".into());
+        let platform = zgx::platform::PlatformService(selections.clone());
+        // Ask for the clipboard (OSC 52) and show the answer's bytes.
+        let term = Terminal::new(
+            &app.ui.runtime,
+            session(
+                r#"exec sh -c 'stty raw -echo; printf "\033]52;c;?\007"; head -c 8 | od -An -c | tr -d " \n"; printf "\r\n"; exec sleep 30'"#,
+            ),
+        );
+        let asked = Rc::new(std::cell::Cell::new(0));
+        let counted = asked.clone();
+        term.on_clipboard_read(Some(move |request: zgx::terminal::ClipboardRead| {
+            counted.set(counted.get() + 1);
+            if allow {
+                request.allow();
+            } else {
+                request.deny();
+            }
+        }));
+        app.mount(provide(
+            platform,
+            zgx_terminal::terminal_view(&term).w(600.).h(300.),
+        ));
+        // The answer's first eight bytes: the clipboard's text in base64
+        // starting ("secret" is c2VjcmV0), or the answer ending empty.
+        let expected = if allow { r"033]52;c;c" } else { r"033]52;c;\a" };
+        app.until("the answer", |app| {
+            app.texts().iter().any(|t| t.starts_with(expected))
+        });
+        assert_eq!(asked.get(), 1, "the app's reader was asked once");
+    }
+}
