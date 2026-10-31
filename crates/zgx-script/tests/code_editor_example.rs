@@ -187,9 +187,10 @@ fn find_marks_every_match_steps_through_them_and_replaces() {
         let mut pending = vec![root];
         let mut found = 0;
         while let Some(id) = pending.pop() {
-            if matches!(scene.kind(id), NodeKind::Rect(c) if *c == warning) {
-                found += 1;
-            }
+            // The editor's decorations, as marks on a node of their own.
+            found += (scene.text_marks(id).iter())
+                .filter(|mark| mark.color == warning)
+                .count();
             pending.extend(scene.children(id).iter().copied());
         }
         found

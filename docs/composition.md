@@ -171,7 +171,10 @@ those not mounted by their `row_text`, else by building the row's description
 without mounting it), case and accents ignored as Chrome's and Safari's do
 ("cafe" finds "Café", composed and decomposed forms alike, curly quotes as
 straight ones). Each match is marked behind its text (`find.match`), the
-current one apart (`find.current`) and scrolled into view; Enter and
+current one apart (`find.current`), each drawn as a selection is: one shape
+over the lines it runs on, rounded by `mark.radius` (by default the selection's
+radius), as an editor's decorations are too. The current one is scrolled
+into view; Enter and
 Command-G (Control-G, F3) go to the next, with Shift the one before,
 wrapping; Escape closes it, the match selected where the text is selectable
 (a field's match is scrolled to but its selection left until then). On

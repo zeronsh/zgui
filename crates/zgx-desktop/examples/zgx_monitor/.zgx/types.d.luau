@@ -234,6 +234,7 @@ export type NumberToken =
 	| "$motion.duration.normal"
 	| "$motion.duration.slow"
 	| "$selection.radius"
+	| "$mark.radius"
 export type FontToken = "$font.sans"
 	| "$font.mono"
 export type ShadowToken = "$shadow.sm"
@@ -328,6 +329,7 @@ export type TokenName =
 	| "selection.radius"
 	| "find.match"
 	| "find.current"
+	| "mark.radius"
 
 -- "#rgb", "#rrggbb", "#rrggbbaa", "rgb(…)", "rgba(…)", "hsl(…)", a few
 -- names, 0xrrggbb, or a colour token ("$text.secondary"; `ColorToken`
@@ -403,6 +405,9 @@ export type Tokens = {
 	info: string,
 	input: {
 		bg: string,
+	},
+	mark: {
+		radius: string,
 	},
 	menu: {
 		bg: string,

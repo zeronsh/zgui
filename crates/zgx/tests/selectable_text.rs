@@ -1932,3 +1932,79 @@ mod highlight_shape {
         assert_eq!(runs(&shape)[1].1, [4.; 4]);
     }
 }
+
+mod mark_shapes {
+    use zgx::scene::{
+        Color, HighlightPiece, NodeKind, Rect, Scene, Style, TextHighlight, TextMark,
+    };
+
+    /// A scene with one text node, its marks set as shapes.
+    fn marked(marks: Vec<TextMark>, ends: Vec<usize>) -> (Scene, zgx::scene::NodeId) {
+        let mut scene = Scene::new(200., 100.);
+        let text = NodeKind::Text {
+            text: "".into(),
+            color: Color(0, 0, 0, 255),
+            font_size: 1.,
+        };
+        let node = scene.append(scene.root(), text, Style::default());
+        scene.set_text_mark_shapes(node, marks, ends, 4.);
+        (scene, node)
+    }
+    fn mark(rect: Rect, color: Color) -> TextMark {
+        TextMark { rect, color }
+    }
+
+    /// Lines of one match are one shape, as a selection's are; two matches
+    /// that touch stay apart, each in its own colour.
+    #[test]
+    fn a_match_over_lines_is_one_shape_and_matches_stay_apart() {
+        let (yellow, orange) = (Color(255, 214, 10, 128), Color(255, 150, 50, 217));
+        let lines = [Rect::new(40., 0., 60., 20.), Rect::new(0., 20., 80., 20.)];
+        let (scene, node) = marked(
+            vec![
+                mark(lines[0], yellow),
+                mark(lines[1], yellow),
+                mark(Rect::new(20., 40., 30., 20.), orange),
+            ],
+            vec![2, 3],
+        );
+        let pieces = scene.text_mark_pieces(node, 0., 0., 2.).expect("shapes");
+        let alone = TextHighlight {
+            color: yellow,
+            rects: lines.to_vec(),
+            text_color: None,
+            radius: 4.,
+        };
+        let first: Vec<HighlightPiece> = (pieces.iter())
+            .filter(|(_, color)| *color == yellow)
+            .map(|(piece, _)| *piece)
+            .collect();
+        assert_eq!(
+            first,
+            alone.pieces(0., 0., 2.),
+            "the first match, as a selection"
+        );
+        let second: Vec<_> = pieces
+            .iter()
+            .filter(|(_, color)| *color == orange)
+            .collect();
+        assert_eq!(
+            second.len(),
+            1,
+            "the second alone, no curve toward the first"
+        );
+        assert!(matches!(second[0].0, HighlightPiece::Run { radii, .. } if radii == [4.; 4]));
+    }
+
+    /// Marks set plainly keep their old look (no shapes), and setting them
+    /// plainly drops shapes set before.
+    #[test]
+    fn plain_marks_are_not_shapes() {
+        let marks = vec![mark(Rect::new(0., 0., 10., 10.), Color(0, 0, 0, 255))];
+        let (mut scene, node) = marked(marks.clone(), vec![1]);
+        assert!(scene.text_mark_pieces(node, 0., 0., 1.).is_some());
+        scene.set_text_marks(node, marks);
+        assert!(scene.text_mark_pieces(node, 0., 0., 1.).is_none());
+        assert_eq!(scene.text_marks(node).len(), 1);
+    }
+}

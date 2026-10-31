@@ -7576,27 +7576,11 @@ impl GpuRenderer {
                                 && outer.x + outer.width >= bounds.x + bounds.width
                                 && outer.y + outer.height >= bounds.y + bounds.height
                         };
-                        // Find's marks, under the selection: rounded a little,
-                        // as a browser's.
+                        // Find's marks, under the selection.
                         let marks = scene.text_marks(item.id);
-                        quads.extend(marks.iter().map(|m| {
-                            let rect = [
-                                bounds.x + m.rect.x,
-                                bounds.y + m.rect.y,
-                                m.rect.width,
-                                m.rect.height,
-                            ];
-                            Quad {
-                                rect,
-                                uv: [0.; 4],
-                                color: rgba(m.color, item.effects.opacity),
-                                fade: rect,
-                                options: [item.effects.edge_fade, 0., 0., 0.],
-                                shape: [MARK_RADIUS, 0., 0., 1.],
-                                border: [0.; 4],
-                                mask: NO_MASK,
-                            }
-                        }));
+                        if !marks.is_empty() {
+                            push_marks(&mut quads, scene, &item, bounds, (x, y), self.scale);
+                        }
                         // A text selection, under the glyphs.
                         let highlight = scene.text_highlight(item.id);
                         if let Some(highlight) = highlight {
@@ -13211,48 +13195,94 @@ fn push_highlight(
     opacity: f32,
     edge_fade: f32,
 ) {
-    use zgx::scene::HighlightPiece;
     let color = rgba(highlight.color, opacity);
+    let pieces = highlight.pieces(x, y, scale);
     quads.extend(
-        highlight
-            .pieces(x, y, scale)
+        pieces
             .into_iter()
-            .map(|piece| match piece {
-                HighlightPiece::Run { rect, radii } => {
-                    let rect = [rect.x, rect.y, rect.width, rect.height];
-                    Quad {
-                        rect,
-                        uv: [0.; 4],
-                        color,
-                        fade: rect,
-                        options: [edge_fade, 0., 0., 1.],
-                        shape: [0., 0., 0., 1.],
-                        border: radii,
-                        mask: NO_MASK,
-                    }
-                }
-                HighlightPiece::Fillet {
-                    rect,
-                    centre,
-                    radius,
-                } => {
-                    // Far enough out that the wider circle's edge, and its
-                    // antialiasing, miss the square's far corner (1.41 × `radius`).
-                    let width = ((radius + 2.) * 16.).ceil();
-                    let outer = radius + width / 16.;
-                    Quad {
-                        rect: [rect.x, rect.y, rect.width, rect.height],
-                        uv: [0.; 4],
-                        color,
-                        fade: [centre.0 - outer, centre.1 - outer, outer * 2., outer * 2.],
-                        options: [edge_fade, 0., 0., 1.],
-                        shape: [width + 4096. * width, -1., width + 4096. * width, 1.],
-                        border: [outer; 4],
-                        mask: NO_MASK,
-                    }
-                }
-            }),
+            .map(|piece| piece_quad(piece, color, edge_fade)),
     );
+}
+/// A text node's marks: as shapes, as a selection is, if they were set so
+/// (`Scene::set_text_mark_shapes`); otherwise each rounded a little, as a
+/// browser's find marks are.
+#[cold]
+#[inline(never)]
+fn push_marks(
+    quads: &mut Vec<Quad>,
+    scene: &zgx::scene::Scene,
+    item: &zgx::scene::PaintItem<'_>,
+    bounds: Rect,
+    (x, y): (f32, f32),
+    scale: f32,
+) {
+    let (opacity, edge_fade) = (item.effects.opacity, item.effects.edge_fade);
+    if let Some(pieces) = scene.text_mark_pieces(item.id, x, y, scale) {
+        quads.extend(
+            (pieces.into_iter())
+                .map(|(piece, color)| piece_quad(piece, rgba(color, opacity), edge_fade)),
+        );
+        return;
+    }
+    quads.extend(scene.text_marks(item.id).iter().map(|m| {
+        let rect = [
+            bounds.x + m.rect.x,
+            bounds.y + m.rect.y,
+            m.rect.width,
+            m.rect.height,
+        ];
+        Quad {
+            rect,
+            uv: [0.; 4],
+            color: rgba(m.color, opacity),
+            fade: rect,
+            options: [edge_fade, 0., 0., 0.],
+            shape: [MARK_RADIUS, 0., 0., 1.],
+            border: [0.; 4],
+            mask: NO_MASK,
+        }
+    }));
+}
+/// A piece of a shape (`TextHighlight::pieces`) as a quad.
+fn piece_quad(piece: zgx::scene::HighlightPiece, color: [f32; 4], edge_fade: f32) -> Quad {
+    use zgx::scene::HighlightPiece;
+    {
+        match piece {
+            HighlightPiece::Run { rect, radii } => {
+                let rect = [rect.x, rect.y, rect.width, rect.height];
+                Quad {
+                    rect,
+                    uv: [0.; 4],
+                    color,
+                    fade: rect,
+                    options: [edge_fade, 0., 0., 1.],
+                    shape: [0., 0., 0., 1.],
+                    border: radii,
+                    mask: NO_MASK,
+                }
+            }
+            HighlightPiece::Fillet {
+                rect,
+                centre,
+                radius,
+            } => {
+                // Far enough out that the wider circle's edge, and its
+                // antialiasing, miss the square's far corner (1.41 × `radius`).
+                let width = ((radius + 2.) * 16.).ceil();
+                let outer = radius + width / 16.;
+                Quad {
+                    rect: [rect.x, rect.y, rect.width, rect.height],
+                    uv: [0.; 4],
+                    color,
+                    fade: [centre.0 - outer, centre.1 - outer, outer * 2., outer * 2.],
+                    options: [edge_fade, 0., 0., 1.],
+                    shape: [width + 4096. * width, -1., width + 4096. * width, 1.],
+                    border: [outer; 4],
+                    mask: NO_MASK,
+                }
+            }
+        }
+    }
 }
 fn ring_quad(style: &zgx::scene::QuadStyle, bounds: Rect, opacity: f32, edge_fade: f32) -> Quad {
     let sides = style.border_sides();
