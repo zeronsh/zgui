@@ -1827,6 +1827,9 @@ struct ColdMaps {
     /// The width each balanced text wraps at, for what it was worked out
     /// from.
     balanced_widths: std::cell::RefCell<NodeMap<(u64, f32)>>,
+    /// The min-content and max-content widths of those of them that size
+    /// themselves by what they hold, as their parent last measured them.
+    content_widths: NodeMap<(f32, f32)>,
 }
 /// A node holding at `top` below its scroll view's top (`Scene::set_sticky`).
 #[derive(Clone, Copy)]
@@ -6315,9 +6318,13 @@ impl Scene {
             }
             None => {
                 maps.size_calcs.remove(&id);
+                maps.content_widths.remove(&id);
             }
         }
         self.sync_cold(id);
+        if let Some(parent) = self.node(id).parent {
+            self.content_sizes_changed(parent);
+        }
         // What layout mapped from it is out of date.
         let node = self.node_mut(id);
         node.style_writes = node.style_writes.wrapping_add(1);
@@ -6327,6 +6334,16 @@ impl Scene {
     pub(super) fn size_calcs(&self, id: NodeId) -> Option<&crate::size_calc::SizeCalcs> {
         let cold = self.cold.as_ref()?;
         cold.size_calcs.get(&id).map(|sizes| &**sizes)
+    }
+    /// `id`'s min-content and max-content widths, if its sizes need them.
+    pub(super) fn content_widths(&self, id: NodeId) -> Option<(f32, f32)> {
+        let cold = self.cold.as_ref()?;
+        cold.content_widths.get(&id).copied()
+    }
+    /// Keep `id`'s min-content and max-content widths: whether they changed.
+    pub(super) fn keep_content_widths(&mut self, id: NodeId, widths: (f32, f32)) -> bool {
+        let maps = self.cold.get_or_insert_default();
+        maps.content_widths.insert(id, widths) != Some(widths)
     }
     /// Whether any node has sizes `set_size_calcs` gave it.
     pub(super) fn any_size_calcs(&self) -> bool {

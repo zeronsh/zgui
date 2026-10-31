@@ -15,6 +15,9 @@ pub(super) struct AdvancedLayoutCache {
     /// The percentage bases children were last measured under: taffy keys
     /// a leaf's cached size by its known and available sizes alone.
     bases: (Option<f32>, Option<f32>),
+    /// Whether a child was mapped with a size from what it holds
+    /// (`min-content` and the like): what the container measures first.
+    content_sized: bool,
 }
 /// What a child's leaf style was mapped from: its style and the style of
 /// the node it lays out as (`laid_out_as`), each by node and count of
@@ -43,6 +46,7 @@ impl AdvancedLayoutCache {
             nodes: Default::default(),
             order: Vec::new(),
             bases: (None, None),
+            content_sized: false,
         }
     }
 }
@@ -397,6 +401,9 @@ impl Scene {
         space: t::Size<t::AvailableSpace>,
         bases: (Option<f32>, Option<f32>),
     ) {
+        if cache.content_sized {
+            self.measure_content_widths(cache, ids, keys, bases);
+        }
         self.rebase(cache, ids, keys, bases);
         let root = cache.root;
         cache
@@ -477,6 +484,82 @@ impl Scene {
         if self.any_size_calcs() {
             self.rebase_size_calcs(cache, ids, keys, bases);
         }
+    }
+    /// Whether any of `ids` takes a width from what it holds.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn any_content_sized(&self, ids: &[NodeId]) -> bool {
+        ids.iter().any(|id| self.content_sized(*id))
+    }
+    /// Keep `parent`'s layout cache knowing whether a child takes a width
+    /// from what it holds, as its child `id`'s sizes change.
+    pub(super) fn content_sizes_changed(&mut self, parent: NodeId) {
+        let ids = self.children_raw(self.node(parent)).clone();
+        let sized = self.any_content_sized(&ids);
+        if let Some(cache) = self.node_mut(parent).advanced_layout.as_deref_mut() {
+            cache.content_sized = sized;
+        }
+    }
+    /// Whether `id` takes a width from what it holds (`min-content` and the
+    /// like), which its parent measures first.
+    fn content_sized(&self, id: NodeId) -> bool {
+        self.size_calcs(id).is_some_and(|sizes| {
+            [&sizes.width, &sizes.min_width, &sizes.max_width]
+                .into_iter()
+                .flatten()
+                .any(|size| size.intrinsic())
+        })
+    }
+    /// Measure what those of `ids` sized by what they hold (`min-content`
+    /// and the like) hold, and size them by it if that changed.
+    #[cold]
+    #[inline(never)]
+    fn measure_content_widths(
+        &mut self,
+        cache: &mut AdvancedLayoutCache,
+        ids: &[NodeId],
+        keys: &[t::NodeId],
+        bases: (Option<f32>, Option<f32>),
+    ) {
+        let probe = Constraints {
+            percent_width: bases.0,
+            percent_height: bases.1,
+            ..Constraints::default()
+        };
+        for (child, key) in ids.iter().zip(keys) {
+            if !self.content_sized(*child) {
+                continue;
+            }
+            let least = self.min_content(*child, probe, true);
+            let most = self.max_content_width(*child, probe).max(least);
+            if self.keep_content_widths(*child, (least, most)) {
+                let mut mapped = cache.tree.style(*key).expect("retained style").clone();
+                self.map_size_calcs(*child, &mut mapped, bases);
+                cache
+                    .tree
+                    .set_style(*key, mapped)
+                    .expect("retained style update");
+            }
+        }
+    }
+    /// `id`'s width laid out on one line. A size of its own from size math
+    /// is set aside by its style, which has none (`w_calc`); one from points
+    /// with a content limit is set aside here, its kept results with it,
+    /// as `measure_unsized` does for `min_content`: a copy, so that
+    /// `min_content` keeps it to itself, inlined.
+    fn max_content_width(&mut self, id: NodeId, probe: Constraints) -> f32 {
+        let node = self.node_mut(id);
+        let saved = (node.style.width.take(), node.style.width_percent.take());
+        let kept = (
+            node.measurement.take(),
+            std::mem::take(&mut node.alternates),
+            std::mem::take(&mut node.sizes),
+        );
+        let width = self.measure(id, probe).0;
+        let node = self.node_mut(id);
+        (node.style.width, node.style.width_percent) = saved;
+        (node.measurement, node.alternates, node.sizes) = kept;
+        width
     }
     /// The sizes `ids` work out from the containing block, for new `bases`.
     #[cold]
@@ -591,21 +674,45 @@ impl Scene {
         let Some(sizes) = self.size_calcs(id) else {
             return false;
         };
+        // Heights by what the box holds are its height at its width:
+        // `auto`, as CSS lays most boxes out.
+        let widths = self.content_widths(id);
         let set = |dimension: &mut t::Dimension,
                    size: &Option<std::sync::Arc<crate::size_calc::SizeCalc>>,
-                   basis| {
+                   basis,
+                   content| {
             if let Some(size) = size {
                 *dimension = size
-                    .resolve_in(basis)
+                    .resolve_in(basis, content)
                     .map_or(t::Dimension::auto(), t::Dimension::length);
             }
         };
-        set(&mut mapped.size.width, &sizes.width, bases.0);
-        set(&mut mapped.size.height, &sizes.height, bases.1);
-        set(&mut mapped.min_size.width, &sizes.min_width, bases.0);
-        set(&mut mapped.max_size.width, &sizes.max_width, bases.0);
-        set(&mut mapped.min_size.height, &sizes.min_height, bases.1);
-        set(&mut mapped.max_size.height, &sizes.max_height, bases.1);
+        set(&mut mapped.size.width, &sizes.width, bases.0, widths);
+        set(&mut mapped.size.height, &sizes.height, bases.1, None);
+        set(
+            &mut mapped.min_size.width,
+            &sizes.min_width,
+            bases.0,
+            widths,
+        );
+        set(
+            &mut mapped.max_size.width,
+            &sizes.max_width,
+            bases.0,
+            widths,
+        );
+        set(
+            &mut mapped.min_size.height,
+            &sizes.min_height,
+            bases.1,
+            None,
+        );
+        set(
+            &mut mapped.max_size.height,
+            &sizes.max_height,
+            bases.1,
+            None,
+        );
         true
     }
     pub(super) fn uses_advanced_layout(&self, id: NodeId) -> bool {
@@ -767,6 +874,8 @@ impl Scene {
             .collect();
         let root = cache.root;
         if cache.order != ids {
+            // A child's sizes change it too (`Scene::set_size_calcs`).
+            cache.content_sized = self.any_size_calcs() && self.any_content_sized(&ids);
             cache
                 .tree
                 .set_children(root, &children)

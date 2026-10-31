@@ -27,6 +27,8 @@ mod i18n_script;
 mod idle_gc;
 #[path = "../image_cache.rs"]
 mod image_cache;
+#[path = "../intrinsic_sizes.rs"]
+mod intrinsic_sizes;
 #[path = "../layout_gaps.rs"]
 mod layout_gaps;
 #[path = "../layout_motion.rs"]

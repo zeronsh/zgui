@@ -20,7 +20,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | --- | --- | --- | --- |
 | `w`, `h` | `Length` | its content's size | border-box: the border and padding are inside |
 | `size` | `Pair` | | `w` and `h` at once |
-| `min_w`, `max_w`, `min_h`, `max_h` | `Length` | | |
+| `min_w`, `max_w`, `min_h`, `max_h` | `Length` | | also [size math](#size-math) and [content sizes](#content-sizes) |
 | `w_full`, `h_full` | `boolean` | `false` | `w = "100%"`, `h = "100%"` |
 | `aspect` | `number` | | width over height; supplies the missing side |
 | `absolute` | `boolean` | `false` | out of the flow, placed by insets (see [Position](#position)) |
@@ -84,6 +84,25 @@ return ui.column {
 - Only these six properties take them: written on `p`, `m` or an inset, one stops the script with an error. Other units (`em`, `vw`) aren't parsed.
 - `state` and function values work, and a value that isn't valid is reported and leaves the last size. A variant's plain `w` doesn't replace a base `calc(…)`: use one in the variant too.
 - A node with one makes its parent use the same layout as `wrap` or `gap_x`: its children are measured a little more slowly than a plain column's.
+
+### Content sizes
+
+`w`, `min_w` and `max_w` also take `"min-content"`, `"max-content"`, `"fit-content"` and `"fit-content(…)"`, sized by what the element holds, as CSS's are. `max-content` is as wide as its content laid out on one line, `min-content` as narrow as it can wrap (a text with `wrap = true`: its longest word; text that doesn't wrap is as wide as its line either way), and `fit-content` takes the room it's given between the two. `fit-content(320px)` fits within 320 points instead.
+
+```lua
+return ui.column {
+	w = 400,
+	gap = 8,
+	ui.text { w = "fit-content", px = 8, bg = "$surface.raised", "A badge, not the column's width" },
+	ui.div { w = 1000, max_w = "max-content", ui.text { "As wide as this line" } },
+}
+```
+
+- In a column an element stretches to the column's width; with one of these it doesn't.
+- `max-content` can be wider than the parent, as in CSS. It overflows; use `fit-content` to stay inside.
+- On `h`, `min_h` and `max_h` they lay out as `auto`: an element's height at its width.
+- They stand alone, as in CSS: `calc(max-content + 8px)` is an error. Use padding instead.
+- The parent measures the element's content once each time it lays out, which costs a little more than a fixed width. Like size math, it makes the parent lay out with taffy.
 
 ### Sticky
 

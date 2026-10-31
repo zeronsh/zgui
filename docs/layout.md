@@ -56,7 +56,7 @@ let cards = row().w_full().flex_wrap()
 
 Sizes are border-box (CSS `box-sizing: border-box`, as GPUI): a container's border sits inside its width and height, its padding and children inside the border, and fit-content sizes include it; `border_over`, outlines and strokes only paint. Overlays stack children in one grid-like area, each aligned on its own (`items` across, `justify` down) and stretched by default. `absolute` children position against the nearest `relative` ancestor (not past an `absolute` one), else their parent; insets count from that block's padding box. See [the styling guide](styling.md#box-model) for the full rules.
 
-`.w_calc("calc(100% - 24px)".parse()?)` and its `h`, `min_` and `max_` siblings work a size out from the containing block: CSS's `calc()`, `min()`, `max()` and `clamp()`.
+`.w_calc("max-content".parse()?)` sizes a view by what it holds: `min-content`, `max-content`, `fit-content` and `fit-content(320px)`, as CSS has them, on widths. `.w_calc("calc(100% - 24px)".parse()?)` and its `h`, `min_` and `max_` siblings work a size out from the containing block: CSS's `calc()`, `min()`, `max()` and `clamp()`.
 
 `.sticky_top(n)` holds a view `n` below the top of the scroll view around it as it scrolls past, inside its parent: CSS's `position: sticky` with `top`, and painted over its siblings. It sticks to the top of a vertical scroll view only.
 
