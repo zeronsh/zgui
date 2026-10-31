@@ -25,9 +25,9 @@ chart redrawing each tick stays cheap: solid rectangles, circles, axis lines, st
 of straight lines running left to right, and filled areas (a closed path of
 straight lines whose edges run left to right in two chains that don't cross, as
 a chart's area under its line or a band between two lines is, in a colour or a
-linear gradient of up to 16 stops; on Windows these rasterize, since FXC
-can't compile their shader). One command it can't draw rasterizes the whole
-canvas. `GpuStats::canvas_quads` counts what it drew as shapes.
+linear gradient of up to 16 stops; on Windows these rasterize unless the app
+ships DXC, since FXC can't compile their shader). One command it can't draw
+rasterizes the whole canvas. `GpuStats::canvas_quads` counts what it drew as shapes.
 
 Otherwise the GPU backend rasterizes vectors with tiny-skia at the current
 display scale and caches their straight-alpha pixels and uploaded texture. Equal

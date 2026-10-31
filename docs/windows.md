@@ -84,7 +84,8 @@ Direct3D 12 compiles shaders with FXC unless the app ships Microsoft's DXC:
 with `dxcompiler.dll` beside the executable, zgx compiles with it, and with
 FXC if that fails. Compiling all 50 of zgx's pipelines took 689 ms with it,
 cold. FXC is deprecated, and its optimizer has overflowed its
-stack on zgx shaders that DXC compiles (Windows CI compiles every shader
+stack on zgx shaders that DXC compiles: canvases' filled areas draw on the
+GPU with DXC, and rasterize with FXC (Windows CI compiles every shader
 under FXC as a release build does, `tests/every_shader.rs`). DXC is quicker
 to a cold window's first text; its output is kept in the shader cache too,
 under a key naming the DLL, so a launch after the first compiles nothing. On

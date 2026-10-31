@@ -470,7 +470,7 @@ fn a_canvas_view_places_its_drawing_without_drawing_it_again() {
 }
 
 /// A filled area under a chart's line, its top chain jagged, in a gradient
-/// fading out: drawn as a quad, no raster made (rasterized on Windows), and
+/// fading out: drawn as a quad, no raster made (rasterized where FXC compiles), and
 /// looks as its raster does, at both scales. So do a band between two lines, a triangle and a
 /// solid area; a shape turning back, and one whose edges cross, rasterize.
 #[test]
@@ -581,8 +581,11 @@ fn filled_areas_draw_as_quads_and_look_as_their_raster_does() {
         };
         let (quads, drawn) = render(false, None);
         let (rasters, reference) = render(true, None);
-        // On Windows areas rasterize: FXC can't compile area.wgsl.
-        let as_quads = if cfg!(windows) { 1 } else { 0 };
+        // Where FXC compiles shaders, areas rasterize: it can't compile
+        // area.wgsl.
+        let on_gpu = GpuRenderer::new(8, 8).unwrap().areas_on_gpu();
+        assert!(on_gpu || cfg!(windows), "areas draw on the GPU off Windows");
+        let as_quads = if on_gpu { 0 } else { 1 };
         assert_eq!(quads.canvas_rasterizations, as_quads, "drawn as quads");
         assert_eq!(rasters.canvas_rasterizations, 1);
         let back: &[(f32, f32)] = &[(10., 10.), (40., 20.), (20., 30.), (30., 5.)];

@@ -1,8 +1,8 @@
 // Filled areas (`shape.x` 1, `zgx_polyline` calls `zgx_area`), appended to
-// polyline.wgsl. Not on Windows: FXC's optimizer recursed on `zgx_area`
-// until it overflowed any stack (512 MiB tried), so there neither it nor
-// the branch to it is compiled, and canvases holding an area rasterize
-// (`AREAS_ON_GPU`).
+// polyline.wgsl. Not where FXC compiles shaders (Direct3D 12 without DXC):
+// its optimizer recursed on `zgx_area` until it overflowed any stack (512 MiB
+// tried), so there neither it nor the branch to it is compiled, and canvases
+// holding an area rasterize (`areas_on_gpu`).
 // A filled area (`shape.x`), by the same search: a polygon whose edges run
 // left to right in two chains, `mask.z` points from `mask.y` and `shape.y`
 // after them, one above the other at every x, as a chart's area under its

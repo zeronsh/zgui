@@ -584,6 +584,9 @@ struct QuadPipelines {
     texture_layout: wgpu::BindGroupLayout,
     viewport_layout: wgpu::BindGroupLayout,
     polylines: std::cell::OnceCell<Polylines>,
+    /// Whether canvases' filled areas draw as quads (`areas_on_gpu`): their
+    /// shader is in the polylines' module then.
+    areas: bool,
 }
 /// The polyline strokes' module (draw.wgsl and polyline.wgsl), its layout
 /// (the quads' groups, and their points as group 2) and its pipeline into
@@ -633,7 +636,7 @@ impl QuadPipelines {
             let device = &self.device;
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("polylines"),
-                source: wgpu::ShaderSource::Wgsl(polyline_source().into()),
+                source: wgpu::ShaderSource::Wgsl(polyline_source(self.areas).into()),
             });
             let points_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("polyline points"),
@@ -2976,6 +2979,7 @@ struct Prepared {
     quad_layout: wgpu::PipelineLayout,
     mapped_uploads: bool,
     vertex_ring: bool,
+    areas: bool,
     #[cfg(d3d11)]
     d3d11: Option<d3d11_frame::Made>,
 }
@@ -3110,7 +3114,7 @@ impl GpuContext {
             // glass windows), where a window's own swap chain is opaque.
             descriptor.backend_options.dx12.presentation_system =
                 wgpu::Dx12SwapchainKind::DxgiFromVisual;
-            descriptor.backend_options.dx12.shader_compiler = compiler;
+            descriptor.backend_options.dx12.shader_compiler = compiler.clone();
             #[cfg(d3d11)]
             {
                 descriptor.backend_options.noop.enable = noop;
@@ -3165,12 +3169,13 @@ impl GpuContext {
                     ),
                     _ => Ok(adapter),
                 });
-            found = adapter.map(|adapter| (instance, adapter));
+            let areas = areas_on_gpu(backends, &compiler);
+            found = adapter.map(|adapter| (instance, adapter, areas));
             if found.is_ok() {
                 break;
             }
         }
-        let (instance, adapter) = found?;
+        let (instance, adapter, areas) = found?;
         let info = adapter.get_info();
         // CPU-written vertex buffers avoid a GPU copy per frame; only worth it
         // where CPU and GPU share memory.
@@ -3279,6 +3284,7 @@ impl GpuContext {
             quad_layout,
             mapped_uploads,
             vertex_ring,
+            areas,
             #[cfg(d3d11)]
             d3d11: d3d11.map(d3d11_frame::Made),
         })
@@ -3298,6 +3304,7 @@ impl GpuContext {
             quad_layout,
             mapped_uploads,
             vertex_ring,
+            areas,
             #[cfg(d3d11)]
             d3d11,
         } = prepared;
@@ -3312,6 +3319,7 @@ impl GpuContext {
             texture_layout: texture_layout.clone(),
             viewport_layout: viewport_layout.clone(),
             polylines: Default::default(),
+            areas,
         };
         Self {
             inner: Rc::new(GpuContextInner {
@@ -7014,8 +7022,13 @@ impl GpuRenderer {
                         // drawn in quads, each would take them alone.
                         if item.effects.opacity >= 1.
                             && item.effects.edge_fade <= 0.
-                            && let Some(drawn) =
-                                canvas_quads(canvas, (bounds.x, bounds.y), view, &mut points)
+                            && let Some(drawn) = canvas_quads(
+                                canvas,
+                                (bounds.x, bounds.y),
+                                view,
+                                self.context.inner.quads.areas,
+                                &mut points,
+                            )
                         {
                             if let Some(old) = self.node_images.remove(&item.id) {
                                 self.images.remove(&old);
@@ -12129,6 +12142,12 @@ impl GpuRenderer {
             .and_then(|present| present.layer.as_ref())
             .is_some_and(|layer| layer.drawables_shown())
     }
+    /// Whether canvases' filled areas draw on the GPU here, or rasterize
+    /// (Direct3D 12 compiling with FXC, which can't compile their shader).
+    #[doc(hidden)]
+    pub fn areas_on_gpu(&self) -> bool {
+        self.context.inner.quads.areas
+    }
     /// Frames wait for drawables a refresh behind (macOS): the host skips
     /// one tick to put them back in phase. The last wait, once.
     #[cfg(target_os = "macos")]
@@ -13296,10 +13315,11 @@ fn canvas_quads(
     canvas: &zgx::canvas::Canvas,
     origin: (f32, f32),
     view: zgx::scene::CanvasView,
+    areas: bool,
     points: &mut Vec<[f32; 2]>,
 ) -> Option<Vec<CanvasQuad>> {
     let mark = points.len();
-    let quads = canvas_quads_of(canvas, origin, view, points);
+    let quads = canvas_quads_of(canvas, origin, view, areas, points);
     if quads.is_none() {
         points.truncate(mark);
     }
@@ -13309,6 +13329,7 @@ fn canvas_quads_of(
     canvas: &zgx::canvas::Canvas,
     origin: (f32, f32),
     view: zgx::scene::CanvasView,
+    areas: bool,
     points: &mut Vec<[f32; 2]>,
 ) -> Option<Vec<CanvasQuad>> {
     use zgx::canvas::{Brush, Draw, LineCap, LineJoin, Segment, Shape};
@@ -13358,7 +13379,7 @@ fn canvas_quads_of(
         match command {
             // Neither box nor circle: an area, if `zgx_area` draws it.
             Draw::Fill { path, brush, .. } if path.shape().is_none() => {
-                if !AREAS_ON_GPU {
+                if !areas {
                     return None;
                 }
                 let quad = area_quad(path, brush, origin, zoom, points)?;
@@ -13925,7 +13946,8 @@ pub fn shader_modules() -> Vec<(&'static str, String)> {
     };
     vec![
         ("draw", include_str!("draw.wgsl").to_owned()),
-        ("polyline", polyline_source()),
+        ("polyline", polyline_source(false)),
+        ("polyline with areas", polyline_source(true)),
         ("image effects", image_effect_source()),
         ("blend", blend_source()),
         (
@@ -13963,10 +13985,10 @@ pub fn shader_modules() -> Vec<(&'static str, String)> {
 }
 /// The polyline strokes' module: the quad shader (draw.wgsl), whose vertex
 /// stage and clip regions they share, polyline.wgsl, and its filled areas
-/// (area.wgsl) where they draw on the GPU (`AREAS_ON_GPU`).
-fn polyline_source() -> String {
+/// (area.wgsl) where they draw on the GPU (`areas_on_gpu`).
+fn polyline_source(areas: bool) -> String {
     let strokes = include_str!("polyline.wgsl");
-    if AREAS_ON_GPU {
+    if areas {
         return format!(
             "{}\n{strokes}\n{}",
             include_str!("draw.wgsl"),
@@ -13989,11 +14011,22 @@ fn polyline_source() -> String {
 /// The line of polyline.wgsl's `zgx_polyline` that hands an area to
 /// area.wgsl's `zgx_area`.
 const AREA_BRANCH: &str = " if v.shape.x>.5 {return zgx_area(v);}\n";
-/// Whether a canvas's filled areas draw as quads (area.wgsl). Not on
-/// Windows: FXC's optimizer recursed on area.wgsl until it overflowed any
-/// stack, which crashed an app at its first canvas stroke. A canvas holding
-/// an area rasterizes there, as one too dense for a quad does.
-const AREAS_ON_GPU: bool = !cfg!(windows);
+/// Whether a canvas's filled areas draw as quads (area.wgsl), for a device
+/// of `backends` compiling shaders with `compiler`. Not where FXC compiles
+/// them (Direct3D 12 without DXC): its optimizer recursed on area.wgsl until
+/// it overflowed any stack, which crashed an app at its first canvas stroke.
+/// A canvas holding an area rasterizes there, as one too dense for a quad
+/// does. Not on the no-op backend either (Direct3D 11 draws no polylines).
+fn areas_on_gpu(backends: wgpu::Backends, compiler: &wgpu::Dx12Compiler) -> bool {
+    match backends {
+        wgpu::Backends::DX12 => matches!(
+            compiler,
+            wgpu::Dx12Compiler::DynamicDxc { .. } | wgpu::Dx12Compiler::StaticDxc
+        ),
+        wgpu::Backends::NOOP => false,
+        _ => true,
+    }
+}
 /// The polyline strokes' pipeline: into the retained target, with
 /// `drawable` also into that in the same pass (`fs_polyline_both`), or into
 /// it `alone` (`Deferred::direct`).
