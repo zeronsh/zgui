@@ -14,6 +14,7 @@ exclude = [
     "vendor/mlua",
     "vendor/taffy",
     "vendor/winit",
+    "vendor/zune-jpeg",
 ]
 resolver = "2"
 
