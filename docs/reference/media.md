@@ -161,7 +161,7 @@ return ui.column {
 
 ## Gotchas
 
-- `ui.image` needs `src`; `code` is the SVG's (an image with only `code` fails to load). A missing or undecodable file shows the error in the window and an empty image.
+- `ui.image` needs `src`; `code` is the SVG's (an image with only `code` fails to load). A missing or undecodable file shows the error in the window, at the script line naming it, and an empty image. An empty `src` (`""`, a picture not chosen yet) shows nothing and is no error, as the web's is, for images, SVGs and `bg_image`.
 - Images and SVGs are decoded once per `src` and shared by every node showing it. Ones no node shows stay only while they fit the image cache's budget, the most recently shown first. A host that watches its scripts (`ScriptHost::watch`) also watches these files: saving an edited image reloads the scripts, state kept, and they show the new one.
 - An image is as large as its pixels in points unless sized; give it a `w` and `h` (or `aspect` and one of them).
 - `draw` runs again only for its size and the state it read; reading state through `peek` (or outside `draw`) does not redraw it. Keep it cheap: it runs in the script for every change it follows.
