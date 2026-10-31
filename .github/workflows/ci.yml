@@ -47,6 +47,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Room on the disk: this job's target/ reaches about 40 GB, more than
+      # some runners have left after their image (two runs died of a full
+      # disk on Oct 31). The image's toolchains it never runs (Android, .NET,
+      # Haskell, Swift, CodeQL, PowerShell: about 28 GB) go while it builds.
+      - run: |
+          df -h /
+          sudo nohup rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/share/powershell > /dev/null 2>&1 &
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -177,6 +184,11 @@ jobs:
           XDG_RUNTIME_DIR: /tmp
           ZGX_REQUIRE_GPU: "1"
         run: cargo test -p zgx-3d --features gltf --locked
+      # The test binaries built above aren't run again: their room goes to
+      # the probes' fixtures, about 13 GB of examples.
+      - name: Room for the fixtures
+        if: ${{ !cancelled() }}
+        run: find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete
       - name: Build native fixtures
         id: native-fixtures
         if: ${{ !cancelled() }}
@@ -211,6 +223,9 @@ jobs:
           path: |
             /tmp/zgx-wayland-popups/sway-tall.trace
             /tmp/zgx-wayland-popups/result.json
+      # What the job left free, beside the start's: a full disk loses the log.
+      - if: always()
+        run: df -h /
       - name: Preserve Vulkan and native window evidence
         if: failure()
         continue-on-error: true
