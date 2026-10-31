@@ -367,6 +367,31 @@ fn borders_and_outlines_take_their_styles() {
     assert_eq!(scene.outline_style(ids[2]), BorderStyle::Solid);
 }
 
+/// `mask_gradient` and `mask_radial` reach the scene as gradient masks.
+#[test]
+fn gradient_masks_reach_the_scene() {
+    use zgx::decoration::Gradient;
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.div { id = "linear", w = 20, h = 20,
+                mask_gradient = { angle = 180, stops = { "#000f", "#0000" } } },
+            ui.div { id = "radial", w = 20, h = 20, mask_radial = { "#000f", "#0000" } },
+            ui.div { id = "none", w = 20, h = 20 } }"##,
+    );
+    h.ui.prepare_frame();
+    let ids = ["linear", "radial", "none"].map(|id| h.find(id).unwrap());
+    let scene = h.ui.scene.borrow();
+    assert!(matches!(
+        scene.mask_gradient(ids[0]),
+        Some(Gradient::Linear { .. })
+    ));
+    assert!(matches!(
+        scene.mask_gradient(ids[1]),
+        Some(Gradient::Radial { .. })
+    ));
+    assert!(scene.mask_gradient(ids[2]).is_none());
+}
+
 #[test]
 fn a_closed_modal_in_an_overlay_blocks_no_clicks() {
     let mut h = Harness::inline(

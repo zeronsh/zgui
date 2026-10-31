@@ -1965,6 +1965,7 @@ fn apply_rare(
             node,
             cold.and_then(|cold| cold.outline_style).unwrap_or_default(),
         );
+        scene.set_mask_gradient(node, cold.and_then(|cold| cold.mask_gradient.clone()));
     }
     if let Some(direction) = rare.direction {
         scene.set_direction(node, Some(direction));

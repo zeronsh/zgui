@@ -1612,6 +1612,11 @@ export type Styles = {
 	bg: Color?,
 	gradient: Gradient?,
 	radial: RadialGradient?,
+	-- Shows the node through a gradient's alpha over its box, whatever its
+	-- size (CSS's `mask-image` with a gradient): `mask_gradient` as
+	-- `gradient` takes it, `mask_radial` as `radial` does. In place of `mask`.
+	mask_gradient: Gradient?,
+	mask_radial: RadialGradient?,
 	color: Color?,
 	bg_image: string?,
 	bg_fit: Fit?,
@@ -1824,6 +1829,8 @@ export type StyleProps = {
 	bg: Reactive<Color>?,
 	gradient: Reactive<Gradient>?,
 	radial: Reactive<RadialGradient>?,
+	mask_gradient: Reactive<Gradient>?,
+	mask_radial: Reactive<RadialGradient>?,
 	color: Reactive<Color>?,
 	bg_image: Reactive<string>?,
 	bg_fit: Reactive<Fit>?,

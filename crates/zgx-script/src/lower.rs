@@ -7216,6 +7216,21 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (Hidden, Lit::Bool(false)) => s.visible(),
         (Invisible, Lit::Bool(true)) => s.invisible(),
         (Bg, Lit::Color(c)) => s.bg(*c),
+        (MaskGradient | MaskRadial, Lit::Gradient(gradient)) => {
+            s.mask_gradient(match &**gradient {
+                crate::node::GradientLit::Linear(angle, stops) => {
+                    zgx::decoration::Gradient::Linear {
+                        angle: *angle,
+                        stops: stops.clone(),
+                    }
+                }
+                crate::node::GradientLit::Radial(radial) => zgx::decoration::Gradient::Radial {
+                    center: radial.center,
+                    radius: radial.radius,
+                    stops: radial.stops,
+                },
+            })
+        }
         (Gradient | Radial, Lit::Gradient(gradient)) => match &**gradient {
             crate::node::GradientLit::Linear(angle, stops) => s.bg_gradient(*angle, stops.clone()),
             crate::node::GradientLit::Radial(radial) => {
