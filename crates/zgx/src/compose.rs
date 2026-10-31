@@ -6651,6 +6651,14 @@ impl NodeHandle {
     pub fn scene(&self) -> Option<Rc<RefCell<crate::scene::Scene>>> {
         self.ui.upgrade().map(|ui| ui.scene.clone())
     }
+    /// Whether assistive technology reads the UI's semantics now
+    /// (`Ui::assistive_technology`): what only a reader needs (a terminal's
+    /// news of its output) can wait for one.
+    pub fn assistive_technology(&self) -> bool {
+        self.ui
+            .upgrade()
+            .is_some_and(|ui| ui.assistive_technology())
+    }
     /// Whether the node is still in the scene.
     pub fn is_mounted(&self) -> bool {
         self.ui
