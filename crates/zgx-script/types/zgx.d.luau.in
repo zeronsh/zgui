@@ -1572,6 +1572,9 @@ export type Styles = {
 	self: Align?,
 	content: AlignContent?,
 	grid: boolean?,
+	-- "contents": its children lay out in its place, as its parent's own
+	-- (CSS `display: contents`); on `ui.each`, its rows are the grid's cells.
+	display: "contents"?,
 	-- A grid's tracks: a number of equal ones, or a list as CSS's
 	-- `grid-template-columns` writes it: "220 1fr auto",
 	-- "repeat(auto-fill, minmax(240, 1fr))". A bare number is points.
@@ -1783,6 +1786,7 @@ export type StyleProps = {
 	self: Reactive<Align>?,
 	content: Reactive<AlignContent>?,
 	grid: Reactive<boolean>?,
+	display: Reactive<string>?,
 	cols: Reactive<number | string>?,
 	rows: Reactive<number | string>?,
 	areas: Reactive<{ string } | string>?,

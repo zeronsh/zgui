@@ -55,6 +55,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `content` | `"start" \| "center" \| "end" \| "stretch" \| "between" \| "around" \| "evenly"` | `"start"` | wrapped lines |
 | `grid` | `boolean` | `false` | lay children out in a grid |
 | `cols`, `rows` | `number \| string` | | a number of equal tracks, or a track list as CSS's `grid-template-columns` writes it (see [Grid tracks](#grid-tracks)) |
+| `display` | `"contents"` | | its children lay out in its place, as its parent's own (CSS `display: contents`): grid cells, row items ([display contents](#display-contents)) |
 | `col_start`, `row_start` | `number` | the next free cell | one-based grid lines; negative count from the end |
 | `areas` | `{ string }` | | named cells, a string a row ([grid tracks](#grid-tracks)) |
 | `flow` | `"row" \| "column" \| "dense" \| "column dense"` | `"row"` | how items without a place fill the grid |
@@ -188,6 +189,36 @@ return ui.overlay {
 - Only painting and hit-testing change. Layout, Tab order and what assistive technology reads keep document order, as in CSS.
 - A raised node over a scroll view keeps that view from scrolling by copying pixels, as anything drawn over it does.
 - For what must rise above everything (a menu, a tooltip), use an overlay ([overlays](overlays.md)), not a large `z`.
+
+### Display contents
+
+`display = "contents"` lays an element's children out in its place, as its parent's own, as CSS `display: contents` does. On `ui.each`, it makes the rows the grid's cells or the row's items, instead of one box holding them.
+
+```lua
+local items = ui.state("items", { "One", "Two", "Three", "Four" })
+return ui.div {
+	grid = true,
+	cols = 3,
+	gap = 8,
+	ui.div { h = 40, bg = "$surface.raised", ui.text { "Pinned" } },
+	ui.each(items, function(item: string)
+		return ui.div { h = 40, bg = "$surface.raised", ui.text { item, literal = true } }
+	end, { display = "contents" }),
+}
+```
+
+- Its own size, padding and margins don't apply. It spans its children for paint, clip and hits, so a `bg` on it paints the box around them.
+- Focus order and assistive technology keep it where it is: a role or label on it stays, with its children under it.
+- Its parent lays out with taffy. Use it where the rows must join the parent's own flow (grid cells, items wrapping with the parent's, a `gap` between them and their siblings); where a box holding them lays out the same, keep the box. 500 rows, counted instructions:
+
+  | 500 rows in | box (`ui.each` default) | `display = "contents"` |
+  | --- | ---: | ---: |
+  | a column, mount | 5.9 M | 9.2 M |
+  | a column, each relayout | 0.3 M | 1.2 M |
+  | a wrapping row, mount | 25.2 M | 12.9 M |
+  | a wrapping row, each relayout | 13.1 M | 3.3 M |
+
+  A column or row of boxes skips taffy; a box that wraps inside a wrapping row is measured several times by its parent.
 
 ### Grid tracks
 

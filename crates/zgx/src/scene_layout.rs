@@ -884,6 +884,11 @@ impl Scene {
             Box::new(AdvancedLayoutCache::new(children))
         });
         let mut ids = self.children_raw(self.node(id)).clone();
+        // Children laid out in their own place lay theirs out here.
+        let flat = self.has_flat_children(id);
+        if flat {
+            ids = self.flatten(&ids);
+        }
         // Those whose containing block is further up are placed by it.
         if self.relative_count > 0 {
             ids.retain(|child| !self.escapes(*child));
@@ -1208,10 +1213,91 @@ impl Scene {
                 )
             })
             .collect();
+        let positions = match flat {
+            true => self.fold_flat(id, positions, (inner_width, inner_height)),
+            false => positions,
+        };
         let size = (root_layout.size.width, root_layout.size.height);
         self.store_measurement(id, constraints, size, positions);
         self.node_mut(id).advanced_layout = Some(cache);
         size
+    }
+    /// `ids` with each laid out in its place (`set_display_contents`)
+    /// replaced by its children, theirs too, in document order.
+    #[cold]
+    #[inline(never)]
+    fn flatten(&self, ids: &[NodeId]) -> Vec<NodeId> {
+        let mut out = Vec::with_capacity(ids.len());
+        for child in ids {
+            if self.is_display_contents(*child) {
+                let inner = self.children_raw(self.node(*child)).clone();
+                out.extend(self.flatten(&inner));
+            } else {
+                out.push(*child);
+            }
+        }
+        out
+    }
+    /// The places `positions` gives the children laid out in their
+    /// parents' place (`flatten`'s order), back under those parents: each
+    /// such parent placed around its own, which it holds measured relative
+    /// to it, as `arrange` walks the tree. Children placed by an ancestor
+    /// further up (`escapes`) aren't among them.
+    #[cold]
+    #[inline(never)]
+    fn fold_flat(
+        &mut self,
+        id: NodeId,
+        positions: Vec<ChildPlacement>,
+        inner: (f32, f32),
+    ) -> Vec<ChildPlacement> {
+        let mut placed = positions.into_iter().peekable();
+        let ids = self.children_raw(self.node(id)).clone();
+        self.fold_level(&ids, &mut placed, inner)
+    }
+    fn fold_level(
+        &mut self,
+        ids: &[NodeId],
+        placed: &mut std::iter::Peekable<std::vec::IntoIter<ChildPlacement>>,
+        inner: (f32, f32),
+    ) -> Vec<ChildPlacement> {
+        let mut out = Vec::with_capacity(ids.len());
+        for child in ids {
+            if self.is_display_contents(*child) {
+                let own = self.children_raw(self.node(*child)).clone();
+                let held = self.fold_level(&own, placed, inner);
+                // Its box spans what it holds.
+                let span = held
+                    .iter()
+                    .map(|(_, rect, _)| *rect)
+                    .reduce(|a, b| a.union(b))
+                    .unwrap_or_default();
+                let held = held
+                    .into_iter()
+                    .map(|(node, rect, c)| {
+                        (
+                            node,
+                            Rect::new(rect.x - span.x, rect.y - span.y, rect.width, rect.height),
+                            c,
+                        )
+                    })
+                    .collect();
+                let constraints = Constraints {
+                    width: Some(span.width),
+                    height: Some(span.height),
+                    percent_width: Some(inner.0),
+                    percent_height: Some(inner.1),
+                    force_width: Some(span.width),
+                    force_height: Some(span.height),
+                };
+                let constraints = self.relevant(*child, constraints);
+                self.store_measurement(*child, constraints, (span.width, span.height), held);
+                out.push((*child, span, constraints));
+            } else if placed.peek().is_some_and(|(node, ..)| node == child) {
+                out.extend(placed.next());
+            }
+        }
+        out
     }
 }
 

@@ -60,6 +60,8 @@ Sizes are border-box (CSS `box-sizing: border-box`, as GPUI): a container's bord
 
 `.sticky_top(n)` holds a view `n` below the top of the scroll view around it as it scrolls past, inside its parent: CSS's `position: sticky` with `top`, and painted over its siblings. It sticks to the top of a vertical scroll view only.
 
+`.display_contents()` lays a view's children out in its place, as its parent's own (CSS `display: contents`): in a grid each is a cell, in a row an item. Its own size, padding and margins don't apply; it spans its children for paint, clip and hits, and keeps its place in focus order and for assistive technology, a role or label it has with its children under it. Its parent lays out with taffy: on each relayout about 4 times the instructions of a column of boxes, and a quarter of those of a wrapping box in a wrapping row (`docs/reference/properties.md`, display contents, has the numbers). `.contents()` is the one-child kind regions use.
+
 `.z(n)` paints and hits a view over siblings with a lower `z`, among its siblings only: CSS's `z-index` without stacking contexts. Layout, focus and accessibility keep document order.
 
 Percent padding uses the containing block's width on every edge. Auto margins absorb remaining space. `aspect_ratio` supplies the missing dimension. Pixel refinements override earlier percentage spacing, gaps and size constraints on the corresponding properties. `.hidden()` removes a subtree from layout and interaction while retaining its component identity; `.invisible()` preserves allocation. `.flex()` restores display and `.visible()` restores visibility. Hidden focused controls blur, and visibility observers stop hidden media deadlines.
