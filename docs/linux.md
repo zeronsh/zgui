@@ -447,8 +447,8 @@ Wayland cannot embed another client's surface (a subsurface belongs to the
 client that made its parent, and GTK draws through a connection of its own),
 and an X11 child window can't be faded, rounded but by a one-bit shape, or
 covered by translucent zgx content; WPE WebKit, made for hosts like this, is
-not packaged on Ubuntu 24.04. So each page is a `WebKitWebView` in a
-`GtkOffscreenWindow`, on a thread of GTK's own running its main loop (winit's
+not packaged on Ubuntu 24.04. So each page is a `WebKitWebView` in a window
+drawn offscreen (below), on a thread of GTK's own running its main loop (winit's
 never runs GLib's; an idle page costs that thread's wait). What it draws is
 copied into a frame shared with the window, and the page's box is a GPU view
 (`zgx::gpu_view`) whose painter uploads the damaged part into a texture. So
@@ -474,6 +474,20 @@ the navigation policy, new-window requests, profiles (named ones under
 `$XDG_DATA_HOME/<program>/web-profiles/<name>`), zoom, transparency and Web
 Inspector (a GTK window of its own) work as on macOS.
 
+Video and audio play through WebKit's GStreamer: `libwebkit2gtk-4.1-0`
+depends on `gstreamer1.0-plugins-base` and `-good`, which play WebM (VP8,
+VP9, Opus, Vorbis) and Ogg; H.264 and AAC need `gstreamer1.0-libav` (or
+`-plugins-bad` and `-ugly`), which an app shipping such media should ask
+its users for. WebKitGTK takes a page in a `GtkOffscreenWindow` for one in
+no window, and a page in no window starts no media (a `<video>` never asked
+for its source; an `AudioContext` stayed suspended). So a page's window is
+zgx's own `ZgxOffscreenWindow`: `GtkWindow`'s class with the methods
+`GtkOffscreenWindow`'s replaces (show, hide, realize, size requests and
+allocation, resizing), drawn offscreen as that one is, and embedded in the
+root window so that WebKit, asking which monitor it's on, gets one. Where
+GTK's classes differ from 3.24's otherwise, zgx says so once on stderr and
+pages show in a `GtkOffscreenWindow`, without media.
+
 The page's accessible tree, which WebKit serves from its web process, is
 the window's too: the page's box is an internal frame (as a browser's iframe
 is) whose child is the page's document, and the document's parent is the
@@ -490,9 +504,10 @@ Orca names it with its role.
 
 Unlike macOS:
 
-- Each frame the page draws is copied twice on the CPU: read from the
-  offscreen window, then its damaged part uploaded. Video and WebGL pages
-  cost more than on macOS.
+- Each frame the page draws is copied on the CPU: WebKit paints it into
+  zgx's surface, and zgx copies and uploads its damaged part
+  ([measured](native-surfaces.md#what-a-linux-page-frame-costs)). Video and
+  WebGL pages cost more than on macOS.
 - The page renders at the window's scale through its zoom, so
   `devicePixelRatio` is 1 at any scale.
 - The cursor is the page's for the CSS cursors with a name in the cursor

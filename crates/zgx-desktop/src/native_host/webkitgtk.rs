@@ -484,7 +484,22 @@ impl Gtk {
             }
             let im = (api.g_object_new)(im_context_type(api), std::ptr::null::<c_char>());
             (api.webkit_web_view_set_input_method_context)(view, im);
-            let window = (api.gtk_offscreen_window_new)();
+            let window = match offscreen_type(api) {
+                Some(kind) => {
+                    let window = (api.g_object_new)(kind, std::ptr::null::<c_char>());
+                    // Taken for a window on screen, it is asked which monitor
+                    // it is on as the page realizes (GDK warned of a window
+                    // with no origin): embedded in the root window, it has
+                    // one, the root's.
+                    (api.gtk_widget_realize)(window);
+                    (api.gdk_offscreen_window_set_embedder)(
+                        (api.gtk_widget_get_window)(window),
+                        (api.gdk_get_default_root_window)(),
+                    );
+                    window
+                }
+                None => (api.gtk_offscreen_window_new)(),
+            };
             // No window a screen reader should follow: focus given to the
             // page activates this one, and a reader taking it for the active
             // window would leave the app's (ATK_ROLE_FILLER).
@@ -1958,6 +1973,96 @@ fn finish_scheme(gtk: &Gtk, task: u64, response: Option<SchemeResponse>) {
             }
         }
         (api.g_object_unref)(request);
+    }
+}
+
+// The page's window: offscreen, as `GtkOffscreenWindow` is, but not one.
+
+/// `ZgxOffscreenWindow`, registered once: a `GtkWindow` drawn offscreen.
+/// WebKitGTK takes a page in a `GtkOffscreenWindow` for one in no window,
+/// and such a page starts no media: a `<video>` or `<audio>` never asked
+/// for its source, and an `AudioContext` stayed suspended. This class is
+/// `GtkWindow`'s with the methods `GtkOffscreenWindow`'s replaces (on GTK
+/// 3.24: show, hide, realize, size allocation and requests, resizing), as
+/// GTK made that class; its instances are plain `GtkWindow`s, as that
+/// class's are. `None` (said once) when the two classes differ otherwise,
+/// for a GTK this wasn't made for: pages show then, without media.
+fn offscreen_type(api: &Api) -> Option<gtk::GType> {
+    static TYPE: OnceLock<Option<gtk::GType>> = OnceLock::new();
+    *TYPE.get_or_init(|| {
+        let replaced = offscreen_methods(api);
+        if replaced.len() != 7 {
+            eprintln!(
+                "zgx: GtkOffscreenWindow differs from GtkWindow in {} places, not GTK 3.24's \
+                 7: web pages show in it, but play no media",
+                replaced.len()
+            );
+            return None;
+        }
+        let _ = OFFSCREEN_METHODS.set(replaced);
+        // SAFETY: GObject's type registry on GTK's thread: the subclass
+        // takes `GtkWindow`'s class and instance sizes as GObject reports
+        // them, and `class_init` copies methods within that class.
+        unsafe {
+            let parent = (api.gtk_window_get_type)();
+            let mut query = std::mem::zeroed::<gtk::GTypeQuery>();
+            (api.g_type_query)(parent, &mut query);
+            let info = gtk::GTypeInfo {
+                class_size: query.class_size as u16,
+                base_init: null_mut(),
+                base_finalize: null_mut(),
+                class_init: Some(offscreen_class_init),
+                class_finalize: null_mut(),
+                class_data: null_mut(),
+                instance_size: query.instance_size as u16,
+                n_preallocs: 0,
+                instance_init: null_mut(),
+                value_table: null_mut(),
+            };
+            Some((api.g_type_register_static)(
+                parent,
+                c"ZgxOffscreenWindow".as_ptr(),
+                &info,
+                0,
+            ))
+        }
+    })
+}
+/// Where `GtkOffscreenWindow`'s class (`offscreen_methods`) differs from
+/// `GtkWindow`'s, in words.
+static OFFSCREEN_METHODS: OnceLock<Vec<usize>> = OnceLock::new();
+/// The words of `GtkWindowClass` past `GObjectClass` (GObject's class sizes)
+/// that `GtkOffscreenWindowClass` holds differently, but for
+/// `GtkWidgetClass`'s private data (its third word from the end; each class
+/// has its own).
+fn offscreen_methods(api: &Api) -> Vec<usize> {
+    // SAFETY: two classes GTK made, on GTK's thread, read within the
+    // smaller's size (`GtkOffscreenWindowClass` begins with a
+    // `GtkWindowClass`).
+    unsafe {
+        let size = |kind| {
+            let mut query = std::mem::zeroed::<gtk::GTypeQuery>();
+            (api.g_type_query)(kind, &mut query);
+            query.class_size as usize / std::mem::size_of::<Ptr>()
+        };
+        let object = size(20 << 2);
+        let private = size((api.gtk_widget_get_type)()) - 3;
+        let window = (api.g_type_class_ref)((api.gtk_window_get_type)()) as *const Ptr;
+        let offscreen = (api.g_type_class_ref)((api.gtk_offscreen_window_get_type)()) as *const Ptr;
+        (object..size((api.gtk_window_get_type)()))
+            .filter(|&at| at != private && *window.add(at) != *offscreen.add(at))
+            .collect()
+    }
+}
+unsafe extern "C" fn offscreen_class_init(class: Ptr, _: Ptr) {
+    let api = gtk::api().expect("GTK runs");
+    // SAFETY: the class being made is `GtkWindowClass`-sized (as
+    // registered), and `OFFSCREEN_METHODS` are words within it.
+    unsafe {
+        let offscreen = (api.g_type_class_ref)((api.gtk_offscreen_window_get_type)()) as *const Ptr;
+        for &at in OFFSCREEN_METHODS.get().expect("found before registering") {
+            *(class as *mut Ptr).add(at) = *offscreen.add(at);
+        }
     }
 }
 

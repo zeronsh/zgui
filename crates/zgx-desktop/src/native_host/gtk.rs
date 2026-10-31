@@ -90,6 +90,8 @@ api! {
     fn gtk_init_check(*mut c_int, *mut *mut *mut c_char) -> gboolean;
     fn gtk_main();
     fn gtk_offscreen_window_new() -> Ptr;
+    fn gtk_offscreen_window_get_type() -> GType;
+    fn gtk_window_get_type() -> GType;
     fn gtk_window_resize(Ptr, c_int, c_int);
     fn gtk_widget_set_size_request(Ptr, c_int, c_int);
     fn gtk_container_add(Ptr, Ptr);
@@ -100,6 +102,9 @@ api! {
     fn gtk_widget_draw(Ptr, Ptr);
     fn gtk_widget_grab_focus(Ptr);
     fn gtk_widget_get_window(Ptr) -> Ptr;
+    fn gtk_widget_realize(Ptr);
+    fn gdk_offscreen_window_set_embedder(Ptr, Ptr);
+    fn gdk_get_default_root_window() -> Ptr;
     fn gtk_widget_send_focus_change(Ptr, *mut GdkEventFocus) -> gboolean;
     fn gtk_widget_get_allocated_width(Ptr) -> c_int;
     fn gtk_widget_get_allocated_height(Ptr) -> c_int;

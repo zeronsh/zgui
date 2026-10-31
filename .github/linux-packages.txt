@@ -9,6 +9,7 @@ gdb
 gir1.2-atspi-2.0
 gir1.2-gtk-3.0
 grim
+gstreamer1.0-tools
 hunspell-en-us
 ibus
 ibus-libpinyin

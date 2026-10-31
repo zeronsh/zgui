@@ -12,6 +12,8 @@
 //! for each of the app's shortcuts that fired: Ctrl+J (the page takes it),
 //! Ctrl+K (the page leaves it alone) and Ctrl+L (reserved: the page never
 //! hears it).
+//!
+//! `--media URL`: the page at URL instead (the smoke's video and audio).
 use zgx::{
     actions::{Action, KeyBinding, Keymap, Keystroke},
     compose::prelude::*,
@@ -61,12 +63,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..Default::default()
             };
             let web = WebView::new(&cx.ui.runtime, options);
-            let page = if transparent {
-                PAGE.replace("background: rgb(0, 0, 255)", "background: transparent")
+            let mut args = std::env::args();
+            if let Some(url) = args
+                .by_ref()
+                .position(|arg| arg == "--media")
+                .and(args.next())
+            {
+                web.load_url(url);
             } else {
-                PAGE.into()
-            };
-            web.load_html(page, Some("https://probe.zgx.test/"));
+                let page = if transparent {
+                    PAGE.replace("background: rgb(0, 0, 255)", "background: transparent")
+                } else {
+                    PAGE.into()
+                };
+                web.load_html(page, Some("https://probe.zgx.test/"));
+            }
             let evaluate = web.clone();
             let events = web.on_event(move |event| match event {
                 WebViewEvent::NavigationFinished { url } => {

@@ -26,8 +26,12 @@ page's own accessible tree is a child of its box (an internal frame) and
 has the box for its parent, and Orca reads the page's heading from browse
 mode and names its first field as Tab moves focus there from the app's own
 button.
+`--media` (X11): a page served from localhost plays a VP8 WebM (GStreamer
+made it), and after a click an `AudioContext` runs.
 """
 import argparse
+import functools
+import http.server
 import json
 import os
 import pathlib
@@ -37,6 +41,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 from platform_smoke import private_runtime, stop, use_ibus_engine, wait_for_ibus_xim, wait_for_wm
@@ -81,6 +86,13 @@ class Session:
         from PIL import ImageGrab
         image = ImageGrab.grab(xdisplay=self.env["DISPLAY"]).convert("RGB")
         image.save(self.output / "window.png")
+        # Where the window is now: its window manager may have placed it
+        # after the probe first asked.
+        info = subprocess.check_output(["xwininfo", "-id", str(self.window)], env=self.env, text=True)
+        origin = tuple(int(re.search(rf"Absolute upper-left {axis}:\s+(-?\d+)", info).group(1)) for axis in "XY")
+        if origin != self.origin:
+            print(f"the window moved from {self.origin} to {origin}", file=sys.stderr)
+            self.origin = origin
         return lambda x, y: image.getpixel((self.origin[0] + x, self.origin[1] + y))
 
     def clipboard(self, text=None):
@@ -125,6 +137,59 @@ def end(owned):
             except (ProcessLookupError, PermissionError):
                 pass
         stop(process)
+
+
+MEDIA = """<!doctype html><html><body style="margin: 0; background: black">
+<video id="video" src="media.webm" muted autoplay loop style="width: 100%"></video><script>
+const post = (value) => window.zgx.postMessage(value);
+const video = document.getElementById('video');
+let played = false;
+video.addEventListener('timeupdate', () => {
+  if (!played && video.currentTime > 0.5) { played = true; post({ video: video.currentTime }); }
+});
+video.addEventListener('error', () => post({ video_error: video.error && video.error.code }));
+addEventListener('click', async () => {
+  const context = new AudioContext();
+  const tone = context.createOscillator();
+  tone.connect(context.destination);
+  tone.start();
+  await context.resume();
+  setTimeout(() => post({ audio: context.state, time: context.currentTime }), 500);
+});
+</script></body></html>"""
+
+
+def serve_media(output):
+    """The media page and a WebM GStreamer encodes, over HTTP on a free
+    localhost port (a file's media stays in WebKit's sandbox): its URL."""
+    folder = output / "media"
+    folder.mkdir(exist_ok=True)
+    (folder / "index.html").write_text(MEDIA)
+    subprocess.run(["gst-launch-1.0", "-q", "videotestsrc", "num-buffers=60", "pattern=ball", "!",
+                    "video/x-raw,width=320,height=180,framerate=30/1", "!", "vp8enc", "deadline=1", "!",
+                    "webmmux", "!", "filesink", "location=" + str(folder / "media.webm")], check=True, timeout=60)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(folder))
+    handler.log_message = lambda *_: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}/"
+
+
+def media_checks(session):
+    """The video plays half a second; a click on the page starts a tone."""
+    checks = {}
+    def message(key):
+        return next((m[0] for m in session.messages() if key in m[0] or key + "_error" in m[0]), None)
+    found = session.wait(lambda: message("video"), "the video never played (WebKit started no media)", 30)
+    if "video" not in found:
+        raise AssertionError(f"the video failed: {found}")
+    checks["video played"] = f"{found['video']:.1f} s"
+    session.click(340, 240)
+    found = session.wait(lambda: message("audio"), "the AudioContext never answered", 15)
+    if found.get("audio") != "running" or not found.get("time", 0) > 0:
+        raise AssertionError(f"the AudioContext did not run: {found}")
+    checks["audio ran"] = f"{found['audio']}, {found['time']:.2f} s"
+    return checks
 
 
 def page_checks(session, ime, transparent=False):
@@ -378,8 +443,10 @@ def x11(args, output, private):
             wait_for_ibus_xim(env)
         if args.orca:
             start_orca(env, output, owned)
+        extra = ["--transparent"] if args.transparent else []
+        extra += ["--media", serve_media(output)] if args.media else []
         with (output / "application.log").open("w") as log:
-            app = subprocess.Popen([str(args.binary.resolve())] + (["--transparent"] if args.transparent else []), env=env, stdout=log, stderr=subprocess.STDOUT)
+            app = subprocess.Popen([str(args.binary.resolve())] + extra, env=env, stdout=log, stderr=subprocess.STDOUT)
         owned.append(app)
         deadline = time.monotonic() + 20
         while True:
@@ -418,6 +485,8 @@ def x11(args, output, private):
             return compose(session, checks)
         def read(session, checks):
             return orca_checks(session, env, output, checks)
+        if args.media:
+            return media_checks(session), "X11"
         check = ime_x11 if args.ime else read if args.orca else None
         return page_checks(session, check, args.transparent), "X11"
     finally:
@@ -516,13 +585,15 @@ def main():
     parser.add_argument("--ime", action="store_true", help="Pinyin composed into the page's field")
     parser.add_argument("--transparent", action="store_true", help="a transparent page over its box's colour")
     parser.add_argument("--orca", action="store_true", help="the page's accessible tree, and Orca reading it (X11)")
+    parser.add_argument("--media", action="store_true", help="a video plays and an AudioContext runs (X11)")
     parser.add_argument("--slow-replies", action="store_true",
                         help="WebKit's answers come 800 ms late (ZGX_WEBKITGTK_REPLY_DELAY_MS, debug builds only): on keys, after Ctrl is up; on the caret, after its frame")
     args = parser.parse_args()
     needed = ["Xvfb", "openbox", "xdotool", "xwininfo"]
     needed += ["sway", "dbus-daemon", "wl-copy", "wl-paste"] + (["fcitx5", "fcitx5-remote"] if args.ime else []) if args.wayland else []
-    needed += ["xclip"] if not args.wayland and not args.ime and not args.orca else []
+    needed += ["xclip"] if not args.wayland and not args.ime and not args.orca and not args.media else []
     needed += ["orca", "gdbus", "dbus-daemon"] if args.orca else []
+    needed += ["gst-launch-1.0"] if args.media else []
     needed += ["ibus-daemon", "ibus", "dbus-daemon", "gsettings"] if args.ime and not args.wayland else []
     for name in needed:
         if shutil.which(name) is None:
@@ -533,7 +604,7 @@ def main():
         os.environ["ZGX_WEBKITGTK_REPLY_DELAY_MS"] = "800"
     with private_runtime("zgx-web-view-") as private:
         checks, backend = (wayland if args.wayland else x11)(args, args.output, private)
-    result = {"result": "pass", "backend": backend + (" IME" if args.ime else "") + (" Orca" if args.orca else "") + (" transparent" if args.transparent else ""), "checks": checks}
+    result = {"result": "pass", "backend": backend + (" IME" if args.ime else "") + (" Orca" if args.orca else "") + (" media" if args.media else "") + (" transparent" if args.transparent else ""), "checks": checks}
     (args.output / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     print("PASS: " + ", ".join(checks))
 
