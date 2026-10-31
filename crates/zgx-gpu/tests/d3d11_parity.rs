@@ -3,7 +3,8 @@
 //! patched), text through the glyph atlas, rounded borders, a list scrolled
 //! inside a rounded clip (scroll copies, clip regions), and heavy's
 //! continuous geometry (bars and a progress bar with fractional edges),
-//! isolated layers (translucent, nested, and turning inside), at
+//! isolated layers (translucent, nested, and turning inside), and images
+//! (a picture with straight alpha and a gradient's ramp), at
 //! 1×, 1.5× and 2×, byte for byte: both compile the same HLSL with FXC
 //! (Direct3D 12 pinned to it, docs/windows.md). `ZGX_D3D11` is read once a
 //! process, so the test runs itself again with it and compares that run's
@@ -163,6 +164,46 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
                         .reactive_style(move || Styles::new().rotate(turn.get() as f32 * 0.13)),
                 ),
         );
+    // Images: a picture with straight alpha, scaled between pixels, and a
+    // gradient (its ramp an image too), over the second card.
+    let pixels: Vec<u8> = (0..16 * 12)
+        .flat_map(|i: u32| {
+            let (x, y) = (i % 16, i / 16);
+            [
+                (x * 16) as u8,
+                (y * 21) as u8,
+                180,
+                if (x + y) % 3 == 0 { 96 } else { 255 },
+            ]
+        })
+        .collect();
+    let picture = std::sync::Arc::new(zgx::image::ImageData::new(16, 12, pixels).unwrap());
+    let pictured = div()
+        .absolute()
+        .ml(140.)
+        .mt(36.)
+        .size(112., 64.)
+        .child(image("picture", picture).absolute().size(53.5, 40.25))
+        .child(
+            div()
+                .absolute()
+                .ml(56.)
+                .size(56., 64.)
+                .rounded(6.)
+                .bg_gradient(
+                    0.7,
+                    vec![
+                        zgx::canvas::GradientStop {
+                            offset: 0.,
+                            color: Color(255, 90, 120, 255),
+                        },
+                        zgx::canvas::GradientStop {
+                            offset: 1.,
+                            color: Color(40, 200, 255, 160),
+                        },
+                    ],
+                ),
+        );
     div()
         .w(SIZE.0)
         .h(SIZE.1)
@@ -172,6 +213,7 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .child(list)
         .child(continuous)
         .child(layered)
+        .child(pictured)
 }
 
 /// Each frame's pixels, RGBA, as this process draws them at `scale`.

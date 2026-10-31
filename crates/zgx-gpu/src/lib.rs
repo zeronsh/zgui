@@ -8782,10 +8782,28 @@ impl GpuRenderer {
         draws
             .iter()
             .find_map(|draw| match (draw.source, draw.shading) {
-                (TextureSource::Image(_), _) => Some("image"),
+                // Drawn by the GPU, not written by the CPU: a GPU view's.
+                (TextureSource::Image(_), _) if self.d3d11_texture(draw.source).is_none() => {
+                    Some("GPU-drawn image")
+                }
                 (_, Shading::Full | Shading::Basic | Shading::Opaque) => None,
                 _ => Some("shader fill, layer shader, blend mode or image effect"),
             })
+    }
+    /// What a batch of `source` samples with Direct3D 11: the glyph atlas,
+    /// a layer's content or an image's texels, if it has them.
+    #[cfg(d3d11)]
+    fn d3d11_texture(
+        &self,
+        source: TextureSource,
+    ) -> Option<&windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView> {
+        let state = self.d3d11.as_ref()?;
+        let surface = match source {
+            TextureSource::Atlas => state.atlas.as_ref(),
+            TextureSource::Layer(id) => state.layers.get(&self.layers.get(&id)?.texture),
+            TextureSource::Image(id) => state.textures.get(self.images.get(&id)?.2.as_ref()?),
+        };
+        surface?.srv.as_ref()
     }
     /// Record this frame with Direct3D 11 (`d3d11_frame`): the pass the
     /// wgpu path records for a frame of plain draws, as `render_direct`
@@ -8882,9 +8900,8 @@ impl GpuRenderer {
             stats.draw_calls += 1;
         }
         let atlas = state.atlas.as_ref().and_then(|atlas| atlas.srv.as_ref());
-        let atlas = atlas.expect("made above");
-        frame.texture(atlas);
-        // What batches sample: the atlas, or a layer's content.
+        frame.texture(atlas.expect("made above"));
+        // What batches sample: the atlas, a layer's content or an image.
         let mut sampled = TextureSource::Atlas;
         let mut unpainted = false;
         let clear = if self.split_shading {
@@ -8903,15 +8920,7 @@ impl GpuRenderer {
                     return;
                 };
                 if batch.source != sampled {
-                    let view = match batch.source {
-                        TextureSource::Layer(id) => self
-                            .layers
-                            .get(&id)
-                            .and_then(|layer| state.layers.get(&layer.texture))
-                            .and_then(|surface| surface.srv.as_ref()),
-                        _ => Some(atlas),
-                    };
-                    let Some(view) = view else {
+                    let Some(view) = self.d3d11_texture(batch.source) else {
                         unpainted = true;
                         return;
                     };
@@ -8940,9 +8949,19 @@ impl GpuRenderer {
                 self.layers.values().map(|layer| &layer.texture).collect();
             state.layers.retain(|texture, _| kept.contains(texture));
         }
+        // So do images given back (`upload_image`).
+        if !self.in_layer && state.textures.len() > self.images.len() {
+            #[allow(clippy::mutable_key_type)]
+            let kept: rustc_hash::FxHashSet<&wgpu::Texture> = self
+                .images
+                .values()
+                .filter_map(|entry| entry.2.as_ref())
+                .collect();
+            state.textures.retain(|texture, _| kept.contains(texture));
+        }
         if unpainted {
             return Err(GpuError(
-                "Direct3D 11 has no content for a layer composited before it was painted".into(),
+                "Direct3D 11 has no texels for a layer or image drawn before they were".into(),
             ));
         }
         stats.render_passes += 1;
@@ -10188,29 +10207,33 @@ impl GpuRenderer {
             upload::write_texels(target, (x, y, width, height), rgba);
             return;
         }
-        // Direct3D 11: into its atlas, made at the shell's atlas's size.
-        // Images are not drawn there (`d3d11_lacks`).
+        // Direct3D 11: into its atlas, or the texture standing for an
+        // image's, made at the shell's texture's size.
         #[cfg(d3d11)]
         if let Some(state) = &mut self.d3d11 {
-            if *target != self.atlas {
-                return;
-            }
             let size = (target.width(), target.height());
-            if state
-                .atlas
-                .as_ref()
-                .is_none_or(|a| (a.width, a.height) != size)
-            {
-                match state.device.surface(size.0, size.1, false) {
-                    Ok(atlas) => state.atlas = Some(atlas),
-                    Err(error) => return eprintln!("zgx: no Direct3D 11 glyph atlas: {error}"),
-                }
-            }
+            let atlas = *target == self.atlas;
+            let kept = if atlas {
+                state.atlas.take()
+            } else {
+                state.textures.remove(target)
+            };
+            let surface = match kept.filter(|t| (t.width, t.height) == size) {
+                Some(surface) => surface,
+                None => match state.device.surface(size.0, size.1, false) {
+                    Ok(made) => made,
+                    Err(error) => return eprintln!("zgx: no Direct3D 11 texture: {error}"),
+                },
+            };
             for pixel in rgba.as_chunks_mut::<4>().0 {
                 pixel.swap(0, 2);
             }
-            let atlas = state.atlas.as_ref().expect("made above");
-            state.device.write(atlas, (x, y, width, height), rgba);
+            state.device.write(&surface, (x, y, width, height), rgba);
+            if atlas {
+                state.atlas = Some(surface);
+            } else {
+                state.textures.insert(target.clone(), surface);
+            }
             return;
         }
         if self.unified {

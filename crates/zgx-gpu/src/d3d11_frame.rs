@@ -13,9 +13,10 @@
 //! on macOS), it is recorded here with Direct3D 11; the glyph atlas, the
 //! window's swap chain (dxgi_present.rs) and readbacks are Direct3D 11's.
 //!
-//! Only what the Windows suite's scenes draw is here, and isolated layers:
-//! quads, text and clip regions, kept frames, scroll copies and catch-up,
-//! and layers drawn into textures of their own and composited. A frame
+//! Only what the Windows suite's scenes draw is here, isolated layers and
+//! images: quads, text and clip regions, kept frames, scroll copies and
+//! catch-up, layers drawn into textures of their own and composited, and
+//! images (gradients' ramps, canvases and SVGs among them) the CPU wrote. A frame
 //! needing more fails, naming what it lacks: there is no Direct3D 12 to
 //! fall back to.
 //!
@@ -695,6 +696,10 @@ pub(crate) struct State {
     /// Isolated layers' contents (`crate::GpuRenderer::paint_layer`), each
     /// under the shell's texture standing for it.
     pub(crate) layers: rustc_hash::FxHashMap<wgpu::Texture, Surface>,
+    /// Images' texels (`crate::GpuRenderer::upload_image`: pictures,
+    /// gradients' ramps, canvases, SVGs), each under the shell's texture
+    /// standing for it.
+    pub(crate) textures: rustc_hash::FxHashMap<wgpu::Texture, Surface>,
 }
 
 impl State {
@@ -723,6 +728,7 @@ impl State {
             target: None,
             spare: None,
             layers: Default::default(),
+            textures: Default::default(),
         })
     }
 

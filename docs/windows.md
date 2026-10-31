@@ -177,9 +177,10 @@ $env:ZGX_D3D11 = "1"; target\release\examples\component_workload.exe
 It draws what the Windows suite's scenes do: quads (borders, rounded
 corners, shadows' shading), text, clip regions with their rounded corners
 and fades, kept frames, scroll copies, and isolated layers (translucent,
-nested, transformed), each drawn into a texture of its own and composited.
-Images, layer effects, backdrop blur, polylines and shader fills are not
-drawn yet (so
+nested, transformed), each drawn into a texture of its own and composited,
+and images the CPU writes (pictures, gradients, canvases' and SVGs' images).
+Images a GPU view draws, layer effects, backdrop blur, polylines and shader
+fills are not drawn yet (so
 neither are what they make: canvas strokes and filled areas, `radial`
 gradients, blurred inset shadows, masks, blends, content blur, and
 `hue_rotate`, `sepia` and `invert`, layer shaders): a frame
