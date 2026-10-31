@@ -15,6 +15,11 @@ by colours the shell prints.
 - an idle, focused terminal does no work: the process's CPU time stays put
   over two seconds (no caret blink, no timers, no redraws without output).
 
+`--orca`: over a private AT-SPI bus with Orca running, a row of the grid is
+in the window's accessible tree as a label with the text it shows, and
+Orca speaks a line of new output (a live region of the latest output)
+without reading back the shell's echo of the typed command.
+
 Build with `cargo build -p zgx-desktop --features terminal --example
 terminal_pane` first."""
 import argparse
@@ -28,6 +33,7 @@ from PIL import Image, ImageChops, ImageGrab
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from platform_smoke import stop  # noqa: E402
+from web_view_smoke import spoken, start_orca  # noqa: E402
 
 MAGENTA, GREEN, BLUE, ORANGE = (255, 0, 255), (0, 255, 0), (0, 0, 255), (255, 128, 0)
 
@@ -53,6 +59,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("/tmp/zgx-terminal"))
+    parser.add_argument("--orca", action="store_true", help="check what Orca and AT-SPI read instead")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     display = os.environ.get("DISPLAY")
@@ -60,6 +67,14 @@ def main():
         parser.error("DISPLAY must name an X11 display with a window manager")
     env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", SHELL="/bin/sh", PS1="$ ", ENV="/dev/null")
     env.pop("WAYLAND_DISPLAY", None)
+    owned = []
+    if args.orca:
+        # A session bus of its own for the accessibility bus to hang off.
+        bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address"], env=env,
+                               stdout=subprocess.PIPE, text=True)
+        owned.append(bus)
+        env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
+        start_orca(env, args.output, owned)
     env.setdefault("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
     log = (args.output / "terminal.log").open("w")
     process = subprocess.Popen([str(args.binary.resolve()), bar(MAGENTA)], env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -105,6 +120,9 @@ def main():
         if width < 8 * 5:
             raise AssertionError(f"eight cells are {width} pixels wide")
         print(f"terminal: the app's input ran (8 cells, {width} px)")
+        if args.orca:
+            orca_checks(env, args.output, xdo, window, type_line)
+            return
 
         xdo("mousemove", "--window", window, 450, 300, "click", 1)
         time.sleep(0.3)
@@ -146,6 +164,74 @@ def main():
     finally:
         stop(process)
         log.close()
+        for owner in reversed(owned):
+            stop(owner)
+
+
+# The grid's rows over the accessibility bus: the window's tree holds one
+# whose name is the marker line's text.
+TREE = """
+import gi, sys, time
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi
+Atspi.init()
+Atspi.set_timeout(1500, 3000)
+marker = sys.argv[1]
+def children(node):
+    node.clear_cache()
+    return [node.get_child_at_index(i) for i in range(node.get_child_count())]
+def find(node, depth=0):
+    if node is None or depth > 20:
+        return None
+    if marker in (node.get_name() or ""):
+        return node
+    for child in children(node):
+        found = find(child, depth + 1)
+        if found:
+            return found
+deadline = time.monotonic() + 30
+row = None
+while time.monotonic() < deadline and row is None:
+    for app in children(Atspi.get_desktop(0)):
+        if app and app.get_name() == "terminal_pane":
+            row = find(app)
+    time.sleep(.5)
+if row:
+    print("ROW " + row.get_role_name() + " " + repr(row.get_name()))
+"""
+
+
+def orca_checks(env, output, xdo, window, type_line):
+    """A row in the accessible tree, and Orca speaking new output."""
+    xdo("mousemove", "--window", window, 450, 300, "click", 1)
+    time.sleep(0.3)
+    type_line("clear; echo zgx-tree-$((40+2))")
+    deadline = time.monotonic() + 40
+    row = ""
+    while time.monotonic() < deadline and "ROW" not in row:
+        row = subprocess.run([sys.executable, "-c", TREE, "zgx-tree-42"], env=env, capture_output=True,
+                             text=True, timeout=60).stdout
+    (output / "tree.txt").write_text(row)
+    if "ROW" not in row:
+        raise AssertionError("no row of the grid in the accessible tree reads zgx-tree-42; see tree.txt")
+    print("terminal: " + row.strip().splitlines()[0])
+    type_line("echo zgx-spoken-$((40+2))")
+    deadline = time.monotonic() + 20
+    nudged = time.monotonic()
+    while not any("zgx-spoken-42" in line for line in spoken(output)):
+        if time.monotonic() > deadline:
+            raise AssertionError("Orca never spoke the new output; see orca-debug.log")
+        # Orca's debug log reaches the file in blocks: a Shift fills one.
+        if time.monotonic() - nudged > 2:
+            nudged = time.monotonic()
+            xdo("key", "shift")
+        time.sleep(0.2)
+    # The shell's echo of what was typed isn't read again as output (the
+    # reader echoes keys itself): no line read back the command.
+    echoed = [line for line in spoken(output) if "echo zgx-spoken" in line]
+    if echoed:
+        raise AssertionError(f"Orca read the typed command back as output: {echoed[:3]}")
+    print("terminal: Orca spoke the new output, and not the shell's echo of the command")
 
 
 if __name__ == "__main__":

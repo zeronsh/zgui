@@ -20,6 +20,7 @@
 
 pub mod front;
 mod keys;
+mod news;
 mod osc;
 mod paint;
 mod palette;

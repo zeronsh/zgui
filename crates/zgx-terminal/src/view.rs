@@ -29,7 +29,7 @@ use zgx::{
     input::{EventContext, EventPhase, InputEvent, Key, Modifiers, PointerButton},
     platform::PlatformService,
     reactive::{Runtime, Signal},
-    semantics::Live,
+    semantics::{Live, Role},
     terminal::{Terminal, TerminalBackend, TerminalCommand, TerminalEvent, WeakTerminal},
 };
 
@@ -71,6 +71,10 @@ struct Engine {
     caret: Signal<(f32, f32)>,
     /// An input method's composition, drawn at the cursor.
     preedit: Signal<String>,
+    /// What a screen reader is told of the latest output (a live region's
+    /// label), and what was typed since: a shell's echo of it is not news.
+    news: Signal<String>,
+    typed: RefCell<String>,
     focused: Cell<bool>,
     /// The hidden editor, or the terminal's node (a press focuses it first),
     /// has keyboard focus; the two settle into `focused` once a dispatch is
@@ -142,6 +146,8 @@ impl EngineTerminal {
             look: Look::default(),
             caret: runtime.signal((PAD_X, PAD_Y)),
             preedit: runtime.signal(String::new()),
+            news: runtime.signal(String::new()),
+            typed: RefCell::new(String::new()),
             focused: Cell::new(false),
             input_has: Cell::new(false),
             root_has: Cell::new(false),
@@ -318,6 +324,7 @@ impl Engine {
         let focused = self.focused.get();
         let mut changed = Vec::new();
         let caret;
+        let output;
         {
             let mut term = session.term();
             let rows = term.screen_lines();
@@ -337,6 +344,9 @@ impl Engine {
                 || offset != self.last_offset.replace(offset)
                 || focused != self.last_focus.replace(focused)
                 || selection != *self.last_selection.borrow();
+            // Rows drawn again for the view's sake (mounted, scrolled back,
+            // focus, a selection) are no news to a reader.
+            output = !all;
             *self.last_selection.borrow_mut() = selection;
             let mut damaged = vec![false; rows];
             match term.damage() {
@@ -372,6 +382,17 @@ impl Engine {
             term.reset_damage();
         }
         let rows = self.rows.borrow();
+        // Worked out only while a screen reader listens.
+        let listening = self
+            .root
+            .borrow()
+            .as_ref()
+            .is_some_and(NodeHandle::assistive_technology);
+        let news = if output && listening {
+            self.news_of(&rows, &changed)
+        } else {
+            String::new()
+        };
         self.runtime.batch(|| {
             for (row, paint) in changed {
                 if let Some(signal) = rows.get(row)
@@ -381,7 +402,35 @@ impl Engine {
                 }
             }
             self.caret.set(caret);
+            if !news.is_empty() {
+                self.news.set(news);
+            }
         });
+    }
+
+    /// What a reader hears of rows `changed` from what `rows` show: new
+    /// lines and what lines gained, less the shell's echo of what was typed.
+    fn news_of(&self, rows: &[Signal<Rc<RowPaint>>], changed: &[(usize, RowPaint)]) -> String {
+        if changed.is_empty() {
+            return String::new();
+        }
+        let before: Vec<Rc<RowPaint>> = rows
+            .iter()
+            .map(|row| row.with_untracked(Rc::clone))
+            .collect();
+        let mut after: Vec<&str> = before.iter().map(|paint| paint.text.as_str()).collect();
+        let before: Vec<&str> = after.clone();
+        for (row, paint) in changed {
+            if let Some(text) = after.get_mut(*row) {
+                *text = &paint.text;
+            }
+        }
+        let news = crate::news::news(&before, &after);
+        let typed = std::mem::take(&mut *self.typed.borrow_mut());
+        if !typed.is_empty() && typed.contains(news.as_str()) {
+            return String::new();
+        }
+        news
     }
 
     /// The row signal at `row`, made on first use.
@@ -561,6 +610,12 @@ impl Engine {
             InputEvent::Text(text) | InputEvent::ImeCommit(text) => {
                 if self.preedit.with_untracked(|shown| !shown.is_empty()) {
                     self.preedit.set(String::new());
+                }
+                {
+                    let mut typed = self.typed.borrow_mut();
+                    if typed.len() < 256 {
+                        typed.push_str(&text);
+                    }
                 }
                 self.write(text.into_bytes());
                 cx.prevent_default();
@@ -1263,7 +1318,7 @@ fn view(engine: Rc<Engine>) -> View {
         .focusable(true)
         .overflow_hidden()
         .cursor(Cursor::Text)
-        .live(Live::Polite)
+        .accessible_label("Terminal")
         .on_event(move |cx| {
             if cx.phase == EventPhase::Capture {
                 return;
@@ -1318,6 +1373,7 @@ fn view(engine: Rc<Engine>) -> View {
             }
         })
         .child(rows)
+        .child(news_view(&engine))
         .child(preedit)
         .child(input)
         .on_mount(move |handle| {
@@ -1348,7 +1404,24 @@ fn row_view(engine: &Rc<Engine>, row: usize) -> View {
         .top(PAD_Y + row as f32 * metrics.cell_height)
         .w_full()
         .h(metrics.cell_height)
+        .role(Role::Label)
         .accessible_label_when(move || label.with(|paint| paint.text.clone()))
+}
+
+/// The latest output, for screen readers alone: a live region they announce
+/// as it changes (the rows themselves are read as the reader moves over
+/// them, not each time they change).
+fn news_view(engine: &Rc<Engine>) -> View {
+    let news = engine.news.clone();
+    div()
+        .absolute()
+        .left(0.)
+        .top(0.)
+        .w(1.)
+        .h(1.)
+        .role(Role::Status)
+        .live(Live::Polite)
+        .accessible_label_when(move || news.get())
 }
 
 /// Whether `term`'s backend is drawn by zgx (this crate's).
