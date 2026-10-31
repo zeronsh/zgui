@@ -23,7 +23,10 @@ fn device() -> Option<wgpu::Device> {
     }
     let instance = wgpu::Instance::new(descriptor);
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-    let features = adapter.features() & wgpu::Features::DUAL_SOURCE_BLENDING;
+    let features = match std::env::var_os("EVERY_NO_DUAL") {
+        Some(_) => wgpu::Features::empty(),
+        None => adapter.features() & wgpu::Features::DUAL_SOURCE_BLENDING,
+    };
     let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: features,
         ..Default::default()
@@ -96,6 +99,9 @@ fn every_shader_module_compiles_each_entry_point() {
     let mut failures = Vec::new();
     let mut made = 0;
     for (name, source) in zgx_gpu::shader_modules() {
+        if std::env::var("EVERY_ONLY").is_ok_and(|only| only != name) {
+            continue;
+        }
         if source.starts_with("enable dual_source_blending") && !dual {
             continue;
         }

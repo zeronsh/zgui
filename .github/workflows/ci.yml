@@ -392,6 +392,22 @@ jobs:
       # the device on DXGI's first low-power adapter (`adapter`, #217).
       - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --test shader_cache --locked
       # Probe (not for merge): v0.1.6's shaders under optimized FXC.
+      # Probe: polyline only, dual-source on.
       - run: cargo test -p zgx-gpu --test every_shader --locked -- --nocapture
+        continue-on-error: true
         env:
-          LOCALAPPDATA: ${{ runner.temp }}\\zgx-cold
+          LOCALAPPDATA: ${{ runner.temp }}\zgx-cold-0
+          EVERY_ONLY: polyline
+      # Probe: polyline only, no dual-source.
+      - run: cargo test -p zgx-gpu --test every_shader --locked -- --nocapture
+        continue-on-error: true
+        env:
+          LOCALAPPDATA: ${{ runner.temp }}\zgx-cold-255
+          EVERY_ONLY: polyline
+          EVERY_NO_DUAL: "1"
+      # Probe: everything, no dual-source.
+      - run: cargo test -p zgx-gpu --test every_shader --locked -- --nocapture
+        continue-on-error: true
+        env:
+          LOCALAPPDATA: ${{ runner.temp }}\zgx-cold-541
+          EVERY_NO_DUAL: "1"
