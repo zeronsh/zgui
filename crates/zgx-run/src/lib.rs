@@ -133,12 +133,16 @@ impl AppConfig {
     /// The config for the script at `script`: its directory's `zgx.json`
     /// (or `zgui.json`, deprecated), or the defaults (named after the directory). rename-to-zgx: keep
     pub fn for_script(script: &Path) -> Result<Self, String> {
-        Self::read(script).map(|(config, _)| config)
+        Self::read(script).map(|(config, _, _)| config)
     }
     /// As [`for_script`](Self::for_script), with what it gives the script's
-    /// host (`zgx_script::app_config`): its packages, what it exposes to
-    /// plugins, and its plugins.
-    fn read(script: &Path) -> Result<(Self, zgx_script::app_config::AppHost), String> {
+    /// host (`zgx_script::app_config`: its packages, what it exposes to
+    /// plugins, and its plugins), and the name the window's frame is saved
+    /// under (`frame_autosave`: `true` is the `app_id`, so apps zgx-run
+    /// runs keep theirs apart; a string, that name).
+    fn read(
+        script: &Path,
+    ) -> Result<(Self, zgx_script::app_config::AppHost, Option<String>), String> {
         let dir = script.parent().unwrap_or(Path::new("."));
         let name = dir
             .canonicalize()
@@ -163,7 +167,7 @@ impl AppConfig {
             path = old;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
-            return Ok((config, Default::default()));
+            return Ok((config, Default::default(), None));
         };
         let fail = |e: String| format!("{}: {e}", path.display());
         let json: serde_json::Value =
@@ -200,6 +204,7 @@ impl AppConfig {
                 "glass",
                 "app_id",
                 "application_id",
+                "frame_autosave",
             ]
             .contains(&key.as_str())
                 && !zgx_script::app_config::KEYS.contains(&key.as_str())
@@ -237,8 +242,16 @@ impl AppConfig {
             config.app_id = id;
         }
         config.application_id = string("application_id")?;
+        let frame_autosave = match object.get("frame_autosave") {
+            None | Some(serde_json::Value::Bool(false)) => None,
+            Some(serde_json::Value::Bool(true)) => Some(config.app_id.clone()),
+            Some(serde_json::Value::String(name)) if !name.is_empty() => Some(name.clone()),
+            Some(_) => {
+                return Err(fail("`frame_autosave` is not true, false or a name".into()));
+            }
+        };
         let app = zgx_script::app_config::from_object(dir, object).map_err(fail)?;
-        Ok((config, app))
+        Ok((config, app, frame_autosave))
     }
 }
 
@@ -305,7 +318,7 @@ pub fn run_hosting(
     if !script.is_file() {
         return Err(format!("{}: no such script", script.display()).into());
     }
-    let (config, app_host) = AppConfig::read(&script)?;
+    let (config, app_host, frame_autosave) = AppConfig::read(&script)?;
     let options = WindowOptions {
         title: config.title.clone(),
         width: config.width,
@@ -313,6 +326,7 @@ pub fn run_hosting(
         min_size: config.min_size,
         titlebar: config.titlebar,
         glass: config.glass.then(zgx_desktop::Glass::default),
+        frame_autosave,
         ..Default::default()
     };
     let launched: Vec<PathBuf> = args
@@ -577,6 +591,20 @@ mod tests {
         .unwrap();
         let config = AppConfig::for_script(&script).unwrap();
         assert_eq!(config.application_id.as_deref(), Some("dev.zgx.code"));
+        let frame = |script: &Path| AppConfig::read(script).unwrap().2;
+        assert_eq!(frame(&script), None);
+        // The window's frame kept: under the app's id, or a name given.
+        std::fs::write(
+            dir.join("zgx.json"),
+            r#"{ "app_id": "assets", "frame_autosave": true }"#,
+        )
+        .unwrap();
+        assert_eq!(frame(&script).as_deref(), Some("assets"));
+        std::fs::write(dir.join("zgx.json"), r#"{ "frame_autosave": "library" }"#).unwrap();
+        assert_eq!(frame(&script).as_deref(), Some("library"));
+        std::fs::write(dir.join("zgx.json"), r#"{ "frame_autosave": 1 }"#).unwrap();
+        let error = AppConfig::for_script(&script).unwrap_err();
+        assert!(error.contains("`frame_autosave` is not"), "{error}");
         // Packages, from the config's directory, are folders.
         std::fs::create_dir_all(dir.join("kit")).unwrap();
         std::fs::write(
@@ -584,7 +612,7 @@ mod tests {
             r#"{ "packages": { "kit": "./kit" } }"#,
         )
         .unwrap();
-        let (_, app) = AppConfig::read(&script).unwrap();
+        let (_, app, _) = AppConfig::read(&script).unwrap();
         assert_eq!(app.packages, [("kit".to_string(), dir.join("./kit"))]);
         std::fs::write(
             dir.join("zgx.json"),
