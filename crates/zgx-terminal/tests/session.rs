@@ -156,6 +156,20 @@ fn input_reaches_the_program_and_it_echoes() {
 fn ctrl_c_interrupts_the_foreground_program() {
     let mut run = Scripted::run("sh -c 'echo ready; sleep 30'", 20, 4);
     run.until("ready", |_, term| shows(term, "ready"));
+    // A ^C before `sleep` exists reaches only the shells, which (dash)
+    // catch it and act once their command ends: 30 s on. Wait for it to be
+    // in the session's process group.
+    let group = run.session.pid().to_string();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !std::process::Command::new("pgrep")
+        .args(["-g", &group, "-x", "sleep"])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        assert!(Instant::now() < deadline, "sleep never started");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     run.session.write(b"\x03".as_slice());
     // SIGINT: 128 + 2.
     assert_eq!(run.exited(), 130);
