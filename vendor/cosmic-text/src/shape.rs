@@ -300,28 +300,7 @@ fn shape_fallback(
     // Restore the buffer to save an allocation.
     scratch.harfrust_buffer = Some(glyph_buffer.clear());
 
-    // zgx: a cluster asking for emoji presentation (U+FE0F after it, or a
-    // keycap's U+20E3) is missing from a font without color glyphs, so the
-    // fallback finds the emoji font, as browsers do: Segoe UI has `1` and
-    // the keycap mark, and drew 1️⃣ in black. With no emoji font, it stays.
-    if !font.is_color() && !run.is_ascii() && run.contains(['\u{FE0F}', '\u{20E3}']) {
-        emoji_presentation_missing(line, &glyphs[glyph_start..], &mut missing);
-    }
-
     missing
-}
-
-/// zgx: the clusters of `glyphs` asking for emoji presentation, added to
-/// `missing` (`shape_fallback`).
-#[cold]
-#[inline(never)]
-fn emoji_presentation_missing(line: &str, glyphs: &[ShapeGlyph], missing: &mut Vec<usize>) {
-    for glyph in glyphs {
-        let cluster = line.get(glyph.start..glyph.end).unwrap_or_default();
-        if cluster.contains(['\u{FE0F}', '\u{20E3}']) && !missing.contains(&glyph.start) {
-            missing.push(glyph.start);
-        }
-    }
 }
 
 /// zgx patch: out of line, so the word cache's path through `Shaping::run`

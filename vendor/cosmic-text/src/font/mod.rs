@@ -57,9 +57,6 @@ pub struct Font {
     pub(crate) italic_or_oblique: bool,
     /// zgx: whether it has an optical size axis (`opsz`).
     optical: bool,
-    /// zgx: whether it has color glyphs (`COLR`, `CBDT` or `sbix`): an
-    /// emoji font.
-    color: bool,
 }
 
 impl fmt::Debug for Font {
@@ -103,12 +100,6 @@ impl Font {
     /// and advances follow the size.
     pub fn has_optical(&self) -> bool {
         self.optical
-    }
-
-    /// zgx: whether it has color glyphs (`COLR`, `CBDT` or `sbix`), as an
-    /// emoji font does.
-    pub fn is_color(&self) -> bool {
-        self.color
     }
 
     pub(crate) fn shaper_instance(&self) -> &harfrust::ShaperInstance {
@@ -167,9 +158,6 @@ impl Font {
         // lifetime of the face data.
         let font_ref = FontRef::from_index((*data).as_ref(), info.index).ok()?;
         let has_optical = font_ref.axes().iter().any(|axis| axis.tag() == Tag::new(b"opsz"));
-        let color = [b"COLR", b"CBDT", b"sbix"]
-            .iter()
-            .any(|tag| font_ref.table_data(Tag::new(tag)).is_some());
         let location = if optical > 0 {
             font_ref.axes().location([
                 (Tag::new(b"wght"), weight.0 as f32),
@@ -253,7 +241,6 @@ impl Font {
         Some(Self {
             id: info.id,
             optical: has_optical,
-            color,
             monospace_fallback,
             #[cfg(feature = "swash")]
             swash: {
