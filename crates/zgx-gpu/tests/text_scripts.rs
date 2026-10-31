@@ -160,6 +160,9 @@ fn an_emoji_sequence_is_one_character_to_the_arrows_selection_and_deleting() {
 #[test]
 fn an_emoji_sequence_draws_as_one_glyph_and_takes_no_caret_inside() {
     let color = has_font(EMOJI_FONTS);
+    // macOS and Windows always have theirs; a Linux may have none, and then
+    // draws a box for each code point.
+    assert!(color || !cfg!(any(target_os = "macos", windows)), "no color emoji font");
     let size = 32.;
     for (name, emoji) in EMOJI {
         let layout = shaped(emoji, size, None);
