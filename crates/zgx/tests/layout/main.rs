@@ -18,6 +18,8 @@ mod element_zoom;
 mod grid_tracks;
 #[path = "../incremental_layout_equivalence.rs"]
 mod incremental_layout_equivalence;
+#[path = "../intrinsic_sizes.rs"]
+mod intrinsic_sizes;
 #[path = "../layout_automatic_minimum.rs"]
 mod layout_automatic_minimum;
 #[path = "../layout_box_model.rs"]
