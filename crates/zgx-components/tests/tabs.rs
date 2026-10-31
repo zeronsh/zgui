@@ -109,18 +109,20 @@ fn two_strips(group: Option<&str>, told: Rc<RefCell<Vec<(String, String)>>>) -> 
     let selected = [ui.signal("a".to_owned()), ui.signal("c".to_owned())];
     let strip = |side: usize, label: &str| {
         let told = told.clone();
-        tabs(
+        let mut more = TabsMore::default();
+        more.group = group.map(str::to_owned);
+        more.on_move = Some(Rc::new(move |id: &str, to: &str| {
+            told.borrow_mut().push((id.to_owned(), to.to_owned()));
+        }));
+        tabs_with(
             label,
             items[side].clone(),
             selected[side].clone(),
             TabsOptions {
                 reorderable: true,
-                group: group.map(str::to_owned),
-                on_move: Some(Rc::new(move |id: &str, to: &str| {
-                    told.borrow_mut().push((id.to_owned(), to.to_owned()));
-                })),
                 ..Default::default()
             },
+            more,
             |id, _| text(format!("Panel {id}")),
         )
         .w(300.)
@@ -471,25 +473,27 @@ fn torn_windows(log: Rc<RefCell<Vec<String>>>) -> TornWindows {
     let selected = [left.signal("a".to_owned()), left.signal("c".to_owned())];
     let strip = |side: usize, label: &str| {
         let (moved, torn) = (log.clone(), log.clone());
-        tabs(
+        let mut more = TabsMore::default();
+        more.group = Some("docs".into());
+        more.on_move = Some(Rc::new(move |id: &str, to: &str| {
+            moved.borrow_mut().push(format!("moved {id} to {to}"));
+        }));
+        // `c` stays home: refused, it isn't torn off.
+        more.on_tear_off = Some(Rc::new(move |id: &str, e: &zgx::input::DragEvent| {
+            let grab = e.grab_x.round();
+            torn.borrow_mut()
+                .push(format!("torn {id} grabbed {grab} in"));
+            id != "c"
+        }));
+        tabs_with(
             label,
             items[side].clone(),
             selected[side].clone(),
             TabsOptions {
                 reorderable: true,
-                group: Some("docs".into()),
-                on_move: Some(Rc::new(move |id: &str, to: &str| {
-                    moved.borrow_mut().push(format!("moved {id} to {to}"));
-                })),
-                // `c` stays home: refused, it isn't torn off.
-                on_tear_off: Some(Rc::new(move |id: &str, e: &zgx::input::DragEvent| {
-                    let grab = e.grab_x.round();
-                    torn.borrow_mut()
-                        .push(format!("torn {id} grabbed {grab} in"));
-                    id != "c"
-                })),
                 ..Default::default()
             },
+            more,
             |id, _| text(format!("Panel {id}")),
         )
         .w(400.)
@@ -568,4 +572,16 @@ fn a_tab_torn_off_leaves_drops_on_another_windows_strip_or_comes_home() {
     assert_eq!(*log.borrow(), ["torn c grabbed 10 in"]);
     let ended = right.input.take_drag_ended().expect("it ended");
     assert!(!ended.outside, "not taken: its preview slides home");
+}
+
+/// `TabsOptions` stays as 0.1.6 published it: zgx-script 0.1.6 builds it by
+/// literal with these two fields and no others, so a field added here
+/// breaks it. What tabs gained since is `TabsMore` (`tabs_with`).
+#[test]
+fn tabs_options_keeps_its_published_fields() {
+    let options = TabsOptions {
+        reorderable: true,
+        on_close: None,
+    };
+    assert!(options.reorderable);
 }

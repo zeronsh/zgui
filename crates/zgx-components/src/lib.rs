@@ -30,7 +30,7 @@ pub use date::{
 pub use grid::{GridCell, GridColumn, GridSelection, GridSort, GridSource, data_grid};
 pub use palette::{PaletteCommand, command_palette, fuzzy_score};
 pub use select::{SelectOption, select, select_live};
-pub use tabs::{CloseTab, MoveTab, Tab, TabsOptions, TearOffTab, tabs};
+pub use tabs::{CloseTab, MoveTab, Tab, TabsMore, TabsOptions, TearOffTab, tabs, tabs_with};
 pub use toast::{Toast, ToastAction, ToastKind, Toaster, toast_host};
 pub use tree::{TreeChildren, TreeItem, tree};
 

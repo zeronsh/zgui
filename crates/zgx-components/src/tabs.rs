@@ -71,6 +71,13 @@ pub struct TabsOptions {
     pub reorderable: bool,
     /// Asked before a tab closes; without it, it closes.
     pub on_close: Option<CloseTab>,
+}
+
+/// More of how [`tabs_with`] behave: kept panels, groups of strips, tabs
+/// torn off. Made from `Default` and its fields set, as more may come.
+#[derive(Clone, Default)]
+#[non_exhaustive]
+pub struct TabsMore {
     /// Each tab's panel stays mounted once chosen, until its tab closes:
     /// hidden, it keeps its state (an editor's undo, caret and scroll) and
     /// takes no layout, paint or frames.
@@ -196,13 +203,26 @@ fn ids(items: &[Tab]) -> Vec<String> {
 /// A strip of `items` and the panel `panel` builds for the one `selected`
 /// (its id). `items` is two-way: closing a tab removes it, reordering
 /// moves it; closing the selected tab chooses its neighbour. The panel is
-/// built as its tab is chosen and dropped as another is (`keep` holds it);
+/// built as its tab is chosen and dropped as another is (`TabsMore::keep`
+/// holds it);
 /// `label` names the strip.
 pub fn tabs(
     label: impl Into<String>,
     items: Signal<Vec<Tab>>,
     selected: Signal<String>,
     options: TabsOptions,
+    panel: impl FnMut(String, &mut Context) -> View + 'static,
+) -> View {
+    tabs_with(label, items, selected, options, TabsMore::default(), panel)
+}
+
+/// [`tabs`], with `more`: kept panels, a group, tear-off.
+pub fn tabs_with(
+    label: impl Into<String>,
+    items: Signal<Vec<Tab>>,
+    selected: Signal<String>,
+    options: TabsOptions,
+    more: TabsMore,
     panel: impl FnMut(String, &mut Context) -> View + 'static,
 ) -> View {
     let label = label.into();
@@ -222,7 +242,7 @@ pub fn tabs(
         let over = runtime.signal(false);
         // This strip, as a torn tab knows where it came from.
         let home: Rc<()> = Rc::new(());
-        let strip_of_group = options.group.clone().map(|group| {
+        let strip_of_group = more.group.clone().map(|group| {
             let strip = Rc::new(Strip {
                 group,
                 label: label.clone(),
@@ -303,12 +323,12 @@ pub fn tabs(
             let (items, selected, nodes) = (items.clone(), selected.clone(), nodes.clone());
             let (close, move_to, reveal) = (close.clone(), move_to.clone(), reveal.clone());
             let reorderable = options.reorderable;
-            let (grouped, on_move) = (strip_of_group.clone(), options.on_move.clone());
-            let tear = options
+            let (grouped, on_move) = (strip_of_group.clone(), more.on_move.clone());
+            let tear = more
                 .on_tear_off
                 .clone()
                 .filter(|_| reorderable)
-                .map(|told| (told, home.clone(), options.group.clone()));
+                .map(|told| (told, home.clone(), more.group.clone()));
             let strip_bounds = strip_bounds.clone();
             move |id: String, _: &mut Context| {
                 let (grouped, on_move) = (grouped.clone(), on_move.clone());
@@ -635,7 +655,7 @@ pub fn tabs(
         };
         let (menu_items, menu_selected, menu_reveal) =
             (items.clone(), selected.clone(), reveal.clone());
-        let more = switch(overflowing, move |over, _| {
+        let all_tabs = switch(overflowing, move |over, _| {
             if !over {
                 return div();
             }
@@ -675,7 +695,7 @@ pub fn tabs(
         let (panel_selected, mut panel) = (selected.clone(), panel);
         // The panel's root lays out as a child of the tab panel, so `grow`
         // and `h_full` fill it.
-        let panels = if options.keep {
+        let panels = if more.keep {
             // The tabs chosen so far, while they are open.
             let mut chosen: Vec<String> = Vec::new();
             let shown = selected.clone();
@@ -709,7 +729,7 @@ pub fn tabs(
         } else {
             switch(move || panel_selected.get(), move |id, cx| panel(id, cx)).contents()
         };
-        let tabs_row = row().items_center().child(strip).child(more);
+        let tabs_row = row().items_center().child(strip).child(all_tabs);
         let tabs_row = match &strip_of_group {
             // Lit while a tab of its group is over it.
             Some(_) => tabs_row.reactive_style(move || {
@@ -723,12 +743,12 @@ pub fn tabs(
         };
         let root = column();
         // A torn tab of its group (or its own, back home) drops here.
-        let takes_torn = options.on_tear_off.is_some() || options.group.is_some();
+        let takes_torn = more.on_tear_off.is_some() || more.group.is_some();
         let root = if takes_torn {
             let (items, selected, over, label) = torn_to;
             // Another strip's tab of its group, or its own back home.
             let accepts = {
-                let (group, home) = (options.group.clone(), home.clone());
+                let (group, home) = (more.group.clone(), home.clone());
                 Rc::new(move |torn: &TabDrag| {
                     Rc::ptr_eq(&torn.home, &home) || (torn.group.is_some() && torn.group == group)
                 })
