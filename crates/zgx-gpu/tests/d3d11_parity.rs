@@ -5,7 +5,8 @@
 //! continuous geometry (bars and a progress bar with fractional edges),
 //! isolated layers (translucent, nested, and turning inside), and images
 //! (a picture with straight alpha and a gradient's ramp), and canvas
-//! polylines (a moving sparkline, a translucent stroke over itself), at
+//! polylines (a moving sparkline, a translucent stroke over itself), and
+//! a truncated text's blurred shadow reaching past its box, at
 //! 1×, 1.5× and 2×, byte for byte: both compile the same HLSL with FXC
 //! (Direct3D 12 pinned to it, docs/windows.md). `ZGX_D3D11` is read once a
 //! process, so the test runs itself again with it and compares that run's
@@ -247,6 +248,17 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
     .ml(12.)
     .mt(36.)
     .size(100., 50.);
+    // A truncated text whose blurred shadow reaches past its box: its
+    // glyphs clipped to the box, its shadow not.
+    let shadowed = text("HHHH HHHH HHHH HHHH")
+        .truncate()
+        .size(130., 20.)
+        .text_size(14.)
+        .text_color(Color(229, 237, 247, 255))
+        .text_shadow(0., 12., 3., Color(230, 60, 60, 255))
+        .absolute()
+        .ml(260.)
+        .mt(250.);
     div()
         .w(SIZE.0)
         .h(SIZE.1)
@@ -258,6 +270,7 @@ fn view(live: Signal<u32>, offset: Signal<f32>) -> View {
         .child(layered)
         .child(pictured)
         .child(lines)
+        .child(shadowed)
 }
 
 /// Each frame's pixels, RGBA, as this process draws them at `scale`.
