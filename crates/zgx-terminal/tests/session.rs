@@ -269,3 +269,21 @@ fn shows_prefix(term: &Term, prefix: &str) -> bool {
         .iter()
         .any(|row| row.trim_start().starts_with(prefix))
 }
+
+/// What an app links this crate with still infers its comparisons of
+/// `usize` and `i32`: no crate in the graph compares them with a type of its
+/// own (alacritty_terminal did, from the primitive's side; our fork doesn't).
+#[test]
+fn usize_compares_only_with_itself() {
+    let rows: std::collections::BTreeMap<usize, ()> = (0..5).map(|i| (i, ())).collect();
+    let range: std::ops::Range<usize> = 1..3;
+    let outside: Vec<usize> = rows
+        .keys()
+        .filter(|i| !range.contains(i))
+        .copied()
+        .collect();
+    assert_eq!(outside, [0, 3, 4]);
+    let lines = [-1i32, 0, 2];
+    let range: std::ops::Range<i32> = 0..2;
+    assert_eq!(lines.iter().filter(|line| range.contains(line)).count(), 1);
+}

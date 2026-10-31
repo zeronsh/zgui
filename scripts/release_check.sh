@@ -5,8 +5,8 @@
 #     scripts/release_check.sh [--allow-dirty]
 #
 # 1. The forks zgx publishes as its own crates (vendor/harfrust,
-#    cosmic-text, taffy, mlua as zgx-harfrust, zgx-cosmic-text, zgx-taffy,
-#    zgx-mlua) are each packaged and built from their package, against
+#    cosmic-text, taffy, mlua, alacritty-terminal as zgx-harfrust,
+#    zgx-cosmic-text, zgx-taffy, zgx-mlua, zgx-alacritty-terminal) are each packaged and built from their package, against
 #    crates.io and the forks they depend on (zgx-cosmic-text shapes with
 #    zgx-harfrust), given from vendor/.
 # 2. Every published workspace crate is packaged and built from its package
@@ -45,7 +45,7 @@ cd "$(git rev-parse --show-toplevel)"
 # `--allow-dirty`: check uncommitted changes too (a release itself is clean).
 dirty=""
 if [ "${1:-}" = --allow-dirty ]; then dirty=--allow-dirty; fi
-forks="harfrust cosmic-text taffy mlua"
+forks="harfrust cosmic-text taffy mlua alacritty-terminal"
 # Where packages are unpacked, the forks' beside the workspace's (3 reads
 # them there).
 target="${CARGO_TARGET_DIR:-target}"

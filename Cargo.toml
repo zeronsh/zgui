@@ -8,6 +8,7 @@ exclude = [
     "vendor/accesskit_macos",
     "vendor/accesskit_unix",
     "vendor/accesskit_windows",
+    "vendor/alacritty-terminal",
     "vendor/cosmic-text",
     "vendor/harfrust",
     "vendor/mlua",
@@ -59,9 +60,10 @@ codegen-units = 1
 lto = "thin"
 codegen-units = 1
 
-# Text shaping (and the shaper under it), layout and the Luau bindings are
-# forks published as zgx's own crates (zgx-cosmic-text, zgx-harfrust,
-# zgx-taffy, zgx-mlua), which zgx's crates depend on
+# Text shaping (and the shaper under it), layout, the Luau bindings and the
+# terminal's screen model are forks published as zgx's own crates
+# (zgx-cosmic-text, zgx-harfrust, zgx-taffy, zgx-mlua, zgx-alacritty-terminal),
+# which zgx's crates depend on
 # by path and version, each with its ZGX_PATCH.md. The crates below are
 # patched in this repository alone: a zgx crate from crates.io builds against
 # their releases, without the fixes, where an API a patch adds is detected at
